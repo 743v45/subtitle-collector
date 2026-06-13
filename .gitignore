@@ -1,0 +1,8 @@
+node_modules/
+.turbo/
+dist/
+*.zip
+.DS_Store
+
+# 根目录调试截图（调试产物，不入库）
+/*.png

@@ -1,0 +1,24 @@
+{
+  "manifest_version": 3,
+  "name": "Bilibili Extensions",
+  "version": "0.1.0",
+  "description": "提取 B 站视频字幕",
+  "permissions": ["activeTab"],
+  "host_permissions": ["*://*.bilibili.com/*"],
+  "content_scripts": [
+    {
+      "matches": ["*://www.bilibili.com/video/*"],
+      "js": ["inject.js"],
+      "world": "MAIN",
+      "run_at": "document_start"
+    },
+    {
+      "matches": ["*://www.bilibili.com/video/*"],
+      "js": ["content.js"],
+      "run_at": "document_start"
+    }
+  ],
+  "action": {
+    "default_popup": "popup.html"
+  }
+}
