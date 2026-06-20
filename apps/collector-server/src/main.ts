@@ -1,4 +1,6 @@
-import { createServer, type IncomingMessage } from 'node:http';
+import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
+import { readFileSync, existsSync } from 'node:fs';
+import { join, extname } from 'node:path';
 import { openDb, migrate } from './db/migrate.js';
 import { attachWsServer } from './ws/server.js';
 import { handleQueryHttp } from './http/queries.js';
@@ -23,11 +25,35 @@ const httpOriginAllowed = (req: IncomingMessage): boolean => {
     || o.startsWith('http://127.0.0.1');
 };
 
+// Task 6 Step 15: 静态托管 collector-web 构建产物。
+// 落在 C2 httpOriginAllowed 守卫之后（调用点先校验 Origin 再走 serveStatic），
+// 确保静态文件不绕过安全校验。
+const PUBLIC_DIR = join(process.cwd(), 'public');
+const MIME: Record<string, string> = {
+  '.html': 'text/html; charset=utf-8',
+  '.js': 'application/javascript; charset=utf-8',
+  '.css': 'text/css; charset=utf-8',
+  '.svg': 'image/svg+xml',
+  '.png': 'image/png',
+  '.json': 'application/json; charset=utf-8',
+  '.ico': 'image/x-icon',
+};
+function serveStatic(req: IncomingMessage, res: ServerResponse) {
+  const url = new URL(req.url ?? '/', 'http://localhost');
+  const fp = join(PUBLIC_DIR, url.pathname === '/' ? '/index.html' : url.pathname);
+  // 路径穿越防护：解析后必须在 PUBLIC_DIR 之下
+  if (!fp.startsWith(PUBLIC_DIR) || !existsSync(fp)) { res.writeHead(404); res.end('not found'); return; }
+  const contentType = MIME[extname(fp)] ?? 'application/octet-stream';
+  res.writeHead(200, { 'Content-Type': contentType });
+  res.end(readFileSync(fp));
+}
+
 const httpServer = createServer((req, res) => {
   if (req.url === '/ping') { res.writeHead(200, { 'Content-Type': 'application/json' }); res.end('{"ok":true}'); return; }
   if (!httpOriginAllowed(req)) { res.writeHead(403, { 'Content-Type': 'application/json' }); res.end('{"ok":false,"error":"forbidden"}'); return; } // C2
   if (req.url?.startsWith('/api/')) { handleQueryHttp(req, res, db); return; }
-  // 静态托管 collector-web 产物在 Task 6 接上
+  // 静态托管 collector-web 产物（非 /ping 非 /api/ 的请求）——C2 校验已在上方通过
+  if (req.url && !req.url.startsWith('/api/') && req.url !== '/ping') { serveStatic(req, res); return; }
   res.writeHead(404); res.end('not found');
 });
 

@@ -3,10 +3,13 @@
   "private": true,
   "scripts": {
     "build": "turbo build",
-    "dev": "turbo dev"
+    "dev": "turbo dev",
+    "test": "turbo run test"
   },
   "devDependencies": {
-    "turbo": "^2"
+    "turbo": "^2",
+    "puppeteer": "^23.0.0",
+    "ws": "^8.18.0"
   },
   "packageManager": "pnpm@9.15.4"
 }

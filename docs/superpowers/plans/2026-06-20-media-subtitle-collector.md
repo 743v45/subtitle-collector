@@ -87,7 +87,7 @@
   "scripts": {
     "build": "tsc",
     "dev": "tsx src/main.ts",
-    "test": "node --test --import tsx src/**/*.test.ts"
+    "test": "node --test --import tsx src/*/*.test.ts"
   },
   "dependencies": {
     "ws": "^8.18.0",
@@ -527,7 +527,7 @@ export function ingestVideo(db: Database.Database, req: IngestRequest): IngestRe
     // 4. version 写入（按 origin 分支去重）
     //    - external/asr：按 (track_id, origin, asr_engine, source_url) 先 SELECT，命中跳过（幂等去重）
     //    - manual：始终 INSERT 新行（人工导入不去重，保留每次导入的快照）
-    const verSel = db.prepare('SELECT id FROM subtitle_versions WHERE track_id = ? AND origin = ? AND coalesce(asr_engine,"") = coalesce(?,"") AND coalesce(source_url,"") = coalesce(?,"")');
+    const verSel = db.prepare("SELECT id FROM subtitle_versions WHERE track_id = ? AND origin = ? AND coalesce(asr_engine,'') = coalesce(?,'') AND coalesce(source_url,'') = coalesce(?,'')");
     const verIns = db.prepare('INSERT INTO subtitle_versions (track_id, origin, payload, body_size, source_url, asr_engine, captured_at) VALUES (?, ?, ?, ?, ?, ?, ?)');
 
     let inserted = 0;
@@ -616,7 +616,7 @@ function setup() {
 
 function connect(port: number): Promise<WebSocket> {
   return new Promise((resolve, reject) => {
-    const ws = new WebSocket(`ws://127.0.0.1:${port}`);
+    const ws = new WebSocket(`ws://127.0.0.1:${port}/ext`);
     ws.once('open', () => resolve(ws));
     ws.once('error', reject);
   });
@@ -908,10 +908,10 @@ export function getVideo(db: Database.Database, source: string, sourceVid: strin
   const video = db.prepare('SELECT v.*, c.name as creator_name FROM videos v LEFT JOIN creators c ON c.id = v.creator_id WHERE v.source = ? AND v.source_vid = ?').get(source, sourceVid) as Record<string, unknown> | undefined;
   if (!video) return null;
   const tracks = db.prepare('SELECT * FROM subtitle_tracks WHERE video_id = ? ORDER BY id').all(video.id) as Array<{ id: number; lan: string | null; lan_doc: string | null; track_type: number | null }>;
-  const versionsByTrack = db.prepare('SELECT * FROM subtitle_versions WHERE track_id = ? ORDER BY id').all.bind(db);
+  const allVersions = db.prepare('SELECT * FROM subtitle_versions WHERE track_id = ? ORDER BY id');
   const result: VideoDetail = { video, tracks: [] };
   for (const t of tracks) {
-    const vs = versionsByTrack(t.id) as VersionRow[];
+    const vs = allVersions.all(t.id) as VersionRow[];
     const sortedVs = vs.slice().sort((a, b) => versionPriority(a.origin) - versionPriority(b.origin));
     result.tracks.push({ ...t, versions: sortedVs });
   }
@@ -1322,7 +1322,7 @@ let operateWatch = { active: false, observedSubtitle: false };
 // 复用上面的 message 监听窗口：SUBTITLE_BODY 出现即视为点击生效
 // （在已有 message listener 里追加一行标记，避免重复监听）
 window.addEventListener("message", (event) => {
-  if (event.source !== window && event.data?.type === "SUBTITLE_BODY") operateWatch.observedSubtitle = true;
+  if (event.source === window && event.data?.type === "SUBTITLE_BODY") operateWatch.observedSubtitle = true;
 });
 
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
