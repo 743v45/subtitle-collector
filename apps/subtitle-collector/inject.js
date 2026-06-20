@@ -26,8 +26,14 @@
           console.log(`[inject] player API 响应 code=${json?.code} data keys=${Object.keys(json?.data ?? {}).join(',')}`);
           if (json?.code !== 0) { console.warn('[inject] player API 风控 code=', json?.code); post("RISK_CONTROL", { url }); return; }
           const d = json.data ?? {};
-          if (d.need_login_subtitle === true) { console.warn('[inject] player API 需登录'); post("NEED_LOGIN", { url }); return; }
+          if (d.need_login_subtitle === true) { console.warn('[inject] player API need_login_subtitle=true（建议登录，但已登录用户可能仍可拿字幕，继续检查 subtitles 数组）'); }
           const subs = d.subtitle?.subtitles ?? [];
+          if (subs.length === 0) {
+            // 无字幕（subtitles 数组空），区分风控/登录/真无字幕：
+            if (d.need_login_subtitle === true) { console.warn('[inject] player API 真需登录（subtitles 数组空 + need_login_subtitle=true）'); post("NEED_LOGIN", { url }); }
+            else { console.log('[inject] player API 无字幕（subtitles 数组空）'); }
+            return;
+          }
           const meta = {
             bvid: d.bvid, aid: d.aid, cid: d.cid,
             title: d.title ?? document.title,
