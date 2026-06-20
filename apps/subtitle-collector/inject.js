@@ -23,9 +23,10 @@
     try {
       if (isPlayerApi(url)) {
         response.clone().json().then((json) => {
-          if (json?.code !== 0) { post("RISK_CONTROL", { url }); return; }
+          console.log(`[inject] player API 响应 code=${json?.code} data keys=${Object.keys(json?.data ?? {}).join(',')}`);
+          if (json?.code !== 0) { console.warn('[inject] player API 风控 code=', json?.code); post("RISK_CONTROL", { url }); return; }
           const d = json.data ?? {};
-          if (d.need_login_subtitle === true) { post("NEED_LOGIN", { url }); return; }
+          if (d.need_login_subtitle === true) { console.warn('[inject] player API 需登录'); post("NEED_LOGIN", { url }); return; }
           const subs = d.subtitle?.subtitles ?? [];
           const meta = {
             bvid: d.bvid, aid: d.aid, cid: d.cid,
@@ -41,7 +42,7 @@
           };
           console.log(`[inject] player API 拦到 bvid=${meta.bvid} subs=${meta.subs.length} title=${meta.title}`);
           post("PLAYER_META", meta);
-        }).catch(() => {});
+        }).catch((e) => console.error('[inject] player API parse error', e));
       }
       if (isSubtitleUrl(url)) {
         response.clone().json().then((data) => {
