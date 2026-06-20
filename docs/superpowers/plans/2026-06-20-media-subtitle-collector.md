@@ -9,7 +9,7 @@
 **Tech Stack:**
 - 服务端：TypeScript + Node 22 + `ws` + `better-sqlite3` + Node 内置 `node:test`
 - 扩展：原生 JS（MV3），零构建链
-- 网页：React + Vite + TypeScript
+- 网页：React + Vite + TypeScript + Tailwind CSS + shadcn/ui（强制，对齐全局样式规则：禁止 `style={{}}` 内联、禁止手写 `.css`）
 - 沿用现有 monorepo：`pnpm workspace` + `turbo`（已含 `apps/*`）
 
 **Spec:** [`docs/superpowers/specs/2026-06-20-media-subtitle-collector-design.md`](../specs/2026-06-20-media-subtitle-collector-design.md)
@@ -37,6 +37,7 @@
 | `apps/subtitle-collector/inject.js` | MAIN world hook（采集） | 新建 |
 | `apps/subtitle-collector/content.js` | ISOLATED 聚合 + 命令执行 | 新建 |
 | `apps/subtitle-collector/background.js` | WS 客户端 + 双重身份协调 | 新建 |
+| `apps/subtitle-collector/config.js` | 服务端地址 + WS 握手 token（扩展与服务端共用同一 token） | 新建 |
 | `apps/subtitle-collector/popup.html` | 状态 + 补采 | 新建 |
 | `apps/subtitle-collector/popup.js` | popup 逻辑 | 新建 |
 | `apps/collector-web/package.json` | 网页包配置（vite + react） | 新建 |
@@ -52,10 +53,16 @@
 | `apps/collector-web/src/components/TrackSwitcher.tsx` | 轨切换器 | 新建 |
 | `apps/collector-web/src/components/VersionSwitcher.tsx` | 版本切换器 | 新建 |
 | `apps/collector-web/src/components/SubtitleView.tsx` | 时间轴逐行 + 复制 | 新建 |
+| `apps/collector-web/tailwind.config.ts` | Tailwind 配置 | 新建 |
+| `apps/collector-web/postcss.config.js` | PostCSS（tailwindcss + autoprefixer） | 新建 |
+| `apps/collector-web/src/globals.css` | Tailwind 指令入口（@tailwind 三件套，不写自定义样式） | 新建 |
+| `apps/collector-web/components.json` | shadcn/ui 配置 | 新建 |
+| `scripts/spike-click-subtitle.mjs` | click 可行性 spike（Task 5 前置，真实登录态） | 新建 |
+| `scripts/verify-collector.mjs` | 扩展 puppeteer mock 回归（subtitle_url 四情况 / navigate / operate） | 新建 |
 
 **测试分层（务实）：**
-- 服务端核心（db/ingest、ws/server、http/queries）→ `node:test` 自动化
-- 扩展采集链路 → puppeteer mock 回归（沿用 `scripts/verify-extension.mjs` 模式）
+- 服务端核心（db/ingest、ws/server、http/queries）→ `node:test` 自动化（`pnpm test` / `turbo run test`）
+- 扩展采集链路 → puppeteer mock 回归（`scripts/verify-collector.mjs`，沿用 `scripts/verify-extension.mjs` 模式）
 - 端到端真实字幕 → 人工验收（参考 `MANUAL.md` 模式）
 
 ---
@@ -171,10 +178,14 @@ CREATE TABLE IF NOT EXISTS subtitle_versions (
   body_size     INTEGER,
   source_url    TEXT,
   asr_engine    TEXT,
-  captured_at   INTEGER NOT NULL,
-  UNIQUE(track_id, origin, coalesce(asr_engine,''), coalesce(source_url,''))
+  captured_at   INTEGER NOT NULL
+  -- 去重在应用层处理（见 db/ingest.ts version 写入分支）：
+  --   origin IN ('external','asr')：按 (track_id, origin, coalesce(asr_engine,''), coalesce(source_url,'')) 先 SELECT，命中则跳过；
+  --   origin = 'manual'：始终 INSERT 新行（人工导入不去重，保留历史快照）。
+  -- 不在 DDL 上设 UNIQUE，否则 manual 多次导入会撞约束报错。
 );
 CREATE INDEX IF NOT EXISTS idx_versions_track ON subtitle_versions(track_id);
+CREATE INDEX IF NOT EXISTS idx_versions_dedup ON subtitle_versions(track_id, origin, asr_engine, source_url);
 
 CREATE TABLE IF NOT EXISTS change_log (
   id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -386,6 +397,25 @@ test('同轨多版本（外挂 vs ASR）：按 origin 分开存', () => {
     assert.deepEqual(versions.map(v => v.origin).sort(), ['asr', 'external']);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
+
+test('manual 版本不去重：同轨重复导入 manual 始终 INSERT 新行', () => {
+  const { db, dir } = freshDb();
+  try {
+    const rec = (title: string) => ingestVideo(db, {
+      source: 'bilibili',
+      video: { source_vid: 'BV1', title, creator: { source_uid: '1', name: 'up' }, extra: {}, duration: 1, published_at: 1 },
+      tracks: [{
+        lan: 'zh', track_type: 1,
+        versions: [{ origin: 'manual', payload: { body: [{ content: title }] }, source_url: null }],
+      }],
+    });
+    rec('人工导入 1');
+    rec('人工导入 2'); // manual 不去重，应再插一行
+    rec('人工导入 3'); // 同理
+    const manuals = db.prepare("SELECT * FROM subtitle_versions WHERE origin = 'manual' ORDER BY id").all() as any[];
+    assert.equal(manuals.length, 3, 'manual 每次导入都应是新行，不参与去重');
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
 ```
 
 - [ ] **Step 2: 跑测试，确认失败**
@@ -494,8 +524,11 @@ export function ingestVideo(db: Database.Database, req: IngestRequest): IngestRe
     const trackIns = db.prepare('INSERT INTO subtitle_tracks (video_id, lan, lan_doc, track_type) VALUES (?, ?, ?, ?)');
     const trackUpd = db.prepare('UPDATE subtitle_tracks SET lan_doc = ? WHERE id = ?');
 
-    // 4. version insert-or-ignore
-    const verIns = db.prepare('INSERT OR IGNORE INTO subtitle_versions (track_id, origin, payload, body_size, source_url, asr_engine, captured_at) VALUES (?, ?, ?, ?, ?, ?, ?)');
+    // 4. version 写入（按 origin 分支去重）
+    //    - external/asr：按 (track_id, origin, asr_engine, source_url) 先 SELECT，命中跳过（幂等去重）
+    //    - manual：始终 INSERT 新行（人工导入不去重，保留每次导入的快照）
+    const verSel = db.prepare('SELECT id FROM subtitle_versions WHERE track_id = ? AND origin = ? AND coalesce(asr_engine,"") = coalesce(?,"") AND coalesce(source_url,"") = coalesce(?,"")');
+    const verIns = db.prepare('INSERT INTO subtitle_versions (track_id, origin, payload, body_size, source_url, asr_engine, captured_at) VALUES (?, ?, ?, ?, ?, ?, ?)');
 
     let inserted = 0;
     let skipped = 0;
@@ -511,8 +544,14 @@ export function ingestVideo(db: Database.Database, req: IngestRequest): IngestRe
       }
       for (const v of t.versions) {
         const payloadStr = JSON.stringify(v.payload);
-        const info = verIns.run(trackId, v.origin, payloadStr, payloadStr.length, v.source_url ?? null, v.asr_engine ?? null, now);
-        if (info.changes > 0) inserted++; else skipped++;
+        if (v.origin !== 'manual') {
+          // external/asr：去重——命中现有行则跳过
+          const ex = verSel.get(trackId, v.origin, v.asr_engine ?? null, v.source_url ?? null) as { id: number } | undefined;
+          if (ex) { skipped++; continue; }
+        }
+        // manual（或 external/asr 首次）：始终 INSERT 新行
+        verIns.run(trackId, v.origin, payloadStr, payloadStr.length, v.source_url ?? null, v.asr_engine ?? null, now);
+        inserted++;
       }
     }
     return { inserted, skipped };
@@ -525,7 +564,7 @@ export function ingestVideo(db: Database.Database, req: IngestRequest): IngestRe
 - [ ] **Step 4: 跑测试，全部通过**
 
 Run: `cd apps/collector-server && pnpm test`
-Expected: 5/5 PASS
+Expected: 6/6 PASS
 
 - [ ] **Step 5: 提交**
 
@@ -569,7 +608,7 @@ function setup() {
   return new Promise<{ port: number; db: any; dir: string; cleanup: () => void }>((resolve) => {
     httpServer.listen(0, '127.0.0.1', () => {
       const port = (httpServer.address() as AddressInfo).port;
-      attachWsServer(httpServer, db);
+      attachWsServer(httpServer, db, 'test-token'); // 预置 token；下方 hello 须带同一 token
       resolve({ port, db, dir, cleanup: () => { httpServer.close(); rmSync(dir, { recursive: true, force: true }); } });
     });
   });
@@ -587,7 +626,7 @@ test('hello 握手：扩展连上后服务端记录 ext_version', async () => {
   const ctx = await setup();
   try {
     const ws = await connect(ctx.port);
-    ws.send(JSON.stringify({ type: 'hello', ext_version: '0.1.0' }));
+    ws.send(JSON.stringify({ type: 'hello', ext_version: '0.1.0', token: 'test-token' }));
     await new Promise(r => setTimeout(r, 50));
     ws.close();
   } finally { ctx.cleanup(); }
@@ -597,7 +636,7 @@ test('ingest 消息：服务端写入 SQLite 并回 ingest-ack', async () => {
   const ctx = await setup();
   try {
     const ws = await connect(ctx.port);
-    ws.send(JSON.stringify({ type: 'hello', ext_version: '0.1.0' }));
+    ws.send(JSON.stringify({ type: 'hello', ext_version: '0.1.0', token: 'test-token' }));
     await new Promise(r => setTimeout(r, 30));
     ws.send(JSON.stringify({
       type: 'ingest',
@@ -619,7 +658,7 @@ test('result 消息：服务端记录 commandId → result 映射', async () => 
   const ctx = await setup();
   try {
     const ws = await connect(ctx.port);
-    ws.send(JSON.stringify({ type: 'hello', ext_version: '0.1.0' }));
+    ws.send(JSON.stringify({ type: 'hello', ext_version: '0.1.0', token: 'test-token' }));
     await new Promise(r => setTimeout(r, 30));
     const commandId = 'cmd-1';
     ws.send(JSON.stringify({ type: 'result', id: commandId, ok: true, data: { nav: true } }));
@@ -632,7 +671,7 @@ test('服务端主动下发 Command：broadcastCommand 触达扩展并收到 res
   const ctx = await setup();
   try {
     const ws = await connect(ctx.port);
-    ws.send(JSON.stringify({ type: 'hello', ext_version: '0.1.0' }));
+    ws.send(JSON.stringify({ type: 'hello', ext_version: '0.1.0', token: 'test-token' }));
     await new Promise(r => setTimeout(r, 30));
 
     const cmd = { id: 'cmd-42', action: 'navigate', url: 'https://www.bilibili.com/video/BV1xxx' };
@@ -647,6 +686,19 @@ test('服务端主动下发 Command：broadcastCommand 触达扩展并收到 res
     ws.send(JSON.stringify({ type: 'result', id: 'cmd-42', ok: true, data: { opened: true } }));
     await new Promise(r => setTimeout(r, 30));
     ws.close();
+  } finally { ctx.cleanup(); }
+});
+
+test('hello 握手 token 不匹配：服务端关闭连接', async () => {
+  const ctx = await setup();
+  try {
+    const ws = await connect(ctx.port);
+    const closed = new Promise<boolean>((resolve) => {
+      ws.once('close', () => resolve(true));
+      setTimeout(() => resolve(false), 500);
+    });
+    ws.send(JSON.stringify({ type: 'hello', ext_version: '0.1.0', token: 'WRONG-TOKEN' }));
+    assert.equal(await closed, true, 'bad token 应被关闭');
   } finally { ctx.cleanup(); }
 });
 ```
@@ -675,7 +727,8 @@ const connections = new Set<ExtConn>();
 // 待广播的 command queue（按 port 维度，简化版；真实场景可按 contextId 等路由）
 const pendingCommands: Array<{ cmd: unknown; target?: WebSocket }> = [];
 
-export function attachWsServer(httpServer: Server, _db: Database.Database): void {
+export function attachWsServer(httpServer: Server, _db: Database.Database, expectedToken?: string): void {
+  const EXPECTED_TOKEN = expectedToken ?? process.env.COLLECTOR_TOKEN ?? ''; // 空 token 视为未配置，全部拒绝
   const wss = new WebSocketServer({
     server: httpServer,
     path: '/ext',
@@ -696,6 +749,13 @@ export function attachWsServer(httpServer: Server, _db: Database.Database): void
 
       if (msg.type === 'hello') {
         conn.extVersion = typeof msg.ext_version === 'string' ? msg.ext_version : null;
+        // WS 握手 token 校验：比对预置 token，不匹配关闭连接（防 WS CSRF，学 opencli）
+        if (!EXPECTED_TOKEN || msg.token !== EXPECTED_TOKEN) {
+          ws.send(JSON.stringify({ type: 'hello-nack', ok: false, error: 'bad token' }));
+          ws.close(4001, 'bad token');
+          return;
+        }
+        ws.send(JSON.stringify({ type: 'hello-ack', ok: true }));
         return;
       }
 
@@ -747,6 +807,7 @@ import { attachWsServer } from './ws/server.js';
 
 const DB_PATH = process.env.COLLECTOR_DB_PATH ?? './bilibili-collector.db';
 const PORT = Number(process.env.COLLECTOR_PORT ?? 21527);
+const TOKEN = process.env.COLLECTOR_TOKEN ?? 'change-me-collector-token'; // 与扩展 config.js 一致
 
 const db = openDb(DB_PATH);
 migrate(db);
@@ -757,7 +818,7 @@ const httpServer = createServer((req, res) => {
   res.writeHead(404); res.end('not found');
 });
 
-attachWsServer(httpServer, db);
+attachWsServer(httpServer, db, TOKEN);
 
 httpServer.listen(PORT, '127.0.0.1', () => {
   console.log(`[collector-server] listening on http://127.0.0.1:${PORT} (ws: /ext)`);
@@ -767,7 +828,7 @@ httpServer.listen(PORT, '127.0.0.1', () => {
 - [ ] **Step 5: 跑测试，全部通过**
 
 Run: `cd apps/collector-server && pnpm test`
-Expected: 4/4 PASS
+Expected: 5/5 PASS
 
 - [ ] **Step 6: 提交**
 
@@ -928,25 +989,40 @@ export function handleQueryHttp(req: IncomingMessage, res: ServerResponse, db: D
 Replace `apps/collector-server/src/main.ts`：
 
 ```ts
-import { createServer } from 'node:http';
+import { createServer, type IncomingMessage } from 'node:http';
 import { openDb, migrate } from './db/migrate.js';
 import { attachWsServer } from './ws/server.js';
 import { handleQueryHttp } from './http/queries.js';
 
 const DB_PATH = process.env.COLLECTOR_DB_PATH ?? './bilibili-collector.db';
 const PORT = Number(process.env.COLLECTOR_PORT ?? 21527);
+const TOKEN = process.env.COLLECTOR_TOKEN ?? 'change-me-collector-token'; // 与扩展 config.js 一致
 
 const db = openDb(DB_PATH);
 migrate(db);
 
+// C2: loopback HTTP 对浏览器是真实攻击面——DNS rebinding 可绕同源策略读 /api/* 与静态页。
+// /ping 外的所有请求校验 Host（防 rebinding）+ Origin（浏览器请求须来自扩展或同源）。
+const httpOriginAllowed = (req: IncomingMessage): boolean => {
+  const host = String(req.headers['host'] ?? '').split(':')[0];
+  if (host !== 'localhost' && host !== '127.0.0.1') return false; // DNS rebinding：非 loopback hostname 直接拒
+  const origin = req.headers['origin'];
+  if (!origin) return true; // curl / 服务端同源 fetch 无 Origin，放行
+  const o = String(origin);
+  return o.startsWith('chrome-extension://') // 扩展
+    || o.startsWith('http://localhost')       // 同源 collector-web
+    || o.startsWith('http://127.0.0.1');
+};
+
 const httpServer = createServer((req, res) => {
   if (req.url === '/ping') { res.writeHead(200, { 'Content-Type': 'application/json' }); res.end('{"ok":true}'); return; }
+  if (!httpOriginAllowed(req)) { res.writeHead(403, { 'Content-Type': 'application/json' }); res.end('{"ok":false,"error":"forbidden"}'); return; } // C2
   if (req.url?.startsWith('/api/')) { handleQueryHttp(req, res, db); return; }
   // 静态托管 collector-web 产物在 Task 6 接上
   res.writeHead(404); res.end('not found');
 });
 
-attachWsServer(httpServer, db);
+attachWsServer(httpServer, db, TOKEN);
 
 httpServer.listen(PORT, '127.0.0.1', () => {
   console.log(`[collector-server] listening on http://127.0.0.1:${PORT} (ws: /ext, api: /api/*)`);
@@ -982,8 +1058,71 @@ git commit -m "feat(collector-server): http query api (list/detail/version) with
 - Create: `apps/subtitle-collector/inject.js`
 - Create: `apps/subtitle-collector/content.js`
 - Create: `apps/subtitle-collector/background.js`
+- Create: `apps/subtitle-collector/config.js`
 - Create: `apps/subtitle-collector/popup.html`
 - Create: `apps/subtitle-collector/popup.js`
+
+> **前置 spike（click 可行性，必做，阻塞 operate 命令实现）**
+> B 站播放器字幕开关在真实 DOM 里能否用 `element.click()` 触发字幕请求，必须先用真实登录态 profile 验证，再决定 operate 命令走 click 还是 CDP 降级。
+
+- [ ] **Step 0: click 可行性 spike（puppeteer + 真实登录态 profile）**
+
+Create `scripts/spike-click-subtitle.mjs`（一次性验证脚本，不入正式测试套件）：
+
+```js
+// 前置：scripts/verify-collector.mjs 已装 puppeteer；用 --user-data-dir 复用已登录 B 站的 Chrome profile。
+// 目的：在真实视频页 element.click() 字幕开关后，5s 内是否出现 aisubtitle/bfs/subtitle 请求。
+import puppeteer from 'puppeteer';
+
+const VIDEO = process.argv[2] || 'https://www.bilibili.com/video/BV1mhjg6SEJy';
+const PROFILE = process.env.CHROME_PROFILE || `${process.env.HOME}/.spike-bilibili-profile`;
+
+const browser = await puppeteer.launch({
+  headless: false,
+  userDataDir: PROFILE, // 复用登录态；首次跑需手动登录一次
+  args: ['--no-first-run', '--no-default-browser-check', '--window-size=1280,900'],
+});
+const page = await browser.newPage();
+let observed = false;
+page.on('request', (req) => {
+  const u = req.url();
+  if (u.includes('aisubtitle') || u.includes('bfs/subtitle') || u.includes('bfs/ai_subtitle')) observed = true;
+});
+
+await page.goto(VIDEO, { waitUntil: 'domcontentloaded', timeout: 60000 });
+await new Promise(r => setTimeout(r, 5000)); // 等播放器就绪
+
+// 方案 A：直接 click()
+async function tryClick(strategy) {
+  observed = false;
+  const handle = await page.$(".bpx-player-ctrl-btn-icon, [aria-label*='字幕'], .subtitle-btn");
+  if (!handle) return { found: false, observed: false, strategy };
+  if (strategy === 'click') {
+    await handle.click();
+  } else {
+    await handle.evaluate((el) => {
+      el.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
+      el.dispatchEvent(new PointerEvent('pointerup', { bubbles: true }));
+      el.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+  }
+  await new Promise(r => setTimeout(r, 5000));
+  return { found: true, observed, strategy };
+}
+
+const A = await tryClick('click');
+console.log('[A] element.click() →', A.observed ? '✅ 触发字幕请求' : '❌ 未触发');
+const B = A.observed ? A : await tryClick('pointer');
+console.log('[B] pointerdown+up+click →', B.observed ? '✅ 触发' : '❌ 未触发');
+console.log('\n结论：', B.observed
+  ? 'operate 可走 click 路线（content.js subtitleObserved=true 即生效）'
+  : 'click 路线不可行 → operate 必须 CDP 降级（attach debugger + Input.dispatchMouseEvent）');
+
+await browser.close();
+```
+
+Run: `node scripts/spike-click-subtitle.mjs`
+Expected: 输出方案 A/B 结论。**任一方案 5s 内观察到 aisubtitle/bfs/subtitle 请求 → content.js operate 走 click；都不行 → 在 operate sendResponse `subtitleObserved=false` 时由上层（后续批量 spec）走 CDP 降级。** 本 plan 内 operate 实现仍以 click 优先（content.js 已内建"先 click() 再 pointer 序列"的 fallback + subtitleObserved 真实结果回传）。
 
 - [ ] **Step 1: package.json**
 
@@ -1006,7 +1145,7 @@ git commit -m "feat(collector-server): http query api (list/detail/version) with
   "name": "Bilibili Subtitle Collector",
   "version": "0.1.0",
   "description": "采集 B 站视频字幕到本地服务端",
-  "permissions": ["activeTab", "tabs", "storage"],
+  "permissions": ["activeTab", "tabs", "storage", "alarms"],
   "host_permissions": ["*://*.bilibili.com/*"],
   "content_scripts": [
     {
@@ -1177,19 +1316,55 @@ function flushIfReady(bvid) {
 }
 
 // 接受 background 命令：在当前页执行 DOM 操作（如点字幕开关）
+// operate 用短超时观察点击后是否真的触发了字幕请求（aisubtitle/bfs/subtitle），
+// 只报"找到并点了"不够——必须确认点击产生了字幕流量，否则上层据此降级到 CDP（见 Task 4b spike）。
+let operateWatch = { active: false, observedSubtitle: false };
+// 复用上面的 message 监听窗口：SUBTITLE_BODY 出现即视为点击生效
+// （在已有 message listener 里追加一行标记，避免重复监听）
+window.addEventListener("message", (event) => {
+  if (event.source !== window && event.data?.type === "SUBTITLE_BODY") operateWatch.observedSubtitle = true;
+});
+
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (msg?.type === "OPERATE") {
     const { op } = msg;
     if (op === "click-subtitle-toggle") {
-      // 简化：找常见字幕开关选择器并点击
       const sel = ".bpx-player-ctrl-btn-icon, [aria-label*='字幕'], .subtitle-btn";
       const el = document.querySelector(sel);
-      if (el) { el.click(); sendResponse({ ok: true }); }
-      else sendResponse({ ok: false, error: "toggle not found" });
+      if (!el) { sendResponse({ ok: false, error: "toggle not found" }); return true; }
+
+      // 点击前重置观察窗口，尝试真实 click()
+      operateWatch = { active: true, observedSubtitle: false };
+      try { el.click(); } catch {}
+
+      // 5s 内监听是否出现字幕请求；不行再试 pointerdown+pointerup+click 序列
+      const tryWait = (clickedOk: boolean) => {
+        setTimeout(() => {
+          if (!operateWatch.observedSubtitle && clickedOk) {
+            // click() 无效，退而试完整指针序列（部分播放器需要 pointerdown/up 配合）
+            operateWatch.observedSubtitle = false;
+            try {
+              el.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true }));
+              el.dispatchEvent(new PointerEvent("pointerup", { bubbles: true }));
+              el.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+            } catch {}
+            setTimeout(() => finish(operateWatch.observedSubtitle), 5000);
+          } else {
+            finish(operateWatch.observedSubtitle);
+          }
+          function finish(observed: boolean) {
+            operateWatch.active = false;
+            sendResponse({ ok: true, clicked: true, subtitleObserved: observed,
+              // subtitleObserved=false 即点击未触发字幕请求，上层据此决定是否走 CDP 降级
+              note: observed ? "click 触发了字幕请求" : "点击后 5s 内未观察到字幕请求，建议 CDP 降级" });
+          }
+        }, 5000);
+      };
+      tryWait(true);
     } else {
       sendResponse({ ok: false, error: "unknown op" });
     }
-    return true;
+    return true; // 异步 sendResponse
   }
 });
 ```
@@ -1197,14 +1372,23 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
 - [ ] **Step 5: background.js（WS 客户端 + 双重身份协调）**
 
 ```js
-const SERVER_URL = "ws://127.0.0.1:21527/ext";
-const PING_URL = "http://127.0.0.1:21527/ping";
+import { SERVER_URL, PING_URL, TOKEN } from "./config.js";
+// config.js 内容（见 Step 5b）：
+//   export const SERVER_URL = "ws://127.0.0.1:21527/ext";
+//   export const PING_URL   = "http://127.0.0.1:21527/ping";
+//   export const TOKEN      = "change-me-collector-token";  // 与服务端 config.js 预置 token 一致
 const EXT_VERSION = chrome.runtime.getManifest().version;
 
 let ws = null;
 let reconnectAttempts = 0;
 const RECONNECT_BASE_MS = 2000;
 const RECONNECT_MAX_MS = 10000;
+
+// MV3 SW 保活兜底：周期 alarm 唤醒 SW，若 ws 未 OPEN 则触发重连（学 opencli keepalive）
+chrome.alarms.create("keepalive", { periodInMinutes: 0.4 });
+chrome.alarms.onAlarm.addListener((a) => {
+  if (a.name === "keepalive" && ws?.readyState !== WebSocket.OPEN) connect();
+});
 
 async function probeServer() {
   try {
@@ -1227,7 +1411,9 @@ async function connect() {
   } catch { scheduleReconnect(); return; }
   ws.onopen = () => {
     reconnectAttempts = 0;
-    ws.send(JSON.stringify({ type: "hello", ext_version: EXT_VERSION }));
+    ws.send(JSON.stringify({ type: "hello", ext_version: EXT_VERSION, token: TOKEN }));
+    // 重连后补发：把 SW 被杀期间 content 暂存到 storage.local 的待上报记录一次性 flush
+    flushPendingIngests();
   };
   ws.onmessage = async (event) => {
     let msg; try { msg = JSON.parse(event.data); } catch { return; }
@@ -1257,6 +1443,11 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (msg?.type === "INGEST" && msg.payload) {
     if (ws?.readyState === WebSocket.OPEN) {
       ws.send(JSON.stringify({ type: "ingest", payload: msg.payload }));
+    } else {
+      // WS 未连（SW 被杀/服务端重启）：暂存 storage.local，onopen 时 flushPendingIngests 补发
+      chrome.storage.local.get(["pendingIngests"], ({ pendingIngests = [] }) => {
+        chrome.storage.local.set({ pendingIngests: [...pendingIngests, msg.payload] });
+      });
     }
     sendResponse({ ok: true });
   } else if (msg?.type === "WS_STATUS") {
@@ -1271,7 +1462,30 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   return true;
 });
 
+// 补发暂存记录（重连成功后调用）
+async function flushPendingIngests() {
+  const { pendingIngests = [] } = await chrome.storage.local.get(["pendingIngests"]);
+  if (pendingIngests.length === 0) return;
+  for (const payload of pendingIngests) {
+    if (ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: "ingest", payload }));
+  }
+  await chrome.storage.local.set({ pendingIngests: [] });
+}
+
 connect();
+```
+
+- [ ] **Step 5b: config.js（服务端地址 + WS 握手 token）**
+
+Create `apps/subtitle-collector/config.js`：
+
+```js
+// 扩展侧配置：服务端地址 + WS 握手 token。
+// token 必须与服务端 config.js 预置 token 一致（见 Task 3 Step 3 server.ts hello 校验）。
+// 部署/分发前请改成随机串，勿提交默认值到公开仓库。
+export const SERVER_URL = "ws://127.0.0.1:21527/ext";
+export const PING_URL = "http://127.0.0.1:21527/ping";
+export const TOKEN = "change-me-collector-token";
 ```
 
 - [ ] **Step 6: popup.html**
@@ -1342,6 +1556,10 @@ git commit -m "feat(subtitle-collector): extension with dual role (passive inges
 - Create: `apps/collector-web/package.json`
 - Create: `apps/collector-web/vite.config.ts`
 - Create: `apps/collector-web/tsconfig.json`
+- Create: `apps/collector-web/tailwind.config.ts`
+- Create: `apps/collector-web/postcss.config.js`
+- Create: `apps/collector-web/components.json`
+- Create: `apps/collector-web/src/globals.css`
 - Create: `apps/collector-web/index.html`
 - Create: `apps/collector-web/src/main.tsx`
 - Create: `apps/collector-web/src/App.tsx`
@@ -1353,7 +1571,54 @@ git commit -m "feat(subtitle-collector): extension with dual role (passive inges
 - Create: `apps/collector-web/src/components/VersionSwitcher.tsx`
 - Create: `apps/collector-web/src/components/SubtitleView.tsx`
 
-- [ ] **Step 1: package.json**
+> **样式总则（强制，对齐全局 CLAUDE.md 样式规则）：** collector-web 只允许 Tailwind 工具类 + shadcn/ui 组件。**禁止** `style={{}}` 内联、**禁止**手写 `.css` 自定义样式（`src/globals.css` 仅放 Tailwind 三件套指令 + shadcn 必需的 CSS 变量）。下方所有组件（TrackSwitcher/VersionSwitcher/SubtitleView/VideoList/VideoDetail）均遵守此规则。
+
+- [ ] **Step 1: 初始化 Tailwind + shadcn/ui**
+
+Run（在 monorepo 根，用 pnpm filter 操作 collector-web）：
+
+```bash
+# 1) 装 Tailwind 工具链
+pnpm --filter @bilibili-ext/collector-web add -D tailwindcss@^3.4.0 postcss autoprefixer
+
+# 2) 初始化 shadcn/ui（交互式，选 New York / Zinc / CSS variables=yes / src/ + @/ 别名）
+npx shadcn@latest init -d
+
+# 3) 加会用到的组件：切换器用 Tabs、按钮用 Button、卡片用 Card、搜索框用 Input
+npx shadcn@latest add tabs button card input
+```
+
+产物（人工确认，缺失则补）：
+- `tailwind.config.ts`（含 content 指向 `./index.html` + `./src/**/*`，plugins 加 `tailwindcss-animate`）
+- `postcss.config.js`（`tailwindcss` + `autoprefixer`）
+- `components.json`（shadcn 配置，aliases `@/components`、`@/lib/utils`）
+- `src/globals.css`（仅 `@tailwind base; @tailwind components; @tailwind utilities;` + shadcn 的 `:root`/`.dark` CSS 变量块，不写任何自定义类样式）
+- `src/lib/utils.ts`（导出 `cn(...)` = `twMerge(clsx(...))`）
+- `src/components/ui/{tabs,button,card,input}.tsx`（shadcn 生成）
+
+vite 别名：在 `vite.config.ts`（见 Step 3）里加 `@` → `./src` 的 resolve alias（shadcn 组件用 `@/components/ui` 引用）。
+
+若 `shadcn init` 未生成（非交互/旧版本），手动补这两个文件，**不写任何自定义样式**：
+
+`src/globals.css`（仅 Tailwind 三件套 + shadcn CSS 变量）：
+```css
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+@layer base {
+  :root { --background: 0 0% 100%; --foreground: 240 10% 3.9%; --muted: 240 4.8% 95.9%; --muted-foreground: 240 3.8% 46.1%; --border: 240 5.9% 90%; --accent: 240 4.8% 95.9%; }
+  .dark { --background: 240 10% 3.9%; --foreground: 0 0% 98%; --muted: 240 3.7% 15.9%; --muted-foreground: 240 5% 64.9%; --border: 240 3.7% 15.9%; --accent: 240 3.7% 15.9%; }
+}
+```
+
+`src/lib/utils.ts`（shadcn 标准 `cn`，组件依赖）：
+```ts
+import { clsx, type ClassValue } from 'clsx';
+import { twMerge } from 'tailwind-merge';
+export function cn(...inputs: ClassValue[]) { return twMerge(clsx(inputs)); }
+```
+
+- [ ] **Step 2: package.json**
 
 ```json
 {
@@ -1368,19 +1633,28 @@ git commit -m "feat(subtitle-collector): extension with dual role (passive inges
   },
   "dependencies": {
     "react": "^18.3.0",
-    "react-dom": "^18.3.0"
+    "react-dom": "^18.3.0",
+    "class-variance-authority": "^0.7.0",
+    "clsx": "^2.1.1",
+    "tailwind-merge": "^2.5.0",
+    "tailwindcss-animate": "^1.0.7",
+    "@radix-ui/react-tabs": "^1.1.1",
+    "@radix-ui/react-slot": "^1.1.0"
   },
   "devDependencies": {
     "@types/react": "^18.3.0",
     "@types/react-dom": "^18.3.0",
     "@vitejs/plugin-react": "^4.3.0",
     "vite": "^5.4.0",
-    "typescript": "^5.6.0"
+    "typescript": "^5.6.0",
+    "tailwindcss": "^3.4.0",
+    "postcss": "^8.4.0",
+    "autoprefixer": "^10.4.0"
   }
 }
 ```
 
-- [ ] **Step 2: vite.config.ts（构建输出到 collector-server/public）**
+- [ ] **Step 3: vite.config.ts（构建输出到 collector-server/public）**
 
 ```ts
 import { defineConfig } from 'vite';
@@ -1389,6 +1663,9 @@ import { resolve } from 'node:path';
 
 export default defineConfig({
   plugins: [react()],
+  resolve: {
+    alias: { '@': resolve(__dirname, 'src') }, // shadcn 组件用 @/components/ui 引用
+  },
   build: {
     outDir: resolve(__dirname, '../collector-server/public'),
     emptyOutDir: true,
@@ -1396,7 +1673,7 @@ export default defineConfig({
 });
 ```
 
-- [ ] **Step 3: tsconfig.json**
+- [ ] **Step 4: tsconfig.json**
 
 ```json
 {
@@ -1408,13 +1685,15 @@ export default defineConfig({
     "strict": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
-    "lib": ["ES2022", "DOM"]
+    "lib": ["ES2022", "DOM"],
+    "baseUrl": ".",
+    "paths": { "@/*": ["./src/*"] }
   },
   "include": ["src"]
 }
 ```
 
-- [ ] **Step 4: index.html**
+- [ ] **Step 5: index.html**
 
 ```html
 <!DOCTYPE html>
@@ -1430,7 +1709,7 @@ export default defineConfig({
 </html>
 ```
 
-- [ ] **Step 5: src/types.ts**
+- [ ] **Step 6: src/types.ts**
 
 ```ts
 export interface VideoListItem {
@@ -1450,7 +1729,7 @@ export interface TrackInfo {
 export interface VideoDetail { video: Record<string, unknown>; tracks: TrackInfo[]; }
 ```
 
-- [ ] **Step 6: src/api.ts**
+- [ ] **Step 7: src/api.ts**
 
 ```ts
 import type { VideoListItem, VideoDetail } from './types';
@@ -1473,49 +1752,57 @@ export async function getVersion(versionId: number): Promise<{ version: { id: nu
 }
 ```
 
-- [ ] **Step 7: src/components/TrackSwitcher.tsx**
+- [ ] **Step 8: src/components/TrackSwitcher.tsx**
 
 ```tsx
 import type { TrackInfo } from '../types';
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
+
+// 轨切换器用 shadcn Tabs（受控）；选中态/胶囊样式由 Tabs variant 接管，不写内联样式。
 export function TrackSwitcher({ tracks, selected, onSelect }: { tracks: TrackInfo[]; selected: number | null; onSelect: (id: number) => void; }) {
   return (
-    <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', margin: '12px 0' }}>
-      {tracks.map((t) => {
-        const isSel = t.id === selected;
-        return (
-          <button key={t.id} onClick={() => onSelect(t.id)} style={{
-            padding: '4px 12px', border: '1px solid #ddd', borderRadius: 16,
-            background: isSel ? '#fb7299' : '#fff', color: isSel ? '#fff' : '#333',
-            cursor: 'pointer', fontWeight: isSel ? 600 : 400,
-          }}>
-            {t.lan_doc || t.lan || '?'} {t.is_default && '(默认)'}
-          </button>
-        );
-      })}
+    <div className="my-3">
+      <Tabs value={selected != null ? String(selected) : ''} onValueChange={(v) => onSelect(Number(v))}>
+        <TabsList className="flex flex-wrap h-auto gap-2 bg-transparent p-0">
+          {tracks.map((t) => (
+            <TabsTrigger
+              key={t.id}
+              value={String(t.id)}
+              className="rounded-full data-[state=active]:bg-[#fb7299] data-[state=active]:text-white data-[state=active]:font-semibold"
+            >
+              {t.lan_doc || t.lan || '?'} {t.is_default && '(默认)'}
+            </TabsTrigger>
+          ))}
+        </TabsList>
+      </Tabs>
     </div>
   );
 }
 ```
 
-- [ ] **Step 8: src/components/VersionSwitcher.tsx**
+- [ ] **Step 9: src/components/VersionSwitcher.tsx**
 
 ```tsx
 import type { VersionInfo } from '../types';
+import { Button } from '@/components/ui/button';
 const label = (v: VersionInfo) => v.origin === 'external' ? '外挂' : v.origin === 'asr' ? 'ASR' : '人工';
 export function VersionSwitcher({ versions, selected, onSelect }: { versions: VersionInfo[]; selected: number | null; onSelect: (id: number) => void; }) {
   if (versions.length <= 1) return null;
   return (
-    <div style={{ display: 'flex', gap: 6, margin: '8px 0' }}>
+    <div className="my-2 flex flex-wrap gap-1.5">
       {versions.map((v) => {
         const isSel = v.id === selected;
         return (
-          <button key={v.id} onClick={() => onSelect(v.id)} style={{
-            padding: '2px 10px', border: '1px solid #eee', borderRadius: 4,
-            background: isSel ? '#23ade5' : '#fafafa', color: isSel ? '#fff' : '#666',
-            cursor: 'pointer', fontSize: 12,
-          }}>
+          <Button
+            key={v.id}
+            variant={isSel ? 'default' : 'outline'}
+            size="sm"
+            onClick={() => onSelect(v.id)}
+            // 选中用 B 站蓝；非选中用 outline variant（shadcn 默认样式，不内联）
+            className={isSel ? 'bg-[#23ade5] text-white hover:bg-[#23ade5]' : 'text-muted-foreground'}
+          >
             {label(v)} {v.is_default && '★'}
-          </button>
+          </Button>
         );
       })}
     </div>
@@ -1523,20 +1810,23 @@ export function VersionSwitcher({ versions, selected, onSelect }: { versions: Ve
 }
 ```
 
-- [ ] **Step 9: src/components/SubtitleView.tsx**
+- [ ] **Step 10: src/components/SubtitleView.tsx**
 
 ```tsx
+import { Button } from '@/components/ui/button';
+import { cn } from '@/lib/utils';
+
 export interface SubtitleLine { from: number; to: number; content: string; }
 export function SubtitleView({ body }: { body: SubtitleLine[] }) {
   const fmt = (sec: number) => { const m = Math.floor(sec / 60); const s = Math.floor(sec % 60); return `${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`; };
   const copy = () => { navigator.clipboard.writeText(body.map(l => l.content).join('\n')); };
   return (
     <div>
-      <button onClick={copy} style={{ marginBottom: 8, padding: '4px 12px', border: '1px solid #ddd', borderRadius: 4, cursor: 'pointer', background: '#fff' }}>复制全文</button>
-      <div style={{ maxHeight: 400, overflowY: 'auto', border: '1px solid #eee', borderRadius: 4, padding: 8 }}>
+      <Button variant="outline" size="sm" onClick={copy} className="mb-2">复制全文</Button>
+      <div className="max-h-[400px] overflow-y-auto rounded border border-border p-2">
         {body.map((l, i) => (
-          <div key={i} style={{ display: 'flex', gap: 12, padding: '2px 0', lineHeight: 1.6 }}>
-            <span style={{ color: '#999', fontSize: 12, whiteSpace: 'nowrap', fontVariantNumeric: 'tabular-nums' }}>{fmt(l.from)} → {fmt(l.to)}</span>
+          <div key={i} className="flex gap-3 py-0.5 leading-relaxed">
+            <span className={cn('whitespace-nowrap text-xs text-muted-foreground tabular-nums')}>{fmt(l.from)} → {fmt(l.to)}</span>
             <span>{l.content}</span>
           </div>
         ))}
@@ -1546,11 +1836,13 @@ export function SubtitleView({ body }: { body: SubtitleLine[] }) {
 }
 ```
 
-- [ ] **Step 10: src/pages/VideoList.tsx**
+- [ ] **Step 11: src/pages/VideoList.tsx**
 
 ```tsx
 import { useEffect, useState } from 'react';
 import { listVideos } from '../api';
+import { Input } from '@/components/ui/input';
+import { Card, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 
 export function VideoList({ onOpen }: { onOpen: (source: string, sourceVid: string) => void }) {
   const [q, setQ] = useState('');
@@ -1565,21 +1857,32 @@ export function VideoList({ onOpen }: { onOpen: (source: string, sourceVid: stri
   }, [q]);
 
   return (
-    <div style={{ padding: 16 }}>
-      <input value={q} onChange={e => setQ(e.target.value)} placeholder="搜索标题/创作者" style={{ width: '100%', padding: 8, marginBottom: 12, border: '1px solid #ddd', borderRadius: 4 }} />
-      <div>共 {total} 条</div>
-      {items.map(v => (
-        <div key={v.id} onClick={() => onOpen(v.source, v.source_vid)} style={{ padding: 12, borderBottom: '1px solid #eee', cursor: 'pointer' }}>
-          <div style={{ fontWeight: 500 }}>{v.title}</div>
-          <div style={{ fontSize: 12, color: '#666' }}>{v.creator_name ?? '-'} · {v.track_count} 轨 · {new Date(v.first_seen_at).toLocaleString()}</div>
-        </div>
-      ))}
+    <div className="space-y-3 p-4">
+      <Input value={q} onChange={e => setQ(e.target.value)} placeholder="搜索标题/创作者" className="mb-3" />
+      <div className="text-sm text-muted-foreground">共 {total} 条</div>
+      <div className="space-y-2">
+        {items.map(v => (
+          <Card
+            key={v.id}
+            onClick={() => onOpen(v.source, v.source_vid)}
+            // 整卡可点：加 cursor-pointer + hover 态，样式全走 shadcn Card + Tailwind 工具类
+            className="cursor-pointer transition-colors hover:bg-accent"
+          >
+            <CardHeader className="p-4">
+              <CardTitle className="text-base font-medium">{v.title}</CardTitle>
+              <CardDescription className="text-xs">
+                {v.creator_name ?? '-'} · {v.track_count} 轨 · {new Date(v.first_seen_at).toLocaleString()}
+              </CardDescription>
+            </CardHeader>
+          </Card>
+        ))}
+      </div>
     </div>
   );
 }
 ```
 
-- [ ] **Step 11: src/pages/VideoDetail.tsx**
+- [ ] **Step 12: src/pages/VideoDetail.tsx**
 
 ```tsx
 import { useEffect, useState } from 'react';
@@ -1587,6 +1890,7 @@ import { getVideo, getVersion } from '../api';
 import { TrackSwitcher } from '../components/TrackSwitcher';
 import { VersionSwitcher } from '../components/VersionSwitcher';
 import { SubtitleView, type SubtitleLine } from '../components/SubtitleView';
+import { Button } from '@/components/ui/button';
 import type { VideoDetail as VD } from '../types';
 
 export function VideoDetail({ source, sourceVid, onBack }: { source: string; sourceVid: string; onBack: () => void }) {
@@ -1606,15 +1910,15 @@ export function VideoDetail({ source, sourceVid, onBack }: { source: string; sou
     getVersion(selectedVersion).then(r => setBody(r.version?.payload?.body ?? []));
   }, [selectedVersion]);
 
-  if (!detail) return <div style={{ padding: 16 }}>加载中...</div>;
+  if (!detail) return <div className="p-4">加载中...</div>;
   const v: any = detail.video;
   const track = detail.tracks.find(t => t.id === selectedTrack);
 
   return (
-    <div style={{ padding: 16, maxWidth: 800 }}>
-      <button onClick={onBack} style={{ marginBottom: 12 }}>← 返回</button>
-      <h2>{v.title}</h2>
-      <div style={{ color: '#666' }}>{v.creator_name ?? '-'} · {v.extra?.pic && <a href={v.extra.pic} target="_blank">封面</a>}</div>
+    <div className="max-w-3xl space-y-3 p-4">
+      <Button variant="ghost" size="sm" onClick={onBack} className="mb-3">← 返回</Button>
+      <h2 className="text-xl font-semibold">{v.title}</h2>
+      <div className="text-sm text-muted-foreground">{v.creator_name ?? '-'} · {v.extra?.pic && <a href={v.extra.pic} target="_blank" rel="noreferrer" className="underline">封面</a>}</div>
       <TrackSwitcher tracks={detail.tracks} selected={selectedTrack} onSelect={(id) => { setSelectedTrack(id); const t = detail.tracks.find(x => x.id === id); if (t) { const dv = t.versions.find(x => x.is_default) ?? t.versions[0]; setSelectedVersion(dv?.id ?? null); } }} />
       {track && <VersionSwitcher versions={track.versions} selected={selectedVersion} onSelect={setSelectedVersion} />}
       <SubtitleView body={body} />
@@ -1623,7 +1927,7 @@ export function VideoDetail({ source, sourceVid, onBack }: { source: string; sou
 }
 ```
 
-- [ ] **Step 12: src/App.tsx**
+- [ ] **Step 13: src/App.tsx**
 
 ```tsx
 import { useState } from 'react';
@@ -1638,17 +1942,18 @@ export default function App() {
 }
 ```
 
-- [ ] **Step 13: src/main.tsx**
+- [ ] **Step 14: src/main.tsx**
 
 ```tsx
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import App from './App';
+import './globals.css'; // Tailwind 三件套 + shadcn CSS 变量（Vite 走 PostCSS → tailwindcss）
 
 createRoot(document.getElementById('root')!).render(<StrictMode><App /></StrictMode>);
 ```
 
-- [ ] **Step 14: collector-server 静态托管 public/**
+- [ ] **Step 15: collector-server 静态托管 public/**
 
 Modify `apps/collector-server/src/main.ts`：在 404 之前加静态托管：
 ```ts
@@ -1668,7 +1973,7 @@ function serveStatic(req: import('node:http').IncomingMessage, res: import('node
 if (req.url && !req.url.startsWith('/api/') && req.url !== '/ping') { serveStatic(req, res); return; }
 ```
 
-- [ ] **Step 15: 构建并 smoke**
+- [ ] **Step 16: 构建并 smoke**
 
 Run:
 ```bash
@@ -1677,7 +1982,7 @@ pnpm --filter @bilibili-ext/collector-server dev
 ```
 浏览器打开 `http://127.0.0.1:21527/`，确认列表页渲染（空状态 OK），详情页路径能进。
 
-- [ ] **Step 16: 提交**
+- [ ] **Step 17: 提交**
 
 ```bash
 cd /Users/taevas/code/mymy/bilibili-extensions
@@ -1696,7 +2001,10 @@ git commit -m "feat(collector-web): react+vite list/detail/search; collector-ser
 
 **Files:**
 - Create: `scripts/load-collector-extension.sh`（参考 `scripts/load-extension.sh`，扩展加载说明）
+- Create: `scripts/verify-collector.mjs`（puppeteer mock 回归脚本，不依赖真实登录）
 - Create: `MANUAL-collector.md`（真实 Chrome 验收清单）
+- Modify: `turbo.json`（加 `test` task）
+- Modify: `package.json`（根，加 `test` 脚本 + puppeteer devDependency）
 
 - [ ] **Step 1: 写扩展加载说明脚本**
 
@@ -1769,20 +2077,192 @@ rm apps/collector-server/bilibili-collector.db
 - subtitle_url 为空时扩展不发 ingest；这类视频不会入库（正确行为）
 ```
 
-- [ ] **Step 3: 跑服务端测试套件作为自动化端到端**
+- [ ] **Step 3: puppeteer mock 回归脚本（覆盖 subtitle_url 四情况 / navigate / operate）**
+
+沿用 `scripts/verify-extension.mjs` 模式：Chrome for Testing + `--load-extension` 加载 `apps/subtitle-collector`，用 `setRequestInterception` mock player API + 字幕 URL，**不依赖真实登录态**（登录态只真实 Chrome 集成需要）。覆盖 spec §10 验收里可被 mock 的部分。
+
+Create `scripts/verify-collector.mjs`：
+
+```js
+#!/usr/bin/env node
+/**
+ * subtitle-collector 扩展 — puppeteer mock 回归（不依赖真实登录态）。
+ * 覆盖：
+ *   1. inject.js 注入（fetch/XHR hook）
+ *   2. PLAYER_META 抽取（bvid/aid/cid/title/up/subs[]）
+ *   3. subtitle_url 四情况：正常 / 空数组(无字幕) / need_login_subtitle=true / code≠0 风控
+ *   4. content.js 组装 → background WS ingest（mock WS server 收到上报）
+ *   5. navigate 命令：broadcastCommand → 扩展 chrome.tabs.create
+ *   6. operate 命令：mock 字幕按钮 DOM，验证点击后 content.js 回传 subtitleObserved 真实结果
+ */
+import puppeteer from 'puppeteer';
+import { createServer } from 'node:http';
+import { WebSocketServer } from 'ws';
+import { readdirSync, existsSync } from 'fs';
+import { homedir } from 'os';
+import { join, dirname } from 'path';
+import { fileURLToPath } from 'url';
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const EXT = join(__dirname, '..', 'apps', 'subtitle-collector');
+
+// ---- mock collector-server（HTTP /ping + WS /ext，收扩展 ingest / 发 navigate+operate） ----
+const received = { ingests: [], results: [] };
+const httpServer = createServer((req, res) => {
+  if (req.url === '/ping') { res.writeHead(200, { 'Content-Type': 'application/json' }); res.end('{"ok":true}'); return; }
+  res.writeHead(404); res.end();
+});
+const wss = new WebSocketServer({ server: httpServer, path: '/ext' });
+wss.on('connection', (ws) => {
+  ws.on('message', (buf) => {
+    const m = JSON.parse(buf.toString());
+    if (m.type === 'hello') ws.send(JSON.stringify({ type: 'hello-ack', ok: true }));
+    else if (m.type === 'ingest') { received.ingests.push(m.payload); ws.send(JSON.stringify({ type: 'ingest-ack', ok: true, inserted_tracks: (m.payload?.tracks?.length ?? 0) })); }
+    else if (m.type === 'result') received.results.push(m);
+  });
+});
+await new Promise((r) => httpServer.listen(21527, '127.0.0.1', r));
+
+// ---- Chrome for Testing ----
+let exec = '';
+try {
+  const base = join(homedir(), '.cache/puppeteer/chrome');
+  const ver = readdirSync(base).sort().pop();
+  const cand = join(base, ver, 'chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing');
+  if (existsSync(cand)) exec = cand;
+} catch {}
+const browser = await puppeteer.launch({
+  ...(exec ? { executablePath: exec } : {}),
+  headless: false,
+  args: [`--disable-extensions-except=${EXT}`, `--load-extension=${EXT}`, '--no-first-run', '--no-default-browser-check', '--window-size=1280,900'],
+});
+await new Promise(r => setTimeout(r, 3000));
+const page = await browser.newPage();
+
+// ---- mock player API：四情况 ----
+await page.setRequestInterception(true);
+page.on('request', (req) => {
+  const u = req.url();
+  const h = { 'access-control-allow-origin': '*' };
+  if (u.includes('CASE_NORMAL')) {
+    req.respond({ status: 200, contentType: 'application/json', headers: h, body: JSON.stringify({ code: 0, data: { bvid: 'BVnormal', aid: 1, cid: 2, title: '正常', up_info: { mid: 11, name: 'up1' }, subtitle: { subtitles: [{ lan: 'zh-Hans', lan_doc: '简体中文', type: 2, subtitle_url: '//aisubtitle.hdslb.com/SUB_NORMAL.json' }] } } }) });
+  } else if (u.includes('CASE_EMPTY')) {
+    req.respond({ status: 200, contentType: 'application/json', headers: h, body: JSON.stringify({ code: 0, data: { bvid: 'BVempty', aid: 3, cid: 4, title: '无字幕', up_info: { mid: 12 }, subtitle: { subtitles: [] } } }) });
+  } else if (u.includes('CASE_LOGIN')) {
+    req.respond({ status: 200, contentType: 'application/json', headers: h, body: JSON.stringify({ code: 0, data: { bvid: 'BVlogin', aid: 5, cid: 6, title: '需登录', need_login_subtitle: true, subtitle: { subtitles: [] } } }) });
+  } else if (u.includes('CASE_RISK')) {
+    req.respond({ status: 200, contentType: 'application/json', headers: h, body: JSON.stringify({ code: -509, data: {} }) });
+  } else if (u.includes('SUB_NORMAL')) {
+    req.respond({ status: 200, contentType: 'application/json', headers: h, body: JSON.stringify({ body: [{ from: 0, to: 1, content: '正常字幕样例' }] }) });
+  } else { req.continue(); }
+});
+
+// 情况1：正常 → 应收到 ingest（含轨 + body）
+await page.goto('https://www.bilibili.com/video/CASE_NORMAL', { waitUntil: 'domcontentloaded' });
+await page.evaluate(() => fetch('https://api.bilibili.com/x/player/wbi/v2?z=CASE_NORMAL'));
+await page.evaluate(() => fetch('https://aisubtitle.hdslb.com/SUB_NORMAL.json'));
+await new Promise(r => setTimeout(r, 1500));
+
+// 情况2/3/4：空 / 需登录 / 风控 → 都不应产生 ingest
+await page.goto('https://www.bilibili.com/video/CASE_EMPTY', { waitUntil: 'domcontentloaded' });
+await page.evaluate(() => fetch('https://api.bilibili.com/x/player/wbi/v2?z=CASE_EMPTY'));
+await page.goto('https://www.bilibili.com/video/CASE_LOGIN', { waitUntil: 'domcontentloaded' });
+await page.evaluate(() => fetch('https://api.bilibili.com/x/player/wbi/v2?z=CASE_LOGIN'));
+await page.goto('https://www.bilibili.com/video/CASE_RISK', { waitUntil: 'domcontentloaded' });
+await page.evaluate(() => fetch('https://api.bilibili.com/x/player/wbi/v2?z=CASE_RISK'));
+await new Promise(r => setTimeout(r, 1500));
+
+// 5. navigate 命令：服务端主动下发，扩展应 chrome.tabs.create
+for (const c of wss.clients) c.send(JSON.stringify({ id: 'cmd-nav', action: 'navigate', url: 'https://www.bilibili.com/video/CASE_NORMAL' }));
+await new Promise(r => setTimeout(r, 1500));
+const navResult = received.results.find(r => r.id === 'cmd-nav');
+console.log('[navigate]', navResult?.ok ? '✅ 扩展回 result ok' : '❌ 未收到 result');
+
+// 6. operate 命令：注入 mock 字幕按钮到当前页，验证 content.js 回传 subtitleObserved 真实结果
+await page.evaluate(() => {
+  const btn = document.createElement('div');
+  btn.className = 'bpx-player-ctrl-btn-icon';
+  btn.id = 'mock-sub-toggle';
+  btn.addEventListener('click', () => { /* 模拟点击后播放器会请求字幕 */ fetch('https://aisubtitle.hdslb.com/SUB_NORMAL.json'); });
+  document.body.appendChild(btn);
+});
+for (const c of wss.clients) c.send(JSON.stringify({ id: 'cmd-op', action: 'operate', op: 'click-subtitle-toggle' }));
+await new Promise(r => setTimeout(r, 12000)); // operate 最多等 5s+5s fallback
+const opResult = received.results.find(r => r.id === 'cmd-op');
+console.log('[operate]', opResult?.data?.subtitleObserved ? '✅ 点击触发了字幕请求' : '⚠️ 未观察到字幕请求（按 spike 结论决定是否 CDP 降级）');
+
+// ---- 断言 ----
+const ok = received.ingests.length === 1 && received.ingests[0]?.video?.source_vid === 'BVnormal';
+console.log('\n[ingest 四情况]', ok ? '✅ 仅正常情况上报，其余三情况未上报' : '❌ subtitle_url 四情况处理异常');
+console.log('  收到 ingest 数:', received.ingests.length, '| navigate:', !!navResult, '| operate:', !!opResult);
+
+await browser.close();
+httpServer.close();
+process.exit(ok && navResult && opResult ? 0 : 1);
+```
+
+Run（前置：根 `package.json` 已含 puppeteer，见 Step 4）：
+```bash
+node scripts/verify-collector.mjs
+```
+Expected: ingest 四情况 ✅ + navigate ✅ + operate 回传 subtitleObserved 真实结果。**失败即回归，CI 应红。**
+
+- [ ] **Step 4: 接入 turbo `test` task + 根 package.json puppeteer 依赖**
+
+`scripts/verify-collector.mjs` 与 `scripts/verify-extension.mjs` 都依赖 `puppeteer`，但当前根 `package.json` 未声明，直接跑会 `Cannot find module 'puppeteer'`。补上：
+
+Modify `turbo.json`（加 `test` task，依赖上游 `^build`，保证 collector-web 产物先就绪）：
+```json
+{
+  "$schema": "https://turbo.build/schema.json",
+  "tasks": {
+    "build": { "outputs": ["dist/**"] },
+    "dev": { "cache": false, "persistent": true },
+    "test": { "dependsOn": ["^build"], "outputs": [] }
+  }
+}
+```
+
+Modify `package.json`（根）：
+```json
+{
+  "name": "bilibili-extensions",
+  "private": true,
+  "scripts": {
+    "build": "turbo build",
+    "dev": "turbo dev",
+    "test": "turbo run test"
+  },
+  "devDependencies": {
+    "turbo": "^2",
+    "puppeteer": "^23.0.0"
+  },
+  "packageManager": "pnpm@9.15.4"
+}
+```
+
+各包 `package.json` 的 `test` 脚本已存在（collector-server: `node --test --import tsx`）；collector-web/扩展无单测，puppeteer 回归脚本通过根目录直接 `node scripts/verify-collector.mjs` 运行（不入 turbo task，因 puppeteer 需下载 Chrome，放 CI 手动触发）。
+
+Run（一次性安装新依赖）：
+```bash
+pnpm install
+```
+Expected: puppeteer 安装并下载 Chrome for Testing 到 `~/.cache/puppeteer/`。
+
+- [ ] **Step 5: 跑服务端测试套件作为自动化端到端**
 
 服务端各 task 已有 `node:test` 单测（ingest 幂等/变更日志、WS RPC、HTTP 查询）。Task 7 末尾跑一遍确认：
 ```bash
-cd apps/collector-server && pnpm test
+pnpm test
 ```
 Expected: 所有测试通过（具体数量取决于 Task 2/3 实现）。
 
-- [ ] **Step 4: 提交**
+- [ ] **Step 6: 提交**
 
 ```bash
 cd /Users/taevas/code/mymy/bilibili-extensions
-git add scripts/load-collector-extension.sh MANUAL-collector.md
-git commit -m "docs: e2e acceptance via real chrome + server test suite (no puppeteer login mock)"
+git add scripts/load-collector-extension.sh scripts/verify-collector.mjs MANUAL-collector.md turbo.json package.json pnpm-lock.yaml
+git commit -m "test(collector): puppeteer mock regression + turbo test task + e2e acceptance"
 ```
 
 ---
@@ -1801,14 +2281,24 @@ git commit -m "docs: e2e acceptance via real chrome + server test suite (no pupp
 
 **类型/方法签名一致性：**
 - `ingestVideo(db, IngestRequest): IngestResult` 在 Task 2 定义，Task 3 WS server 复用，Task 5 background 发的 payload 字段对齐（source/video/tracks）
-- WS 消息 type 字段：hello / log / ingest / ingest-ack / result（Task 3 + Task 5 一致）
+- WS 消息 type 字段：hello / log / ingest / ingest-ack / result（Task 3 + Task 5 一致）；C3 后 hello 必带 token、服务端回 hello-ack/hello-nack
 - HTTP 路径：/ping /api/videos /api/videos/:source/:source_vid /api/versions/:id（Task 3/4 + Task 6 api.ts 对齐）
 - 默认轨优先级：Task 4 queries.ts 与 §5.6 一致（CC中文 > AI中文 > 英文 > 其他）
+
+**审查反馈 Critical 已修复（C1-C8）：**
+- C1 MV3 SW 保活：manifest 加 `alarms` 权限；background 启动建 `keepalive` alarm（periodInMinutes 0.4），onAlarm 兜底重连；WS 未连时 content 记录暂存 `chrome.storage.local`，onopen flushPendingIngests 补发（Task 5 Step 5）
+- C2 HTTP Origin/Host 校验：main.ts（Task 4 Step 3）加 `httpOriginAllowed` 守卫——`/ping` 外所有请求校验 Host ∈ {localhost,127.0.0.1} 防 DNS rebinding + Origin 白名单（扩展 / 同源 loopback），非法返 403；同时保护 `/api/*` 与 Task 6 静态托管（serveStatic 落在校验之后）
+- C3 扩展身份/token：hello 带 token（取自 config.js）；server.ts hello 校验不匹配关闭（4001）；config.js 落 plan（Task 5 Step 5b）；服务端 token 取自 `COLLECTOR_TOKEN` env（Task 3 main.ts）
+- C4 collector-web 样式：强制 Tailwind + shadcn/ui，Task 6 Step 1 init + Step 2 依赖；TrackSwitcher→shadcn Tabs、VersionSwitcher/SubtitleView→shadcn Button、VideoList→Input+Card、VideoDetail→Button+Tailwind；禁止 `style={{}}` 与手写 .css（globals.css 仅 Tailwind 指令 + shadcn CSS 变量）
+- C5 click 可行性：Task 5 Step 0 新增 spike（真实登录态 profile，click()→pointer 序列→CDP 降级判定）；content.js operate sendResponse 改为 `{ clicked, subtitleObserved, note }` 真实结果（点击后 5s+5s 监听字幕请求）
+- C6 manual 版本去重：schema 去 UNIQUE（改应用层去重 + idx_versions_dedup）；ingest.ts version 写入分支——origin='manual' 始终 INSERT 新行，external/asr 先 SELECT 命中跳过
+- C7 ingest-ack 协议地位：由 spec §4.1 协议层澄清（ingest-ack 是服务端→扩展的主动消息，无 id，不进 pending Map，已从 Command 列表移除）；plan 侧 server.ts 以 `{type:'ingest-ack',...}` 主动推送、background 作主动消息处理，与 spec 一致
+- C8 测试：新增 scripts/verify-collector.mjs（puppeteer mock，四情况/navigate/operate）；turbo.json 加 `test` task（dependsOn ^build）；根 package.json 加 `test` 脚本 + puppeteer devDependency
 
 **已发现的 trade-off（保留）：**
 - Task 4 把 default 标记在查询时算（与 §5.6 一致）
 - Task 5 content.js 暴遍历找 bvid 是简化实现，可后续优化（标记 trade-off）
-- Task 5 operate 命令的字幕开关选择器是简化版本，覆盖 B 站主流；后续可补
+- Task 5 operate 命令的字幕开关选择器是简化版本，覆盖 B 站主流；C5 后点击结果回传 subtitleObserved 真实值（false 时上层按 spike 结论走 CDP 降级），后续可补
 
 ---
 
