@@ -72,6 +72,8 @@ async function connect() {
 
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (msg?.type === "INGEST" && msg.payload) {
+    const bvid = msg.payload.video?.source_vid ?? '?';
+    console.log(`[background] ingest 转发 bvid=${bvid} ws_open=${ws?.readyState === WebSocket.OPEN}`);
     if (ws?.readyState === WebSocket.OPEN) {
       ws.send(JSON.stringify({ type: "ingest", payload: msg.payload }));
     } else {

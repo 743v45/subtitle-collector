@@ -57,6 +57,7 @@ function flushIfReady(bvid) {
     },
     tracks,
   };
+  console.log(`[content] INGEST bvid=${cur.meta.bvid} tracks=${tracks.length}`);
   chrome.runtime.sendMessage({ type: "INGEST", payload: record });
 }
 

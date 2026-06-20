@@ -38,12 +38,14 @@
               url_missing: !normalizeUrl(s.subtitle_url), // spec §7.1 第四情况：单轨 url 缺失标记
             })),
           };
+          console.log(`[inject] player API 拦到 bvid=${meta.bvid} subs=${meta.subs.length} title=${meta.title}`);
           post("PLAYER_META", meta);
         }).catch(() => {});
       }
       if (isSubtitleUrl(url)) {
         response.clone().json().then((data) => {
           const text = JSON.stringify(data);
+          console.log(`[inject] subtitle body 拦到 url=${normalizeUrl(url)} body_size=${text.length}`);
           post("SUBTITLE_BODY", { url: normalizeUrl(url), body: data, body_size: text.length });
         }).catch(() => {});
       }
