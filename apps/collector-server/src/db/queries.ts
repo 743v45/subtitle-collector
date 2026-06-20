@@ -1,0 +1,82 @@
+import type Database from 'better-sqlite3';
+
+export interface VideoListItem {
+  id: number;
+  source: string;
+  source_vid: string;
+  title: string;
+  creator_name: string | null;
+  duration: number | null;
+  track_count: number;
+  first_seen_at: number;
+}
+
+export function listVideos(db: Database.Database, q: string | undefined, page: number, size: number): { total: number; items: VideoListItem[] } {
+  const offset = (page - 1) * size;
+  const params: any[] = [];
+  let where = '';
+  if (q) {
+    where = "WHERE v.title LIKE ? OR c.name LIKE ?";
+    params.push(`%${q}%`, `%${q}%`);
+  }
+  const totalRow = db.prepare(`SELECT COUNT(*) as c FROM videos v LEFT JOIN creators c ON c.id = v.creator_id ${where}`).get(...params) as { c: number };
+  const rows = db.prepare(`
+    SELECT v.id, v.source, v.source_vid, v.title, c.name as creator_name, v.duration, v.first_seen_at,
+           (SELECT COUNT(*) FROM subtitle_tracks t WHERE t.video_id = v.id) as track_count
+    FROM videos v LEFT JOIN creators c ON c.id = v.creator_id
+    ${where}
+    ORDER BY v.first_seen_at DESC
+    LIMIT ? OFFSET ?
+  `).all(...params, size, offset) as VideoListItem[];
+  return { total: totalRow.c, items: rows };
+}
+
+export interface VersionRow { id: number; origin: string; source_url: string | null; asr_engine: string | null; captured_at: number; body_size: number | null; }
+export interface TrackRow { id: number; lan: string | null; lan_doc: string | null; track_type: number | null; versions: VersionRow[]; }
+export interface VideoDetail { video: Record<string, unknown>; tracks: TrackRow[]; }
+
+const trackPriority = (lan: string | null, track_type: number | null): number => {
+  const isZh = !!lan && lan.toLowerCase().includes('zh');
+  const isEn = !!lan && lan.toLowerCase().includes('en');
+  if (isZh && track_type === 2) return 0; // CC中文
+  if (isZh && track_type === 1) return 1; // AI中文
+  if (isEn) return 2;
+  return 3;
+};
+
+const versionPriority = (origin: string): number => {
+  if (origin === 'external') return 0;
+  if (origin === 'manual') return 1;
+  return 2; // asr
+};
+
+export function getVideo(db: Database.Database, source: string, sourceVid: string): VideoDetail | null {
+  const video = db.prepare('SELECT v.*, c.name as creator_name FROM videos v LEFT JOIN creators c ON c.id = v.creator_id WHERE v.source = ? AND v.source_vid = ?').get(source, sourceVid) as Record<string, unknown> | undefined;
+  if (!video) return null;
+  const tracks = db.prepare('SELECT * FROM subtitle_tracks WHERE video_id = ? ORDER BY id').all(video.id) as Array<{ id: number; lan: string | null; lan_doc: string | null; track_type: number | null }>;
+  const allVersions = db.prepare('SELECT * FROM subtitle_versions WHERE track_id = ? ORDER BY id');
+  const result: VideoDetail = { video, tracks: [] };
+  for (const t of tracks) {
+    const vs = allVersions.all(t.id) as VersionRow[];
+    const sortedVs = vs.slice().sort((a, b) => versionPriority(a.origin) - versionPriority(b.origin));
+    result.tracks.push({ ...t, versions: sortedVs });
+  }
+  result.tracks.sort((a, b) => trackPriority(a.lan, a.track_type) - trackPriority(b.lan, b.track_type));
+  // 标 is_default
+  const seenDefault = { track: false, version: false };
+  for (const t of result.tracks) {
+    (t as any).is_default = !seenDefault.track;
+    seenDefault.track = true;
+    for (const v of t.versions) {
+      (v as any).is_default = !seenDefault.version && (t as any).is_default;
+      if ((v as any).is_default) seenDefault.version = true;
+    }
+  }
+  return result;
+}
+
+export function getVersionPayload(db: Database.Database, versionId: number): { id: number; origin: string; payload: unknown; captured_at: number } | null {
+  const v = db.prepare('SELECT id, origin, payload, captured_at FROM subtitle_versions WHERE id = ?').get(versionId) as { id: number; origin: string; payload: string; captured_at: number } | undefined;
+  if (!v) return null;
+  return { id: v.id, origin: v.origin, payload: JSON.parse(v.payload), captured_at: v.captured_at };
+}
