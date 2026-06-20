@@ -6,7 +6,7 @@
   "scripts": {
     "build": "tsc",
     "dev": "tsx src/main.ts",
-    "test": "node --test --import tsx src/**/*.test.ts"
+    "test": "node --test --import tsx \"src/*/*.test.ts\""
   },
   "dependencies": {
     "ws": "^8.18.0",
