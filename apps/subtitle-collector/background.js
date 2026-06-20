@@ -44,9 +44,18 @@ async function connect() {
         await chrome.tabs.create({ url: msg.url });
         ws.send(JSON.stringify({ type: "result", id: msg.id, ok: true, data: { opened: true } }));
       } else if (msg.action === "operate") {
-        const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-        const resp = await chrome.tabs.sendMessage(tab.id, { type: "OPERATE", op: msg.op });
-        ws.send(JSON.stringify({ type: "result", id: msg.id, ok: resp?.ok !== false, data: resp }));
+        // 只找 B 站视频页（manifest content_scripts matches 决定哪些 tab 注入了 content.js）
+        const [tab] = await chrome.tabs.query({ active: true, currentWindow: true, url: "*://www.bilibili.com/video/*" });
+        if (!tab?.id) {
+          ws.send(JSON.stringify({ type: "result", id: msg.id, ok: false, error: "当前活跃 tab 非 B 站视频页，无法执行 operate" }));
+          return;
+        }
+        try {
+          const resp = await chrome.tabs.sendMessage(tab.id, { type: "OPERATE", op: msg.op });
+          ws.send(JSON.stringify({ type: "result", id: msg.id, ok: resp?.ok !== false, data: resp }));
+        } catch (err) {
+          ws.send(JSON.stringify({ type: "result", id: msg.id, ok: false, error: "content script 通信失败: " + (err.message || err) }));
+        }
       } else if (msg.action === "fetch-subtitle") {
         // MVP 占位（spec §6.2/§7.3 明列，协议闭环不吞 id；后续可接真实逻辑）
         ws.send(JSON.stringify({ type: "result", id: msg.id, ok: false, error: "not implemented" }));
@@ -74,8 +83,13 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   } else if (msg?.type === "WS_STATUS") {
     sendResponse({ ok: true, connected: ws?.readyState === WebSocket.OPEN });
   } else if (msg?.type === "MANUAL_CAPTURE") {
-    chrome.tabs.query({ active: true, currentWindow: true }, ([tab]) => {
-      if (tab?.id) chrome.tabs.sendMessage(tab.id, { type: "RE_AGG" });
+    // 只找 B 站视频页（避免对 chrome:// 等无 content script 的 tab sendMessage 抛 "Receiving end does not exist"）
+    chrome.tabs.query({ active: true, currentWindow: true, url: "*://www.bilibili.com/video/*" }, ([tab]) => {
+      if (tab?.id) {
+        chrome.tabs.sendMessage(tab.id, { type: "RE_AGG" }, () => {
+          if (chrome.runtime.lastError) console.warn('[collector] RE_AGG 失败:', chrome.runtime.lastError.message);
+        });
+      }
     });
     sendResponse({ ok: true });
   }
