@@ -4,7 +4,11 @@
   "version": "0.1.0",
   "description": "采集 B 站视频字幕到本地服务端",
   "permissions": ["activeTab", "tabs", "storage", "alarms"],
-  "host_permissions": ["*://*.bilibili.com/*"],
+  "host_permissions": [
+    "*://*.bilibili.com/*",
+    "*://127.0.0.1/*",
+    "*://localhost/*"
+  ],
   "content_scripts": [
     {
       "matches": ["*://www.bilibili.com/video/*"],
