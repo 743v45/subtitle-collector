@@ -35,6 +35,7 @@
             subs: subs.map((s) => ({
               lan: s.lan, lan_doc: s.lan_doc, track_type: s.type ?? null,
               subtitle_url: normalizeUrl(s.subtitle_url),
+              url_missing: !normalizeUrl(s.subtitle_url), // spec §7.1 第四情况：单轨 url 缺失标记
             })),
           };
           post("PLAYER_META", meta);
@@ -68,7 +69,7 @@
             up_mid: d.up_info?.mid ?? null, up_name: d.up_info?.name ?? null,
             pic: d.pic, duration: d.video_info?.duration ?? null,
             published_at: d.pubdate ? d.pubdate * 1000 : null,
-            subs: subs.map((s) => ({ lan: s.lan, lan_doc: s.lan_doc, track_type: s.type ?? null, subtitle_url: normalizeUrl(s.subtitle_url) })),
+            subs: subs.map((s) => ({ lan: s.lan, lan_doc: s.lan_doc, track_type: s.type ?? null, subtitle_url: normalizeUrl(s.subtitle_url), url_missing: !normalizeUrl(s.subtitle_url) })),
           });
         } catch {}
       });

@@ -37,5 +37,5 @@ export function handleQueryHttp(req: IncomingMessage, res: ServerResponse, db: D
     return;
   }
 
-  json(res, 404, { error: 'not found' });
+  json(res, 404, { ok: false, error: 'not found' });
 }

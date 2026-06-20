@@ -62,16 +62,15 @@ export function getVideo(db: Database.Database, source: string, sourceVid: strin
     result.tracks.push({ ...t, versions: sortedVs });
   }
   result.tracks.sort((a, b) => trackPriority(a.lan, a.track_type) - trackPriority(b.lan, b.track_type));
-  // 标 is_default
-  const seenDefault = { track: false, version: false };
-  for (const t of result.tracks) {
-    (t as any).is_default = !seenDefault.track;
-    seenDefault.track = true;
+  // 标 is_default：每个 track 各自独立标首个 version 为 default（不跨轨串台）
+  result.tracks.forEach((t, idx) => {
+    (t as any).is_default = idx === 0; // 默认 track 是排序后首个
+    let seenVer = false;
     for (const v of t.versions) {
-      (v as any).is_default = !seenDefault.version && (t as any).is_default;
-      if ((v as any).is_default) seenDefault.version = true;
+      (v as any).is_default = !seenVer; // 默认 version 是该轨排序后首个
+      seenVer = true;
     }
-  }
+  });
   return result;
 }
 

@@ -1,8 +1,4 @@
 import { SERVER_URL, PING_URL, TOKEN } from "./config.js";
-// config.js 内容（见 Step 5b）：
-//   export const SERVER_URL = "ws://127.0.0.1:21527/ext";
-//   export const PING_URL   = "http://127.0.0.1:21527/ping";
-//   export const TOKEN      = "change-me-collector-token";  // 与服务端 config.js 预置 token 一致
 const EXT_VERSION = chrome.runtime.getManifest().version;
 
 let ws = null;
@@ -10,7 +6,7 @@ let reconnectAttempts = 0;
 const RECONNECT_BASE_MS = 2000;
 const RECONNECT_MAX_MS = 10000;
 
-// MV3 SW 保活兜底：周期 alarm 唤醒 SW，若 ws 未 OPEN 则触发重连（学 opencli keepalive）
+// MV3 SW 保活兜底：周期 alarm 唤醒 SW，若 ws 未 OPEN 则触发重连（C1）
 chrome.alarms.create("keepalive", { periodInMinutes: 0.4 });
 chrome.alarms.onAlarm.addListener((a) => {
   if (a.name === "keepalive" && ws?.readyState !== WebSocket.OPEN) connect();
@@ -38,22 +34,22 @@ async function connect() {
   ws.onopen = () => {
     reconnectAttempts = 0;
     ws.send(JSON.stringify({ type: "hello", ext_version: EXT_VERSION, token: TOKEN }));
-    // 重连后补发：把 SW 被杀期间 content 暂存到 storage.local 的待上报记录一次性 flush
     flushPendingIngests();
   };
   ws.onmessage = async (event) => {
     let msg; try { msg = JSON.parse(event.data); } catch { return; }
     if (!msg.id) return;
-    // 收到 Command，分发
     try {
       if (msg.action === "navigate") {
         await chrome.tabs.create({ url: msg.url });
         ws.send(JSON.stringify({ type: "result", id: msg.id, ok: true, data: { opened: true } }));
       } else if (msg.action === "operate") {
-        // 找当前页 content script 执行
         const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
         const resp = await chrome.tabs.sendMessage(tab.id, { type: "OPERATE", op: msg.op });
         ws.send(JSON.stringify({ type: "result", id: msg.id, ok: resp?.ok !== false, data: resp }));
+      } else if (msg.action === "fetch-subtitle") {
+        // MVP 占位（spec §6.2/§7.3 明列，协议闭环不吞 id；后续可接真实逻辑）
+        ws.send(JSON.stringify({ type: "result", id: msg.id, ok: false, error: "not implemented" }));
       } else {
         ws.send(JSON.stringify({ type: "result", id: msg.id, ok: false, error: "unknown action: " + msg.action }));
       }
@@ -70,7 +66,6 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     if (ws?.readyState === WebSocket.OPEN) {
       ws.send(JSON.stringify({ type: "ingest", payload: msg.payload }));
     } else {
-      // WS 未连（SW 被杀/服务端重启）：暂存 storage.local，onopen 时 flushPendingIngests 补发
       chrome.storage.local.get(["pendingIngests"], ({ pendingIngests = [] }) => {
         chrome.storage.local.set({ pendingIngests: [...pendingIngests, msg.payload] });
       });
@@ -79,7 +74,6 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   } else if (msg?.type === "WS_STATUS") {
     sendResponse({ ok: true, connected: ws?.readyState === WebSocket.OPEN });
   } else if (msg?.type === "MANUAL_CAPTURE") {
-    // 触发当前页 content.js 重新聚合并上报
     chrome.tabs.query({ active: true, currentWindow: true }, ([tab]) => {
       if (tab?.id) chrome.tabs.sendMessage(tab.id, { type: "RE_AGG" });
     });

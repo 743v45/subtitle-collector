@@ -29,12 +29,13 @@ const httpServer = createServer((req, res) => {
 const wss = new WebSocketServer({ server: httpServer, path: '/ext' });
 wss.on('connection', (ws) => {
   ws.on('message', (buf) => {
-    const m = JSON.parse(buf.toString());
+    let m; try { m = JSON.parse(buf.toString()); } catch { return; } // M1: 扩展发非 JSON 不崩
     if (m.type === 'hello') ws.send(JSON.stringify({ type: 'hello-ack', ok: true }));
     else if (m.type === 'ingest') { received.ingests.push(m.payload); ws.send(JSON.stringify({ type: 'ingest-ack', ok: true, inserted_tracks: (m.payload?.tracks?.length ?? 0) })); }
     else if (m.type === 'result') received.results.push(m);
   });
 });
+wss.on('connection', (ws) => { console.log('[mock-server] 扩展连接'); });
 await new Promise((r) => httpServer.listen(21527, '127.0.0.1', r));
 
 // ---- Chrome for Testing ----
@@ -47,7 +48,7 @@ try {
 } catch {}
 const browser = await puppeteer.launch({
   ...(exec ? { executablePath: exec } : {}),
-  headless: true,
+  headless: false, // plan 要求 false：headless 模式下 Chrome 不加载 MV3 扩展
   args: [`--disable-extensions-except=${EXT}`, `--load-extension=${EXT}`, '--no-first-run', '--no-default-browser-check', '--window-size=1280,900'],
 });
 await new Promise(r => setTimeout(r, 3000));

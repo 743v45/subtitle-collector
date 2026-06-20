@@ -9,8 +9,6 @@ interface ExtConn {
 }
 
 const connections = new Set<ExtConn>();
-// 待广播的 command queue（按 port 维度，简化版；真实场景可按 contextId 等路由）
-const pendingCommands: Array<{ cmd: unknown; target?: WebSocket }> = [];
 
 export function attachWsServer(httpServer: Server, _db: Database.Database, expectedToken?: string): void {
   const EXPECTED_TOKEN = expectedToken ?? process.env.COLLECTOR_TOKEN ?? ''; // 空 token 视为未配置，全部拒绝
@@ -19,7 +17,7 @@ export function attachWsServer(httpServer: Server, _db: Database.Database, expec
     path: '/ext',
     verifyClient: ({ req }: { req: IncomingMessage }) => {
       const origin = req.headers['origin'];
-      // loopback Node fetch 没 Origin；chrome-extension 才发；其他 origin 拒
+      // Origin 是辅助防线（非浏览器/本地 Node 不带 Origin）；主鉴权靠 hello token（B1 备注）
       return !origin || origin.startsWith('chrome-extension://');
     },
   });
@@ -31,6 +29,9 @@ export function attachWsServer(httpServer: Server, _db: Database.Database, expec
     ws.on('message', async (data: RawData) => {
       let msg: any;
       try { msg = JSON.parse(data.toString()); } catch { return; }
+
+      // 未完成 hello 握手且非 hello 消息：拒（防竞态未握手连接写库，B4）
+      if (msg.type !== 'hello' && !conn.extVersion) return;
 
       if (msg.type === 'hello') {
         conn.extVersion = typeof msg.ext_version === 'string' ? msg.ext_version : null;
@@ -71,7 +72,8 @@ export function attachWsServer(httpServer: Server, _db: Database.Database, expec
   });
 }
 
-export function broadcastCommand(port: number, cmd: { id: string; action: string; [k: string]: unknown }): void {
+// port 参数保留为向后兼容签名（MVP 单实例广播；未来可按 port/contextId 路由）
+export function broadcastCommand(_port: number, cmd: { id: string; action: string; [k: string]: unknown }): void {
   const payload = JSON.stringify(cmd);
   for (const c of connections) {
     if (c.ws.readyState === WebSocket.OPEN) {

@@ -10,6 +10,12 @@
 2. 构建 web（首次或 web 改动后）：`pnpm --filter @bilibili-ext/collector-web build`
 3. 加载扩展：`bash scripts/load-collector-extension.sh`，按提示在 chrome://extensions/ 加载
 
+## 可选：mock 回归（verify-collector.mjs）
+
+`pnpm test:ext`（或 `node scripts/verify-collector.mjs`）：用 puppeteer mock 验证扩展的 subtitle_url 四情况 + navigate + operate 命令。**需要 headed Chrome 环境**（headless 模式不加载 MV3 扩展）。失败时按 `[mock-server]` 日志排查 WS 握手。
+
+自动化单元测试走 `pnpm test`（= turbo run test，跑 collector-server 11 个 node:test）。
+
 ## 验收项（对应 spec §10）
 
 | # | 操作 | 期望 |
