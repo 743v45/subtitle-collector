@@ -1,5 +1,6 @@
 document.addEventListener("DOMContentLoaded", () => {
   const status = document.getElementById("status");
+  const biliLogin = document.getElementById("bili-login");
   const video = document.getElementById("video");
   const stats = document.getElementById("stats");
   const btn = document.getElementById("btn-capture");
@@ -11,8 +12,28 @@ document.addEventListener("DOMContentLoaded", () => {
     });
   }
 
+  function checkBiliLogin() {
+    fetch('https://api.bilibili.com/x/web-interface/nav', { credentials: 'include' })
+      .then(r => r.json())
+      .then(d => {
+        if (d.code === 0 && d.data?.isLogin) {
+          biliLogin.textContent = `已登录 (${d.data.uname || '用户'})`;
+          biliLogin.className = "status ok";
+        } else {
+          biliLogin.textContent = "未登录（无法采集字幕，请先登录 bilibili.com）";
+          biliLogin.className = "status no";
+        }
+      })
+      .catch(() => {
+        biliLogin.textContent = "检查失败（网络问题）";
+        biliLogin.className = "status no";
+      });
+  }
+
   btn.onclick = () => { chrome.runtime.sendMessage({ type: "MANUAL_CAPTURE" }); };
 
   refresh();
+  checkBiliLogin();
   setInterval(refresh, 2000);
+  setInterval(checkBiliLogin, 30000);
 });
