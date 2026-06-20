@@ -19,6 +19,7 @@
   window.fetch = async function (...args) {
     const response = await ORIGINAL_FETCH.apply(this, args);
     const url = typeof args[0] === "string" ? args[0] : args[0]?.url;
+    console.log(`[inject] fetch 调用 url=${url} isPlayer=${isPlayerApi(url)} isSubtitle=${isSubtitleUrl(url)}`);
     try {
       if (isPlayerApi(url)) {
         response.clone().json().then((json) => {
@@ -47,9 +48,9 @@
           const text = JSON.stringify(data);
           console.log(`[inject] subtitle body 拦到 url=${normalizeUrl(url)} body_size=${text.length}`);
           post("SUBTITLE_BODY", { url: normalizeUrl(url), body: data, body_size: text.length });
-        }).catch(() => {});
+        }).catch((e) => console.error('[inject] subtitle parse error', e));
       }
-    } catch {}
+    } catch (e) { console.error('[inject] fetch hook error', e); }
     return response;
   };
 
