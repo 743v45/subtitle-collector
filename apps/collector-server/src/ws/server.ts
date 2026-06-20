@@ -39,8 +39,10 @@ export function attachWsServer(httpServer: Server, _db: Database.Database, expec
         if (!EXPECTED_TOKEN || msg.token !== EXPECTED_TOKEN) {
           ws.send(JSON.stringify({ type: 'hello-nack', ok: false, error: 'bad token' }));
           ws.close(4001, 'bad token');
+          console.warn(`[ws] hello 握手失败：token 不匹配（ext_version=${conn.extVersion ?? 'unknown'}）`);
           return;
         }
+        console.log(`[ws] hello 握手成功：ext_version=${conn.extVersion ?? 'unknown'}`);
         ws.send(JSON.stringify({ type: 'hello-ack', ok: true }));
         return;
       }
