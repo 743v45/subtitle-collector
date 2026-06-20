@@ -1687,38 +1687,102 @@ git commit -m "feat(collector-web): react+vite list/detail/search; collector-ser
 
 ---
 
-## Task 7: 端到端回归 + 真实 B 站验证（人工）
+## Task 7: 端到端验收（自动化单元 + 真实 Chrome 集成）
+
+**核心判断**：B 站字幕需登录态 + 真实播放器触发，puppeteer mock 登录态不可行/不可信。改为：
+
+- **自动化（执行时我做）**：服务端四层写入 + WS RPC 协议 + HTTP 查询 API（已在前序 Task 用 `node:test` 覆盖）
+- **真实 Chrome 集成（你做，登录态已在你的 Chrome 里）**：扩展装上 → 访问视频 → 验证入库 + 网页查阅
 
 **Files:**
-- Create: `scripts/verify-collector.mjs`（参考现有 `scripts/verify-extension.mjs`）
+- Create: `scripts/load-collector-extension.sh`（参考 `scripts/load-extension.sh`，扩展加载说明）
+- Create: `MANUAL-collector.md`（真实 Chrome 验收清单）
 
-- [ ] **Step 1: 写 puppeteer mock 验证脚本骨架**
+- [ ] **Step 1: 写扩展加载说明脚本**
 
-Create `scripts/verify-collector.mjs`：
-```js
-// 1. 起 collector-server（用临时 db）
-// 2. 用 puppeteer 加载扩展 + mock player API 返回字幕
-// 3. 断言 SQLite 写入 + /api/videos 能查到
-// 4. 清理
+Create `scripts/load-collector-extension.sh`：
+```bash
+#!/usr/bin/env bash
+# 用法：bash scripts/load-collector-extension.sh
+# 在 chrome://extensions/ 开发者模式加载此目录：apps/subtitle-collector/
+set -e
+EXT_DIR="$(cd "$(dirname "$0")/../apps/subtitle-collector" && pwd)"
+echo "扩展目录: $EXT_DIR"
+echo "在 chrome://extensions/ 打开开发者模式，点击'加载已解压的扩展程序'，选择："
+echo "  $EXT_DIR"
+echo ""
+echo "依赖服务（运行中才能上报）："
+echo "  cd apps/collector-server && pnpm dev"
 ```
-（具体内容在执行时按现有 `scripts/verify-extension.mjs` 模式实现，本 task 只做骨架+人工验收清单）
-
-- [ ] **Step 2: 真实端到端验收清单**
-
-人工执行（在登录态 Chrome 中）：
-- [ ] 启动 `pnpm dev`（collector-server + collector-web 构建产物已就位）
-- [ ] 加载扩展 `apps/subtitle-collector/`
-- [ ] 打开 B 站视频页（`https://www.bilibili.com/video/BV1mhjg6SEJy`），点开字幕
-- [ ] popup 显示"已连接 ✓"，"上报统计"显示新增轨数
-- [ ] 访问 `http://127.0.0.1:21527/`，列表显示该视频
-- [ ] 点进详情，轨切换器 + 时间轴逐行正常显示
-- [ ] 复制按钮可用
-
-- [ ] **Step 3: 提交（如有改动）**
 
 ```bash
-git add scripts/verify-collector.mjs
-git commit -m "test: e2e verify scaffold + manual checklist" || echo "no changes"
+chmod +x scripts/load-collector-extension.sh
+```
+
+- [ ] **Step 2: 写真实 Chrome 验收清单**
+
+Create `MANUAL-collector.md`：
+```markdown
+# 媒体字幕采集库 — 真实 Chrome 验收清单
+
+> 登录态已在你的 Chrome 里，无需 puppeteer mock。
+> 沿用本项目 `MANUAL.md` 模式（现有 subtitle-extractor 已用此模式端到端验证）。
+
+## 前置
+
+1. 启动服务端：`cd apps/collector-server && pnpm dev`
+   - 应看到 `[collector-server] listening on http://127.0.0.1:21527 (ws: /ext, api: /api/*)`
+2. 构建 web（首次或 web 改动后）：`pnpm --filter @bilibili-ext/collector-web build`
+3. 加载扩展：`bash scripts/load-collector-extension.sh`，按提示在 chrome://extensions/ 加载
+
+## 验收项（对应 spec §10）
+
+| # | 操作 | 期望 |
+|---|---|---|
+| 1 | 打开 `https://www.bilibili.com/video/BV1mhjg6SEJy`（info/ 里的样本） | 扩展 popup 显示 "已连接 ✓" |
+| 2 | 点开视频字幕按钮（中文字幕） | popup "上报统计" 显示新增轨数；服务端控制台看到 ingest-ack |
+| 3 | 访问 `http://127.0.0.1:21527/api/videos` | JSON 列表包含 BV1mhjg6SEJy，标题正确 |
+| 4 | 浏览器打开 `http://127.0.0.1:21527/` | 列表页显示该视频 |
+| 5 | 点进详情 | 轨切换器 + 时间轴逐行 + 默认轨高亮 |
+| 6 | 切换轨/版本 | 内容正确切换；默认轨带"默认"标记 |
+| 7 | 复制按钮 | 复制成功 |
+| 8 | 关闭服务端（Ctrl+C）后再访问视频页 | popup 变 "未连接 ✗"，无控制台 ERR 噪声 |
+| 9 | 重新启动服务端 | popup 自动恢复 "已连接 ✓"（指数退避重连） |
+| 10 | 同视频再访问一次 | 服务端不重复入库（version skipped）；title 没变则 change_log 不增加 |
+
+## 服务端命令（排查）
+
+```bash
+# 看 db 状态
+sqlite3 apps/collector-server/bilibili-collector.db "SELECT * FROM videos; SELECT * FROM change_log ORDER BY id DESC LIMIT 5;"
+
+# 看连接状态
+curl -s http://127.0.0.1:21527/api/videos | jq
+
+# 重置 db（开发期）
+rm apps/collector-server/bilibili-collector.db
+```
+
+## 已知限制
+
+- B 站部分视频 `need_login_subtitle=true`，需确认你在 Chrome 已登录 B 站
+- subtitle_url 为空时扩展不发 ingest；这类视频不会入库（正确行为）
+```
+
+- [ ] **Step 3: 跑服务端测试套件作为自动化端到端**
+
+服务端各 task 已有 `node:test` 单测（ingest 幂等/变更日志、WS RPC、HTTP 查询）。Task 7 末尾跑一遍确认：
+```bash
+cd apps/collector-server && pnpm test
+```
+Expected: 所有测试通过（具体数量取决于 Task 2/3 实现）。
+
+- [ ] **Step 4: 提交**
+
+```bash
+cd /Users/taevas/code/mymy/bilibili-extensions
+git add scripts/load-collector-extension.sh MANUAL-collector.md
+git commit -m "docs: e2e acceptance via real chrome + server test suite (no puppeteer login mock)"
 ```
 
 ---
