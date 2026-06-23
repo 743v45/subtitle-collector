@@ -1,0 +1,3436 @@
+{
+  "font_size": 0.4,
+  "font_color": "#FFFFFF",
+  "background_alpha": 0.5,
+  "background_color": "#9C27B0",
+  "Stroke": "none",
+  "type": "AIsubtitle",
+  "lang": "zh",
+  "version": "v1.7.0.4",
+  "body": [
+    {
+      "from": 0.36,
+      "to": 2.56,
+      "sid": 1,
+      "location": 2,
+      "content": "前几期我一直在讲AI编程工程化",
+      "music": 0.0
+    },
+    {
+      "from": 2.56,
+      "to": 5.63,
+      "sid": 2,
+      "location": 2,
+      "content": "评论区很多观众说能不能看实际的代码的流程",
+      "music": 0.0
+    },
+    {
+      "from": 5.63,
+      "to": 7.79,
+      "sid": 3,
+      "location": 2,
+      "content": "这一期我直接拿我的真实项目演示",
+      "music": 0.0
+    },
+    {
+      "from": 7.79,
+      "to": 10.73,
+      "sid": 4,
+      "location": 2,
+      "content": "10万加的代码的项目是如何做到正常迭代",
+      "music": 0.0
+    },
+    {
+      "from": 10.73,
+      "to": 12.47,
+      "sid": 5,
+      "location": 2,
+      "content": "且不会影响旧功能",
+      "music": 0.0
+    },
+    {
+      "from": 12.47,
+      "to": 13.67,
+      "sid": 6,
+      "location": 2,
+      "content": "先回答评论区",
+      "music": 0.0
+    },
+    {
+      "from": 13.67,
+      "to": 15.81,
+      "sid": 7,
+      "location": 2,
+      "content": "有的观众想看我的spec的目录结构",
+      "music": 0.0
+    },
+    {
+      "from": 15.81,
+      "to": 17.15,
+      "sid": 8,
+      "location": 2,
+      "content": "首先你要有两个印象",
+      "music": 0.0
+    },
+    {
+      "from": 17.15,
+      "to": 18.16,
+      "sid": 9,
+      "location": 2,
+      "content": "第一个印象",
+      "music": 0.0
+    },
+    {
+      "from": 18.16,
+      "to": 21.34,
+      "sid": 10,
+      "location": 2,
+      "content": "spec里面区分了自然语言决策类的spec",
+      "music": 0.0
+    },
+    {
+      "from": 21.34,
+      "to": 22.86,
+      "sid": 11,
+      "location": 2,
+      "content": "第二个是spec",
+      "music": 0.0
+    },
+    {
+      "from": 22.86,
+      "to": 25.14,
+      "sid": 12,
+      "location": 2,
+      "content": "也区分HAREYS里面的spec",
+      "music": 0.0
+    },
+    {
+      "from": 25.14,
+      "to": 28.24,
+      "sid": 13,
+      "location": 2,
+      "content": "那首先自然语言决策类the spec",
+      "music": 0.0
+    },
+    {
+      "from": 28.24,
+      "to": 30.88,
+      "sid": 14,
+      "location": 2,
+      "content": "其实就是你的软件里面的",
+      "music": 0.0
+    },
+    {
+      "from": 30.88,
+      "to": 32.68,
+      "sid": 15,
+      "location": 2,
+      "content": "所有的功能的决策是什么",
+      "music": 0.0
+    },
+    {
+      "from": 32.68,
+      "to": 34.44,
+      "sid": 16,
+      "location": 2,
+      "content": "为什么怎么做之类的",
+      "music": 0.0
+    },
+    {
+      "from": 34.44,
+      "to": 36.08,
+      "sid": 17,
+      "location": 2,
+      "content": "以及边界是什么",
+      "music": 0.0
+    },
+    {
+      "from": 36.08,
+      "to": 38.46,
+      "sid": 18,
+      "location": 2,
+      "content": "这些都是偏向于自然语言的描述",
+      "music": 0.0
+    },
+    {
+      "from": 38.46,
+      "to": 39.8,
+      "sid": 19,
+      "location": 2,
+      "content": "另一个SPECT是什么呢",
+      "music": 0.0
+    },
+    {
+      "from": 39.8,
+      "to": 41.95,
+      "sid": 20,
+      "location": 2,
+      "content": "另一个SPECT就是honeys工程里面的spec",
+      "music": 0.0
+    },
+    {
+      "from": 41.95,
+      "to": 44.69,
+      "sid": 21,
+      "location": 2,
+      "content": "那为什么要区分两份spec呢",
+      "music": 0.0
+    },
+    {
+      "from": 44.69,
+      "to": 47.35,
+      "sid": 22,
+      "location": 2,
+      "content": "首先自然语言决策类的spec",
+      "music": 0.0
+    },
+    {
+      "from": 47.35,
+      "to": 49.88,
+      "sid": 23,
+      "location": 2,
+      "content": "在大模型这种transform的架构下",
+      "music": 0.0
+    },
+    {
+      "from": 49.88,
+      "to": 55.06,
+      "sid": 24,
+      "location": 2,
+      "content": "它是不一定会百分之百会按照span里面去做",
+      "music": 0.0
+    },
+    {
+      "from": 55.06,
+      "to": 59.24,
+      "sid": 25,
+      "location": 2,
+      "content": "因为在上下文工程上下文污染之后",
+      "music": 0.0
+    },
+    {
+      "from": 59.24,
+      "to": 61.48,
+      "sid": 26,
+      "location": 2,
+      "content": "或者说上下文过长之后",
+      "music": 0.0
+    },
+    {
+      "from": 61.48,
+      "to": 62.52,
+      "sid": 27,
+      "location": 2,
+      "content": "注意力分散",
+      "music": 0.0
+    },
+    {
+      "from": 62.52,
+      "to": 64.8,
+      "sid": 28,
+      "location": 2,
+      "content": "它有一些决策类它是会遗忘掉的",
+      "music": 0.0
+    },
+    {
+      "from": 64.8,
+      "to": 66.67,
+      "sid": 29,
+      "location": 2,
+      "content": "那HONEX工程里面的SPG",
+      "music": 0.0
+    },
+    {
+      "from": 66.67,
+      "to": 68.13,
+      "sid": 30,
+      "location": 2,
+      "content": "它就是一个硬约束",
+      "music": 0.0
+    },
+    {
+      "from": 68.13,
+      "to": 70.539,
+      "sid": 31,
+      "location": 2,
+      "content": "他就说把你的业务拉出来",
+      "music": 0.0
+    },
+    {
+      "from": 70.539,
+      "to": 72.379,
+      "sid": 32,
+      "location": 2,
+      "content": "交给哈尼士去做管控",
+      "music": 0.0
+    },
+    {
+      "from": 72.379,
+      "to": 73.499,
+      "sid": 33,
+      "location": 2,
+      "content": "做质量检查",
+      "music": 0.0
+    },
+    {
+      "from": 73.499,
+      "to": 76.339,
+      "sid": 34,
+      "location": 2,
+      "content": "也就是说质检那好处是什么呢",
+      "music": 0.0
+    },
+    {
+      "from": 76.339,
+      "to": 78.39,
+      "sid": 35,
+      "location": 2,
+      "content": "就是说你自然语言角色类",
+      "music": 0.0
+    },
+    {
+      "from": 78.39,
+      "to": 81.13,
+      "sid": 36,
+      "location": 2,
+      "content": "可能你你里面的一些东西被遗忘掉了",
+      "music": 0.0
+    },
+    {
+      "from": 81.13,
+      "to": 83.87,
+      "sid": 37,
+      "location": 2,
+      "content": "开发过程中没有呃达到目的",
+      "music": 0.0
+    },
+    {
+      "from": 83.87,
+      "to": 85.6,
+      "sid": 38,
+      "location": 2,
+      "content": "或者说没有百分百执行",
+      "music": 0.0
+    },
+    {
+      "from": 85.6,
+      "to": 89.1,
+      "sid": 39,
+      "location": 2,
+      "content": "但是我在最终HANSHHANS这边有一些硬约束",
+      "music": 0.0
+    },
+    {
+      "from": 89.1,
+      "to": 92.31,
+      "sid": 40,
+      "location": 2,
+      "content": "我的逻辑已经已经定好了之后",
+      "music": 0.0
+    },
+    {
+      "from": 92.31,
+      "to": 95.03,
+      "sid": 41,
+      "location": 2,
+      "content": "你无论AI中间怎么去跑",
+      "music": 0.0
+    },
+    {
+      "from": 95.03,
+      "to": 96.27,
+      "sid": 42,
+      "location": 2,
+      "content": "怎么去产生代码",
+      "music": 0.0
+    },
+    {
+      "from": 96.27,
+      "to": 99.09,
+      "sid": 43,
+      "location": 2,
+      "content": "只要你最终能符合我这个门禁",
+      "music": 0.0
+    },
+    {
+      "from": 99.09,
+      "to": 101.16,
+      "sid": 44,
+      "location": 2,
+      "content": "也就是说这个honey这个spec",
+      "music": 0.0
+    },
+    {
+      "from": 101.16,
+      "to": 105.62,
+      "sid": 45,
+      "location": 2,
+      "content": "那么我就认为你整个开发工程是OK的",
+      "music": 0.0
+    },
+    {
+      "from": 105.62,
+      "to": 110.11,
+      "sid": 46,
+      "location": 2,
+      "content": "那如果说但凡任何一点都呃有异常",
+      "music": 0.0
+    },
+    {
+      "from": 110.11,
+      "to": 112.71,
+      "sid": 47,
+      "location": 2,
+      "content": "或者说开发过程中出现了修改了这个功能",
+      "music": 0.0
+    },
+    {
+      "from": 112.71,
+      "to": 114.34,
+      "sid": 48,
+      "location": 2,
+      "content": "导致另一个功能坏了之后",
+      "music": 0.0
+    },
+    {
+      "from": 114.34,
+      "to": 117.66,
+      "sid": 49,
+      "location": 2,
+      "content": "那这个时候他就过不了这个honeys这个质量检查",
+      "music": 0.0
+    },
+    {
+      "from": 117.66,
+      "to": 118.44,
+      "sid": 50,
+      "location": 2,
+      "content": "也就是质检",
+      "music": 0.0
+    },
+    {
+      "from": 118.44,
+      "to": 119.96,
+      "sid": 51,
+      "location": 2,
+      "content": "OK这就是我们项目",
+      "music": 0.0
+    },
+    {
+      "from": 119.96,
+      "to": 124.5,
+      "sid": 52,
+      "location": 2,
+      "content": "整个整个项目的两个SPECT的主要区别",
+      "music": 0.0
+    },
+    {
+      "from": 124.82,
+      "to": 127.56,
+      "sid": 53,
+      "location": 2,
+      "content": "在开始之前有必要快速认识我这个项目",
+      "music": 0.0
+    },
+    {
+      "from": 127.56,
+      "to": 128.54,
+      "sid": 54,
+      "location": 2,
+      "content": "想必大家都知道",
+      "music": 0.0
+    },
+    {
+      "from": 128.54,
+      "to": 130.16,
+      "sid": 55,
+      "location": 2,
+      "content": "电子桌宠类似以前的QQ宠物",
+      "music": 0.0
+    },
+    {
+      "from": 130.16,
+      "to": 131.87,
+      "sid": 56,
+      "location": 2,
+      "content": "4月份的codex宠物玩法",
+      "music": 0.0
+    },
+    {
+      "from": 131.87,
+      "to": 133.61,
+      "sid": 57,
+      "location": 2,
+      "content": "那为何我选择这个项目呢",
+      "music": 0.0
+    },
+    {
+      "from": 133.61,
+      "to": 134.91,
+      "sid": 58,
+      "location": 2,
+      "content": "因为这不是一个demo",
+      "music": 0.0
+    },
+    {
+      "from": 134.91,
+      "to": 137.11,
+      "sid": 59,
+      "location": 2,
+      "content": "是我从2月份经历了y coding",
+      "music": 0.0
+    },
+    {
+      "from": 137.11,
+      "to": 138.03,
+      "sid": 60,
+      "location": 2,
+      "content": "再到app",
+      "music": 0.0
+    },
+    {
+      "from": 138.03,
+      "to": 139.61,
+      "sid": 61,
+      "location": 2,
+      "content": "然后再重构两轮",
+      "music": 0.0
+    },
+    {
+      "from": 139.61,
+      "to": 142.51,
+      "sid": 62,
+      "location": 2,
+      "content": "最后引入AI工程化后持续稳定迭代的项目",
+      "music": 0.0
+    },
+    {
+      "from": 142.51,
+      "to": 143.61,
+      "sid": 63,
+      "location": 2,
+      "content": "直到现在",
+      "music": 0.0
+    },
+    {
+      "from": 143.61,
+      "to": 146.23,
+      "sid": 64,
+      "location": 2,
+      "content": "且是经历过AI编程时代下",
+      "music": 0.0
+    },
+    {
+      "from": 146.23,
+      "to": 148.65,
+      "sid": 65,
+      "location": 2,
+      "content": "每个开发者都会遇到的种种问题",
+      "music": 0.0
+    },
+    {
+      "from": 148.65,
+      "to": 152.45,
+      "sid": 66,
+      "location": 2,
+      "content": "以及解决之后沉淀下来有价值的项目经验",
+      "music": 0.0
+    },
+    {
+      "from": 152.45,
+      "to": 158.19,
+      "sid": 67,
+      "location": 2,
+      "content": "当然项目的复杂不是单靠代码含量来来衡量的",
+      "music": 0.0
+    },
+    {
+      "from": 158.19,
+      "to": 160.31,
+      "sid": 68,
+      "location": 2,
+      "content": "整体要看整个项目的复杂程度",
+      "music": 0.0
+    },
+    {
+      "from": 160.31,
+      "to": 163.28,
+      "sid": 69,
+      "location": 2,
+      "content": "这里面你可以看到左边有很多很多个功能",
+      "music": 0.0
+    },
+    {
+      "from": 163.28,
+      "to": 166.34,
+      "sid": 70,
+      "location": 2,
+      "content": "当然我们肯定不是在这个视频里面讲我的功能",
+      "music": 0.0
+    },
+    {
+      "from": 166.34,
+      "to": 168.99,
+      "sid": 71,
+      "location": 2,
+      "content": "我们直接抛出一个最直接直观的问题",
+      "music": 0.0
+    },
+    {
+      "from": 168.99,
+      "to": 170.35,
+      "sid": 72,
+      "location": 2,
+      "content": "你在使用AI编程的时候",
+      "music": 0.0
+    },
+    {
+      "from": 170.35,
+      "to": 172.91,
+      "sid": 73,
+      "location": 2,
+      "content": "一定会会碰到AI改好这个功能",
+      "music": 0.0
+    },
+    {
+      "from": 172.91,
+      "to": 174.959,
+      "sid": 74,
+      "location": 2,
+      "content": "却把另外的功能给改坏",
+      "music": 0.0
+    },
+    {
+      "from": 174.959,
+      "to": 177.199,
+      "sid": 75,
+      "location": 2,
+      "content": "那用我的项目最简单的功能来说",
+      "music": 0.0
+    },
+    {
+      "from": 177.199,
+      "to": 179.179,
+      "sid": 76,
+      "location": 2,
+      "content": "比方说我的宠物饱腹度",
+      "music": 0.0
+    },
+    {
+      "from": 179.179,
+      "to": 179.919,
+      "sid": 77,
+      "location": 2,
+      "content": "饱腹度",
+      "music": 0.0
+    },
+    {
+      "from": 179.919,
+      "to": 182.199,
+      "sid": 78,
+      "location": 2,
+      "content": "我呃在我的这个项目的原则里",
+      "music": 0.0
+    },
+    {
+      "from": 182.199,
+      "to": 184.66,
+      "sid": 79,
+      "location": 2,
+      "content": "饱和度大于等于90就拒绝喂食",
+      "music": 0.0
+    },
+    {
+      "from": 184.66,
+      "to": 186.54,
+      "sid": 80,
+      "location": 2,
+      "content": "假设我想把它调松一点",
+      "music": 0.0
+    },
+    {
+      "from": 186.54,
+      "to": 189.34,
+      "sid": 81,
+      "location": 2,
+      "content": "改成大于等于95才拒绝",
+      "music": 0.0
+    },
+    {
+      "from": 189.34,
+      "to": 192.15,
+      "sid": 82,
+      "location": 2,
+      "content": "那这个项目在看起来",
+      "music": 0.0
+    },
+    {
+      "from": 192.15,
+      "to": 195.13,
+      "sid": 83,
+      "location": 2,
+      "content": "在一开始看起来会觉得是一行数字",
+      "music": 0.0
+    },
+    {
+      "from": 195.13,
+      "to": 199.93,
+      "sid": 84,
+      "location": 2,
+      "content": "但在实际里面它会影响整个喂食的按钮嗯",
+      "music": 0.0
+    },
+    {
+      "from": 199.93,
+      "to": 201.43,
+      "sid": 85,
+      "location": 2,
+      "content": "背包的一些道具",
+      "music": 0.0
+    },
+    {
+      "from": 201.43,
+      "to": 202.53,
+      "sid": 86,
+      "location": 2,
+      "content": "饱腹度经验",
+      "music": 0.0
+    },
+    {
+      "from": 202.53,
+      "to": 203.17,
+      "sid": 87,
+      "location": 2,
+      "content": "亲密度",
+      "music": 0.0
+    },
+    {
+      "from": 203.17,
+      "to": 203.69,
+      "sid": 88,
+      "location": 2,
+      "content": "动画",
+      "music": 0.0
+    },
+    {
+      "from": 203.69,
+      "to": 206.75,
+      "sid": 89,
+      "location": 2,
+      "content": "跨窗口传播等一系列的模块的交互",
+      "music": 0.0
+    },
+    {
+      "from": 206.75,
+      "to": 209.21,
+      "sid": 90,
+      "location": 2,
+      "content": "所以我在验收的这些东西",
+      "music": 0.0
+    },
+    {
+      "from": 209.21,
+      "to": 212.49,
+      "sid": 91,
+      "location": 2,
+      "content": "我不能只听AI说我改好了这个东西",
+      "music": 0.0
+    },
+    {
+      "from": 212.49,
+      "to": 216.95,
+      "sid": 92,
+      "location": 2,
+      "content": "因为它很大概率或者说在这个过程中是有概率",
+      "music": 0.0
+    },
+    {
+      "from": 216.95,
+      "to": 219.82,
+      "sid": 93,
+      "location": 2,
+      "content": "AI它会自行去改动以前的",
+      "music": 0.0
+    },
+    {
+      "from": 219.82,
+      "to": 222.16,
+      "sid": 94,
+      "location": 2,
+      "content": "已经存在的且正常的一些功能",
+      "music": 0.0
+    },
+    {
+      "from": 222.16,
+      "to": 224.14,
+      "sid": 95,
+      "location": 2,
+      "content": "最后你验收虽然通过了",
+      "music": 0.0
+    },
+    {
+      "from": 224.14,
+      "to": 226.18,
+      "sid": 96,
+      "location": 2,
+      "content": "但你在未来的某一个时间段",
+      "music": 0.0
+    },
+    {
+      "from": 226.18,
+      "to": 229.42,
+      "sid": 97,
+      "location": 2,
+      "content": "你会发现原来前面的某些正常的功能",
+      "music": 0.0
+    },
+    {
+      "from": 229.42,
+      "to": 231.92,
+      "sid": 98,
+      "location": 2,
+      "content": "在某个时间点已经被改掉了",
+      "music": 0.0
+    },
+    {
+      "from": 231.92,
+      "to": 234.53,
+      "sid": 99,
+      "location": 2,
+      "content": "而导致那个时候你想再去回退",
+      "music": 0.0
+    },
+    {
+      "from": 234.53,
+      "to": 235.93,
+      "sid": 100,
+      "location": 2,
+      "content": "再去再去回想诶",
+      "music": 0.0
+    },
+    {
+      "from": 235.93,
+      "to": 237.68,
+      "sid": 101,
+      "location": 2,
+      "content": "前面哪个时间段已经改了",
+      "music": 0.0
+    },
+    {
+      "from": 237.68,
+      "to": 239.32,
+      "sid": 102,
+      "location": 2,
+      "content": "改了某某某个功能",
+      "music": 0.0
+    },
+    {
+      "from": 239.32,
+      "to": 241.36,
+      "sid": 103,
+      "location": 2,
+      "content": "然后造成另一个功能不能用的情况",
+      "music": 0.0
+    },
+    {
+      "from": 241.36,
+      "to": 243.0,
+      "sid": 104,
+      "location": 2,
+      "content": "你会非常非常的困难",
+      "music": 0.0
+    },
+    {
+      "from": 243.0,
+      "to": 247.15,
+      "sid": 105,
+      "location": 2,
+      "content": "所以最终的解决办法是引入honeys呃",
+      "music": 0.0
+    },
+    {
+      "from": 247.15,
+      "to": 248.53,
+      "sid": 106,
+      "location": 2,
+      "content": "为了说明方便呢",
+      "music": 0.0
+    },
+    {
+      "from": 248.53,
+      "to": 250.71,
+      "sid": 107,
+      "location": 2,
+      "content": "我是把饱和度改成九声了",
+      "music": 0.0
+    },
+    {
+      "from": 250.71,
+      "to": 253.87,
+      "sid": 108,
+      "location": 2,
+      "content": "然后这时候你去喂食是没办法喂的",
+      "music": 0.0
+    },
+    {
+      "from": 253.87,
+      "to": 256.85,
+      "sid": 109,
+      "location": 2,
+      "content": "因为他这时候是限制了90的限制",
+      "music": 0.0
+    },
+    {
+      "from": 256.85,
+      "to": 259.41,
+      "sid": 110,
+      "location": 2,
+      "content": "这是我的一个业务的一个实际的一个效果",
+      "music": 0.0
+    },
+    {
+      "from": 259.41,
+      "to": 260.99,
+      "sid": 111,
+      "location": 2,
+      "content": "那好我们来点进来",
+      "music": 0.0
+    },
+    {
+      "from": 260.99,
+      "to": 263.64,
+      "sid": 112,
+      "location": 2,
+      "content": "这是我们的一个honeys的一个工程目录",
+      "music": 0.0
+    },
+    {
+      "from": 263.64,
+      "to": 265.36,
+      "sid": 113,
+      "location": 2,
+      "content": "这是一个外壳工程",
+      "music": 0.0
+    },
+    {
+      "from": 265.36,
+      "to": 267.28,
+      "sid": 114,
+      "location": 2,
+      "content": "不是项目一开始就存在的",
+      "music": 0.0
+    },
+    {
+      "from": 267.28,
+      "to": 269.659,
+      "sid": 115,
+      "location": 2,
+      "content": "是项目经历过APP阶段之后",
+      "music": 0.0
+    },
+    {
+      "from": 269.659,
+      "to": 272.919,
+      "sid": 116,
+      "location": 2,
+      "content": "在持续迭代过程中逐步建立完善起来的",
+      "music": 0.0
+    },
+    {
+      "from": 272.919,
+      "to": 276.2,
+      "sid": 117,
+      "location": 2,
+      "content": "你可以先不用理解这一套架构",
+      "music": 0.0
+    },
+    {
+      "from": 276.2,
+      "to": 277.02,
+      "sid": 118,
+      "location": 2,
+      "content": "每一层是什么",
+      "music": 0.0
+    },
+    {
+      "from": 277.02,
+      "to": 279.62,
+      "sid": 119,
+      "location": 2,
+      "content": "等会我会告诉你你的项目可以怎么落地",
+      "music": 0.0
+    },
+    {
+      "from": 279.62,
+      "to": 281.89,
+      "sid": 120,
+      "location": 2,
+      "content": "你现在只需要跟着我的思路来",
+      "music": 0.0
+    },
+    {
+      "from": 281.89,
+      "to": 285.37,
+      "sid": 121,
+      "location": 2,
+      "content": "OK我相信各位还没忘记我这个饱腹度的逻辑",
+      "music": 0.0
+    },
+    {
+      "from": 285.37,
+      "to": 287.05,
+      "sid": 122,
+      "location": 2,
+      "content": "就是说我点击喂养之后",
+      "music": 0.0
+    },
+    {
+      "from": 287.05,
+      "to": 289.459,
+      "sid": 123,
+      "location": 2,
+      "content": "它是会发生一系列的业务流程",
+      "music": 0.0
+    },
+    {
+      "from": 289.459,
+      "to": 290.499,
+      "sid": 124,
+      "location": 2,
+      "content": "会增加经验啊",
+      "music": 0.0
+    },
+    {
+      "from": 290.499,
+      "to": 291.579,
+      "sid": 125,
+      "location": 2,
+      "content": "增加饱腹度啊等",
+      "music": 0.0
+    },
+    {
+      "from": 291.579,
+      "to": 292.919,
+      "sid": 126,
+      "location": 2,
+      "content": "或者说跨窗口同步啊",
+      "music": 0.0
+    },
+    {
+      "from": 292.919,
+      "to": 295.13,
+      "sid": 127,
+      "location": 2,
+      "content": "气标气泡窗口啊之类的",
+      "music": 0.0
+    },
+    {
+      "from": 295.13,
+      "to": 297.63,
+      "sid": 128,
+      "location": 2,
+      "content": "那我是怎么保证他每次在",
+      "music": 0.0
+    },
+    {
+      "from": 297.63,
+      "to": 299.87,
+      "sid": 129,
+      "location": 2,
+      "content": "比如说我想修改饱腹度的阈值之后",
+      "music": 0.0
+    },
+    {
+      "from": 299.87,
+      "to": 302.23,
+      "sid": 130,
+      "location": 2,
+      "content": "他这一系列附带的流程",
+      "music": 0.0
+    },
+    {
+      "from": 302.23,
+      "to": 306.769,
+      "sid": 131,
+      "location": 2,
+      "content": "一系列的业务不会说某一项会发生异常呢",
+      "music": 0.0
+    },
+    {
+      "from": 306.769,
+      "to": 310.79,
+      "sid": 132,
+      "location": 2,
+      "content": "我们首先点进来看我们的honeys的一个单元嗯",
+      "music": 0.0
+    },
+    {
+      "from": 310.79,
+      "to": 312.11,
+      "sid": 133,
+      "location": 2,
+      "content": "这里面我已经打开了",
+      "music": 0.0
+    },
+    {
+      "from": 312.11,
+      "to": 314.13,
+      "sid": 134,
+      "location": 2,
+      "content": "这这个是关于呃",
+      "music": 0.0
+    },
+    {
+      "from": 314.13,
+      "to": 316.77,
+      "sid": 135,
+      "location": 2,
+      "content": "关于宠物的这个一些属性的一个spec",
+      "music": 0.0
+    },
+    {
+      "from": 316.77,
+      "to": 320.09,
+      "sid": 136,
+      "location": 2,
+      "content": "如果你对于一些前端的测试框架",
+      "music": 0.0
+    },
+    {
+      "from": 320.09,
+      "to": 322.47,
+      "sid": 137,
+      "location": 2,
+      "content": "或者说MOKE的技术之类的都不懂的话",
+      "music": 0.0
+    },
+    {
+      "from": 322.47,
+      "to": 324.72,
+      "sid": 138,
+      "location": 2,
+      "content": "你可以先去了解一下嗯",
+      "music": 0.0
+    },
+    {
+      "from": 324.72,
+      "to": 326.96,
+      "sid": 139,
+      "location": 2,
+      "content": "这些不需要你手动写这些AI",
+      "music": 0.0
+    },
+    {
+      "from": 326.96,
+      "to": 329.46,
+      "sid": 140,
+      "location": 2,
+      "content": "你只只要有一定的认知后",
+      "music": 0.0
+    },
+    {
+      "from": 329.46,
+      "to": 331.72,
+      "sid": 141,
+      "location": 2,
+      "content": "AI会自己帮你去产出这些东西",
+      "music": 0.0
+    },
+    {
+      "from": 331.72,
+      "to": 333.08,
+      "sid": 142,
+      "location": 2,
+      "content": "然后呢这个是什么呢",
+      "music": 0.0
+    },
+    {
+      "from": 333.08,
+      "to": 336.27,
+      "sid": 143,
+      "location": 2,
+      "content": "这个是饱和度70势力王之后呃",
+      "music": 0.0
+    },
+    {
+      "from": 336.27,
+      "to": 337.57,
+      "sid": 144,
+      "location": 2,
+      "content": "模拟一个宠物的实例",
+      "music": 0.0
+    },
+    {
+      "from": 337.57,
+      "to": 339.85,
+      "sid": 145,
+      "location": 2,
+      "content": "它不需要去通过嗯",
+      "music": 0.0
+    },
+    {
+      "from": 339.85,
+      "to": 341.77,
+      "sid": 146,
+      "location": 2,
+      "content": "实际它实际演示的时候",
+      "music": 0.0
+    },
+    {
+      "from": 341.77,
+      "to": 342.75,
+      "sid": 147,
+      "location": 2,
+      "content": "你实际验收的时候",
+      "music": 0.0
+    },
+    {
+      "from": 342.75,
+      "to": 345.39,
+      "sid": 148,
+      "location": 2,
+      "content": "他不需要通过呃所谓的UI啊",
+      "music": 0.0
+    },
+    {
+      "from": 345.39,
+      "to": 346.29,
+      "sid": 149,
+      "location": 2,
+      "content": "截图啊之类的",
+      "music": 0.0
+    },
+    {
+      "from": 346.29,
+      "to": 347.49,
+      "sid": 150,
+      "location": 2,
+      "content": "然后自己再去反馈",
+      "music": 0.0
+    },
+    {
+      "from": 347.49,
+      "to": 348.97,
+      "sid": 151,
+      "location": 2,
+      "content": "那这样子效率太低了",
+      "music": 0.0
+    },
+    {
+      "from": 348.97,
+      "to": 353.08,
+      "sid": 152,
+      "location": 2,
+      "content": "我们知道软件开发前后台交互",
+      "music": 0.0
+    },
+    {
+      "from": 353.08,
+      "to": 356.44,
+      "sid": 153,
+      "location": 2,
+      "content": "前后端联调是一个非常正常不过的",
+      "music": 0.0
+    },
+    {
+      "from": 356.44,
+      "to": 358.84,
+      "sid": 154,
+      "location": 2,
+      "content": "随任何缺少了这个环节",
+      "music": 0.0
+    },
+    {
+      "from": 358.84,
+      "to": 361.86,
+      "sid": 155,
+      "location": 2,
+      "content": "那肯定是一个不健康的项目",
+      "music": 0.0
+    },
+    {
+      "from": 361.86,
+      "to": 364.84,
+      "sid": 156,
+      "location": 2,
+      "content": "那么这时候在这个honeys里面呢",
+      "music": 0.0
+    },
+    {
+      "from": 364.84,
+      "to": 366.68,
+      "sid": 157,
+      "location": 2,
+      "content": "它有一个70",
+      "music": 0.0
+    },
+    {
+      "from": 366.68,
+      "to": 369.999,
+      "sid": 158,
+      "location": 2,
+      "content": "那70在跑自动测试的时候",
+      "music": 0.0
+    },
+    {
+      "from": 369.999,
+      "to": 372.399,
+      "sid": 159,
+      "location": 2,
+      "content": "其实它会走这个VR的接口",
+      "music": 0.0
+    },
+    {
+      "from": 372.399,
+      "to": 376.16,
+      "sid": 160,
+      "location": 2,
+      "content": "VR的接口调的是一个我们的核心的业务逻辑",
+      "music": 0.0
+    },
+    {
+      "from": 376.16,
+      "to": 378.88,
+      "sid": 161,
+      "location": 2,
+      "content": "也就是说这个honeys的spec",
+      "music": 0.0
+    },
+    {
+      "from": 378.88,
+      "to": 384.22,
+      "sid": 162,
+      "location": 2,
+      "content": "它本质上是把一些核心的业务的那段代码",
+      "music": 0.0
+    },
+    {
+      "from": 384.22,
+      "to": 385.14,
+      "sid": 163,
+      "location": 2,
+      "content": "或者说接口",
+      "music": 0.0
+    },
+    {
+      "from": 385.14,
+      "to": 387.65,
+      "sid": 164,
+      "location": 2,
+      "content": "它外包给哈里斯工程",
+      "music": 0.0
+    },
+    {
+      "from": 387.65,
+      "to": 389.19,
+      "sid": 165,
+      "location": 2,
+      "content": "让他去自检",
+      "music": 0.0
+    },
+    {
+      "from": 389.19,
+      "to": 392.07,
+      "sid": 166,
+      "location": 2,
+      "content": "OK那我们的需求是改这个饱和度为80",
+      "music": 0.0
+    },
+    {
+      "from": 392.07,
+      "to": 393.59,
+      "sid": 167,
+      "location": 2,
+      "content": "那么这时候他会做什么呢",
+      "music": 0.0
+    },
+    {
+      "from": 393.59,
+      "to": 394.97,
+      "sid": 168,
+      "location": 2,
+      "content": "AI它改完之后",
+      "music": 0.0
+    },
+    {
+      "from": 394.97,
+      "to": 396.52,
+      "sid": 169,
+      "location": 2,
+      "content": "它会泡pis",
+      "music": 0.0
+    },
+    {
+      "from": 396.52,
+      "to": 398.74,
+      "sid": 170,
+      "location": 2,
+      "content": "会跑这套正常的值",
+      "music": 0.0
+    },
+    {
+      "from": 398.74,
+      "to": 400.44,
+      "sid": 171,
+      "location": 2,
+      "content": "比如说现在饱和度70",
+      "music": 0.0
+    },
+    {
+      "from": 400.44,
+      "to": 401.96,
+      "sid": 172,
+      "location": 2,
+      "content": "我们改成了80后",
+      "music": 0.0
+    },
+    {
+      "from": 401.96,
+      "to": 405.21,
+      "sid": 173,
+      "location": 2,
+      "content": "它这个保温度是否还能正常的完成",
+      "music": 0.0
+    },
+    {
+      "from": 405.21,
+      "to": 406.83,
+      "sid": 174,
+      "location": 2,
+      "content": "一系列的附带的一些业务",
+      "music": 0.0
+    },
+    {
+      "from": 406.83,
+      "to": 408.17,
+      "sid": 175,
+      "location": 2,
+      "content": "比如说经验啊",
+      "music": 0.0
+    },
+    {
+      "from": 408.17,
+      "to": 409.05,
+      "sid": 176,
+      "location": 2,
+      "content": "心情之类的",
+      "music": 0.0
+    },
+    {
+      "from": 409.05,
+      "to": 410.87,
+      "sid": 177,
+      "location": 2,
+      "content": "如果这些都没有问题",
+      "music": 0.0
+    },
+    {
+      "from": 410.87,
+      "to": 412.17,
+      "sid": 178,
+      "location": 2,
+      "content": "他是没有报错的",
+      "music": 0.0
+    },
+    {
+      "from": 412.17,
+      "to": 415.139,
+      "sid": 179,
+      "location": 2,
+      "content": "他这一部分正常的值就可以过",
+      "music": 0.0
+    },
+    {
+      "from": 415.139,
+      "to": 416.89,
+      "sid": 180,
+      "location": 2,
+      "content": "然后呢再跑一遍",
+      "music": 0.0
+    },
+    {
+      "from": 416.89,
+      "to": 417.73,
+      "sid": 181,
+      "location": 2,
+      "content": "被拒绝的",
+      "music": 0.0
+    },
+    {
+      "from": 417.73,
+      "to": 420.45,
+      "sid": 182,
+      "location": 2,
+      "content": "也就是说高于我们的80的这个值之后",
+      "music": 0.0
+    },
+    {
+      "from": 420.45,
+      "to": 424.27,
+      "sid": 183,
+      "location": 2,
+      "content": "他的一些拒绝的行为是否正常的发生",
+      "music": 0.0
+    },
+    {
+      "from": 424.27,
+      "to": 427.11,
+      "sid": 184,
+      "location": 2,
+      "content": "比如说今天是不是预期为零",
+      "music": 0.0
+    },
+    {
+      "from": 427.11,
+      "to": 428.29,
+      "sid": 185,
+      "location": 2,
+      "content": "然后一些行为",
+      "music": 0.0
+    },
+    {
+      "from": 428.29,
+      "to": 430.63,
+      "sid": 186,
+      "location": 2,
+      "content": "一些广播事件是不是预期不会发生",
+      "music": 0.0
+    },
+    {
+      "from": 430.63,
+      "to": 432.65,
+      "sid": 187,
+      "location": 2,
+      "content": "那只有这这两部分",
+      "music": 0.0
+    },
+    {
+      "from": 432.65,
+      "to": 434.59,
+      "sid": 188,
+      "location": 2,
+      "content": "只有这两部分都通过了之后",
+      "music": 0.0
+    },
+    {
+      "from": 434.59,
+      "to": 437.06,
+      "sid": 189,
+      "location": 2,
+      "content": "那么才证明我们改",
+      "music": 0.0
+    },
+    {
+      "from": 437.06,
+      "to": 439.68,
+      "sid": 190,
+      "location": 2,
+      "content": "因为这个改的这个饱和度的需求",
+      "music": 0.0
+    },
+    {
+      "from": 439.68,
+      "to": 440.78,
+      "sid": 191,
+      "location": 2,
+      "content": "改完之后",
+      "music": 0.0
+    },
+    {
+      "from": 440.78,
+      "to": 445.549,
+      "sid": 192,
+      "location": 2,
+      "content": "所有的业务逻辑还保持正常的一个一个证明",
+      "music": 0.0
+    },
+    {
+      "from": 445.549,
+      "to": 447.309,
+      "sid": 193,
+      "location": 2,
+      "content": "那AI它改完",
+      "music": 0.0
+    },
+    {
+      "from": 447.309,
+      "to": 448.709,
+      "sid": 194,
+      "location": 2,
+      "content": "它开发完需求之后",
+      "music": 0.0
+    },
+    {
+      "from": 448.709,
+      "to": 450.309,
+      "sid": 195,
+      "location": 2,
+      "content": "比如说改了我们的饱腹度之后",
+      "music": 0.0
+    },
+    {
+      "from": 450.309,
+      "to": 452.409,
+      "sid": 196,
+      "location": 2,
+      "content": "他是怎么去验收呢",
+      "music": 0.0
+    },
+    {
+      "from": 452.409,
+      "to": 454.539,
+      "sid": 197,
+      "location": 2,
+      "content": "我们可以看一下",
+      "music": 0.0
+    },
+    {
+      "from": 456.81,
+      "to": 460.35,
+      "sid": 198,
+      "location": 2,
+      "content": "大概这个流程就是它每次开发完之后",
+      "music": 0.0
+    },
+    {
+      "from": 460.35,
+      "to": 463.14,
+      "sid": 199,
+      "location": 2,
+      "content": "它会比如说我们开发了这个相关模块",
+      "music": 0.0
+    },
+    {
+      "from": 463.14,
+      "to": 465.5,
+      "sid": 200,
+      "location": 2,
+      "content": "他会先跑这个honeys的测试",
+      "music": 0.0
+    },
+    {
+      "from": 465.5,
+      "to": 467.3,
+      "sid": 201,
+      "location": 2,
+      "content": "当然你是要先去跟他说",
+      "music": 0.0
+    },
+    {
+      "from": 467.3,
+      "to": 468.42,
+      "sid": 202,
+      "location": 2,
+      "content": "你改完这个东西",
+      "music": 0.0
+    },
+    {
+      "from": 468.42,
+      "to": 470.8,
+      "sid": 203,
+      "location": 2,
+      "content": "你要去跑一下honey的工程",
+      "music": 0.0
+    },
+    {
+      "from": 470.8,
+      "to": 472.24,
+      "sid": 204,
+      "location": 2,
+      "content": "spect honey呃",
+      "music": 0.0
+    },
+    {
+      "from": 472.24,
+      "to": 475.02,
+      "sid": 205,
+      "location": 2,
+      "content": "这个命令是跑了我们的这个SPECT嗯",
+      "music": 0.0
+    },
+    {
+      "from": 475.02,
+      "to": 476.28,
+      "sid": 206,
+      "location": 2,
+      "content": "这些命令如果你不懂的话",
+      "music": 0.0
+    },
+    {
+      "from": 476.28,
+      "to": 477.96,
+      "sid": 207,
+      "location": 2,
+      "content": "你可以后面再去了解",
+      "music": 0.0
+    },
+    {
+      "from": 477.96,
+      "to": 479.92,
+      "sid": 208,
+      "location": 2,
+      "content": "然后你逆一执行会发生什么呢",
+      "music": 0.0
+    },
+    {
+      "from": 479.92,
+      "to": 483.14,
+      "sid": 209,
+      "location": 2,
+      "content": "它会先做一个类似于我们的那种自动化测试",
+      "music": 0.0
+    },
+    {
+      "from": 483.14,
+      "to": 485.66,
+      "sid": 210,
+      "location": 2,
+      "content": "OK但如果说你全部都pass的话",
+      "music": 0.0
+    },
+    {
+      "from": 485.66,
+      "to": 488.02,
+      "sid": 211,
+      "location": 2,
+      "content": "那么证明你这个功能是正常的",
+      "music": 0.0
+    },
+    {
+      "from": 488.02,
+      "to": 490.729,
+      "sid": 212,
+      "location": 2,
+      "content": "也就是说它AI改了这个饱和度之后",
+      "music": 0.0
+    },
+    {
+      "from": 490.729,
+      "to": 492.149,
+      "sid": 213,
+      "location": 2,
+      "content": "它没有影响你的功能",
+      "music": 0.0
+    },
+    {
+      "from": 492.149,
+      "to": 495.729,
+      "sid": 214,
+      "location": 2,
+      "content": "当然你还得再跑另一个这个文件的一个测试",
+      "music": 0.0
+    },
+    {
+      "from": 495.729,
+      "to": 498.0,
+      "sid": 215,
+      "location": 2,
+      "content": "当然对于是不是同一个文件",
+      "music": 0.0
+    },
+    {
+      "from": 498.0,
+      "to": 499.74,
+      "sid": 216,
+      "location": 2,
+      "content": "这个就看你个人的需要",
+      "music": 0.0
+    },
+    {
+      "from": 499.74,
+      "to": 503.18,
+      "sid": 217,
+      "location": 2,
+      "content": "我这个是因为为了自己的一些呃一些习惯",
+      "music": 0.0
+    },
+    {
+      "from": 503.18,
+      "to": 505.28,
+      "sid": 218,
+      "location": 2,
+      "content": "我比较习惯把它区分一下",
+      "music": 0.0
+    },
+    {
+      "from": 505.28,
+      "to": 510.68,
+      "sid": 219,
+      "location": 2,
+      "content": "然后假设假设AI在改动饱腹度这个过程中",
+      "music": 0.0
+    },
+    {
+      "from": 510.68,
+      "to": 512.62,
+      "sid": 220,
+      "location": 2,
+      "content": "他偷偷改了其他的代码",
+      "music": 0.0
+    },
+    {
+      "from": 512.62,
+      "to": 514.14,
+      "sid": 221,
+      "location": 2,
+      "content": "比方说他改了",
+      "music": 0.0
+    },
+    {
+      "from": 514.14,
+      "to": 517.22,
+      "sid": 222,
+      "location": 2,
+      "content": "改了喂养的这个接口里面的一些业务逻辑",
+      "music": 0.0
+    },
+    {
+      "from": 517.22,
+      "to": 518.78,
+      "sid": 223,
+      "location": 2,
+      "content": "比如说他不给",
+      "music": 0.0
+    },
+    {
+      "from": 518.78,
+      "to": 522.08,
+      "sid": 224,
+      "location": 2,
+      "content": "突然间他不增加经验的",
+      "music": 0.0
+    },
+    {
+      "from": 522.2,
+      "to": 526.64,
+      "sid": 225,
+      "location": 2,
+      "content": "也就是说他这个预期他这结果是不对的",
+      "music": 0.0
+    },
+    {
+      "from": 526.64,
+      "to": 531.36,
+      "sid": 226,
+      "location": 2,
+      "content": "那这时候他在那个这个地方它就会报错",
+      "music": 0.0
+    },
+    {
+      "from": 531.36,
+      "to": 534.6,
+      "sid": 227,
+      "location": 2,
+      "content": "那这时候我们开发者就非常非常直观的",
+      "music": 0.0
+    },
+    {
+      "from": 534.6,
+      "to": 536.14,
+      "sid": 228,
+      "location": 2,
+      "content": "就能知道诶",
+      "music": 0.0
+    },
+    {
+      "from": 536.14,
+      "to": 537.9,
+      "sid": 229,
+      "location": 2,
+      "content": "我让你改了饱和度",
+      "music": 0.0
+    },
+    {
+      "from": 537.9,
+      "to": 539.48,
+      "sid": 230,
+      "location": 2,
+      "content": "你居然把我里面的东西",
+      "music": 0.0
+    },
+    {
+      "from": 539.48,
+      "to": 541.4,
+      "sid": 231,
+      "location": 2,
+      "content": "的原先的业务逻辑给干掉了",
+      "music": 0.0
+    },
+    {
+      "from": 541.4,
+      "to": 543.53,
+      "sid": 232,
+      "location": 2,
+      "content": "那这明显就不对了",
+      "music": 0.0
+    },
+    {
+      "from": 543.53,
+      "to": 545.69,
+      "sid": 233,
+      "location": 2,
+      "content": "所以这就是一个核心的业务",
+      "music": 0.0
+    },
+    {
+      "from": 545.69,
+      "to": 547.49,
+      "sid": 234,
+      "location": 2,
+      "content": "交给honeys的一个必要性",
+      "music": 0.0
+    },
+    {
+      "from": 547.49,
+      "to": 548.83,
+      "sid": 235,
+      "location": 2,
+      "content": "因为这些东西",
+      "music": 0.0
+    },
+    {
+      "from": 548.83,
+      "to": 554.03,
+      "sid": 236,
+      "location": 2,
+      "content": "你人是不可能去看每一行AI产出的代码",
+      "music": 0.0
+    },
+    {
+      "from": 554.03,
+      "to": 555.75,
+      "sid": 237,
+      "location": 2,
+      "content": "那为什么要这么麻烦呢",
+      "music": 0.0
+    },
+    {
+      "from": 555.75,
+      "to": 558.34,
+      "sid": 238,
+      "location": 2,
+      "content": "为什么要要这么多测试框架呢",
+      "music": 0.0
+    },
+    {
+      "from": 558.34,
+      "to": 560.62,
+      "sid": 239,
+      "location": 2,
+      "content": "或者说我们为什么用spec honey呢",
+      "music": 0.0
+    },
+    {
+      "from": 560.62,
+      "to": 563.66,
+      "sid": 240,
+      "location": 2,
+      "content": "在我们前面已经讲了嗯很多期了",
+      "music": 0.0
+    },
+    {
+      "from": 563.66,
+      "to": 568.79,
+      "sid": 241,
+      "location": 2,
+      "content": "其实在这里最重要最重要的主要是解决模型",
+      "music": 0.0
+    },
+    {
+      "from": 568.79,
+      "to": 571.51,
+      "sid": 242,
+      "location": 2,
+      "content": "大模型本身是概率模型的一些问题",
+      "music": 0.0
+    },
+    {
+      "from": 571.51,
+      "to": 574.26,
+      "sid": 243,
+      "location": 2,
+      "content": "或者说它会产生幻觉的问题",
+      "music": 0.0
+    },
+    {
+      "from": 574.26,
+      "to": 576.78,
+      "sid": 244,
+      "location": 2,
+      "content": "就是只要是transformer架构",
+      "music": 0.0
+    },
+    {
+      "from": 576.78,
+      "to": 580.46,
+      "sid": 245,
+      "location": 2,
+      "content": "它就不可避免的在某一个时间段会产生幻觉",
+      "music": 0.0
+    },
+    {
+      "from": 580.46,
+      "to": 583.29,
+      "sid": 246,
+      "location": 2,
+      "content": "那这个时候对于任何项目",
+      "music": 0.0
+    },
+    {
+      "from": 583.29,
+      "to": 584.37,
+      "sid": 247,
+      "location": 2,
+      "content": "或者说对于AI编程",
+      "music": 0.0
+    },
+    {
+      "from": 584.37,
+      "to": 589.05,
+      "sid": 248,
+      "location": 2,
+      "content": "是非常非常有致命的一个一个潜在的因素",
+      "music": 0.0
+    },
+    {
+      "from": 589.05,
+      "to": 595.06,
+      "sid": 249,
+      "location": 2,
+      "content": "就说假设我现在我现在饱腹度改了80之后",
+      "music": 0.0
+    },
+    {
+      "from": 595.06,
+      "to": 598.18,
+      "sid": 250,
+      "location": 2,
+      "content": "我如果不做这些测试",
+      "music": 0.0
+    },
+    {
+      "from": 598.18,
+      "to": 600.0,
+      "sid": 251,
+      "location": 2,
+      "content": "或者说这些HAEX工程",
+      "music": 0.0
+    },
+    {
+      "from": 600.0,
+      "to": 602.12,
+      "sid": 252,
+      "location": 2,
+      "content": "整个测试用例之类的",
+      "music": 0.0
+    },
+    {
+      "from": 602.12,
+      "to": 604.91,
+      "sid": 253,
+      "location": 2,
+      "content": "一旦里面出现任何",
+      "music": 0.0
+    },
+    {
+      "from": 604.91,
+      "to": 607.93,
+      "sid": 254,
+      "location": 2,
+      "content": "比如说我正常情况下喂养之后",
+      "music": 0.0
+    },
+    {
+      "from": 607.93,
+      "to": 609.39,
+      "sid": 255,
+      "location": 2,
+      "content": "我需要经验去加",
+      "music": 0.0
+    },
+    {
+      "from": 609.39,
+      "to": 610.85,
+      "sid": 256,
+      "location": 2,
+      "content": "我需要心情去加",
+      "music": 0.0
+    },
+    {
+      "from": 610.85,
+      "to": 612.29,
+      "sid": 257,
+      "location": 2,
+      "content": "去去自动增加",
+      "music": 0.0
+    },
+    {
+      "from": 612.29,
+      "to": 613.91,
+      "sid": 258,
+      "location": 2,
+      "content": "我需要广播窗口",
+      "music": 0.0
+    },
+    {
+      "from": 613.91,
+      "to": 617.64,
+      "sid": 259,
+      "location": 2,
+      "content": "一旦在后面AI在某个时间段",
+      "music": 0.0
+    },
+    {
+      "from": 617.64,
+      "to": 620.34,
+      "sid": 260,
+      "location": 2,
+      "content": "突然为了某一个需求而改动了",
+      "music": 0.0
+    },
+    {
+      "from": 620.34,
+      "to": 622.29,
+      "sid": 261,
+      "location": 2,
+      "content": "里面的这个喂养的逻辑",
+      "music": 0.0
+    },
+    {
+      "from": 622.29,
+      "to": 626.07,
+      "sid": 262,
+      "location": 2,
+      "content": "反而就会导致我们在未来的某个时间点",
+      "music": 0.0
+    },
+    {
+      "from": 626.07,
+      "to": 628.35,
+      "sid": 263,
+      "location": 2,
+      "content": "会出现不可避免的回溯",
+      "music": 0.0
+    },
+    {
+      "from": 628.35,
+      "to": 633.47,
+      "sid": 264,
+      "location": 2,
+      "content": "去追溯我们到底何时改了这部分的代码",
+      "music": 0.0
+    },
+    {
+      "from": 633.47,
+      "to": 636.31,
+      "sid": 265,
+      "location": 2,
+      "content": "那这时候项目迭代期异常",
+      "music": 0.0
+    },
+    {
+      "from": 636.31,
+      "to": 639.61,
+      "sid": 266,
+      "location": 2,
+      "content": "你去排查这些东西是非常非常的困难的",
+      "music": 0.0
+    },
+    {
+      "from": 639.61,
+      "to": 640.15,
+      "sid": 267,
+      "location": 2,
+      "content": "也就是说",
+      "music": 0.0
+    },
+    {
+      "from": 640.15,
+      "to": 643.589,
+      "sid": 268,
+      "location": 2,
+      "content": "你根本就不可能在一个长线迭代的项目里面",
+      "music": 0.0
+    },
+    {
+      "from": 643.589,
+      "to": 644.829,
+      "sid": 269,
+      "location": 2,
+      "content": "去排查AI",
+      "music": 0.0
+    },
+    {
+      "from": 644.829,
+      "to": 648.949,
+      "sid": 270,
+      "location": 2,
+      "content": "因为幻觉带来的问题带来的一些隐性的修改",
+      "music": 0.0
+    },
+    {
+      "from": 648.949,
+      "to": 653.89,
+      "sid": 271,
+      "location": 2,
+      "content": "而导致你要去review以前的某个时间点上传的代码",
+      "music": 0.0
+    },
+    {
+      "from": 653.89,
+      "to": 655.89,
+      "sid": 272,
+      "location": 2,
+      "content": "是根本不可能发生的事情",
+      "music": 0.0
+    },
+    {
+      "from": 655.89,
+      "to": 660.309,
+      "sid": 273,
+      "location": 2,
+      "content": "而且为什么我说要关键时候再去叠",
+      "music": 0.0
+    },
+    {
+      "from": 660.309,
+      "to": 661.369,
+      "sid": 274,
+      "location": 2,
+      "content": "再去写SPG",
+      "music": 0.0
+    },
+    {
+      "from": 661.369,
+      "to": 662.249,
+      "sid": 275,
+      "location": 2,
+      "content": "再去写honeys",
+      "music": 0.0
+    },
+    {
+      "from": 662.249,
+      "to": 663.309,
+      "sid": 276,
+      "location": 2,
+      "content": "再去介绍honeys",
+      "music": 0.0
+    },
+    {
+      "from": 663.309,
+      "to": 667.11,
+      "sid": 277,
+      "location": 2,
+      "content": "因为你一旦在一开始项目还没定性下来的时候",
+      "music": 0.0
+    },
+    {
+      "from": 667.11,
+      "to": 669.41,
+      "sid": 278,
+      "location": 2,
+      "content": "你一开始就去写这么多东西",
+      "music": 0.0
+    },
+    {
+      "from": 669.41,
+      "to": 670.87,
+      "sid": 279,
+      "location": 2,
+      "content": "去跑这么多东西",
+      "music": 0.0
+    },
+    {
+      "from": 670.87,
+      "to": 672.87,
+      "sid": 280,
+      "location": 2,
+      "content": "去驾驶这么多honeys的东西",
+      "music": 0.0
+    },
+    {
+      "from": 672.87,
+      "to": 675.83,
+      "sid": 281,
+      "location": 2,
+      "content": "你会发现你每改一个需求点",
+      "music": 0.0
+    },
+    {
+      "from": 675.83,
+      "to": 680.14,
+      "sid": 282,
+      "location": 2,
+      "content": "你都要跑这么这么多测试这么多哈尼斯工程",
+      "music": 0.0
+    },
+    {
+      "from": 680.14,
+      "to": 683.48,
+      "sid": 283,
+      "location": 2,
+      "content": "那么那么你对你的整个AI的效率",
+      "music": 0.0
+    },
+    {
+      "from": 683.48,
+      "to": 685.08,
+      "sid": 284,
+      "location": 2,
+      "content": "是非常非常的慢的",
+      "music": 0.0
+    },
+    {
+      "from": 685.08,
+      "to": 687.28,
+      "sid": 285,
+      "location": 2,
+      "content": "也就是说我的原则是",
+      "music": 0.0
+    },
+    {
+      "from": 687.28,
+      "to": 691.66,
+      "sid": 286,
+      "location": 2,
+      "content": "我的建议是各位在想落地SPECT跟honey的时候",
+      "music": 0.0
+    },
+    {
+      "from": 691.66,
+      "to": 694.22,
+      "sid": 287,
+      "location": 2,
+      "content": "一定要针对一个大的",
+      "music": 0.0
+    },
+    {
+      "from": 694.22,
+      "to": 696.66,
+      "sid": 288,
+      "location": 2,
+      "content": "或者说一个整块的功能需求点",
+      "music": 0.0
+    },
+    {
+      "from": 696.66,
+      "to": 701.26,
+      "sid": 289,
+      "location": 2,
+      "content": "核心非常核心的一些需求点去做honeys的建设",
+      "music": 0.0
+    },
+    {
+      "from": 701.26,
+      "to": 704.69,
+      "sid": 290,
+      "location": 2,
+      "content": "而对于一些单条决策或者说单挑核心",
+      "music": 0.0
+    },
+    {
+      "from": 704.69,
+      "to": 706.93,
+      "sid": 291,
+      "location": 2,
+      "content": "比如说饱腹度有最大值",
+      "music": 0.0
+    },
+    {
+      "from": 706.93,
+      "to": 708.85,
+      "sid": 292,
+      "location": 2,
+      "content": "这种单挑核心决策",
+      "music": 0.0
+    },
+    {
+      "from": 708.85,
+      "to": 711.13,
+      "sid": 293,
+      "location": 2,
+      "content": "那么你就不需要作为一个honeys",
+      "music": 0.0
+    },
+    {
+      "from": 711.13,
+      "to": 715.449,
+      "sid": 294,
+      "location": 2,
+      "content": "你只需要去写为一个嗯决策类的spec",
+      "music": 0.0
+    },
+    {
+      "from": 715.449,
+      "to": 718.889,
+      "sid": 295,
+      "location": 2,
+      "content": "在决策类的spark在我们前面几集讲了也不少",
+      "music": 0.0
+    },
+    {
+      "from": 718.889,
+      "to": 722.19,
+      "sid": 296,
+      "location": 2,
+      "content": "也就是说用自然语言去写",
+      "music": 0.0
+    },
+    {
+      "from": 722.19,
+      "to": 725.43,
+      "sid": 297,
+      "location": 2,
+      "content": "这个要是为什么要设定这个这个SPA",
+      "music": 0.0
+    },
+    {
+      "from": 725.43,
+      "to": 727.39,
+      "sid": 298,
+      "location": 2,
+      "content": "为什么要写这个最大阈值",
+      "music": 0.0
+    },
+    {
+      "from": 727.39,
+      "to": 729.68,
+      "sid": 299,
+      "location": 2,
+      "content": "这个阈值能干什么",
+      "music": 0.0
+    },
+    {
+      "from": 729.88,
+      "to": 734.9,
+      "sid": 300,
+      "location": 2,
+      "content": "OK那整个流程其实就大概就是这样",
+      "music": 0.0
+    },
+    {
+      "from": 734.9,
+      "to": 738.64,
+      "sid": 301,
+      "location": 2,
+      "content": "就是从小的功能点入手来给大家讲解",
+      "music": 0.0
+    },
+    {
+      "from": 738.64,
+      "to": 742.1,
+      "sid": 302,
+      "location": 2,
+      "content": "其实这这整块我认为是比较好讲解的",
+      "music": 0.0
+    },
+    {
+      "from": 742.1,
+      "to": 744.25,
+      "sid": 303,
+      "location": 2,
+      "content": "刚好我的项目也比较形象化",
+      "music": 0.0
+    },
+    {
+      "from": 744.25,
+      "to": 745.93,
+      "sid": 304,
+      "location": 2,
+      "content": "所以讲起来不会很费劲",
+      "music": 0.0
+    },
+    {
+      "from": 745.93,
+      "to": 748.33,
+      "sid": 305,
+      "location": 2,
+      "content": "嗯怎么说呢",
+      "music": 0.0
+    },
+    {
+      "from": 748.33,
+      "to": 750.07,
+      "sid": 306,
+      "location": 2,
+      "content": "这整个工作流程",
+      "music": 0.0
+    },
+    {
+      "from": 750.07,
+      "to": 751.97,
+      "sid": 307,
+      "location": 2,
+      "content": "这整个honey is back and honeys",
+      "music": 0.0
+    },
+    {
+      "from": 751.97,
+      "to": 756.13,
+      "sid": 308,
+      "location": 2,
+      "content": "整个流程其实你要自己去亲身体验一下",
+      "music": 0.0
+    },
+    {
+      "from": 756.13,
+      "to": 758.05,
+      "sid": 309,
+      "location": 2,
+      "content": "去经历AI编程",
+      "music": 0.0
+    },
+    {
+      "from": 758.05,
+      "to": 760.95,
+      "sid": 310,
+      "location": 2,
+      "content": "整个流程从0~1",
+      "music": 0.0
+    },
+    {
+      "from": 760.95,
+      "to": 763.089,
+      "sid": 311,
+      "location": 2,
+      "content": "再到1~10整个阶段之后",
+      "music": 0.0
+    },
+    {
+      "from": 763.089,
+      "to": 766.009,
+      "sid": 312,
+      "location": 2,
+      "content": "你会有非常非常遇到非常非常多的问题",
+      "music": 0.0
+    },
+    {
+      "from": 766.009,
+      "to": 768.309,
+      "sid": 313,
+      "location": 2,
+      "content": "然后你会有非常非常多的认知",
+      "music": 0.0
+    },
+    {
+      "from": 768.309,
+      "to": 770.329,
+      "sid": 314,
+      "location": 2,
+      "content": "还有一些反馈",
+      "music": 0.0
+    },
+    {
+      "from": 770.329,
+      "to": 771.769,
+      "sid": 315,
+      "location": 2,
+      "content": "因为这是每AI as",
+      "music": 0.0
+    },
+    {
+      "from": 771.769,
+      "to": 775.06,
+      "sid": 316,
+      "location": 2,
+      "content": "当下每个开发者都必经的一个阶段",
+      "music": 0.0
+    },
+    {
+      "from": 775.06,
+      "to": 777.9,
+      "sid": 317,
+      "location": 2,
+      "content": "只是说大家的收获多和少的问题",
+      "music": 0.0
+    },
+    {
+      "from": 777.9,
+      "to": 779.62,
+      "sid": 318,
+      "location": 2,
+      "content": "以及经验的多和少的问题",
+      "music": 0.0
+    },
+    {
+      "from": 779.62,
+      "to": 783.76,
+      "sid": 319,
+      "location": 2,
+      "content": "然后在大模型的transformer架构不变的情况下",
+      "music": 0.0
+    },
+    {
+      "from": 783.76,
+      "to": 786.14,
+      "sid": 320,
+      "location": 2,
+      "content": "这一套honeys跟SPG",
+      "music": 0.0
+    },
+    {
+      "from": 786.14,
+      "to": 792.69,
+      "sid": 321,
+      "location": 2,
+      "content": "将会是长期以及都会一直存在的一个AI工程",
+      "music": 0.0
+    },
+    {
+      "from": 792.69,
+      "to": 795.21,
+      "sid": 322,
+      "location": 2,
+      "content": "也就是说我们传统的软件工程",
+      "music": 0.0
+    },
+    {
+      "from": 795.21,
+      "to": 800.81,
+      "sid": 323,
+      "location": 2,
+      "content": "现在要逐步演变成用软件工程的思维来设立",
+      "music": 0.0
+    },
+    {
+      "from": 800.81,
+      "to": 803.75,
+      "sid": 324,
+      "location": 2,
+      "content": "AI时代下的AI编程工程化",
+      "music": 0.0
+    },
+    {
+      "from": 803.75,
+      "to": 805.79,
+      "sid": 325,
+      "location": 2,
+      "content": "然后呢对于你们的项目",
+      "music": 0.0
+    },
+    {
+      "from": 805.79,
+      "to": 809.97,
+      "sid": 326,
+      "location": 2,
+      "content": "我在前面讲到会跟你们说怎么去做HANSER",
+      "music": 0.0
+    },
+    {
+      "from": 809.97,
+      "to": 812.21,
+      "sid": 327,
+      "location": 2,
+      "content": "比如说你现在的项目已经呃",
+      "music": 0.0
+    },
+    {
+      "from": 812.21,
+      "to": 814.329,
+      "sid": 328,
+      "location": 2,
+      "content": "地基已经打了还行",
+      "music": 0.0
+    },
+    {
+      "from": 814.329,
+      "to": 817.289,
+      "sid": 329,
+      "location": 2,
+      "content": "然后项目已经迭代的差不多了",
+      "music": 0.0
+    },
+    {
+      "from": 817.289,
+      "to": 818.709,
+      "sid": 330,
+      "location": 2,
+      "content": "发展到一定阶段了",
+      "music": 0.0
+    },
+    {
+      "from": 818.709,
+      "to": 822.93,
+      "sid": 331,
+      "location": 2,
+      "content": "然后发现现在改一个东西都不太好控制",
+      "music": 0.0
+    },
+    {
+      "from": 822.93,
+      "to": 824.25,
+      "sid": 332,
+      "location": 2,
+      "content": "或者说是没有心里有数",
+      "music": 0.0
+    },
+    {
+      "from": 824.25,
+      "to": 826.23,
+      "sid": 333,
+      "location": 2,
+      "content": "有时候你的东西多了之后",
+      "music": 0.0
+    },
+    {
+      "from": 826.23,
+      "to": 828.83,
+      "sid": 334,
+      "location": 2,
+      "content": "你会发现你有一些前面改的东西",
+      "music": 0.0
+    },
+    {
+      "from": 828.83,
+      "to": 829.39,
+      "sid": 335,
+      "location": 2,
+      "content": "你会忘了",
+      "music": 0.0
+    },
+    {
+      "from": 829.39,
+      "to": 831.09,
+      "sid": 336,
+      "location": 2,
+      "content": "你会不知道之前做了什么",
+      "music": 0.0
+    },
+    {
+      "from": 831.09,
+      "to": 835.82,
+      "sid": 337,
+      "location": 2,
+      "content": "那这时候你就可以开始考虑引入honeys的",
+      "music": 0.0
+    },
+    {
+      "from": 835.82,
+      "to": 838.34,
+      "sid": 338,
+      "location": 2,
+      "content": "那honeys honeys怎么去引用呢",
+      "music": 0.0
+    },
+    {
+      "from": 838.34,
+      "to": 840.0,
+      "sid": 339,
+      "location": 2,
+      "content": "这个其实也不难",
+      "music": 0.0
+    },
+    {
+      "from": 840.0,
+      "to": 843.419,
+      "sid": 340,
+      "location": 2,
+      "content": "就是说你要让重新新开新开一个窗口",
+      "music": 0.0
+    },
+    {
+      "from": 843.419,
+      "to": 847.58,
+      "sid": 341,
+      "location": 2,
+      "content": "让AI去帮你去做整套的架构",
+      "music": 0.0
+    },
+    {
+      "from": 847.58,
+      "to": 849.66,
+      "sid": 342,
+      "location": 2,
+      "content": "harness跟span的一个分析",
+      "music": 0.0
+    },
+    {
+      "from": 849.66,
+      "to": 851.26,
+      "sid": 343,
+      "location": 2,
+      "content": "然后这些文档",
+      "music": 0.0
+    },
+    {
+      "from": 851.26,
+      "to": 852.34,
+      "sid": 344,
+      "location": 2,
+      "content": "包括这些文档",
+      "music": 0.0
+    },
+    {
+      "from": 852.34,
+      "to": 856.54,
+      "sid": 345,
+      "location": 2,
+      "content": "都不是我自己全部自己一行一行写出来的",
+      "music": 0.0
+    },
+    {
+      "from": 856.54,
+      "to": 861.83,
+      "sid": 346,
+      "location": 2,
+      "content": "这些事在跟AI经历经历过一系列的讨论之后",
+      "music": 0.0
+    },
+    {
+      "from": 861.83,
+      "to": 863.98,
+      "sid": 347,
+      "location": 2,
+      "content": "最终沉淀下来的一一套方案",
+      "music": 0.0
+    },
+    {
+      "from": 863.98,
+      "to": 868.08,
+      "sid": 348,
+      "location": 2,
+      "content": "这个方案就是最初的我们最开始讨论的",
+      "music": 0.0
+    },
+    {
+      "from": 868.08,
+      "to": 870.04,
+      "sid": 349,
+      "location": 2,
+      "content": "最完整的一套方案",
+      "music": 0.0
+    },
+    {
+      "from": 870.04,
+      "to": 872.28,
+      "sid": 350,
+      "location": 2,
+      "content": "你看这个这个是在5月6号",
+      "music": 0.0
+    },
+    {
+      "from": 872.28,
+      "to": 874.2,
+      "sid": 351,
+      "location": 2,
+      "content": "就说我们上个月做的一个工程化的",
+      "music": 0.0
+    },
+    {
+      "from": 874.2,
+      "to": 875.8,
+      "sid": 352,
+      "location": 2,
+      "content": "一个一个落地",
+      "music": 0.0
+    },
+    {
+      "from": 875.8,
+      "to": 881.1,
+      "sid": 353,
+      "location": 2,
+      "content": "然后这一整套你其实不需要去全部自己去写",
+      "music": 0.0
+    },
+    {
+      "from": 881.1,
+      "to": 883.44,
+      "sid": 354,
+      "location": 2,
+      "content": "你只需要在它给了你方案之后",
+      "music": 0.0
+    },
+    {
+      "from": 883.44,
+      "to": 886.98,
+      "sid": 355,
+      "location": 2,
+      "content": "你直接再去里面做一定的修整调整",
+      "music": 0.0
+    },
+    {
+      "from": 886.98,
+      "to": 889.38,
+      "sid": 356,
+      "location": 2,
+      "content": "然后呢他的做honeys的方法呢",
+      "music": 0.0
+    },
+    {
+      "from": 889.38,
+      "to": 895.41,
+      "sid": 357,
+      "location": 2,
+      "content": "也不是说全部从一开始就全程全套给你honeys",
+      "music": 0.0
+    },
+    {
+      "from": 895.41,
+      "to": 896.43,
+      "sid": 358,
+      "location": 2,
+      "content": "给你铺垫好",
+      "music": 0.0
+    },
+    {
+      "from": 896.43,
+      "to": 901.2,
+      "sid": 359,
+      "location": 2,
+      "content": "而是说你要渐进式去完成每个honeys的建设",
+      "music": 0.0
+    },
+    {
+      "from": 901.2,
+      "to": 904.42,
+      "sid": 360,
+      "location": 2,
+      "content": "比方说我今天就完成我的聊天",
+      "music": 0.0
+    },
+    {
+      "from": 904.42,
+      "to": 907.22,
+      "sid": 361,
+      "location": 2,
+      "content": "跟ASIAN的这个哈尼斯的建设",
+      "music": 0.0
+    },
+    {
+      "from": 907.22,
+      "to": 909.15,
+      "sid": 362,
+      "location": 2,
+      "content": "我明天可以完成",
+      "music": 0.0
+    },
+    {
+      "from": 909.15,
+      "to": 912.19,
+      "sid": 363,
+      "location": 2,
+      "content": "嗯什么我以以我的以我的软件来说",
+      "music": 0.0
+    },
+    {
+      "from": 912.19,
+      "to": 914.67,
+      "sid": 364,
+      "location": 2,
+      "content": "就以我明天可以完成我的记忆系统的",
+      "music": 0.0
+    },
+    {
+      "from": 914.67,
+      "to": 915.93,
+      "sid": 365,
+      "location": 2,
+      "content": "一个哈利斯的建设",
+      "music": 0.0
+    },
+    {
+      "from": 915.93,
+      "to": 919.09,
+      "sid": 366,
+      "location": 2,
+      "content": "我后天可以再完成我的呃经验啊",
+      "music": 0.0
+    },
+    {
+      "from": 919.09,
+      "to": 920.89,
+      "sid": 367,
+      "location": 2,
+      "content": "或者说商商商城啊",
+      "music": 0.0
+    },
+    {
+      "from": 920.89,
+      "to": 921.69,
+      "sid": 368,
+      "location": 2,
+      "content": "背包金币啊",
+      "music": 0.0
+    },
+    {
+      "from": 921.69,
+      "to": 924.25,
+      "sid": 369,
+      "location": 2,
+      "content": "当然这个本质上你看我的这个软件",
+      "music": 0.0
+    },
+    {
+      "from": 924.25,
+      "to": 928.01,
+      "sid": 370,
+      "location": 2,
+      "content": "本质上其实就跟那个像我们传统的一些软件的",
+      "music": 0.0
+    },
+    {
+      "from": 928.01,
+      "to": 929.47,
+      "sid": 371,
+      "location": 2,
+      "content": "SARS也挺像的",
+      "music": 0.0
+    },
+    {
+      "from": 929.47,
+      "to": 931.39,
+      "sid": 372,
+      "location": 2,
+      "content": "比如说左侧栏有几个模块",
+      "music": 0.0
+    },
+    {
+      "from": 931.39,
+      "to": 934.91,
+      "sid": 373,
+      "location": 2,
+      "content": "右侧那这种情况你是最方便去做honey的建设的",
+      "music": 0.0
+    },
+    {
+      "from": 934.91,
+      "to": 938.07,
+      "sid": 374,
+      "location": 2,
+      "content": "你可以每每天用一个模块去介绍",
+      "music": 0.0
+    },
+    {
+      "from": 938.07,
+      "to": 938.7,
+      "sid": 375,
+      "location": 2,
+      "content": "Hi",
+      "music": 0.0
+    },
+    {
+      "from": 938.7,
+      "to": 942.46,
+      "sid": 376,
+      "location": 2,
+      "content": "为什么我说honeys跟spin要在中迭代",
+      "music": 0.0
+    },
+    {
+      "from": 942.46,
+      "to": 943.82,
+      "sid": 377,
+      "location": 2,
+      "content": "中期后期引入呢",
+      "music": 0.0
+    },
+    {
+      "from": 943.82,
+      "to": 948.49,
+      "sid": 378,
+      "location": 2,
+      "content": "因为这个时候你让AI自己去反推里面的逻辑",
+      "music": 0.0
+    },
+    {
+      "from": 948.49,
+      "to": 950.69,
+      "sid": 379,
+      "location": 2,
+      "content": "其实是非常适合的",
+      "music": 0.0
+    },
+    {
+      "from": 950.69,
+      "to": 954.28,
+      "sid": 380,
+      "location": 2,
+      "content": "也不用你自己去限定限定规则之类的",
+      "music": 0.0
+    },
+    {
+      "from": 954.28,
+      "to": 957.73,
+      "sid": 381,
+      "location": 2,
+      "content": "因为这时候你的整套架构跟技术协议",
+      "music": 0.0
+    },
+    {
+      "from": 957.73,
+      "to": 958.69,
+      "sid": 382,
+      "location": 2,
+      "content": "已经开始稳定了",
+      "music": 0.0
+    },
+    {
+      "from": 958.69,
+      "to": 960.91,
+      "sid": 383,
+      "location": 2,
+      "content": "那这时候你就让他AI去反推的话",
+      "music": 0.0
+    },
+    {
+      "from": 960.91,
+      "to": 963.53,
+      "sid": 384,
+      "location": 2,
+      "content": "本质上也不会改变什么嗯",
+      "music": 0.0
+    },
+    {
+      "from": 963.53,
+      "to": 966.01,
+      "sid": 385,
+      "location": 2,
+      "content": "文档一些约束之类的",
+      "music": 0.0
+    },
+    {
+      "from": 966.01,
+      "to": 968.23,
+      "sid": 386,
+      "location": 2,
+      "content": "他反而会比你写的更好",
+      "music": 0.0
+    },
+    {
+      "from": 968.23,
+      "to": 971.25,
+      "sid": 387,
+      "location": 2,
+      "content": "比你自己去一开始去写各种各样的约束",
+      "music": 0.0
+    },
+    {
+      "from": 971.25,
+      "to": 973.03,
+      "sid": 388,
+      "location": 2,
+      "content": "或者说接口条件可能还更好",
+      "music": 0.0
+    },
+    {
+      "from": 973.03,
+      "to": 976.209,
+      "sid": 389,
+      "location": 2,
+      "content": "所以这就是我说为什么很很倡议",
+      "music": 0.0
+    },
+    {
+      "from": 976.209,
+      "to": 978.72,
+      "sid": 390,
+      "location": 2,
+      "content": "很倡导大家去在AI时代下",
+      "music": 0.0
+    },
+    {
+      "from": 978.72,
+      "to": 980.76,
+      "sid": 391,
+      "location": 2,
+      "content": "模型越来越强的时代下",
+      "music": 0.0
+    },
+    {
+      "from": 980.76,
+      "to": 983.689,
+      "sid": 392,
+      "location": 2,
+      "content": "你这些东西包括一些文档",
+      "music": 0.0
+    },
+    {
+      "from": 983.689,
+      "to": 985.349,
+      "sid": 393,
+      "location": 2,
+      "content": "一些设计文档之类的",
+      "music": 0.0
+    },
+    {
+      "from": 985.349,
+      "to": 987.929,
+      "sid": 394,
+      "location": 2,
+      "content": "你这些东西交给AI去做",
+      "music": 0.0
+    },
+    {
+      "from": 987.929,
+      "to": 990.85,
+      "sid": 395,
+      "location": 2,
+      "content": "可能比你还要做得更好",
+      "music": 0.0
+    },
+    {
+      "from": 990.85,
+      "to": 994.37,
+      "sid": 396,
+      "location": 2,
+      "content": "因为你的能力在AI这个模型",
+      "music": 0.0
+    },
+    {
+      "from": 994.37,
+      "to": 996.27,
+      "sid": 397,
+      "location": 2,
+      "content": "在transformer这个模型",
+      "music": 0.0
+    },
+    {
+      "from": 996.27,
+      "to": 1000.84,
+      "sid": 398,
+      "location": 2,
+      "content": "情的这个巨大的这个能力下",
+      "music": 0.0
+    },
+    {
+      "from": 1000.84,
+      "to": 1004.09,
+      "sid": 399,
+      "location": 2,
+      "content": "你是完全匹敌不了这个模型",
+      "music": 0.0
+    },
+    {
+      "from": 1004.09,
+      "to": 1007.55,
+      "sid": 400,
+      "location": 2,
+      "content": "你的能力是远小于它的几千几万倍",
+      "music": 0.0
+    },
+    {
+      "from": 1007.55,
+      "to": 1012.18,
+      "sid": 401,
+      "location": 2,
+      "content": "它就像是你的全世界的一个助手",
+      "music": 0.0
+    },
+    {
+      "from": 1012.18,
+      "to": 1013.62,
+      "sid": 402,
+      "location": 2,
+      "content": "什么都懂得住手",
+      "music": 0.0
+    },
+    {
+      "from": 1013.62,
+      "to": 1015.02,
+      "sid": 403,
+      "location": 2,
+      "content": "但是你想去跟他比例",
+      "music": 0.0
+    },
+    {
+      "from": 1015.02,
+      "to": 1015.74,
+      "sid": 404,
+      "location": 2,
+      "content": "你是不可能的",
+      "music": 0.0
+    },
+    {
+      "from": 1015.74,
+      "to": 1019.569,
+      "sid": 405,
+      "location": 2,
+      "content": "所以你还不如在项目中期",
+      "music": 0.0
+    },
+    {
+      "from": 1019.569,
+      "to": 1023.88,
+      "sid": 406,
+      "location": 2,
+      "content": "交给AI去做功能的一些迭代",
+      "music": 0.0
+    },
+    {
+      "from": 1023.88,
+      "to": 1024.96,
+      "sid": 407,
+      "location": 2,
+      "content": "比如说spec honey",
+      "music": 0.0
+    },
+    {
+      "from": 1024.96,
+      "to": 1026.08,
+      "sid": 408,
+      "location": 2,
+      "content": "让他去建设",
+      "music": 0.0
+    },
+    {
+      "from": 1026.08,
+      "to": 1028.119,
+      "sid": 409,
+      "location": 2,
+      "content": "而不是让你自己去建设",
+      "music": 0.0
+    },
+    {
+      "from": 1028.119,
+      "to": 1032.919,
+      "sid": 410,
+      "location": 2,
+      "content": "你人是要负责判断判断他的东西是对还是不对",
+      "music": 0.0
+    },
+    {
+      "from": 1032.919,
+      "to": 1036.619,
+      "sid": 411,
+      "location": 2,
+      "content": "判断它落地的东西是是呃正常的",
+      "music": 0.0
+    },
+    {
+      "from": 1036.619,
+      "to": 1038.339,
+      "sid": 412,
+      "location": 2,
+      "content": "还是说离谱的",
+      "music": 0.0
+    },
+    {
+      "from": 1038.339,
+      "to": 1040.579,
+      "sid": 413,
+      "location": 2,
+      "content": "还是说偏于人类的语义的",
+      "music": 0.0
+    },
+    {
+      "from": 1040.579,
+      "to": 1042.949,
+      "sid": 414,
+      "location": 2,
+      "content": "这些东西都需要你去判断",
+      "music": 0.0
+    },
+    {
+      "from": 1042.949,
+      "to": 1044.789,
+      "sid": 415,
+      "location": 2,
+      "content": "你可能不需要参与编码",
+      "music": 0.0
+    },
+    {
+      "from": 1044.789,
+      "to": 1046.509,
+      "sid": 416,
+      "location": 2,
+      "content": "但是你必须去判断",
+      "music": 0.0
+    },
+    {
+      "from": 1046.509,
+      "to": 1050.409,
+      "sid": 417,
+      "location": 2,
+      "content": "你可以不去在乎里面代码里面写的什么",
+      "music": 0.0
+    },
+    {
+      "from": 1050.409,
+      "to": 1053.16,
+      "sid": 418,
+      "location": 2,
+      "content": "你是否里面是否有埋雷之类的",
+      "music": 0.0
+    },
+    {
+      "from": 1053.16,
+      "to": 1057.19,
+      "sid": 419,
+      "location": 2,
+      "content": "但是你最大限度式的价值是在于",
+      "music": 0.0
+    },
+    {
+      "from": 1057.19,
+      "to": 1059.37,
+      "sid": 420,
+      "location": 2,
+      "content": "你怎么去把控这些边界",
+      "music": 0.0
+    },
+    {
+      "from": 1059.37,
+      "to": 1060.98,
+      "sid": 421,
+      "location": 2,
+      "content": "把控AI的输出",
+      "music": 0.0
+    },
+    {
+      "from": 1060.98,
+      "to": 1065.7,
+      "sid": 422,
+      "location": 2,
+      "content": "能把他一整套的能力放在一个很完整",
+      "music": 0.0
+    },
+    {
+      "from": 1065.7,
+      "to": 1067.08,
+      "sid": 423,
+      "location": 2,
+      "content": "很安全",
+      "music": 0.0
+    },
+    {
+      "from": 1067.08,
+      "to": 1070.73,
+      "sid": 424,
+      "location": 2,
+      "content": "很平稳的一个流程去迭代",
+      "music": 0.0
+    },
+    {
+      "from": 1070.73,
+      "to": 1073.63,
+      "sid": 425,
+      "location": 2,
+      "content": "而不是说全部给他限制时",
+      "music": 0.0
+    },
+    {
+      "from": 1073.63,
+      "to": 1076.949,
+      "sid": 426,
+      "location": 2,
+      "content": "也不是说全部让它放开跑",
+      "music": 0.0
+    },
+    {
+      "from": 1076.949,
+      "to": 1079.449,
+      "sid": 427,
+      "location": 2,
+      "content": "这是非常在这个时代下",
+      "music": 0.0
+    },
+    {
+      "from": 1079.449,
+      "to": 1083.46,
+      "sid": 428,
+      "location": 2,
+      "content": "开发者最重要最重要的价值体现",
+      "music": 0.0
+    }
+  ]
+}

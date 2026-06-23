@@ -38,7 +38,7 @@ wss.on('connection', (ws) => {
 wss.on('connection', (ws) => { console.log('[mock-server] 扩展连接'); });
 await new Promise((r) => httpServer.listen(21527, '127.0.0.1', r));
 
-// ---- Chrome for Testing ----
+// ---- Chrome 定位：优先 Chrome for Testing，回退系统 Chrome（已验证系统 Chrome 149 可加载 MV3 扩展） ----
 let exec = '';
 try {
   const base = join(homedir(), '.cache/puppeteer/chrome');
@@ -46,9 +46,17 @@ try {
   const cand = join(base, ver, 'chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing');
   if (existsSync(cand)) exec = cand;
 } catch {}
+// fallback：系统 Chrome（macOS）
+if (!exec) {
+  const sysChrome = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
+  if (existsSync(sysChrome)) exec = sysChrome;
+}
 const browser = await puppeteer.launch({
   ...(exec ? { executablePath: exec } : {}),
   headless: false, // plan 要求 false：headless 模式下 Chrome 不加载 MV3 扩展
+  // 注意：不能带 --enable-automation（puppeteer 默认会加），否则 --load-extension 失效。
+  // 用 ignoreDefaultArgs 去掉它，这是加载 MV3 扩展的关键。
+  ignoreDefaultArgs: ['--enable-automation'],
   args: [`--disable-extensions-except=${EXT}`, `--load-extension=${EXT}`, '--no-first-run', '--no-default-browser-check', '--window-size=1280,900'],
 });
 await new Promise(r => setTimeout(r, 3000));
@@ -74,9 +82,12 @@ page.on('request', (req) => {
 
 // 情况1：正常 → 应收到 ingest（含轨 + body）
 await page.goto('https://www.bilibili.com/video/CASE_NORMAL', { waitUntil: 'domcontentloaded' });
+console.log('[时机1] goto后立即 hook:', await page.evaluate(() => !window.fetch.toString().includes('[native code]')));
 await page.evaluate(() => fetch('https://api.bilibili.com/x/player/wbi/v2?z=CASE_NORMAL'));
+console.log('[时机2] fetch后 hook:', await page.evaluate(() => !window.fetch.toString().includes('[native code]')));
 await page.evaluate(() => fetch('https://aisubtitle.hdslb.com/SUB_NORMAL.json'));
 await new Promise(r => setTimeout(r, 1500));
+console.log('[时机3] 等待后 hook:', await page.evaluate(() => !window.fetch.toString().includes('[native code]')));
 
 // 情况2/3/4：空 / 需登录 / 风控 → 都不应产生 ingest
 await page.goto('https://www.bilibili.com/video/CASE_EMPTY', { waitUntil: 'domcontentloaded' });
@@ -107,6 +118,13 @@ const opResult = received.results.find(r => r.id === 'cmd-op');
 console.log('[operate]', opResult?.data?.subtitleObserved ? '✅ 点击触发了字幕请求' : '⚠️ 未观察到字幕请求（按 spike 结论决定是否 CDP 降级）');
 
 // ---- 断言 ----
+// 诊断：在真实成功上下文里查 inject/content 是否真的工作
+const diag = await page.evaluate(() => ({
+  fetch_native: window.fetch.toString().includes('[native code]'),
+  fetch_src: window.fetch.toString().slice(0, 80),
+})).catch((e) => ({ err: e.message }));
+console.log('[diag] fetch hook 状态:', JSON.stringify(diag));
+console.log('[diag] 首个 ingest 内容:', JSON.stringify(received.ingests[0])?.slice(0, 500));
 const ok = received.ingests.length === 1 && received.ingests[0]?.video?.source_vid === 'BVnormal';
 console.log('\n[ingest 四情况]', ok ? '✅ 仅正常情况上报，其余三情况未上报' : '❌ subtitle_url 四情况处理异常');
 console.log('  收到 ingest 数:', received.ingests.length, '| navigate:', !!navResult, '| operate:', !!opResult);

@@ -6,3 +6,12 @@ dist/
 
 # 根目录调试截图（调试产物，不入库）
 /*.png
+
+# 本地 MCP / IDE 配置（含调试用浏览器实例地址，不入库）
+.opencode/
+
+# Claude 本地开发笔记（私有）
+.claude/
+
+# SQLite 数据库（采集数据，含隐私）
+apps/collector-server/*.db

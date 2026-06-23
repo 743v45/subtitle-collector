@@ -84,6 +84,17 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     sendResponse({ ok: true });
   } else if (msg?.type === "WS_STATUS") {
     sendResponse({ ok: true, connected: ws?.readyState === WebSocket.OPEN });
+  } else if (msg?.type === "FETCH_SUBTITLE" && msg.url) {
+    // content script 请求 background 抓字幕体（background 有 host_permissions，免 CORS）
+    // B 站新版播放器改用同源 protobuf endpoint，inject 拦不到旧 aisubtitle 请求，故由 background 主动抓
+    fetch(msg.url, { headers: { "Referer": "https://www.bilibili.com/" } })
+      .then(async (r) => {
+        if (!r.ok) { sendResponse({ ok: false, error: "HTTP " + r.status }); return; }
+        const body = await r.json().catch(() => null);
+        if (!body) { sendResponse({ ok: false, error: "json parse failed" }); return; }
+        sendResponse({ ok: true, body });
+      })
+      .catch((e) => sendResponse({ ok: false, error: e.message }));
   } else if (msg?.type === "MANUAL_CAPTURE") {
     // 只找 B 站视频页（避免对 chrome:// 等无 content script 的 tab sendMessage 抛 "Receiving end does not exist"）
     chrome.tabs.query({ active: true, currentWindow: true, url: "*://www.bilibili.com/video/*" }, ([tab]) => {

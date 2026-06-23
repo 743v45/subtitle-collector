@@ -10,6 +10,9 @@ window.addEventListener("message", (event) => {
     const cur = collected.get(data.bvid) ?? { meta: data, bodies: new Map() };
     cur.meta = data;
     collected.set(data.bvid, cur);
+    // 主动让 background 抓取字幕体（B 站新版播放器改用同源 protobuf endpoint，
+    // inject 的 isSubtitleUrl 不再能拦到字幕请求；改由 background 用 host_permissions 免 CORS 抓取）
+    fetchSubtitleBodiesViaBg(data.bvid, cur.meta.subs);
     flushIfReady(data.bvid);
   } else if (type === "SUBTITLE_BODY") {
     for (const [bvid, cur] of collected.entries()) {
@@ -25,6 +28,26 @@ window.addEventListener("message", (event) => {
     if (collected.size > 0) needLogin.add([...collected.keys()].pop());
   }
 });
+
+// 让 background（host_permissions 免 CORS）抓取每轨字幕体，存入 bodies 后重试 flush
+function fetchSubtitleBodiesViaBg(bvid, subs) {
+  for (const s of subs) {
+    const url = s.subtitle_url;
+    if (!url || s.url_missing) continue;
+    if (collected.get(bvid)?.bodies.has(url)) continue; // 已有（inject 拦到的）不重复
+    chrome.runtime.sendMessage({ type: "FETCH_SUBTITLE", url }, (resp) => {
+      const cur = collected.get(bvid);
+      if (!cur) return;
+      if (resp?.ok && resp.body) {
+        cur.bodies.set(url, resp.body);
+        console.log(`[content] background 抓到字幕体 bvid=${bvid} url=${url.slice(-30)} size=${JSON.stringify(resp.body).length}`);
+        flushIfReady(bvid);
+      } else {
+        console.warn(`[content] background 抓字幕失败 bvid=${bvid} url=${url.slice(-30)} err=${resp?.error}`);
+      }
+    });
+  }
+}
 
 function flushIfReady(bvid) {
   const cur = collected.get(bvid);
