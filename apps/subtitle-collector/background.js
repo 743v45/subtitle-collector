@@ -1,8 +1,11 @@
 import { SERVER_URL, PING_URL, TOKEN } from "./config.js";
+import { shouldReport, genClientId, CLIENT_ID_KEY, REPORTING_KEY } from "./reporting.mjs";
 const EXT_VERSION = chrome.runtime.getManifest().version;
 
 let ws = null;
 let reconnectAttempts = 0;
+let reportingEnabled = true; // 内存态；启动从 storage 载入，默认 true（fail-open）
+let clientId = null;         // 内存态；启动载入或首次生成
 const RECONNECT_BASE_MS = 2000;
 const RECONNECT_MAX_MS = 10000;
 
@@ -11,6 +14,25 @@ chrome.alarms.create("keepalive", { periodInMinutes: 0.4 });
 chrome.alarms.onAlarm.addListener((a) => {
   if (a.name === "keepalive" && ws?.readyState !== WebSocket.OPEN) connect();
 });
+
+// 启动载入持久态：clientId（无则生成并回写）、reportingEnabled（默认 true）
+async function loadPersistedState() {
+  const items = await chrome.storage.local.get([CLIENT_ID_KEY, REPORTING_KEY]);
+  if (items[CLIENT_ID_KEY]) {
+    clientId = items[CLIENT_ID_KEY];
+  } else {
+    clientId = genClientId();
+    await chrome.storage.local.set({ [CLIENT_ID_KEY]: clientId });
+  }
+  reportingEnabled = shouldReport(items[REPORTING_KEY]); // undefined → true
+}
+
+// 统一更新开关：内存 + storage
+async function applyReporting(enabled) {
+  reportingEnabled = enabled === true;
+  await chrome.storage.local.set({ [REPORTING_KEY]: reportingEnabled });
+  return reportingEnabled;
+}
 
 async function probeServer() {
   try {
@@ -33,7 +55,7 @@ async function connect() {
   } catch { scheduleReconnect(); return; }
   ws.onopen = () => {
     reconnectAttempts = 0;
-    ws.send(JSON.stringify({ type: "hello", ext_version: EXT_VERSION, token: TOKEN }));
+    ws.send(JSON.stringify({ type: "hello", ext_version: EXT_VERSION, token: TOKEN, client_id: clientId, reporting_enabled: reportingEnabled }));
     flushPendingIngests();
   };
   ws.onmessage = async (event) => {
@@ -59,6 +81,10 @@ async function connect() {
       } else if (msg.action === "fetch-subtitle") {
         // MVP 占位（spec §6.2/§7.3 明列，协议闭环不吞 id；后续可接真实逻辑）
         ws.send(JSON.stringify({ type: "result", id: msg.id, ok: false, error: "not implemented" }));
+      } else if (msg.action === "set-reporting") {
+        const newEnabled = await applyReporting(msg.enabled === true);
+        ws.send(JSON.stringify({ type: "result", id: msg.id, ok: true, data: { reporting_enabled: newEnabled } }));
+        // set-reporting 路径不发 reporting-state：server 作为发起方据 result 更新状态
       } else {
         ws.send(JSON.stringify({ type: "result", id: msg.id, ok: false, error: "unknown action: " + msg.action }));
       }
@@ -73,6 +99,11 @@ async function connect() {
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (msg?.type === "INGEST" && msg.payload) {
     const bvid = msg.payload.video?.source_vid ?? '?';
+    if (!shouldReport(reportingEnabled)) {
+      console.log(`[background] ingest 丢弃（上报开关关）bvid=${bvid}`);
+      sendResponse({ ok: true, dropped: true });
+      return true;
+    }
     console.log(`[background] ingest 转发 bvid=${bvid} ws_open=${ws?.readyState === WebSocket.OPEN}`);
     if (ws?.readyState === WebSocket.OPEN) {
       ws.send(JSON.stringify({ type: "ingest", payload: msg.payload }));
@@ -105,6 +136,15 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       }
     });
     sendResponse({ ok: true });
+  } else if (msg?.type === "SET_REPORTING") {
+    applyReporting(msg.enabled === true).then((enabled) => {
+      // popup 本地变化 → 发 reporting-state 同步 server
+      if (ws?.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: "reporting-state", enabled }));
+      }
+      sendResponse({ ok: true, reporting_enabled: enabled });
+    });
+    return true;
   }
   return true;
 });
@@ -119,4 +159,4 @@ async function flushPendingIngests() {
   await chrome.storage.local.set({ pendingIngests: [] });
 }
 
-connect();
+loadPersistedState().then(connect);
