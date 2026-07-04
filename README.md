@@ -45,7 +45,7 @@ pnpm --filter @bilibili-ext/subtitle-collector build   # 产物到 apps/subtitle
 #    → 选择 apps/subtitle-collector/dist 目录（crxjs 生成的构建产物，含 manifest.json）
 ```
 
-> 一键多终端替代：`pnpm dev`（= `turbo dev`）会并行起 server + web dev server，但**扩展仍需手动加载**到浏览器。
+> 一键多终端替代：`pnpm dev`（= `turbo dev`）并行起 server + collector-web + 扩展三端的 dev server；扩展 dev server 端口在 [vite.config.ts](apps/subtitle-collector/vite.config.ts) 用 `server.strictPort` 钉死为 **5174**，避免与 collector-web（默认 5173）端口漂移、把不一致的端口烧进 dist 而触发 CRXJS popup 闪烁死循环。扩展本身仍需手动加载 dist 到浏览器。
 
 加载扩展后，popup 显示「已连接 ✓」需要满足：
 1. collector-server 已在 `127.0.0.1:21527` 运行；

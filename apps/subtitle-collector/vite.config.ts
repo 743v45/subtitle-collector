@@ -12,6 +12,17 @@ export default defineConfig({
   resolve: {
     alias: { '@': fileURLToPath(new URL('./src', import.meta.url)) },
   },
+  // dev server 端口必须钉死。CRXJS 会把 dev server 端口硬编码进 dist 产物
+  // （loading-page 的 VITE_URL、service-worker-loader 的 import 'http://localhost:<port>/...'）。
+  // monorepo 里 collector-web 也跑 Vite，默认都从 5173 起步、被占就 +1，本扩展会被挤到
+  // 5174+ 而漂移；一旦实际端口与 dist 里烧死的端口不一致，popup 就陷入
+  // 「探测 /@crx/dev-ready → reload → 仍是 loading-page」的闪烁死循环。
+  // strictPort:true 让端口被占时直接报错，而不是悄悄漂移再触发该 bug。
+  server: {
+    port: 5174,
+    strictPort: true,
+    hmr: { port: 5174 },
+  },
   build: {
     outDir: 'dist',
     emptyOutDir: true,
