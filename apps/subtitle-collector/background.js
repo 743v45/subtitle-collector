@@ -164,6 +164,60 @@ async function connect() {
         } catch (err) {
           ws.send(JSON.stringify({ type: "result", id: msg.id, ok: false, error: String(err.message || err) }));
         }
+      } else if (msg.action === "get-upper-info") {
+        try {
+          if (!wbiKeys) await refreshWbiKeys();
+          const mid = msg.mid;
+          // 1. acc/info（Wbi）：name/sign/level/sex/official/face
+          const infoRes = await biliFetch('/x/space/wbi/acc/info', { wbi: true, params: { mid }, wbiKeys });
+          if (!infoRes.ok) { ws.send(JSON.stringify({ type: "result", id: msg.id, ok: false, error: infoRes.code })); return; }
+          const info = infoRes.data;
+          // 2. relation/stat（cookie）：follower/following
+          const statRes = await biliFetch('/x/relation/stat', { params: { vmid: mid } });
+          const stat = statRes.ok ? statRes.data : {};
+          // 3. 上报 ingest-upper（入库 creators）
+          const creator = {
+            source_uid: String(mid),
+            name: info.name ?? null,
+            avatar: info.face ?? null,
+            sign: info.sign ?? null,
+            level: info.level ?? null,
+            sex: info.sex ?? null,
+            official_type: info.official?.type ?? null,
+            official_title: info.official?.title ?? null,
+            fans: stat.follower ?? null,
+            following: stat.following ?? null,
+          };
+          ws.send(JSON.stringify({ type: "ingest-upper", payload: { source: "bilibili", creator } }));
+          // 4. 回执
+          ws.send(JSON.stringify({ type: "result", id: msg.id, ok: true, data: { mid, ...creator } }));
+        } catch (err) {
+          ws.send(JSON.stringify({ type: "result", id: msg.id, ok: false, error: String(err.message || err) }));
+        }
+      } else if (msg.action === "list-upper-videos") {
+        try {
+          if (!wbiKeys) await refreshWbiKeys();
+          const parsed = await biliFetch('/x/space/wbi/arc/search', {
+            wbi: true,
+            params: { mid: msg.mid, pn: msg.page ?? 1, ps: msg.page_size ?? 30, order: 'pubdate' },
+            wbiKeys,
+          });
+          if (!parsed.ok) {
+            ws.send(JSON.stringify({ type: "result", id: msg.id, ok: false, error: parsed.code }));
+          } else {
+            const vlist = parsed.data?.list?.vlist ?? [];
+            const items = vlist.map((v) => ({
+              bvid: v.bvid, title: v.title, created: v.created ?? null,
+              play: v.play ?? null, length: v.length ?? null,
+            }));
+            ws.send(JSON.stringify({
+              type: "result", id: msg.id, ok: true,
+              data: { total: parsed.data?.page?.count ?? items.length, items },
+            }));
+          }
+        } catch (err) {
+          ws.send(JSON.stringify({ type: "result", id: msg.id, ok: false, error: String(err.message || err) }));
+        }
       } else if (msg.action === "set-reporting") {
         const newEnabled = await applyReporting(msg.enabled === true);
         ws.send(JSON.stringify({ type: "result", id: msg.id, ok: true, data: { reporting_enabled: newEnabled } }));
