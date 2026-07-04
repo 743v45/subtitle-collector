@@ -16,7 +16,7 @@ const connections = new Map<string, ExtConn>(); // key = clientId（hello 后入
 interface PendingEntry { resolve: (v: any) => void; timer: NodeJS.Timeout; }
 const pending = new Map<string, PendingEntry>();
 
-export function attachWsServer(httpServer: Server, _db: Database.Database, expectedToken?: string): void {
+export function attachWsServer(httpServer: Server, _db: Database.Database, expectedToken?: string, heartbeatMs = 30000): void {
   const EXPECTED_TOKEN = expectedToken ?? process.env.COLLECTOR_TOKEN ?? ''; // 空 token 视为未配置，全部拒绝
   const wss = new WebSocketServer({
     server: httpServer,
@@ -30,6 +30,11 @@ export function attachWsServer(httpServer: Server, _db: Database.Database, expec
 
   wss.on('connection', (ws: WebSocket) => {
     const conn: ExtConn = { ws, extVersion: null, clientId: null, reportingEnabled: true };
+    // 心跳：连接建立 isAlive=true，收到 pong 翻回 true；sweep 周期内无 pong → terminate（清理半开连接）
+    const live = ws as WebSocket & { isAlive: boolean };
+    live.isAlive = true;
+    ws.on('pong', () => { live.isAlive = true; });
+    console.log('[ws] connect（等待 hello 握手）');
 
     ws.on('message', async (data: RawData) => {
       let msg: any;
@@ -94,9 +99,26 @@ export function attachWsServer(httpServer: Server, _db: Database.Database, expec
     });
 
     ws.on('close', () => {
+      console.log(`[ws] close client_id=${conn.clientId ?? '(未握手)'}`);
       if (conn.clientId && connections.get(conn.clientId) === conn) connections.delete(conn.clientId);
     });
   });
+
+  // 心跳扫频：每 heartbeatMs 遍历所有连接，isAlive=false（上一轮 ping 后未收 pong）→ terminate（触发 close→删 Map）；
+  // 否则置 false 并 ping。浏览器原生 WS 协议层自动回 pong，无需客户端配合。学 ws 库官方示例。
+  const sweep = setInterval(() => {
+    wss.clients.forEach((c) => {
+      const cw = c as WebSocket & { isAlive?: boolean };
+      if (cw.isAlive === false) {
+        console.log('[ws] 心跳超时，terminate 半开连接');
+        return c.terminate();
+      }
+      cw.isAlive = false;
+      c.ping();
+    });
+  }, heartbeatMs);
+  sweep.unref(); // 不阻止进程退出（dev/test 场景）
+  httpServer.on('close', () => clearInterval(sweep));
 }
 
 // port 参数保留为向后兼容签名（MVP 单实例广播；未来可按 port/contextId 路由）
@@ -120,6 +142,29 @@ export function sendToClient(clientId: string, cmd: { id: string; action: string
   if (!conn || conn.ws.readyState !== WebSocket.OPEN) return false;
   conn.ws.send(JSON.stringify(cmd));
   return true;
+}
+
+// 下发任意 command（navigate/operate/fetch-subtitle 等）并等扩展回 result 回执。
+// 与 requestReportingChange 同模式：sendToClient 失败 → offline；超时无 result → timeout。
+// 注意：本函数不在服务端侧改任何 conn 状态，只是透传回执（result 消息体含 ok/data/error）。
+export async function requestCommand(
+  clientId: string,
+  action: string,
+  params: Record<string, unknown>,
+  timeoutMs = 5000,
+): Promise<{ ok: true; result: any } | { ok: false; code: 'offline' | 'timeout' }> {
+  const id = randomUUID();
+  const sent = sendToClient(clientId, { id, action, ...params });
+  if (!sent) return { ok: false, code: 'offline' };
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => {
+      if (pending.has(id)) { pending.delete(id); resolve({ ok: false, code: 'timeout' }); }
+    }, timeoutMs);
+    pending.set(id, {
+      resolve: (msg: any) => resolve({ ok: true, result: msg }),
+      timer,
+    });
+  });
 }
 
 export async function requestReportingChange(

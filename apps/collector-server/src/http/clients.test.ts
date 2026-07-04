@@ -83,3 +83,67 @@ test('POST 离线 client → 404；enabled 非布尔 → 400', async () => {
     ws.close();
   } finally { ctx.cleanup(); }
 });
+
+test('POST /api/clients/:id/command：下发 command 并等 result 回执', async () => {
+  const ctx = await setup();
+  try {
+    const ws = await wsConnect(ctx.port, 'ext-A', true);
+    ws.on('message', (d) => {
+      const m = JSON.parse(d.toString());
+      if (m.action === 'navigate') ws.send(JSON.stringify({ type: 'result', id: m.id, ok: true, data: { opened: true } }));
+    });
+    await new Promise(r => setTimeout(r, 50));
+    const r = await httpReq(ctx.port, 'POST', '/api/clients/ext-A/command', {
+      action: 'navigate',
+      url: 'https://www.bilibili.com/video/BV1xxx',
+    });
+    assert.equal(r.status, 200);
+    assert.equal(r.json.ok, true);
+    assert.equal(r.json.client_id, 'ext-A');
+    assert.equal(r.json.action, 'navigate');
+    assert.equal(r.json.result.ok, true);
+    assert.equal(r.json.result.data.opened, true);
+    ws.close();
+  } finally { ctx.cleanup(); }
+});
+
+test('POST /api/clients/:id/command：action 缺失/空串 → 400', async () => {
+  const ctx = await setup();
+  try {
+    const r1 = await httpReq(ctx.port, 'POST', '/api/clients/ext-A/command', { url: 'x' });
+    assert.equal(r1.status, 400);
+    const ws = await wsConnect(ctx.port, 'ext-A', true);
+    await new Promise(r => setTimeout(r, 50));
+    const r2 = await httpReq(ctx.port, 'POST', '/api/clients/ext-A/command', { action: '' });
+    assert.equal(r2.status, 400);
+    ws.close();
+  } finally { ctx.cleanup(); }
+});
+
+test('POST /api/clients/:id/command：离线 client → 404', async () => {
+  const ctx = await setup();
+  try {
+    const r = await httpReq(ctx.port, 'POST', '/api/clients/ext-NONE/command', { action: 'navigate', url: 'x' });
+    assert.equal(r.status, 404);
+    assert.equal(r.json.ok, false);
+    assert.equal(r.json.error, 'client not online');
+  } finally { ctx.cleanup(); }
+});
+
+test('POST /api/clients/:id/command：扩展不回 result → 504（短 timeout 注入）', async () => {
+  const ctx = await setup();
+  try {
+    const ws = await wsConnect(ctx.port, 'ext-A', true);
+    // 故意不注册 message 处理器：收到 command 不回 result
+    await new Promise(r => setTimeout(r, 50));
+    const r = await httpReq(ctx.port, 'POST', '/api/clients/ext-A/command', {
+      action: 'navigate',
+      url: 'x',
+      timeout: 80,
+    });
+    assert.equal(r.status, 504);
+    assert.equal(r.json.ok, false);
+    assert.equal(r.json.error, 'extension result timeout');
+    ws.close();
+  } finally { ctx.cleanup(); }
+});

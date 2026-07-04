@@ -5,7 +5,8 @@
     "build": "turbo build",
     "dev": "turbo dev",
     "test": "turbo run test",
-    "test:ext": "turbo run build --filter=@bilibili-ext/subtitle-collector && node scripts/verify-collector.mjs"
+    "test:ext": "turbo run build --filter=@bilibili-ext/subtitle-collector && node scripts/verify-collector.mjs",
+    "cli": "pnpm -C apps/collector-server exec tsx src/cli/main.ts"
   },
   "devDependencies": {
     "turbo": "^2",

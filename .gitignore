@@ -13,8 +13,10 @@ dist/
 # Claude 本地开发笔记（私有）
 .claude/
 
-# SQLite 数据库（采集数据，含隐私）
+# SQLite 数据库（采集数据，含隐私）+ WAL 模式副产物（-wal/-shm 由 better-sqlite3 WAL 产生，运行时生成）
 apps/collector-server/*.db
+apps/collector-server/*.db-wal
+apps/collector-server/*.db-shm
 
 # collector-cli server 运维产物（pid 文件 + 后台日志，本地运行时生成）
 apps/collector-server/.collector-server.pid
