@@ -161,7 +161,7 @@ async function connect() {
             return u && bodies[u] != null;
           });
           const payload = buildIngestPayload(view, validSubs, bodies);
-          ws.send(JSON.stringify({ type: "ingest", payload }));
+          sendIngest(payload);
           // 5. 回执（不阻塞等 ingest-ack；ingest 由 server 异步入库，result 只报实际入库轨数）
           ws.send(JSON.stringify({
             type: "result", id: msg.id, ok: true,
@@ -273,15 +273,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       sendResponse({ ok: true, dropped: true });
       return true;
     }
-    if (ws?.readyState === WebSocket.OPEN) {
-      console.log(`[background] 上报中 ${summary}`);
-      ws.send(JSON.stringify({ type: "ingest", payload }));
-    } else {
-      console.log(`[background] ingest 暂存（WS 未连接）${summary}`);
-      chrome.storage.local.get(["pendingIngests"], ({ pendingIngests = [] }) => {
-        chrome.storage.local.set({ pendingIngests: [...pendingIngests, payload] });
-      });
-    }
+    sendIngest(payload);
     sendResponse({ ok: true });
   } else if (msg?.type === "WS_STATUS") {
     sendResponse({ ok: true, connected: ws?.readyState === WebSocket.OPEN });
@@ -318,6 +310,18 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   }
   return true;
 });
+
+// 统一 ingest 上报：WS OPEN 直发；断线时落 pendingIngests storage，重连后 flushPendingIngests 补发。
+// fetch-subtitle（主动）与 content→background INGEST（被动）共用，保证 WS 断时不丢。
+function sendIngest(payload) {
+  if (ws?.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({ type: "ingest", payload }));
+  } else {
+    chrome.storage.local.get(["pendingIngests"], ({ pendingIngests = [] }) => {
+      chrome.storage.local.set({ pendingIngests: [...pendingIngests, payload] });
+    });
+  }
+}
 
 // 补发暂存记录（重连成功后调用）
 async function flushPendingIngests() {
