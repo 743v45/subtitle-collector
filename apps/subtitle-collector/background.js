@@ -2,6 +2,7 @@ import { SERVER_URL, PING_URL, TOKEN } from "./config.js";
 import { shouldReport, genClientId, CLIENT_ID_KEY, REPORTING_KEY } from "./reporting.mjs";
 import { extractKeysFromNav } from "./wbi.js";
 import { biliFetch, formatSearchResult } from "./bili-fetch.js";
+import { buildIngestPayload } from "./ingest-payload.js";
 const EXT_VERSION = chrome.runtime.getManifest().version;
 
 let ws = null;
@@ -126,8 +127,36 @@ async function connect() {
           ws.send(JSON.stringify({ type: "result", id: msg.id, ok: false, error: String(err.message || err) }));
         }
       } else if (msg.action === "fetch-subtitle") {
-        // MVP 占位（spec §6.2/§7.3 明列，协议闭环不吞 id；后续可接真实逻辑）
-        ws.send(JSON.stringify({ type: "result", id: msg.id, ok: false, error: "not implemented" }));
+        try {
+          const bvid = msg.bvid;
+          // 1. view：完整元信息（标题/UP owner/stat/tags/pages/desc，组装 extra）
+          const viewRes = await biliFetch('/x/web-interface/view', { params: { bvid } });
+          if (!viewRes.ok) { ws.send(JSON.stringify({ type: "result", id: msg.id, ok: false, error: viewRes.code })); return; }
+          const view = viewRes.data;
+          // 2. player/wbi/v2：字幕轨
+          if (!wbiKeys) await refreshWbiKeys();
+          const playerRes = await biliFetch('/x/player/wbi/v2', { wbi: true, params: { bvid, aid: view.aid, cid: view.cid }, wbiKeys });
+          if (!playerRes.ok) { ws.send(JSON.stringify({ type: "result", id: msg.id, ok: false, error: playerRes.code })); return; }
+          const subs = playerRes.data?.subtitle?.subtitles ?? [];
+          // 3. 字幕体：fetch 用 normalize 后的 url，bodies key 也用 normalize 后的 url（对齐 ingest-payload.js 的 normalizeUrl 查找）
+          const bodies = {};
+          for (const s of subs) {
+            const url = s.subtitle_url?.startsWith('//') ? 'https:' + s.subtitle_url : s.subtitle_url;
+            if (!url) continue;
+            const r = await fetch(url, { headers: { Referer: 'https://www.bilibili.com/' } });
+            if (r.ok) bodies[url] = await r.json().catch(() => null);
+          }
+          // 4. ingest（无字幕也入库 video，避免下次重采）
+          const payload = buildIngestPayload(view, subs, bodies);
+          ws.send(JSON.stringify({ type: "ingest", payload }));
+          // 5. 回执（不阻塞等 ingest-ack；ingest 由 server 异步入库，result 只报采集到的轨数）
+          ws.send(JSON.stringify({
+            type: "result", id: msg.id, ok: true,
+            data: { bvid, tracks: subs.length, ingested: true, ...(subs.length === 0 ? { reason: 'no_subtitle' } : {}) },
+          }));
+        } catch (err) {
+          ws.send(JSON.stringify({ type: "result", id: msg.id, ok: false, error: String(err.message || err) }));
+        }
       } else if (msg.action === "set-reporting") {
         const newEnabled = await applyReporting(msg.enabled === true);
         ws.send(JSON.stringify({ type: "result", id: msg.id, ok: true, data: { reporting_enabled: newEnabled } }));
