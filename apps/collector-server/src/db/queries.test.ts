@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { openDb, migrate } from './migrate.js';
 import { ingestVideo } from './ingest.js';
-import { listVideos, getVideo, getVersionPayload } from './queries.js';
+import { listVideos, getVideo, getVersionPayload, getCreator } from './queries.js';
 
 function freshDb() {
   const dir = mkdtempSync(join(tmpdir(), 'collector-q-'));
@@ -111,5 +111,33 @@ test('getVersionPayload: 不存在返回 null', () => {
   const { db, dir } = freshDb();
   try {
     assert.equal(getVersionPayload(db, 999), null);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('getCreator: 命中返回完整 creator 详情（含 P2 字段）', () => {
+  const { db, dir } = freshDb();
+  try {
+    db.prepare(
+      "INSERT INTO creators (source, source_uid, name, sign, level, sex, official_type, official_title, fans, following, first_seen_at, updated_at) " +
+      "VALUES ('bilibili','123','up1','签名',6,'男',1,'官方',1000,50,1,2)"
+    ).run();
+    const c = getCreator(db, 1);
+    assert.equal(c?.name, 'up1');
+    assert.equal(c?.sign, '签名');
+    assert.equal(c?.level, 6);
+    assert.equal(c?.sex, '男');
+    assert.equal(c?.official_type, 1);
+    assert.equal(c?.official_title, '官方');
+    assert.equal(c?.fans, 1000);
+    assert.equal(c?.following, 50);
+    assert.equal(c?.source_uid, '123');
+    assert.equal(c?.source, 'bilibili');
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('getCreator: 未命中返回 null', () => {
+  const { db, dir } = freshDb();
+  try {
+    assert.equal(getCreator(db, 999), null);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });

@@ -79,3 +79,27 @@ export function getVersionPayload(db: Database.Database, versionId: number): { i
   if (!v) return null;
   return { id: v.id, origin: v.origin, payload: JSON.parse(v.payload), captured_at: v.captured_at };
 }
+
+export interface CreatorDetail {
+  id: number;
+  source: string;
+  source_uid: string;
+  name: string | null;
+  avatar: string | null;
+  sign: string | null;
+  level: number | null;
+  sex: string | null;
+  official_type: number | null;
+  official_title: string | null;
+  fans: number | null;
+  following: number | null;
+  first_seen_at: number;
+  updated_at: number;
+}
+
+// 按 creators 表自增 id 取 UP 主详情（含 P2 字段 sign/level/sex/official_*/fans/following）。
+// 供 popup/web 展示 UP 主资料。null = 未找到。
+export function getCreator(db: Database.Database, id: number): CreatorDetail | null {
+  const row = db.prepare('SELECT * FROM creators WHERE id = ?').get(id) as CreatorDetail | undefined;
+  return row ?? null;
+}

@@ -1,6 +1,6 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type Database from 'better-sqlite3';
-import { listVideos, getVideo, getVersionPayload } from '../db/queries.js';
+import { listVideos, getVideo, getVersionPayload, getCreator } from '../db/queries.js';
 
 function json(res: ServerResponse, status: number, body: unknown): void {
   res.writeHead(status, { 'Content-Type': 'application/json' });
@@ -26,6 +26,15 @@ export function handleQueryHttp(req: IncomingMessage, res: ServerResponse, db: D
     const detail = getVideo(db, source, sourceVid);
     if (!detail) { json(res, 404, { ok: false, error: 'not found' }); return; }
     json(res, 200, { ok: true, ...detail });
+    return;
+  }
+
+  const creatorMatch = pathname.match(/^\/api\/creators\/(\d+)$/);
+  if (creatorMatch) {
+    // GET /api/creators/:id → UP 主详情（含 P2 字段 sign/level/fans/...），供 popup/web 展示
+    const c = getCreator(db, Number(creatorMatch[1]));
+    if (!c) { json(res, 404, { ok: false, error: 'creator not found' }); return; }
+    json(res, 200, { ok: true, creator: c });
     return;
   }
 
