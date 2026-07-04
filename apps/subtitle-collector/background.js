@@ -2,7 +2,7 @@ import { SERVER_URL, PING_URL, TOKEN } from "./config.js";
 import { shouldReport, genClientId, CLIENT_ID_KEY, REPORTING_KEY } from "./reporting.mjs";
 import { extractKeysFromNav } from "./wbi.js";
 import { biliFetch, formatSearchResult } from "./bili-fetch.js";
-import { buildIngestPayload } from "./ingest-payload.js";
+import { buildIngestPayload, normalizeUrl } from "./ingest-payload.js";
 const EXT_VERSION = chrome.runtime.getManifest().version;
 
 let ws = null;
@@ -141,7 +141,7 @@ async function connect() {
           // 3. 字幕体：fetch 用 normalize 后的 url，bodies key 也用 normalize 后的 url（对齐 ingest-payload.js 的 normalizeUrl 查找）
           const bodies = {};
           for (const s of subs) {
-            const url = s.subtitle_url?.startsWith('//') ? 'https:' + s.subtitle_url : s.subtitle_url;
+            const url = normalizeUrl(s.subtitle_url);
             if (!url) continue;
             const r = await fetch(url, { headers: { Referer: 'https://www.bilibili.com/' } });
             if (!r.ok) { console.warn(`[background] fetch-subtitle 字幕体 HTTP ${r.status} bvid=${msg.bvid} url=${url}`); continue; }
@@ -151,7 +151,7 @@ async function connect() {
           }
           // 4. ingest（无字幕也入库 video，避免下次重采）；过滤字幕体抓取失败的轨，避免 payload:null 入库污染 external 去重
           const validSubs = subs.filter((s) => {
-            const u = s.subtitle_url?.startsWith('//') ? 'https:' + s.subtitle_url : s.subtitle_url;
+            const u = normalizeUrl(s.subtitle_url);
             return u && bodies[u] != null;
           });
           const payload = buildIngestPayload(view, validSubs, bodies);

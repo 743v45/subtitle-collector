@@ -8,7 +8,8 @@ export function extractExtraFromView(v) {
   if (v.tname != null) extra.tname = v.tname;
   if (v.copyright != null) extra.copyright = v.copyright;
   if (v.state != null) extra.state = v.state;
-  if (v.pub_location != null) extra.publocation = v.pub_location;
+  const publoc = v.pub_location ?? v.publocation;
+  if (publoc != null) extra.publocation = publoc;
   if (Array.isArray(v.tags)) extra.tags = v.tags.map((t) => ({ tag_id: t.tag_id, tag_name: t.tag_name }));
   if (v.dimension) extra.dimension = { width: v.dimension.width, height: v.dimension.height, rotate: v.dimension.rotate };
   if (Array.isArray(v.pages)) extra.pages = v.pages.map((p) => ({ cid: p.cid, page: p.page, part: p.part, duration: p.duration }));
@@ -27,7 +28,7 @@ export function extractExtraFromView(v) {
 }
 
 // // → https: 归一化（对齐 Task 5 plan 调用方：fetch 需要 https，故 bodies 的 key 为 normalize 后的 url）
-function normalizeUrl(u) {
+export function normalizeUrl(u) {
   return typeof u === 'string' && u.startsWith('//') ? 'https:' + u : u;
 }
 
@@ -39,7 +40,7 @@ export function buildIngestPayload(view, subs, subtitleBodies) {
     video: {
       source_vid: view.bvid,
       creator: {
-        source_uid: String(view.owner?.mid ?? ''),
+        source_uid: String(view.owner?.mid ?? 'unknown'),
         name: view.owner?.name ?? null,
         avatar: view.owner?.face ?? null,
       },

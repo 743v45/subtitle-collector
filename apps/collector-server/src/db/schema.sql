@@ -10,7 +10,9 @@ CREATE TABLE IF NOT EXISTS creators (
   UNIQUE(source, source_uid)
 );
 
--- videos.extra (TEXT/JSON) 结构（由扩展从页面 __INITIAL_STATE__.videoData 采集）：
+-- videos.extra (TEXT/JSON) 结构：
+--   被动采集（content.js）由扩展从页面 __INITIAL_STATE__.videoData 采集；
+--   主动采集（background.js fetch-subtitle）从 /x/web-interface/view 接口采集，字段集同源。
 --   { aid, cid, pic, desc, ctime, tid, tname, copyright, state, publocation,
 --     tags:[{tag_id,tag_name}], dimension:{width,height,rotate},
 --     pages:[{cid,page,part,duration}], rights:{...}, honor:{...}, ugc_season:{id,title}|null,
