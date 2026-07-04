@@ -312,6 +312,15 @@ GET /ping → 200 { ok: true }
 
 **安全：** loopback only；WS upgrade `verifyClient` 拒非 `chrome-extension://` origin（防 WS CSRF，学 opencli）；**握手 token 校验**——服务端收到 `hello` 消息后比对 `config.js` 预置 token，不匹配关闭连接。
 
+**连接生命周期与心跳（防半开连接残留）：** 扩展的 WS 跑在 MV3 service worker（`background.js`）内，SW 被挂起/回收、睡眠、断网、kill 进程等场景下对端不发 TCP FIN，服务端 `ws.on('close')` 不会触发 —— 连接变"半开"，会永久残留在 `connections` Map，导致 `listClients()` 假在线、`sendToClient` 对着死连接下发。服务端对策（ws 库官方 isAlive 模式）：
+
+- 连接建立时 `ws.isAlive = true`，收到 pong 翻回 `true`
+- 每 `heartbeatMs`（默认 30s；`attachWsServer` 第 4 参可注入，测试用 ~40ms）扫频：`isAlive === false` → `ws.terminate()`（触发 close → 删 Map）；否则置 `false` 并 `ws.ping()`
+- 浏览器原生 WS 协议层自动回 pong，**客户端无需配合**（`background.js` 的 keepalive alarm 是断线重连触发器，与本机制正交）
+- `setInterval` 句柄 `unref()` 且 `httpServer.on('close')` 时 `clearInterval`，不阻止进程退出、不泄漏
+
+**连接日志：** `[ws] connect（等待 hello 握手）` / `[ws] hello 握手成功` / `[ws] close client_id=...` / `[ws] 心跳超时，terminate 半开连接` —— 连接建立与断开均有日志，关浏览器/挂起后可在 dev 终端观察到断开。
+
 ### 6.3 网页消费（HTTP，查询路径，只读）
 
 ```
@@ -463,6 +472,8 @@ TrackSwitcher / SubtitleView 的交互思路复用 subtitle-extractor 的"字幕
 | 12 | `/ping` 探活：服务未启动时扩展静默丢弃上报，无控制台噪声 |
 | 13 | WS 断线后扩展指数退避重连，重连后能继续上报和接收命令 |
 | 14 | collector-web 无 `style={{}}` 内联样式 / 无手写 `.css` 自定义样式 / 使用 shadcn 组件 |
+| 15 | 服务端 WS 心跳：半开连接（不回 pong）在 2 个 sweep 周期内被 terminate 并从 `listClients` 剔除；正常连接保留 |
+| 16 | WS 连接建立/握手/断开/心跳超时均有服务端日志，关浏览器后可观察到断开日志 |
 
 ## 11. 测试方式
 
@@ -475,8 +486,17 @@ TrackSwitcher / SubtitleView 的交互思路复用 subtitle-extractor 的"字幕
 - **扩展命令执行（主动）**：puppeteer 验证 navigate/operate 命令触发 tabs + content script 操作
 - **扩展主动身份回归脚本**：验收 #5（subtitle_url 四情况）、#6（navigate）、#7（operate）由 `scripts/verify-collector.mjs` puppeteer 脚本覆盖（可重复执行）
 - **真实端到端**：登录态浏览器开有字幕的 B 站视频，确认 SQLite 入库 + 网页查阅（人工，参考 `MANUAL.md` 模式）
+- **WS 心跳/半开清理**：Node test，raw socket 造"发 hello 后静默（不回 pong/不发 close）"的半开客户端，注入短 `heartbeatMs`，断言 2 个 sweep 周期后从 `listClients` 消失、正常连接保留（`apps/collector-server/src/ws/server.test.ts`）
 
 > 本项目无构建链（扩展侧），服务端/web 用 TS+Vite 但测试沿用 Node test + puppeteer mock，不强引 Playwright。
+
+### 11.1 测试轮次记录（对齐全局 8.2）
+
+| 轮次 | 时间 | 范围 | 结果 | 备注 |
+|---|---|---|---|---|
+| R1 | 2026-07-05 | ws 心跳单测 RED→GREEN（`server.test.ts`） | 失败 → 16/16 通过 | RED：无心跳逻辑致半开残留；GREEN：isAlive sweep + terminate |
+| R1 | 2026-07-05 | collector-server 全量 `pnpm test` | 141 pass / 0 fail | 含新增心跳清理用例（`setup(heartbeatMs?)` 注入） |
+| R1 | 2026-07-05 | `tsc --noEmit`（collector-server） | exit 0 | `isAlive` 经 `as WebSocket & { isAlive }` cast，类型干净 |
 
 ## 12. 风险
 
