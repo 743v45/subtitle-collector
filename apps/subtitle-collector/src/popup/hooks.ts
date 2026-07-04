@@ -159,8 +159,10 @@ export function useCollected(): {
 }
 
 // —— 上报开关：启动从 storage 读（默认开，!==false），切换时发 SET_REPORTING ——
-export function useReporting(): { enabled: boolean; setEnabled: (v: boolean) => void } {
-  const [enabled, setEnabled] = useState(true);
+// enabled 初始 null=未知：避免首帧硬编码 true（"开"）→ storage 实际 false 时"开→关"的翻转闪烁；
+// storage 回调回来才落到真实 boolean，Popup 在 null 期间显示中性占位。
+export function useReporting(): { enabled: boolean | null; setEnabled: (v: boolean) => void } {
+  const [enabled, setEnabled] = useState<boolean | null>(null);
   useEffect(() => {
     chrome.storage.local.get([REPORTING_KEY], (items) => {
       setEnabled(items[REPORTING_KEY] !== false);
@@ -174,7 +176,7 @@ export function useReporting(): { enabled: boolean; setEnabled: (v: boolean) => 
 }
 
 // —— 本地数据源：popup 经 chrome.tabs.sendMessage 直取 content.js 的 collected ——
-// 「已收集」改用本地提取的数据展示（轨道/正文/extra），server 数据仅作一致性校验。
+// 「视频信息」改用本地提取的数据展示（轨道/正文/extra），server 数据仅作一致性校验。
 export type LocalCollectedState =
   | { state: 'loading' }
   | { state: 'not-loaded' } // 视频页但 content.js 还没拦到 player API / 正文未就绪

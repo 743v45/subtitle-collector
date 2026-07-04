@@ -413,13 +413,30 @@ background.js 是扩展的 WS 客户端，连 `ws://localhost:21527`，承担双
 
 ### 7.4 popup
 
+布局自上而下（实现在 [Popup.tsx](apps/subtitle-collector/src/popup/Popup.tsx)）：
+
 ```
-[状态] WS 已连接 ✓ / 未连接 ✗
-[当前视频] BV1xxx — 标题
-[上报统计] 本次新增 2 轨，跳过 0 轨
-[手动补采] 按钮 → 触发当前页 WS 上报
-[任务入口]（后续）批量/定时/UP主/AI 命令固定按钮
+[连接]      已连接 / 未连接
+[B站登录]   已登录(uname) / 未登录
+[当前视频]  BV1xxx / 非视频页
+┌ 视频信息 ───────────────────────────────┐
+│ 上次上报 xxx / 未上报到服务端（副标题）   │
+│ ▾复制字幕（N/M 轨已获取）                 │
+│   [纯文本 ▸]   ← 横向抽屉：点开→三格式横排 │
+│   简体中文 zh-Hans           [复制]       │
+│   AI                         [复制]       │ ← url 含 aisubtitle
+│   en  English                [复制]       │
+│ 播放/点赞/投币/收藏/转发/弹幕数 统计网格   │
+└──────────────────────────────────────────┘
+[自动上报]  关/开 [开关] [手动补采]
 ```
+
+关键交互：
+
+- **格式横向抽屉**（`SubtitleCopySection`）：替换原 Radix Select——后者在扩展 popup 里 popper+Portal 触发"打开即关"已知不兼容。收缩态只渲染当前格式 1 个按钮（`▸` 提示），点击横向展开全部 3 个（纯文本/带时间戳/SRT），点选其一即折叠回单个并写回 `chrome.storage.local` 记忆。纯 button + Tailwind，不走 Portal，规避 popup 视口 bug。
+- **每轨右复制按钮**：点即复制「该轨 × 当前格式」，按钮内联反馈"已复制/失败"1.5s。`subtitle_url` 含 `aisubtitle.hdslb.com` 的轨左侧标 "AI"（B 站 AI 字幕 URL 特征），否则显示 `lan_doc`（+ `lan` 副标）。无 body 的轨按钮置灰"未获取"。
+- **「视频信息」**（原"已收集"）：主数据来自本地 content.js（未上报），副标题才提示服务端上报时间——纠正"已收集"暗示已上报的歧义。
+- **手动补采**：缩小（`h-7 text-xs`）并入"自动上报"行右侧，不再 `w-full` 独占整行。
 
 ## 8. 网页（apps/collector-web）
 
@@ -497,6 +514,7 @@ TrackSwitcher / SubtitleView 的交互思路复用 subtitle-extractor 的"字幕
 | R1 | 2026-07-05 | ws 心跳单测 RED→GREEN（`server.test.ts`） | 失败 → 16/16 通过 | RED：无心跳逻辑致半开残留；GREEN：isAlive sweep + terminate |
 | R1 | 2026-07-05 | collector-server 全量 `pnpm test` | 141 pass / 0 fail | 含新增心跳清理用例（`setup(heartbeatMs?)` 注入） |
 | R1 | 2026-07-05 | `tsc --noEmit`（collector-server） | exit 0 | `isAlive` 经 `as WebSocket & { isAlive }` cast，类型干净 |
+| R2 | 2026-07-05 | popup 复制区重构（横向抽屉+每轨复制）/「视频信息」/手动补采布局 | `vite build` 通过 | Radix Select 在 popup 打不开→换纯 button 横向抽屉；复制改每轨一键；76 模块 700ms。复制交互（clipboard+真实字幕）难自动化，由 build 冒烟 + 人工覆盖 |
 
 ## 12. 风险
 

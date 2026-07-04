@@ -22,13 +22,6 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from '@/components/ui/collapsible';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
 
 const SUBTITLE_FORMAT_KEY = 'subtitleFormat';
 const FORMAT_LABEL: Record<SubtitleFormat, string> = {
@@ -99,7 +92,7 @@ export function Popup() {
     <div className="space-y-3 p-3">
       <Row label="连接">
         {conn === 'loading' ? (
-          <Badge variant="secondary">检查中</Badge>
+          <StatusPlaceholder className="w-16" />
         ) : conn === 'connected' ? (
           <Badge variant="success">已连接</Badge>
         ) : (
@@ -109,7 +102,7 @@ export function Popup() {
 
       <Row label="B站登录">
         {login.state === 'loading' ? (
-          <Badge variant="secondary">检查中</Badge>
+          <StatusPlaceholder className="w-16" />
         ) : login.state === 'logged' ? (
           <Badge variant="success">已登录 ({login.uname})</Badge>
         ) : login.state === 'guest' ? (
@@ -128,19 +121,29 @@ export function Popup() {
       <div className="flex items-center justify-between">
         <span className="text-sm text-muted-foreground">自动上报</span>
         <div className="flex items-center gap-2">
-          <span className="text-sm text-muted-foreground">
-            {reporting.enabled ? '开' : '关'}
-          </span>
-          <Switch
-            checked={reporting.enabled}
-            onCheckedChange={reporting.setEnabled}
-          />
+          {reporting.enabled === null ? (
+            <StatusPlaceholder className="w-20" />
+          ) : (
+            <>
+              <span className="text-sm text-muted-foreground">
+                {reporting.enabled ? '开' : '关'}
+              </span>
+              <Switch
+                checked={reporting.enabled}
+                onCheckedChange={reporting.setEnabled}
+              />
+            </>
+          )}
+          <Button
+            size="sm"
+            variant="outline"
+            className="h-7 px-2.5 text-xs"
+            onClick={onCapture}
+          >
+            手动补采
+          </Button>
         </div>
       </div>
-
-      <Button size="sm" className="w-full" onClick={onCapture}>
-        手动补采
-      </Button>
     </div>
   );
 }
@@ -154,7 +157,18 @@ function Row({ label, children }: { label: string; children: ReactNode }) {
   );
 }
 
-// 「已收集」主数据来自本地 content.js（local），server 仅作一致性校验 + 上报时间提示。
+// loading/未知态占位：不渲染任何语义值（不显示"检查中/开/已连接"等），仅一条中性脉冲条，
+// 避免首帧默认值 → 异步真值的双次渲染闪烁（重点消除"开→关"的错误值翻转）。
+function StatusPlaceholder({ className }: { className?: string }) {
+  return (
+    <span
+      aria-label="加载中"
+      className={cn('inline-block h-5 animate-pulse rounded-md bg-muted', className)}
+    />
+  );
+}
+
+// 「视频信息」主数据来自本地 content.js（local），server 仅作一致性校验 + 上报时间提示。
 function CollectedBlock({
   local,
   server,
@@ -173,7 +187,7 @@ function CollectedBlock({
     return (
       <Card>
         <CardContent className="p-3 text-sm text-muted-foreground">
-          已收集: 查询中…
+          视频信息: 查询中…
         </CardContent>
       </Card>
     );
@@ -221,7 +235,7 @@ function CollectedBlock({
       <CardContent className="space-y-3 p-3">
         <div className="space-y-0.5">
           <div className="flex flex-wrap items-center gap-2">
-            <div className="text-sm font-medium">已收集</div>
+            <div className="text-sm font-medium">视频信息</div>
             {consistency.map((c) => (
               <Badge
                 key={c.field}
@@ -305,7 +319,7 @@ function ReportedSubstatus({ server }: { server: CollectedState }) {
   return <div className="text-xs text-muted-foreground">{text}</div>;
 }
 
-// 默认折叠；展开后选一轨 + 选格式 + 复制。格式选择记忆上次。
+// 默认折叠；展开后选格式（横向抽屉，记忆）+ 每轨右侧复制按钮，点即复制「该轨 × 当前格式」。
 function SubtitleCopySection({
   subs,
   bodies,
@@ -315,34 +329,35 @@ function SubtitleCopySection({
 }) {
   const [format, setFormat] = useSubtitleFormat();
   const [open, setOpen] = useState(false);
-  const [selectedUrl, setSelectedUrl] = useState<string | null>(null);
-  const [copied, setCopied] = useState(false);
-  const [failed, setFailed] = useState(false);
+  // 格式横向抽屉：收缩态只显示当前格式（点击展开），展开态横排三个，点选其一折叠并记忆。
+  const [fmtOpen, setFmtOpen] = useState(false);
+  const [copiedUrl, setCopiedUrl] = useState<string | null>(null);
+  const [failedUrl, setFailedUrl] = useState<string | null>(null);
 
   const copyableSubs = subs.filter((s) => s.has_body);
-  const effectiveUrl =
-    selectedUrl && copyableSubs.some((s) => s.subtitle_url === selectedUrl)
-      ? selectedUrl
-      : (copyableSubs[0]?.subtitle_url ?? null);
 
   if (copyableSubs.length === 0) {
     // 字幕体均未抓到（如 url_missing / 仍在加载），不渲染复制区
     return null;
   }
 
-  const onCopy = async () => {
-    if (!effectiveUrl) return;
-    const body = bodies[effectiveUrl];
+  const onCopy = async (url: string) => {
+    const body = bodies[url];
     if (!body) return;
     const ok = await copyText(formatSubtitle(body, format));
     if (ok) {
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
+      setCopiedUrl(url);
+      setTimeout(() => setCopiedUrl(null), 1500);
     } else {
-      setFailed(true);
-      setTimeout(() => setFailed(false), 1500);
+      setFailedUrl(url);
+      setTimeout(() => setFailedUrl(null), 1500);
     }
   };
+
+  // 抽屉收缩态只渲染当前格式（点击展开）；展开态渲染全部三个。
+  const fmtShown = fmtOpen
+    ? FORMAT_OPTIONS
+    : FORMAT_OPTIONS.filter((o) => o.value === format);
 
   return (
     <Collapsible open={open} onOpenChange={setOpen}>
@@ -353,55 +368,80 @@ function SubtitleCopySection({
         <span>复制字幕（{copyableSubs.length}/{subs.length} 轨已获取）</span>
       </CollapsibleTrigger>
       <CollapsibleContent className="space-y-2 pt-2">
-        <div className="space-y-1">
-          {subs.map((s, i) => {
-            const selectable = !!s.has_body && !!s.subtitle_url;
-            const isSelected = s.subtitle_url === effectiveUrl;
+        <div className="flex flex-wrap gap-1">
+          {fmtShown.map((o) => {
+            const isCurrent = o.value === format;
             return (
               <button
-                key={s.subtitle_url ?? i}
+                key={o.value}
                 type="button"
-                disabled={!selectable}
-                onClick={() => s.subtitle_url && setSelectedUrl(s.subtitle_url)}
+                onClick={() => {
+                  if (fmtOpen) {
+                    setFormat(o.value);
+                    setFmtOpen(false);
+                  } else {
+                    setFmtOpen(true);
+                  }
+                }}
                 className={cn(
-                  'flex w-full items-center justify-between rounded border px-2 py-1 text-xs',
-                  isSelected ? 'border-primary bg-accent text-accent-foreground' : 'border-input',
-                  !selectable && 'cursor-not-allowed opacity-50'
+                  'rounded border px-2 py-0.5 text-xs transition-colors',
+                  isCurrent
+                    ? 'border-primary bg-primary text-primary-foreground'
+                    : 'border-input bg-background hover:bg-accent hover:text-accent-foreground'
                 )}
               >
-                <span className="flex items-center gap-2">
-                  <span className="font-medium">{s.lan_doc ?? s.lan ?? '未知'}</span>
-                  {s.lan && <span className="text-muted-foreground">{s.lan}</span>}
-                </span>
-                <span className="text-muted-foreground">
-                  {!selectable ? '未获取' : isSelected ? '已选' : '可复制'}
-                </span>
+                {o.label}
+                {!fmtOpen && ' ▸'}
               </button>
             );
           })}
         </div>
-        <div className="flex items-center gap-2">
-          <Select value={format} onValueChange={(v) => setFormat(v as SubtitleFormat)}>
-            <SelectTrigger className="h-8 flex-1 text-xs">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {FORMAT_OPTIONS.map((o) => (
-                <SelectItem key={o.value} value={o.value}>
-                  {o.label}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          <Button
-            size="sm"
-            variant={failed ? 'destructive' : 'default'}
-            className="h-8 px-3"
-            onClick={onCopy}
-            disabled={!effectiveUrl}
-          >
-            {copied ? '已复制' : failed ? '复制失败' : '复制'}
-          </Button>
+
+        <div className="space-y-1">
+          {subs.map((s, i) => {
+            const url = s.subtitle_url;
+            const selectable = !!s.has_body && !!url;
+            // B 站 AI 字幕走 aisubtitle.hdslb.com，用 URL 特征识别最稳。
+            const isAi = !!url && url.includes('aisubtitle');
+            const label = isAi ? 'AI' : (s.lan_doc ?? s.lan ?? '未知');
+            const justCopied = !!url && copiedUrl === url;
+            const justFailed = !!url && failedUrl === url;
+            return (
+              <div
+                key={url ?? i}
+                className="flex items-center justify-between rounded border border-input px-2 py-1 text-xs"
+              >
+                <span className="flex min-w-0 items-center gap-2">
+                  <span className="font-medium">{label}</span>
+                  {!isAi && s.lan && s.lan_doc && (
+                    <span className="text-muted-foreground">{s.lan}</span>
+                  )}
+                </span>
+                <button
+                  type="button"
+                  disabled={!selectable}
+                  onClick={() => url && onCopy(url)}
+                  className={cn(
+                    'shrink-0 rounded px-2 py-0.5 text-xs transition-colors',
+                    justFailed
+                      ? 'bg-destructive text-destructive-foreground'
+                      : justCopied
+                        ? 'bg-secondary text-secondary-foreground'
+                        : 'bg-primary text-primary-foreground hover:bg-primary/90',
+                    !selectable && 'cursor-not-allowed opacity-50'
+                  )}
+                >
+                  {!selectable
+                    ? '未获取'
+                    : justCopied
+                      ? '已复制'
+                      : justFailed
+                        ? '失败'
+                        : '复制'}
+                </button>
+              </div>
+            );
+          })}
         </div>
       </CollapsibleContent>
     </Collapsible>
