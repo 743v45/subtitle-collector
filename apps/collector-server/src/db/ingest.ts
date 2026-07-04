@@ -38,6 +38,17 @@ export interface IngestResult {
 
 const VIDEO_FIELDS = ['title', 'extra', 'duration', 'status', 'published_at'] as const;
 
+// extra 的 change_log 比较辅助：剔除 stat 子对象后再比较，使统计数字波动不产生 change_log。
+// 库内 videos.extra 仍存完整 JSON（含最新 stat）；仅"是否记变更 + 记录的快照值"这一步忽略 stat。
+function structuralExtra(v: unknown): string {
+  if (typeof v !== 'string') return String(v ?? '');
+  try {
+    const o = JSON.parse(v);
+    if (o && typeof o === 'object' && !Array.isArray(o)) delete (o as Record<string, unknown>).stat;
+    return JSON.stringify(o);
+  } catch { return v; }
+}
+
 export function ingestVideo(db: Database.Database, req: IngestRequest): IngestResult {
   const now = Date.now();
   const tx = db.transaction((r: IngestRequest) => {
@@ -82,8 +93,12 @@ export function ingestVideo(db: Database.Database, req: IngestRequest): IngestRe
       for (const f of VIDEO_FIELDS) {
         const oldVal = existingVideo[f];
         const newVal = fields[f];
-        if (String(oldVal ?? '') !== String(newVal ?? '')) {
-          changeIns.run('video', videoId, f, oldVal == null ? null : String(oldVal), newVal == null ? null : String(newVal), now);
+        const isExtra = f === 'extra';
+        // extra：剔除 stat 后比较/记录（统计数字波动不记 change_log）；其余字段原样比较
+        const oldCmp = isExtra ? structuralExtra(oldVal) : String(oldVal ?? '');
+        const newCmp = isExtra ? structuralExtra(newVal) : String(newVal ?? '');
+        if (oldCmp !== newCmp) {
+          changeIns.run('video', videoId, f, oldVal == null ? null : oldCmp, newVal == null ? null : newCmp, now);
         }
       }
       videoUpd.run(fields.title, fields.extra, fields.duration, fields.status, fields.published_at, now, videoId);

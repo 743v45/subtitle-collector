@@ -3,6 +3,7 @@
 * { box-sizing: border-box; margin: 0; padding: 0; }
 body { width: 320px; padding: 12px; font-family: system-ui, sans-serif; font-size: 13px; }
 .row { padding: 6px 0; border-bottom: 1px solid #eee; }
+.muted { color: #999; }
 .btn { margin-top: 8px; padding: 6px 12px; background: #fb7299; color: #fff; border: 0; border-radius: 4px; cursor: pointer; width: 100%; }
 .status { padding: 4px 8px; border-radius: 4px; display: inline-block; }
 .status.ok { background: #e6f7e6; color: #2a8a2a; }
@@ -11,6 +12,7 @@ body { width: 320px; padding: 12px; font-family: system-ui, sans-serif; font-siz
 <div class="row">连接: <span id="status" class="status no">检查中...</span></div>
 <div class="row">B站登录: <span id="bili-login" class="status no">检查中...</span></div>
 <div class="row" id="video">当前视频: -</div>
+<div class="row" id="collected">已收集: 查询中...</div>
 <div class="row">上报: <label style="display:inline-flex;align-items:center;gap:4px;"><input type="checkbox" id="report-toggle"> <span id="report-label">-</span></label></div>
 <button id="btn-capture" class="btn">手动补采</button>
 <script type="module" src="popup.js"></script>

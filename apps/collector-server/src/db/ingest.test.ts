@@ -148,3 +148,48 @@ test('manual 版本不去重：同轨重复导入 manual 始终 INSERT 新行', 
     assert.equal(manuals.length, 3, 'manual 每次导入都应是新行，不参与去重');
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
+
+test('extra.stat 波动不记 change_log，但库里 extra 更新为最新 stat', () => {
+  const { db, dir } = freshDb();
+  try {
+    const rec = (view: number, like: number) => ingestVideo(db, {
+      source: 'bilibili',
+      video: {
+        source_vid: 'BV1', title: 't',
+        creator: { source_uid: '1', name: 'up' },
+        extra: { aid: 1, cid: 2, tname: '单机游戏', stat: { view, like } },
+        duration: 1, published_at: 1,
+      },
+      tracks: [],
+    });
+    rec(100, 10);
+    rec(999, 88); // 仅 stat 数字变化
+    const logs = db.prepare("SELECT * FROM change_log WHERE entity='video' AND field='extra'").all() as any[];
+    assert.equal(logs.length, 0, '仅 stat 数字变化不应记 extra change_log');
+    const v = db.prepare('SELECT extra FROM videos WHERE source_vid = ?').get('BV1') as any;
+    const extra = JSON.parse(v.extra);
+    assert.equal(extra.stat.view, 999, '库里 extra.stat 应为最新值');
+    assert.equal(extra.stat.like, 88);
+    assert.equal(extra.tname, '单机游戏', '非 stat 结构字段应保留');
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('extra 结构字段（tname/tags 等）变化记 change_log', () => {
+  const { db, dir } = freshDb();
+  try {
+    const rec = (tname: string, tags: unknown[]) => ingestVideo(db, {
+      source: 'bilibili',
+      video: {
+        source_vid: 'BV2', title: 't',
+        creator: { source_uid: '1', name: 'up' },
+        extra: { aid: 1, cid: 2, tname, tags, stat: { view: 1 } },
+        duration: 1, published_at: 1,
+      },
+      tracks: [],
+    });
+    rec('单机游戏', [{ tag_id: 1, tag_name: 'x' }]);
+    rec('手机游戏', [{ tag_id: 2, tag_name: 'y' }]); // 结构字段变化（stat 未变）
+    const logs = db.prepare("SELECT * FROM change_log WHERE entity='video' AND field='extra'").all() as any[];
+    assert.equal(logs.length, 1, '结构字段变化应记一条 extra change_log');
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});

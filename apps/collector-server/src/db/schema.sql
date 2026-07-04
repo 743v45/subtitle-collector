@@ -10,6 +10,13 @@ CREATE TABLE IF NOT EXISTS creators (
   UNIQUE(source, source_uid)
 );
 
+-- videos.extra (TEXT/JSON) 结构（由扩展从页面 __INITIAL_STATE__.videoData 采集）：
+--   { aid, cid, pic, desc, ctime, tid, tname, copyright, state, publocation,
+--     tags:[{tag_id,tag_name}], dimension:{width,height,rotate},
+--     pages:[{cid,page,part,duration}], rights:{...}, honor:{...}, ugc_season:{id,title}|null,
+--     stat:{view,danmaku,reply,favorite,coin,share,like,now_rank,his_rank} }
+-- change_log 策略：ingest 比较前先剔除 extra.stat，统计数字波动不记 change_log；
+--                  其余结构字段（分区/标签/版权/pages 等）变化照常记 change_log。
 CREATE TABLE IF NOT EXISTS videos (
   id            INTEGER PRIMARY KEY AUTOINCREMENT,
   source        TEXT NOT NULL,

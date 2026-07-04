@@ -15,6 +15,57 @@
   }
   function post(type, data) { window.postMessage({ type, data }, "*"); }
 
+  // 从页面 __INITIAL_STATE__.videoData 补充结构性 + 统计字段（player API 不含这些）。
+  // __INITIAL_STATE__ 由 B 站 SSR 写入 HTML，PLAYER_META 触发时（已拦到 player API）通常已就绪；
+  // 取不到则降级为只含 player API 的 aid/cid/pic，不阻塞字幕采集。
+  function readVideoExtra(d) {
+    const extra = { aid: d.aid ?? null, cid: d.cid ?? null, pic: d.pic ?? null };
+    try {
+      const vd = window.__INITIAL_STATE__?.videoData;
+      if (!vd) return extra;
+      if (vd.desc != null) extra.desc = vd.desc;
+      if (vd.ctime != null) extra.ctime = vd.ctime;
+      if (vd.tid != null) extra.tid = vd.tid;
+      if (vd.tname != null) extra.tname = vd.tname;
+      if (vd.copyright != null) extra.copyright = vd.copyright;
+      if (vd.state != null) extra.state = vd.state;
+      const publoc = vd.pub_location ?? vd.publocation;
+      if (publoc != null) extra.publocation = publoc;
+      if (Array.isArray(vd.tags)) extra.tags = vd.tags.map((t) => ({ tag_id: t.tag_id, tag_name: t.tag_name }));
+      if (vd.dimension) extra.dimension = { width: vd.dimension.width, height: vd.dimension.height, rotate: vd.dimension.rotate };
+      if (Array.isArray(vd.pages)) extra.pages = vd.pages.map((p) => ({ cid: p.cid, page: p.page, part: p.part, duration: p.duration }));
+      if (vd.rights) extra.rights = vd.rights;
+      if (vd.honor_reply) extra.honor = vd.honor_reply;
+      if (vd.ugc_season) extra.ugc_season = { id: vd.ugc_season.id, title: vd.ugc_season.title };
+      if (vd.stat) {
+        const s = vd.stat;
+        extra.stat = {
+          view: s.view ?? null, danmaku: s.danmaku ?? null, reply: s.reply ?? null,
+          favorite: s.favorite ?? null, coin: s.coin ?? null, share: s.share ?? null,
+          like: s.like ?? null, now_rank: s.now_rank ?? null, his_rank: s.his_rank ?? null,
+        };
+      }
+    } catch (e) { console.warn("[inject] readVideoExtra 解析失败，降级为基本 extra", e); }
+    return extra;
+  }
+
+  // 统一组装 PLAYER_META（fetch/XHR 共用），含从 __INITIAL_STATE__ 读到的 extra
+  function buildPlayerMeta(d, subs) {
+    return {
+      bvid: d.bvid, aid: d.aid, cid: d.cid,
+      title: d.title ?? document.title,
+      up_mid: d.up_info?.mid ?? null, up_name: d.up_info?.name ?? null,
+      pic: d.pic, duration: d.video_info?.duration ?? null,
+      published_at: d.pubdate ? d.pubdate * 1000 : null,
+      extra: readVideoExtra(d),
+      subs: subs.map((s) => ({
+        lan: s.lan, lan_doc: s.lan_doc, track_type: s.type ?? null,
+        subtitle_url: normalizeUrl(s.subtitle_url),
+        url_missing: !normalizeUrl(s.subtitle_url), // spec §7.1 第四情况：单轨 url 缺失标记
+      })),
+    };
+  }
+
   // ---- fetch ----
   window.fetch = async function (...args) {
     const response = await ORIGINAL_FETCH.apply(this, args);
@@ -34,18 +85,7 @@
             else { console.log('[inject] player API 无字幕（subtitles 数组空）'); }
             return;
           }
-          const meta = {
-            bvid: d.bvid, aid: d.aid, cid: d.cid,
-            title: d.title ?? document.title,
-            up_mid: d.up_info?.mid ?? null, up_name: d.up_info?.name ?? null,
-            pic: d.pic, duration: d.video_info?.duration ?? null,
-            published_at: d.pubdate ? d.pubdate * 1000 : null,
-            subs: subs.map((s) => ({
-              lan: s.lan, lan_doc: s.lan_doc, track_type: s.type ?? null,
-              subtitle_url: normalizeUrl(s.subtitle_url),
-              url_missing: !normalizeUrl(s.subtitle_url), // spec §7.1 第四情况：单轨 url 缺失标记
-            })),
-          };
+          const meta = buildPlayerMeta(d, subs);
           console.log(`[inject] player API 拦到 bvid=${meta.bvid} subs=${meta.subs.length} title=${meta.title}`);
           post("PLAYER_META", meta);
         }).catch((e) => console.error('[inject] player API parse error', e));
@@ -74,13 +114,7 @@
           const d = json.data ?? {};
           if (d.need_login_subtitle === true) { post("NEED_LOGIN", { url: this._url }); return; }
           const subs = d.subtitle?.subtitles ?? [];
-          post("PLAYER_META", {
-            bvid: d.bvid, aid: d.aid, cid: d.cid, title: d.title ?? document.title,
-            up_mid: d.up_info?.mid ?? null, up_name: d.up_info?.name ?? null,
-            pic: d.pic, duration: d.video_info?.duration ?? null,
-            published_at: d.pubdate ? d.pubdate * 1000 : null,
-            subs: subs.map((s) => ({ lan: s.lan, lan_doc: s.lan_doc, track_type: s.type ?? null, subtitle_url: normalizeUrl(s.subtitle_url), url_missing: !normalizeUrl(s.subtitle_url) })),
-          });
+          post("PLAYER_META", buildPlayerMeta(d, subs));
         } catch {}
       });
     }

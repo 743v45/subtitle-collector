@@ -74,7 +74,7 @@ function flushIfReady(bvid) {
       source_vid: cur.meta.bvid,
       creator: { source_uid: String(cur.meta.up_mid ?? "unknown"), name: cur.meta.up_name },
       title: cur.meta.title,
-      extra: { aid: cur.meta.aid, cid: cur.meta.cid, pic: cur.meta.pic },
+      extra: cur.meta.extra ?? { aid: cur.meta.aid, cid: cur.meta.cid, pic: cur.meta.pic },
       duration: cur.meta.duration,
       published_at: cur.meta.published_at,
     },
