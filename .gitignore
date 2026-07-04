@@ -15,3 +15,12 @@ dist/
 
 # SQLite 数据库（采集数据，含隐私）
 apps/collector-server/*.db
+
+# collector-cli server 运维产物（pid 文件 + 后台日志，本地运行时生成）
+apps/collector-server/.collector-server.pid
+apps/collector-server/.collector-server.log
+
+# 环境变量（含真实 token，不入库；.env.example 是模板，入库）
+.env
+.env.*
+!.env.example

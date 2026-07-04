@@ -1,0 +1,47 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  unit:
+    name: 单元测试 + 构建冒烟
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      # CI 只跑 node:test 单测 + web 构建冒烟。
+      # puppeteer 扩展 e2e（pnpm test:ext）不在此 job：verify 脚本当前按 macOS
+      # 的 Chrome 路径定位、缺 Linux sandbox 参数，且 MV3 扩展需要 headed 浏览器。
+      # 扩展 e2e 请在本地运行。
+      - name: 安装依赖（跳过 puppeteer 自带 Chrome 下载）
+        run: pnpm install --frozen-lockfile
+        env:
+          PUPPETEER_SKIP_DOWNLOAD: 'true'
+
+      - name: 单元测试（turbo run test）
+        run: pnpm test
+
+      - name: collector-web 构建冒烟
+        run: pnpm --filter @bilibili-ext/collector-web build
+
+      - name: 校验 web 构建产物
+        run: test -f apps/collector-server/public/index.html
+
+      - name: subtitle-collector 扩展构建冒烟
+        run: pnpm --filter @bilibili-ext/subtitle-collector build
+
+      - name: 校验扩展构建产物
+        run: test -f apps/subtitle-collector/dist/manifest.json
