@@ -250,6 +250,26 @@ export function useLocalCollected(currentBvid: string | null): {
     return () => chrome.runtime.onMessage.removeListener(handler);
   }, [currentBvid]);
 
+  // 当前 tab 刷新（扩展更新后页面重注入 content.js）时自动重查，省去手动重开弹窗。
+  // B 站播放器 / player API 在 onload 后约 1-2s 才就绪，延迟 2s 兜底再查一次。
+  useEffect(() => {
+    if (!currentBvid) return;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const handler = (
+      _tabId: number,
+      changeInfo: chrome.tabs.TabChangeInfo,
+      tab: chrome.tabs.Tab
+    ) => {
+      if (!tab?.active || changeInfo.status !== 'complete') return;
+      timer = setTimeout(() => setRefreshKey((k) => k + 1), 2000);
+    };
+    chrome.tabs.onUpdated.addListener(handler);
+    return () => {
+      chrome.tabs.onUpdated.removeListener(handler);
+      if (timer) clearTimeout(timer);
+    };
+  }, [currentBvid]);
+
   const refreshLocal = useCallback(() => setRefreshKey((k) => k + 1), []);
   return { local, refreshLocal };
 }

@@ -26,3 +26,6 @@ apps/collector-server/.collector-server.log
 .env
 .env.*
 !.env.example
+
+# Superpowers brainstorm mockups（visual companion 产物，临时）
+.superpowers/
