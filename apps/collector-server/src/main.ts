@@ -4,6 +4,7 @@ import { join, extname } from 'node:path';
 import { openDb, migrate } from './db/migrate.js';
 import { attachWsServer } from './ws/server.js';
 import { handleQueryHttp } from './http/queries.js';
+import { handleClientsHttp } from './http/clients.js';
 
 const DB_PATH = process.env.COLLECTOR_DB_PATH ?? './bilibili-collector.db';
 const PORT = Number(process.env.COLLECTOR_PORT ?? 21527);
@@ -51,6 +52,7 @@ function serveStatic(req: IncomingMessage, res: ServerResponse) {
 const httpServer = createServer((req, res) => {
   if (req.url === '/ping') { res.writeHead(200, { 'Content-Type': 'application/json' }); res.end('{"ok":true}'); return; }
   if (!httpOriginAllowed(req)) { res.writeHead(403, { 'Content-Type': 'application/json' }); res.end('{"ok":false,"error":"forbidden"}'); return; } // C2
+  if (req.url?.startsWith('/api/clients')) { handleClientsHttp(req, res); return; }
   if (req.url?.startsWith('/api/')) { handleQueryHttp(req, res, db); return; }
   // 静态托管 collector-web 产物（非 /ping 非 /api/ 的请求）——C2 校验已在上方通过
   if (req.url && !req.url.startsWith('/api/') && req.url !== '/ping') { serveStatic(req, res); return; }
