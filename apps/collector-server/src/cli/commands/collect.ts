@@ -109,8 +109,11 @@ export async function collectNewVideos(
   timeout: number,
 ): Promise<{ total: number; new: string[]; collected: string[] }> {
   const resp = await collectUpperVideos(client, clientId, mid, opts, timeout) as {
-    ok: boolean; result?: { ok: boolean; data?: { total?: number; items?: Array<{ bvid: string }> } };
+    ok: boolean; result?: { ok: boolean; error?: string; data?: { total?: number; items?: Array<{ bvid: string }> } };
   };
+  if (!resp.ok || !resp.result?.ok) {
+    throw new Error(`list-upper-videos failed: ${resp.result?.error ?? 'server error'}`);
+  }
   const items = resp.result?.data?.items ?? [];
   const bvids = items.map((it) => it.bvid).filter(Boolean);
   if (bvids.length === 0) return { total: resp.result?.data?.total ?? 0, new: [], collected: [] };

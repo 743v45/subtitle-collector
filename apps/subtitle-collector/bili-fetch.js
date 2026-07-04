@@ -16,7 +16,7 @@ export function parseBiliResponse(body) {
 // search/type response.data → { total, items:[{bvid,title,up,mid,play,duration,pubdate}] }
 export function formatSearchResult(data) {
   const items = Array.isArray(data?.result) ? data.result.map((r) => ({
-    bvid: r.bvid, title: r.title, up: r.author, mid: r.mid,
+    bvid: r.bvid, title: (r.title || '').replace(/<em[^>]*>|<\/em>/g, ''), up: r.author, mid: r.mid,
     play: r.play ?? 0, duration: r.duration ?? 0, pubdate: r.pubdate ?? 0,
   })) : [];
   return { total: data?.page?.count ?? items.length, items };

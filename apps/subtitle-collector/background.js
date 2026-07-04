@@ -174,6 +174,7 @@ async function connect() {
           const info = infoRes.data;
           // 2. relation/stat（cookie）：follower/following
           const statRes = await biliFetch('/x/relation/stat', { params: { vmid: mid } });
+          const statFailed = !statRes.ok;
           const stat = statRes.ok ? statRes.data : {};
           // 3. 上报 ingest-upper（入库 creators）
           const creator = {
@@ -190,7 +191,7 @@ async function connect() {
           };
           ws.send(JSON.stringify({ type: "ingest-upper", payload: { source: "bilibili", creator } }));
           // 4. 回执
-          ws.send(JSON.stringify({ type: "result", id: msg.id, ok: true, data: { mid, ...creator } }));
+          ws.send(JSON.stringify({ type: "result", id: msg.id, ok: true, data: { mid, ...creator, stat_failed: statFailed } }));
         } catch (err) {
           ws.send(JSON.stringify({ type: "result", id: msg.id, ok: false, error: String(err.message || err) }));
         }

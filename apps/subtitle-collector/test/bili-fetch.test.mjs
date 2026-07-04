@@ -34,6 +34,17 @@ test('formatSearchResult 把 search response.data 格式化成 {total, items}', 
   assert.equal(out.items[0].mid, 11);
 });
 
+test('formatSearchResult 清理 title 中的 <em class="keyword"> 高亮标签', () => {
+  const data = {
+    page: { count: 1 },
+    result: [
+      { bvid: 'BV1a', title: '<em class="keyword">t1</em>', author: 'up1', mid: 11, play: 100, duration: 120, pubdate: 1700000000 },
+    ],
+  };
+  const out = formatSearchResult(data);
+  assert.equal(out.items[0].title, 't1');
+});
+
 test('parseBiliResponse 缺 code → malformed', () => {
   assert.deepEqual(parseBiliResponse({}), { ok: false, code: 'malformed', message: 'non-json or missing code' });
   assert.deepEqual(parseBiliResponse(null), { ok: false, code: 'malformed', message: 'non-json or missing code' });
