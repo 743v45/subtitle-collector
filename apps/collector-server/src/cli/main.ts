@@ -89,6 +89,7 @@ export async function main(): Promise<void> {
       { buildStatsCommand },
       { buildClientsCommand },
       { buildServerCommand },
+      { buildCollectCommand },
     ] = await Promise.all([
       import('./commands/videos.js'),
       import('./commands/versions.js'),
@@ -97,6 +98,7 @@ export async function main(): Promise<void> {
       import('./commands/stats.js'),
       import('./commands/clients.js'),
       import('./commands/server.js'),
+      import('./commands/collect.js'),
     ]);
     program.addCommand(buildVideosCommand());   // videos list / get / get-by-id
     program.addCommand(buildVersionsCommand()); // versions get
@@ -105,6 +107,7 @@ export async function main(): Promise<void> {
     program.addCommand(buildStatsCommand());    // stats overview / stats count --by
     program.addCommand(buildClientsCommand());  // clients list / reporting / command
     program.addCommand(buildServerCommand());   // server ping / status / start / stop
+    program.addCommand(buildCollectCommand());  // collect search / subtitle / dedupe
 
     await program.parseAsync(process.argv);
   } catch (err) {
