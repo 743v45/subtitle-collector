@@ -1,7 +1,6 @@
 # 媒体字幕采集库 — 真实 Chrome 验收清单
 
 > 登录态已在你的 Chrome 里，无需 puppeteer mock。
-> 沿用本项目 `MANUAL.md` 模式（现有 subtitle-extractor 已用此模式端到端验证）。
 
 ## 前置
 
