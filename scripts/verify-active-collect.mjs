@@ -25,7 +25,7 @@ if (!existsSync(join(EXT, 'manifest.json'))) {
   process.exit(1);
 }
 
-const received = { ingests: [], results: [] };
+const received = { ingests: [], results: [], ingestUpper: [] };
 const httpServer = createServer((req, res) => {
   if (req.url === '/ping') { res.writeHead(200); res.end('{"ok":true}'); return; }
   res.writeHead(404); res.end();
@@ -36,6 +36,7 @@ wss.on('connection', (ws) => {
     const m = JSON.parse(buf.toString());
     if (m.type === 'hello') ws.send(JSON.stringify({ type: 'hello-ack', ok: true }));
     else if (m.type === 'ingest') { received.ingests.push(m.payload); ws.send(JSON.stringify({ type: 'ingest-ack', ok: true })); }
+    else if (m.type === 'ingest-upper') { received.ingestUpper.push(m.payload); ws.send(JSON.stringify({ type: 'ingest-upper-ack', ok: true })); }
     else if (m.type === 'result') received.results.push(m);
   });
 });
@@ -76,6 +77,12 @@ page.on('request', (req) => {
     req.respond({ status: 200, contentType: 'application/json', headers: h, body: JSON.stringify({ code: 0, data: { subtitle: { subtitles: [{ lan: 'zh-Hans', lan_doc: '简体中文', type: 2, subtitle_url: '//aisubtitle.hdslb.com/cap.json' }] } } }) });
   } else if (u.includes('aisubtitle.hdslb.com/cap.json')) {
     req.respond({ status: 200, contentType: 'application/json', headers: h, body: JSON.stringify({ body: [{ from: 0, to: 1, content: '采集字幕样例' }] }) });
+  } else if (u.includes('/x/space/wbi/acc/info')) {
+    req.respond({ status: 200, contentType: 'application/json', headers: h, body: JSON.stringify({ code: 0, data: { mid: 99, name: 'up主', face: 'f', sign: '签名', level: 6, sex: '男', official: { type: 1, title: '官方' } } }) });
+  } else if (u.includes('/x/relation/stat')) {
+    req.respond({ status: 200, contentType: 'application/json', headers: h, body: JSON.stringify({ code: 0, data: { mid: 99, follower: 1000, following: 50 } }) });
+  } else if (u.includes('/x/space/wbi/arc/search')) {
+    req.respond({ status: 200, contentType: 'application/json', headers: h, body: JSON.stringify({ code: 0, data: { page: { count: 1 }, list: { vlist: [{ bvid: 'BVupper', title: 'UP视频', created: 1700000000, play: 5, length: '5:00' }] } } }) });
   } else { req.continue(); }
 });
 
@@ -97,7 +104,21 @@ const capIngest = received.ingests.find((p) => p.video?.source_vid === 'BVcap');
 console.log('[fetch-subtitle]', capRes?.ok && capRes.data?.tracks === 1 ? '✅ 采到 1 轨' : '❌', capRes);
 console.log('[fetch-subtitle ingest]', capIngest ? '✅ 入库上报' : '❌ 未上报 ingest');
 
+// 3. upper-info
+for (const c of wss.clients) c.send(JSON.stringify({ id: 't-upper', action: 'get-upper-info', mid: 99 }));
+await new Promise((r) => setTimeout(r, 3000));
+const upperRes = received.results.find((r) => r.id === 't-upper');
+const upperIngest = received.ingestUpper.find((p) => p.creator?.source_uid === '99');
+console.log('[upper-info]', upperRes?.ok && upperRes.data?.name === 'up主' ? '✅' : '❌', upperRes);
+console.log('[upper-info ingest-upper]', upperIngest ? '✅ 入库上报' : '❌ 未上报');
+
+// 4. upper-videos
+for (const c of wss.clients) c.send(JSON.stringify({ id: 't-uv', action: 'list-upper-videos', mid: 99, page: 1, page_size: 30 }));
+await new Promise((r) => setTimeout(r, 3000));
+const uvRes = received.results.find((r) => r.id === 't-uv');
+console.log('[upper-videos]', uvRes?.ok && uvRes.data?.items?.length === 1 ? '✅' : '❌', uvRes);
+
 await browser.close();
 httpServer.close();
-const ok = searchRes?.ok && capRes?.ok && capIngest;
+const ok = searchRes?.ok && capRes?.ok && capIngest && upperRes?.ok && upperIngest && uvRes?.ok;
 process.exit(ok ? 0 : 1);
