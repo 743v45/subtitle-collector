@@ -144,15 +144,22 @@ async function connect() {
             const url = s.subtitle_url?.startsWith('//') ? 'https:' + s.subtitle_url : s.subtitle_url;
             if (!url) continue;
             const r = await fetch(url, { headers: { Referer: 'https://www.bilibili.com/' } });
-            if (r.ok) bodies[url] = await r.json().catch(() => null);
+            if (!r.ok) { console.warn(`[background] fetch-subtitle 字幕体 HTTP ${r.status} bvid=${msg.bvid} url=${url}`); continue; }
+            const body = await r.json().catch(() => null);
+            if (body) bodies[url] = body;
+            else console.warn(`[background] fetch-subtitle 字幕体 JSON 解析失败 bvid=${msg.bvid} url=${url}`);
           }
-          // 4. ingest（无字幕也入库 video，避免下次重采）
-          const payload = buildIngestPayload(view, subs, bodies);
+          // 4. ingest（无字幕也入库 video，避免下次重采）；过滤字幕体抓取失败的轨，避免 payload:null 入库污染 external 去重
+          const validSubs = subs.filter((s) => {
+            const u = s.subtitle_url?.startsWith('//') ? 'https:' + s.subtitle_url : s.subtitle_url;
+            return u && bodies[u] != null;
+          });
+          const payload = buildIngestPayload(view, validSubs, bodies);
           ws.send(JSON.stringify({ type: "ingest", payload }));
-          // 5. 回执（不阻塞等 ingest-ack；ingest 由 server 异步入库，result 只报采集到的轨数）
+          // 5. 回执（不阻塞等 ingest-ack；ingest 由 server 异步入库，result 只报实际入库轨数）
           ws.send(JSON.stringify({
             type: "result", id: msg.id, ok: true,
-            data: { bvid, tracks: subs.length, ingested: true, ...(subs.length === 0 ? { reason: 'no_subtitle' } : {}) },
+            data: { bvid, tracks: validSubs.length, ingested: true, ...(validSubs.length === 0 ? { reason: 'no_subtitle' } : {}) },
           }));
         } catch (err) {
           ws.send(JSON.stringify({ type: "result", id: msg.id, ok: false, error: String(err.message || err) }));
