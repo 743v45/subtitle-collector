@@ -128,6 +128,32 @@ export async function collectNewVideos(
   return { total: resp.result?.data?.total ?? bvids.length, new: newArr, collected };
 }
 
+/** `collect discover <mid...>`：批量多 UP，每个跑 new-videos，汇总 per_mid + all_new。单 mid 失败记录 error，不影响其他。 */
+export async function collectDiscover(
+  client: CollectClient,
+  clientId: string,
+  db: Database.Database,
+  mids: string[],
+  opts: UpperVideosOpts,
+  timeout: number,
+): Promise<{
+  per_mid: Array<{ mid: string; total: number; new: string[]; collected: string[]; error?: string }>;
+  all_new: string[];
+}> {
+  const per_mid: Array<{ mid: string; total: number; new: string[]; collected: string[]; error?: string }> = [];
+  const all_new: string[] = [];
+  for (const mid of mids) {
+    try {
+      const r = await collectNewVideos(client, clientId, mid, db, opts, timeout);
+      per_mid.push({ mid, ...r });
+      all_new.push(...r.new);
+    } catch (err) {
+      per_mid.push({ mid, total: 0, new: [], collected: [], error: String((err as Error)?.message ?? err) });
+    }
+  }
+  return { per_mid, all_new };
+}
+
 // ── commander 装配 ──
 
 /**
@@ -277,6 +303,30 @@ export function buildCollectCommand(): Command {
       } catch (err) {
         handleHttpError(err);
       }
+    });
+
+  collect
+    .command('discover <mid...>')
+    .description('批量多 UP 主发现新视频：每 UP 拉列表 + 对比库 → 汇总 per_mid + all_new')
+    .option('--page <n>', '页码（默认 1）', (v) => Number.parseInt(v, 10), 1)
+    .option('--size <n>', '每页条数（默认 30）', (v) => Number.parseInt(v, 10), 30)
+    .option('--client <id>', '扩展 client_id')
+    .option('--timeout <ms>', '超时毫秒（默认 15000）', (v) => Number.parseInt(v, 10), DEFAULT_COLLECT_TIMEOUT_MS)
+    .action(async (mids: string[], opts: { page: number; size: number; client?: string; timeout: number }) => {
+      if (mids.length === 0) emitError('at least one <mid> required', 'ARGS');
+      if (!Number.isFinite(opts.timeout) || opts.timeout <= 0) emitError(`invalid --timeout: ${opts.timeout}`, 'ARGS');
+      const ctx = getCliContext();
+      const client = new ServerClient(ctx.serverUrl, ctx.token);
+      let db: Database.Database;
+      try { db = openReadonlyDb(ctx.dbPath); } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        emitError(msg, 'DB_UNREADABLE');
+      }
+      try {
+        const clientId = await resolveClientId(client as CollectClient, opts.client);
+        const data = await collectDiscover(client as CollectClient, clientId, db, mids, { page: opts.page, size: opts.size }, opts.timeout);
+        emitResult(data, ctx.format);
+      } catch (err) { handleHttpError(err); }
     });
 
   return collect;

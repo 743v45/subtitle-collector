@@ -5,7 +5,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import Database from 'better-sqlite3';
-import { collectSearch, collectSubtitle, collectDedupe, collectUpperInfo, collectUpperVideos, collectNewVideos, resolveClientId } from './collect.js';
+import { collectSearch, collectSubtitle, collectDedupe, collectUpperInfo, collectUpperVideos, collectNewVideos, collectDiscover, resolveClientId } from './collect.js';
 
 function mockClient(sendCommandResult: unknown, listClientsResult: unknown[] = [{ client_id: 'c1' }]) {
   const calls: Array<{ clientId: string; action: string; params: unknown; timeout: number }> = [];
@@ -90,4 +90,56 @@ test('collectNewVideos 拉列表 + 对比库 → 返回 new/collected', async ()
   const out = await collectNewVideos(c as any, 'c1', '123', db, { page: 1, size: 30 }, 15000);
   assert.deepEqual(out.new.sort(), ['BV1', 'BV3']);
   assert.deepEqual(out.collected, ['BV2']);
+});
+
+test('collectDiscover 批量多 UP，汇总 per_mid + all_new', async () => {
+  let call = 0;
+  const c = {
+    calls: [] as Array<{ action: string; mid: string }>,
+    async listClients() { return [{ client_id: 'c1' }]; },
+    async sendCommand(clientId: string, action: string, params: Record<string, unknown>, timeout: number) {
+      c.calls.push({ action, mid: params.mid as string });
+      call++;
+      if (action === 'list-upper-videos') {
+        const items = call === 1
+          ? [{ bvid: 'BV1' }, { bvid: 'BV2' }, { bvid: 'BV3' }]
+          : [{ bvid: 'BV2' }, { bvid: 'BV4' }];
+        return { ok: true, result: { ok: true, data: { total: items.length, items } } };
+      }
+      return { ok: true };
+    },
+  };
+  const db = makeDb();
+  db.prepare("INSERT INTO videos (source, source_vid, title, first_seen_at) VALUES ('bilibili','BV2','t',1)").run();
+  const out = await collectDiscover(c as any, 'c1', db, ['m1', 'm2'], { page: 1, size: 30 }, 15000);
+  assert.equal(out.per_mid.length, 2);
+  assert.deepEqual(out.per_mid[0].new.sort(), ['BV1', 'BV3']);
+  assert.deepEqual(out.per_mid[0].collected, ['BV2']);
+  assert.deepEqual(out.per_mid[1].new, ['BV4']);
+  assert.deepEqual(out.per_mid[1].collected, ['BV2']);
+  assert.deepEqual(out.all_new.sort(), ['BV1', 'BV3', 'BV4']);
+});
+
+test('collectDiscover 单 mid 失败记 error，不影响其他', async () => {
+  let call = 0;
+  const c = {
+    async listClients() { return [{ client_id: 'c1' }]; },
+    async sendCommand(clientId: string, action: string, params: Record<string, unknown>, timeout: number) {
+      call++;
+      if (action === 'list-upper-videos') {
+        // m1 正常，m2（第二次）失败
+        if (call === 1) return { ok: true, result: { ok: true, data: { total: 1, items: [{ bvid: 'BV1' }] } } };
+        return { ok: true, result: { ok: false, error: 'bili_-400' } };
+      }
+      return { ok: true };
+    },
+  };
+  const db = makeDb();
+  const out = await collectDiscover(c as any, 'c1', db, ['m1', 'm2'], { page: 1, size: 30 }, 15000);
+  assert.equal(out.per_mid.length, 2);
+  assert.deepEqual(out.per_mid[0].new, ['BV1']);       // m1 正常
+  assert.equal(out.per_mid[0].error, undefined);
+  assert.equal(out.per_mid[1].total, 0);               // m2 失败
+  assert.match(out.per_mid[1].error ?? '', /bili_-400|list-upper-videos failed/);
+  assert.deepEqual(out.all_new, ['BV1']);              // m1 的 new 仍在汇总
 });
