@@ -10,7 +10,7 @@ import puppeteer from "puppeteer";
 import { existsSync, mkdirSync, cpSync } from "node:fs";
 import { join } from "node:path";
 
-const EXT_DIR = new URL("../apps/subtitle-collector", import.meta.url).pathname;
+const EXT_DIR = new URL("../apps/subtitle-collector/dist", import.meta.url).pathname;
 const SRC_PROFILE = "/Users/taevas/.cache/chrome-devtools-mcp/chrome-profile";
 const DST_PROFILE = "/Users/taevas/.cache/bilibili-ext-test-profile";
 const PORT = 9224;

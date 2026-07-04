@@ -17,7 +17,11 @@ import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const EXT = join(__dirname, '..', 'apps', 'subtitle-collector');
+const EXT = join(__dirname, '..', 'apps', 'subtitle-collector', 'dist');
+if (!existsSync(join(EXT, 'manifest.json'))) {
+  console.error(`[fatal] ${EXT}/manifest.json 不存在。请先在 apps/subtitle-collector 跑 pnpm build。`);
+  process.exit(1);
+}
 
 const received = { ingests: [], hellos: [], results: [] };
 const httpServer = createServer((req, res) => {

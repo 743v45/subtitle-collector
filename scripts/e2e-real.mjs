@@ -21,7 +21,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const EXT = join(__dirname, "..", "apps", "subtitle-collector");
+const EXT = join(__dirname, "..", "apps", "subtitle-collector", "dist");
 const COOKIE_FILE = "/tmp/bili-cookies.json";
 const BV = process.argv[2] || "BV1mhjg6SEJy";
 const VIDEO_URL = `https://www.bilibili.com/video/${BV}`;

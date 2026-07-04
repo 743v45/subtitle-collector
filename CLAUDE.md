@@ -13,8 +13,8 @@ B 站**字幕（subtitle）**相关浏览器扩展的 monorepo（pnpm + turbo，
 
 | App 类型 | 例子 | 构建链 | 样式规则 |
 |---|---|---|---|
-| 无构建链纯原生扩展 | `apps/subtitle-collector`（popup/inject/content）等 | 无 | **豁免**全局规则，沿用原生手写 CSS（MV3 无构建链，引 Tailwind 需 CDN/构建属过度工程） |
-| 有构建链前端 | `apps/collector-web`（React + Vite） | 有 | **无豁免**，强制 Tailwind 工具类 + shadcn/ui；禁 `style={{}}` 内联、禁手写 `.css`、禁 CSS-in-JS |
+| 无构建链纯原生扩展 | （暂无） | 无 | **豁免**全局规则，沿用原生手写 CSS |
+| 有构建链前端 | `apps/collector-web`、`apps/subtitle-collector`（popup） | 有 | **无豁免**，强制 Tailwind 工具类 + shadcn/ui；禁 `style={{}}` 内联、禁手写 `.css`、禁 CSS-in-JS；subtitle-collector 的 inject/content 虽为裸 JS 但无独立样式，不豁免 popup |
 | 纯后端 | `apps/collector-server` | — | 无 UI，不涉及 |
 
 通用约束：**content script 向宿主页注入可视 UI 时，必须用 Shadow DOM 隔离样式，禁止注入裸 `<style>` 污染宿主页。**
@@ -23,7 +23,7 @@ B 站**字幕（subtitle）**相关浏览器扩展的 monorepo（pnpm + turbo，
 
 | App 类型 | 测试方式 | 是否豁免全局 `integration-tests/*.spec.ts` |
 |---|---|---|
-| 无构建链扩展 | `scripts/verify-*.mjs`（puppeteer mock + `--load-extension`）+ `node:test`（核心逻辑提取纯函数测） | **豁免** Playwright E2E 强制要求 |
+| subtitle-collector（已迁构建链） | `vite build` 冒烟 + `scripts/verify-*.mjs`（puppeteer mock，`--load-extension=apps/subtitle-collector/dist`）+ `node:test`（reporting.mjs 纯函数，import 源码不依赖 dist） | **豁免** Playwright E2E；新增 `vite build` 冒烟 |
 | collector-server（TS） | `node --test --import tsx` | — |
 | collector-web | 至少 `vite build` 冒烟 | — |
 

@@ -19,7 +19,7 @@ import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
-const EXT = "/Users/taevas/code/mymy/bilibili-extensions/apps/subtitle-collector";
+const EXT = "/Users/taevas/code/mymy/bilibili-extensions/apps/subtitle-collector/dist";
 const COOKIE_FILE = "/tmp/bili-cookies.json";
 const SERVER_PING = "http://127.0.0.1:21527/ping";
 const SERVER_API = "http://127.0.0.1:21527/api/videos";

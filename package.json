@@ -5,7 +5,7 @@
     "build": "turbo build",
     "dev": "turbo dev",
     "test": "turbo run test",
-    "test:ext": "node scripts/verify-collector.mjs"
+    "test:ext": "turbo run build --filter=@bilibili-ext/subtitle-collector && node scripts/verify-collector.mjs"
   },
   "devDependencies": {
     "turbo": "^2",
