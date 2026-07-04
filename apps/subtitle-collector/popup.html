@@ -11,7 +11,7 @@ body { width: 320px; padding: 12px; font-family: system-ui, sans-serif; font-siz
 <div class="row">连接: <span id="status" class="status no">检查中...</span></div>
 <div class="row">B站登录: <span id="bili-login" class="status no">检查中...</span></div>
 <div class="row" id="video">当前视频: -</div>
-<div class="row" id="stats">上报: -</div>
+<div class="row">上报: <label style="display:inline-flex;align-items:center;gap:4px;"><input type="checkbox" id="report-toggle"> <span id="report-label">-</span></label></div>
 <button id="btn-capture" class="btn">手动补采</button>
-<script src="popup.js"></script>
+<script type="module" src="popup.js"></script>
 </body></html>
