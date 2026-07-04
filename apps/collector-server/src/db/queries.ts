@@ -25,7 +25,7 @@ export function listVideos(db: Database.Database, q: string | undefined, page: n
            (SELECT COUNT(*) FROM subtitle_tracks t WHERE t.video_id = v.id) as track_count
     FROM videos v LEFT JOIN creators c ON c.id = v.creator_id
     ${where}
-    ORDER BY v.first_seen_at DESC
+    ORDER BY v.first_seen_at DESC, v.id DESC
     LIMIT ? OFFSET ?
   `).all(...params, size, offset) as VideoListItem[];
   return { total: totalRow.c, items: rows };
