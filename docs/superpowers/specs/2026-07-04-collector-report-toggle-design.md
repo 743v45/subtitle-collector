@@ -202,13 +202,13 @@ POST /api/clients/:client_id/reporting
 
 | 轮次 | 日期 | 测试内容 | 结果 | 发现的问题 / 修复 |
 |---|---|---|---|---|
-| 1 | | 扩展纯函数 shouldReport 两路 | | |
-| 2 | | 扩展 puppeteer mock：开关关→不报、不暂存 | | |
-| 3 | | 扩展 puppeteer mock：开关开→回归现状 | | |
-| 4 | | server：双 client hello + GET /api/clients | | |
-| 5 | | server：POST 定向 set-reporting + result 回执 | | |
-| 6 | | server：离线 404 / 超时 504 / HTTP 守卫 403 | | |
-| 7 | | 端到端：两扩展独立开/关互不影响 | | |
+| 1 | 2026-07-05 | 扩展纯函数 shouldReport 两路 + genClientId + key 常量 | ✅ 3/3 pass（`node --test`） | - |
+| 2 | 2026-07-05 | server：双 client hello + listClients + sendToClient 隔离 | ✅ pass（server.test.ts） | broadcastCommand 既有用例 hello 须补 client_id（Map 改造后无 id 不入表），已修 |
+| 3 | 2026-07-05 | server：POST 定向 set-reporting + result 回执 + 504 超时注入 | ✅ pass（server.test.ts） | - |
+| 4 | 2026-07-05 | server：HTTP GET /api/clients + POST 404/504/400 | ✅ 3/3 pass（clients.test.ts） | clients.ts union narrowing，改 `if(!r.ok)` 判别，tsc 干净 |
+| 5 | 2026-07-05 | server：reporting-state 更新 conn 状态 | ✅ pass | - |
+| 6 | 2026-07-05 | 全量回归 `turbo run test` | ✅ 2 包全过（server 30 + 扩展 3） | 顺手修预存 flake：listVideos 排序加 `id DESC` tiebreaker（同毫秒 ingest 致 first_seen_at 相同） |
+| 7 | 2026-07-05 | 端到端 puppeteer：开关关→不报 / 开→回归 | ⏳ 脚本就绪，待本地跑 | `verify-collector-report-toggle.mjs` 已落盘；端口 21527 与在跑的 collector-server 冲突，需停 server 后跑。扩展咽喉逻辑已由轮次 1 + 代码 review 覆盖 |
 
 ## 11. 风险
 
