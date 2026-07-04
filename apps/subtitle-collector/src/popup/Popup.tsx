@@ -12,7 +12,7 @@ import {
 import { fmtNum } from './format';
 import { cn } from '@/lib/utils';
 import type { ConsistencyIssue, LocalSub, SubtitleBody } from './types';
-import { formatSubtitle, type SubtitleFormat } from '../../subtitleFormat.mjs';
+import { formatSubtitle, SUBTITLE_FORMATS, type SubtitleFormat } from '../../subtitleFormat.mjs';
 import { Badge } from '@/components/ui/badge';
 import { Switch } from '@/components/ui/switch';
 import { Button } from '@/components/ui/button';
@@ -31,11 +31,36 @@ import {
 } from '@/components/ui/select';
 
 const SUBTITLE_FORMAT_KEY = 'subtitleFormat';
-const FORMAT_OPTIONS: { value: SubtitleFormat; label: string }[] = [
-  { value: 'text', label: '纯文本' },
-  { value: 'timestamp', label: '带时间戳' },
-  { value: 'srt', label: 'SRT' },
-];
+const FORMAT_LABEL: Record<SubtitleFormat, string> = {
+  text: '纯文本',
+  timestamp: '带时间戳',
+  srt: 'SRT',
+};
+// 从 SUBTITLE_FORMATS 派生，避免和模块常量两处漂移
+const FORMAT_OPTIONS = SUBTITLE_FORMATS.map((value) => ({ value, label: FORMAT_LABEL[value] }));
+
+// 复制到剪贴板：navigator.clipboard 优先，失败回退 execCommand（popup 失焦/老 Chrome 兼容）。
+// 返回是否成功，调用方据此给反馈。
+async function copyText(text: string): Promise<boolean> {
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch {
+    try {
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      ta.style.position = 'fixed';
+      ta.style.opacity = '0';
+      document.body.appendChild(ta);
+      ta.select();
+      const ok = document.execCommand('copy');
+      document.body.removeChild(ta);
+      return ok;
+    } catch {
+      return false;
+    }
+  }
+}
 
 // 字幕复制格式记忆：启动从 storage 读，切换时回写。
 function useSubtitleFormat(): [SubtitleFormat, (f: SubtitleFormat) => void] {
@@ -139,7 +164,10 @@ function CollectedBlock({
   server: CollectedState;
   consistency: ConsistencyIssue[];
 }) {
-  if (local.state === 'non-video') return null;
+  // 非视频页判定走 server（useCollected 的 tabs.query 本地解析 URL）：
+  // useLocalCollected 在 currentBvid 未就绪时保持 loading，不再判 non-video，
+  // 避免 loading → 空 → loading 的卡片闪烁。
+  if (server.state === 'non-video') return null;
 
   if (local.state === 'loading') {
     return (
@@ -289,6 +317,7 @@ function SubtitleCopySection({
   const [open, setOpen] = useState(false);
   const [selectedUrl, setSelectedUrl] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const [failed, setFailed] = useState(false);
 
   const copyableSubs = subs.filter((s) => s.has_body);
   const effectiveUrl =
@@ -305,13 +334,13 @@ function SubtitleCopySection({
     if (!effectiveUrl) return;
     const body = bodies[effectiveUrl];
     if (!body) return;
-    const text = formatSubtitle(body, format);
-    try {
-      await navigator.clipboard.writeText(text);
+    const ok = await copyText(formatSubtitle(body, format));
+    if (ok) {
       setCopied(true);
       setTimeout(() => setCopied(false), 1500);
-    } catch {
-      // clipboard 不可用（焦点丢失/权限），静默忽略
+    } else {
+      setFailed(true);
+      setTimeout(() => setFailed(false), 1500);
     }
   };
 
@@ -364,8 +393,14 @@ function SubtitleCopySection({
               ))}
             </SelectContent>
           </Select>
-          <Button size="sm" className="h-8 px-3" onClick={onCopy} disabled={!effectiveUrl}>
-            {copied ? '已复制' : '复制'}
+          <Button
+            size="sm"
+            variant={failed ? 'destructive' : 'default'}
+            className="h-8 px-3"
+            onClick={onCopy}
+            disabled={!effectiveUrl}
+          >
+            {copied ? '已复制' : failed ? '复制失败' : '复制'}
           </Button>
         </div>
       </CollapsibleContent>

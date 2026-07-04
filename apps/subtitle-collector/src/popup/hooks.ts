@@ -177,7 +177,6 @@ export function useReporting(): { enabled: boolean; setEnabled: (v: boolean) => 
 // 「已收集」改用本地提取的数据展示（轨道/正文/extra），server 数据仅作一致性校验。
 export type LocalCollectedState =
   | { state: 'loading' }
-  | { state: 'non-video' }
   | { state: 'not-loaded' } // 视频页但 content.js 还没拦到 player API / 正文未就绪
   | { state: 'no-subtitle' } // player API subtitles 数组为空，真无字幕
   | {
@@ -197,7 +196,9 @@ export function useLocalCollected(currentBvid: string | null): {
 
   useEffect(() => {
     if (!currentBvid) {
-      setLocal({ state: 'non-video' });
+      // currentBvid 未就绪（useCollected 的 tabs.query 尚未回调）—— 保持 loading，
+      // 不判 non-video；非视频页由 server 状态在 CollectedBlock 决定，避免 loading→空→loading 闪烁。
+      setLocal({ state: 'loading' });
       return;
     }
     setLocal({ state: 'loading' });
@@ -258,7 +259,12 @@ export function diffConsistency(
   server: CollectedState
 ): ConsistencyIssue[] {
   if (local.state !== 'has-subtitle' || server.state !== 'ok') return [];
-  const localTrackCount = local.subs.filter((s) => s.has_body).length;
+  // 分子用「会入轨的轨数」（有 url 且非 url_missing），对齐 content.js flushIfReady 的入轨过滤，
+  // 也对齐 server tracks（subtitle_tracks 行数）。不用 has_body：那是 body fetch 状态，
+  // body 异步流入时抖动；reporting 关时 body 到齐也不触发 INGEST_RESULT，has_body 永不刷新 → 误报。
+  const localTrackCount = local.subs.filter(
+    (s) => !!s.subtitle_url && !s.url_missing
+  ).length;
   if (localTrackCount !== server.tracks) {
     return [
       {

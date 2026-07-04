@@ -1,5 +1,6 @@
 // apps/subtitle-collector/subtitleFormat.d.ts
 // 供 popup TS import 的类型声明（纯类型，无运行时）。
+// 不导出 SubtitleBody：popup 用 src/popup/types.ts 自己的 SubtitleBody，避免同名异义 smell。
 
 export type SubtitleFormat = 'text' | 'timestamp' | 'srt';
 
@@ -11,10 +12,14 @@ export interface SubtitleCue {
   content?: string;
 }
 
-export type SubtitleBody = { body?: SubtitleCue[] } | unknown;
+export type SubtitleInput =
+  | { body?: SubtitleCue[] }
+  | readonly unknown[]
+  | null
+  | undefined;
 
-export function extractCues(body: SubtitleBody): SubtitleCue[];
-export function subtitleToPlainText(body: SubtitleBody): string;
-export function subtitleToTimestamped(body: SubtitleBody): string;
-export function subtitleToSRT(body: SubtitleBody): string;
-export function formatSubtitle(body: SubtitleBody, fmt: SubtitleFormat): string;
+export function extractCues(body: SubtitleInput): SubtitleCue[];
+export function subtitleToPlainText(body: SubtitleInput): string;
+export function subtitleToTimestamped(body: SubtitleInput): string;
+export function subtitleToSRT(body: SubtitleInput): string;
+export function formatSubtitle(body: SubtitleInput, fmt: SubtitleFormat): string;

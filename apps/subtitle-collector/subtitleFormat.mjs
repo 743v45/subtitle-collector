@@ -21,18 +21,20 @@ function getContent(cue) {
   return (cue?.content ?? '').trim();
 }
 
-/** 秒 → mm:ss（分秒各 padStart 2 位）。 */
+/** 秒 → mm:ss（分秒各 padStart 2 位）。非有限数/负数兜底为 0（防 NaN/负 → "NaN:NaN"）。 */
 function formatMinSec(sec) {
-  const total = Math.floor(sec);
+  const safeSec = typeof sec === 'number' && Number.isFinite(sec) && sec >= 0 ? sec : 0;
+  const total = Math.floor(safeSec);
   const m = Math.floor(total / 60);
   const s = total % 60;
   return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
 }
 
-/** 秒 → HH:MM:SS,mmm（时/分/秒各 2 位，毫秒 3 位）。 */
+/** 秒 → HH:MM:SS,mmm（时/分/秒各 2 位，毫秒 3 位）。非有限数/负数兜底为 0；毫秒封顶 999 防 2.9995→,1000。 */
 function formatSrtTime(sec) {
-  const total = Math.floor(sec);
-  const ms = Math.round((sec - total) * 1000);
+  const safeSec = typeof sec === 'number' && Number.isFinite(sec) && sec >= 0 ? sec : 0;
+  const total = Math.floor(safeSec);
+  const ms = Math.min(999, Math.round((safeSec - total) * 1000));
   const h = Math.floor(total / 3600);
   const m = Math.floor((total % 3600) / 60);
   const s = total % 60;

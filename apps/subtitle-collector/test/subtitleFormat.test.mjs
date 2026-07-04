@@ -102,3 +102,27 @@ test('formatSubtitle：按 fmt 分发', () => {
 test('formatSubtitle：未知 fmt 返回空串', () => {
   assert.equal(formatSubtitle({ body: [{ from: 0, content: 'x' }] }, 'nope'), '');
 });
+
+test('负数/NaN from：兜底为 0（不产生 "-01:-05" / "NaN:NaN"）', () => {
+  assert.equal(subtitleToTimestamped({ body: [{ from: -5, to: 1, content: 'x' }] }), '[00:00] x');
+  assert.equal(subtitleToTimestamped({ body: [{ from: NaN, to: 1, content: 'y' }] }), '[00:00] y');
+  assert.ok(
+    subtitleToSRT({ body: [{ from: -5, to: 1, content: 'x' }] }).startsWith('1\n00:00:00,000 --> '),
+  );
+});
+
+test('毫秒封顶 999（2.9995 不产生 ,1000 非法 SRT）', () => {
+  const out = subtitleToSRT({ body: [{ from: 2.9995, to: 4, content: 'm' }] });
+  assert.ok(out.includes('00:00:02,999 --> '), `期望 ,999 实际 ${out}`);
+});
+
+test('to < from：SRT 时间轴原样反映数据（格式层不强制纠正）', () => {
+  const out = subtitleToSRT({ body: [{ from: 5, to: 2, content: '倒' }] });
+  assert.ok(out.includes('00:00:05,000 --> 00:00:02,000'), out);
+});
+
+test('非 ASCII content（中文/emoji）保留', () => {
+  const body = { body: [{ from: 0, to: 1, content: '中文🎉 tests' }] };
+  assert.equal(subtitleToPlainText(body), '中文🎉 tests');
+  assert.equal(subtitleToTimestamped(body), '[00:00] 中文🎉 tests');
+});
