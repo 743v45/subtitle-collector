@@ -21,3 +21,10 @@ export interface TrackInfo {
   is_default?: boolean; versions: VersionInfo[];
 }
 export interface VideoDetail { video: VideoInfo; tracks: TrackInfo[]; }
+
+export interface ClientInfo {
+  client_id: string;
+  ext_version: string | null;
+  reporting_enabled: boolean;
+  connected: true;
+}

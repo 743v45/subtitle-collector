@@ -1,4 +1,4 @@
-import type { VideoListItem, VideoDetail } from './types';
+import type { VideoListItem, VideoDetail, ClientInfo } from './types';
 import type { SubtitleLine } from '@/components/SubtitleView';
 
 const BASE = '';
@@ -23,4 +23,18 @@ export async function getVideo(source: string, sourceVid: string): Promise<Video
 export async function getVersion(versionId: number): Promise<{ version: { id: number; origin: string; payload: { body: SubtitleLine[] }; captured_at: number } }> {
   const r = await fetch(`${BASE}/api/versions/${versionId}`);
   return ensureOk(r, (j) => j);
+}
+
+export async function listClients(): Promise<ClientInfo[]> {
+  const r = await fetch(`${BASE}/api/clients`);
+  return ensureOk(r, (j) => j.clients ?? []);
+}
+
+export async function setReporting(clientId: string, enabled: boolean): Promise<boolean> {
+  const r = await fetch(`${BASE}/api/clients/${encodeURIComponent(clientId)}/reporting`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ enabled }),
+  });
+  return ensureOk(r, (j) => j.reporting_enabled);
 }
