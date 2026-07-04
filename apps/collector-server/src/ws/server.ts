@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { WebSocketServer, WebSocket, type RawData } from 'ws';
 import type { IncomingMessage, Server } from 'node:http';
 import type Database from 'better-sqlite3';
-import { ingestVideo, type IngestRequest } from '../db/ingest.js';
+import { ingestVideo, ingestUpper, type IngestRequest, type IngestUpperRequest } from '../db/ingest.js';
 
 interface ExtConn {
   ws: WebSocket;
@@ -83,6 +83,16 @@ export function attachWsServer(httpServer: Server, _db: Database.Database, expec
         } catch (err) {
           ws.send(JSON.stringify({ type: 'ingest-ack', ok: false, error: (err as Error).message }));
           console.log(`[server] ingest 失败 source=${msg.payload?.source} source_vid=${msg.payload?.video?.source_vid} error=${(err as Error).message}`);
+        }
+        return;
+      }
+
+      if (msg.type === 'ingest-upper' && msg.payload) {
+        try {
+          const result = ingestUpper(_db, msg.payload as IngestUpperRequest);
+          ws.send(JSON.stringify({ type: 'ingest-upper-ack', ok: true, ...result }));
+        } catch (err) {
+          ws.send(JSON.stringify({ type: 'ingest-upper-ack', ok: false, error: (err as Error).message }));
         }
         return;
       }
