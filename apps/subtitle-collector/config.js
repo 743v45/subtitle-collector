@@ -3,4 +3,5 @@
 // 部署/分发前请改成随机串，勿提交默认值到公开仓库。
 export const SERVER_URL = "ws://127.0.0.1:21527/ext";
 export const PING_URL = "http://127.0.0.1:21527/ping";
+export const API_BASE = "http://127.0.0.1:21527"; // popup 直连本地 API 用（host_permissions 免 CORS）
 export const TOKEN = "change-me-collector-token";

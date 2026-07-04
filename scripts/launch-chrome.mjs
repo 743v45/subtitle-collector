@@ -7,13 +7,32 @@
  * 前置：已在 9223 Chrome 登录过 B 站（cookie 在 ~/.cache/chrome-devtools-mcp/chrome-profile）。
  */
 import puppeteer from "puppeteer";
-import { existsSync, mkdirSync, cpSync } from "node:fs";
+import { existsSync, mkdirSync, cpSync, readdirSync } from "node:fs";
 import { join } from "node:path";
+import { homedir } from "node:os";
 
 const EXT_DIR = new URL("../apps/subtitle-collector/dist", import.meta.url).pathname;
 const SRC_PROFILE = "/Users/taevas/.cache/chrome-devtools-mcp/chrome-profile";
 const DST_PROFILE = "/Users/taevas/.cache/bilibili-ext-test-profile";
 const PORT = 9224;
+
+// 动态解析 Chrome 二进制：puppeteer 默认按版本号找自带 chrome-for-testing，
+// 缓存版本对不上（如自带要 131、本机只有 149）会抛 "Could not find Chrome"。
+// 优先用最新的 chrome-for-testing，回退系统 Chrome，再回退 puppeteer 默认。
+function resolveChrome() {
+  try {
+    const base = join(homedir(), ".cache/puppeteer/chrome");
+    if (existsSync(base)) {
+      const ver = readdirSync(base).sort().pop();
+      const cand = join(base, ver, "chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing");
+      if (existsSync(cand)) return cand;
+    }
+  } catch {}
+  const sys = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
+  if (existsSync(sys)) return sys;
+  return undefined;
+}
+const CHROME_BIN = resolveChrome();
 
 // 复制已登录 profile（避免抢占 9223 实例；cookie 带 B 站登录态）
 if (!existsSync(DST_PROFILE)) {
@@ -24,9 +43,10 @@ if (!existsSync(DST_PROFILE)) {
 }
 
 console.log("[launch] 启动 Chrome @9224，加载扩展:", EXT_DIR);
+if (CHROME_BIN) console.log("[launch] Chrome 二进制:", CHROME_BIN);
 const browser = await puppeteer.launch({
   headless: false,
-  executablePath: undefined, // 用 puppeteer 自带 chrome-for-testing
+  executablePath: CHROME_BIN, // 动态解析（chrome-for-testing → 系统 Chrome → 默认）
   userDataDir: DST_PROFILE,
   // 关键：去掉会破坏扩展加载的默认参数
   ignoreDefaultArgs: ["--enable-automation", "--disable-extensions"],
