@@ -144,3 +144,77 @@ export function ingestVideo(db: Database.Database, req: IngestRequest): IngestRe
   const { inserted, skipped } = tx(req);
   return { source: req.source, source_vid: req.video.source_vid, inserted_tracks: inserted, skipped_tracks: skipped };
 }
+
+// ── P2: UP 主资料 upsert（独立于 ingestVideo，只写 creators）──
+
+export interface IngestUpperRequest {
+  source: string;
+  creator: {
+    source_uid: string;
+    name?: string;
+    avatar?: string;
+    sign?: string;
+    level?: number;
+    sex?: string;
+    official_type?: number;
+    official_title?: string;
+    fans?: number;
+    following?: number;
+  };
+}
+
+export interface IngestUpperResult {
+  source: string;
+  source_uid: string;
+  updated_fields: string[];
+}
+
+// fans/following 是时点 stat（同 videos.stat 哲学），波动不记 change_log；其余字段变化照常记。
+const UPPER_STAT_FIELDS = new Set(['fans', 'following']);
+const UPPER_FIELDS = ['name', 'avatar', 'sign', 'level', 'sex', 'official_type', 'official_title', 'fans', 'following'] as const;
+
+export function ingestUpper(db: Database.Database, req: IngestUpperRequest): IngestUpperResult {
+  const tx = db.transaction((r: IngestUpperRequest): { updated_fields: string[] } => {
+    const now = Date.now();
+    const creatorSel = db.prepare('SELECT * FROM creators WHERE source = ? AND source_uid = ?');
+    const changeIns = db.prepare('INSERT INTO change_log (entity, entity_id, field, old_value, new_value, changed_at) VALUES (?, ?, ?, ?, ?, ?)');
+
+    const existing = creatorSel.get(r.source, r.creator.source_uid) as Record<string, unknown> | undefined;
+
+    if (!existing) {
+      db.prepare(`INSERT INTO creators (source, source_uid, name, avatar, sign, level, sex, official_type, official_title, fans, following, first_seen_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+        .run(r.source, r.creator.source_uid,
+          r.creator.name ?? null, r.creator.avatar ?? null, r.creator.sign ?? null,
+          r.creator.level ?? null, r.creator.sex ?? null, r.creator.official_type ?? null,
+          r.creator.official_title ?? null, r.creator.fans ?? null, r.creator.following ?? null,
+          now, now);
+      return { updated_fields: [...UPPER_FIELDS] };
+    }
+
+    const id = existing.id as number;
+    const updated: string[] = [];
+    const sets: string[] = [];
+    const vals: unknown[] = [];
+    for (const f of UPPER_FIELDS) {
+      const oldV = existing[f];
+      const newV = (r.creator as Record<string, unknown>)[f] ?? null;
+      if (String(oldV ?? '') !== String(newV ?? '')) {
+        if (!UPPER_STAT_FIELDS.has(f)) {
+          changeIns.run('creator', id, f, oldV == null ? null : String(oldV), newV == null ? null : String(newV), now);
+        }
+        updated.push(f);
+        sets.push(`${f} = ?`);
+        vals.push(newV);
+      }
+    }
+    if (sets.length > 0) {
+      sets.push('updated_at = ?');
+      vals.push(now);
+      vals.push(id);
+      db.prepare(`UPDATE creators SET ${sets.join(', ')} WHERE id = ?`).run(...vals);
+    }
+    return { updated_fields: updated };
+  });
+  const { updated_fields } = tx(req);
+  return { source: req.source, source_uid: req.creator.source_uid, updated_fields };
+}

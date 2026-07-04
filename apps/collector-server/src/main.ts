@@ -1,7 +1,7 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { readFileSync, existsSync } from 'node:fs';
 import { join, extname } from 'node:path';
-import { openDb, migrate } from './db/migrate.js';
+import { openDb, migrate, runMigrations } from './db/migrate.js';
 import { attachWsServer } from './ws/server.js';
 import { handleQueryHttp } from './http/queries.js';
 import { handleClientsHttp } from './http/clients.js';
@@ -12,6 +12,7 @@ const TOKEN = process.env.COLLECTOR_TOKEN ?? 'change-me-collector-token'; // 与
 
 const db = openDb(DB_PATH);
 migrate(db);
+runMigrations(db);
 
 // C2: loopback HTTP 对浏览器是真实攻击面——DNS rebinding 可绕同源策略读 /api/* 与静态页。
 // /ping 外的所有请求校验 Host（防 rebinding）+ Origin（浏览器请求须来自扩展或同源）。

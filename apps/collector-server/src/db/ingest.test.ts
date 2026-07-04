@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { openDb, migrate } from './migrate.js';
-import { ingestVideo } from './ingest.js';
+import { openDb, migrate, runMigrations } from './migrate.js';
+import { ingestVideo, ingestUpper } from './ingest.js';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -191,5 +191,60 @@ test('extra 结构字段（tname/tags 等）变化记 change_log', () => {
     rec('手机游戏', [{ tag_id: 2, tag_name: 'y' }]); // 结构字段变化（stat 未变）
     const logs = db.prepare("SELECT * FROM change_log WHERE entity='video' AND field='extra'").all() as any[];
     assert.equal(logs.length, 1, '结构字段变化应记一条 extra change_log');
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('ingestUpper 首次插入 creator（含新字段）', () => {
+  const { db, dir } = freshDb();
+  try {
+    const out = ingestUpper(db, {
+      source: 'bilibili',
+      creator: { source_uid: '123', name: 'up1', avatar: 'f', sign: '签名', level: 6, sex: '男',
+        official_type: 1, official_title: '官方', fans: 1000, following: 50 },
+    });
+    const row = db.prepare('SELECT * FROM creators WHERE source_uid=?').get('123') as Record<string, unknown>;
+    assert.equal(row.name, 'up1');
+    assert.equal(row.sign, '签名');
+    assert.equal(row.level, 6);
+    assert.equal(row.fans, 1000);
+    assert.deepEqual(out.updated_fields.sort(), ['avatar', 'fans', 'following', 'level', 'name', 'official_title', 'official_type', 'sex', 'sign']);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('ingestUpper 字段变化记 change_log', () => {
+  const { db, dir } = freshDb();
+  try {
+    ingestUpper(db, { source: 'bilibili', creator: { source_uid: '123', name: 'up1', sign: '旧签名' } });
+    ingestUpper(db, { source: 'bilibili', creator: { source_uid: '123', name: 'up1', sign: '新签名' } });
+    const changes = db.prepare('SELECT field FROM change_log WHERE entity=? AND entity_id=?').all('creator', 1) as Array<{ field: string }>;
+    assert.equal(changes.length, 1);
+    assert.equal(changes[0].field, 'sign');
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('ingestUpper fans/following 波动不记 change_log（stat 类）', () => {
+  const { db, dir } = freshDb();
+  try {
+    ingestUpper(db, { source: 'bilibili', creator: { source_uid: '123', name: 'up1', fans: 1000, following: 50 } });
+    ingestUpper(db, { source: 'bilibili', creator: { source_uid: '123', name: 'up1', fans: 2000, following: 60 } });
+    const changes = db.prepare('SELECT field FROM change_log WHERE entity=?').all('creator') as Array<{ field: string }>;
+    assert.equal(changes.filter((c) => c.field === 'fans' || c.field === 'following').length, 0);
+    const row = db.prepare('SELECT fans, following FROM creators WHERE source_uid=?').get('123') as Record<string, number>;
+    assert.equal(row.fans, 2000);
+    assert.equal(row.following, 60);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('runMigrations 幂等：列已存在不抛', () => {
+  const { db, dir } = freshDb(); // freshDb 已调 migrate（schema.sql 含新列）
+  try {
+    // 再跑 runMigrations：列已存在，应吞 "duplicate column name" 不抛
+    assert.doesNotThrow(() => runMigrations(db));
+    // creators 表仍有新字段（7 列在）
+    const cols = db.prepare('PRAGMA table_info(creators)').all() as Array<{ name: string }>;
+    const names = cols.map((c) => c.name);
+    for (const f of ['sign', 'level', 'sex', 'official_type', 'official_title', 'fans', 'following']) {
+      assert.ok(names.includes(f), `creators 应有列 ${f}`);
+    }
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });

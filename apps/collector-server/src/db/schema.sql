@@ -5,6 +5,13 @@ CREATE TABLE IF NOT EXISTS creators (
   source_uid    TEXT NOT NULL,
   name          TEXT,
   avatar        TEXT,
+  sign          TEXT,
+  level         INTEGER,
+  sex           TEXT,
+  official_type INTEGER,
+  official_title TEXT,
+  fans          INTEGER,
+  following     INTEGER,
   first_seen_at INTEGER NOT NULL,
   updated_at    INTEGER NOT NULL,
   UNIQUE(source, source_uid)
