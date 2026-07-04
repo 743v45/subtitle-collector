@@ -1,4 +1,4 @@
-import { type ReactNode, useCallback, useEffect, useState } from 'react';
+import { type ComponentType, type ReactNode, useCallback, useEffect, useState } from 'react';
 import {
   useBiliLogin,
   useCollected,
@@ -78,6 +78,11 @@ export function Popup() {
   const { collected: serverCollected, currentBvid, refresh } = useCollected();
   const { local, refreshLocal } = useLocalCollected(currentBvid);
   const consistency = diffConsistency(local, serverCollected);
+  // 非视频页（日常多数场景）精简：保留「连接」「B站登录」「自动上报开关」；
+  // 「当前视频 / 视频信息 / 手动补采」是视频页专属，用 isVideoPage 隐藏。
+  // currentBvid 在 tabs.query 回调后才就绪（视频页=bvid / 非视频页=null），首帧 null 即隐藏，
+  // 回调后视频页才出现——既精简非视频页，也避免"当前视频:非视频页 → BVxxx"的初始值闪烁。
+  const isVideoPage = currentBvid !== null;
 
   const onCapture = () => {
     chrome.runtime.sendMessage({ type: 'MANUAL_CAPTURE' });
@@ -112,11 +117,15 @@ export function Popup() {
         )}
       </Row>
 
-      <Row label="当前视频">
-        <span className="text-sm tabular-nums">{currentBvid ?? '非视频页'}</span>
-      </Row>
+      {isVideoPage && (
+        <>
+          <Row label="当前视频">
+            <span className="text-sm tabular-nums">{currentBvid}</span>
+          </Row>
 
-      <CollectedBlock local={local} server={serverCollected} consistency={consistency} />
+          <CollectedBlock local={local} server={serverCollected} consistency={consistency} />
+        </>
+      )}
 
       <div className="flex items-center justify-between">
         <span className="text-sm text-muted-foreground">自动上报</span>
@@ -134,14 +143,16 @@ export function Popup() {
               />
             </>
           )}
-          <Button
-            size="sm"
-            variant="outline"
-            className="h-7 px-2.5 text-xs"
-            onClick={onCapture}
-          >
-            手动补采
-          </Button>
+          {isVideoPage && (
+            <Button
+              size="sm"
+              variant="outline"
+              className="h-7 px-2.5 text-xs"
+              onClick={onCapture}
+            >
+              手动补采
+            </Button>
+          )}
         </div>
       </div>
     </div>
@@ -193,12 +204,16 @@ function CollectedBlock({
     );
   }
 
-  // 视频页但 content.js 还没拦到 player API（页面刚加载/未播放）
+  // 视频页但拿不到本地采集：最常见是扩展更新后页面未重新注入 content.js（页面是装/更新前打开的），
+  // 刷新当前页 + 重开弹窗即可恢复；页面刚加载、播放器尚未就绪也会短暂命中此态，刷新同样能解。
   if (local.state === 'not-loaded') {
     return (
       <Card>
-        <CardContent className="p-3 text-sm text-muted-foreground">
-          正在获取当前视频信息，请确保视频已开始加载
+        <CardContent className="space-y-1 p-3">
+          <div className="text-sm text-muted-foreground">未获取到视频信息</div>
+          <div className="text-xs text-muted-foreground">
+            刷新当前页后重开本弹窗（扩展更新后页面需刷新才会注入采集脚本）
+          </div>
         </CardContent>
       </Card>
     );
@@ -221,65 +236,72 @@ function CollectedBlock({
   const pages = Array.isArray(extra.pages) ? extra.pages : [];
 
   // 字段名对齐 inject.js readVideoExtra 写入的 stat：view/like/coin/favorite/share/danmaku
-  const stats: Array<{ label: string; value: number | null | undefined }> = [
-    { label: '播放', value: stat.view },
-    { label: '点赞', value: stat.like },
-    { label: '投币', value: stat.coin },
-    { label: '收藏', value: stat.favorite },
-    { label: '转发', value: stat.share },
-    { label: '弹幕数', value: stat.danmaku },
+  // 图标用等高线 inline SVG（见文件末尾 *Icon），B 站语义一一对应。
+  const stats: Array<{
+    label: string;
+    value: number | null | undefined;
+    icon: ComponentType<{ className?: string }>;
+  }> = [
+    { label: '播放', value: stat.view, icon: PlayIcon },
+    { label: '点赞', value: stat.like, icon: LikeIcon },
+    { label: '投币', value: stat.coin, icon: CoinIcon },
+    { label: '收藏', value: stat.favorite, icon: StarIcon },
+    { label: '转发', value: stat.share, icon: ShareIcon },
+    { label: '弹幕数', value: stat.danmaku, icon: DanmakuIcon },
   ];
 
   return (
     <Card>
       <CardContent className="space-y-3 p-3">
-        <div className="space-y-0.5">
-          <div className="flex flex-wrap items-center gap-2">
-            <div className="text-sm font-medium">视频信息</div>
-            {consistency.map((c) => (
-              <Badge
-                key={c.field}
-                variant="destructive"
-                className="font-normal"
-                title={`本地 ${c.local} / 服务端 ${c.server}`}
-              >
-                ⚠ {c.field}不一致
-              </Badge>
-            ))}
-          </div>
-          <ReportedSubstatus server={server} />
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="text-sm font-medium">视频信息</div>
+          <SyncStatusBadge server={server} />
+          {consistency.map((c) => (
+            <Badge
+              key={c.field}
+              variant="destructive"
+              className="font-normal"
+              title={`本地 ${c.local} / 服务端 ${c.server}`}
+            >
+              ⚠ {c.field}不一致
+            </Badge>
+          ))}
         </div>
 
-        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
-          <span className="inline-flex items-center gap-1">
-            <TrackIcon className="h-3.5 w-3.5" />
-            <span className="tabular-nums">{subs.length}</span>
-            <span>轨字幕</span>
-          </span>
-          {pages.length > 1 && (
-            <span className="inline-flex items-center gap-1">
-              <PagesIcon className="h-3.5 w-3.5" />
-              <span className="tabular-nums">{pages.length}</span>
-              <span>P</span>
-            </span>
-          )}
-          {extra.tname && (
-            <span className="inline-flex items-center gap-1">
-              <CategoryIcon className="h-3.5 w-3.5" />
-              <span>{extra.tname}</span>
-            </span>
-          )}
-        </div>
+        {/* 轨数已并入「复制字幕」触发器，头部统计区只留多 P / 分类（无则不渲染） */}
+        {(pages.length > 1 || extra.tname) && (
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
+            {pages.length > 1 && (
+              <span className="inline-flex items-center gap-1">
+                <PagesIcon className="h-3.5 w-3.5" />
+                <span className="tabular-nums">{pages.length}</span>
+                <span>P</span>
+              </span>
+            )}
+            {extra.tname && (
+              <span className="inline-flex items-center gap-1">
+                <CategoryIcon className="h-3.5 w-3.5" />
+                <span>{extra.tname}</span>
+              </span>
+            )}
+          </div>
+        )}
 
         <SubtitleCopySection subs={subs} bodies={bodies} />
 
         <div className="grid grid-cols-3 gap-x-2 gap-y-2">
-          {stats.map((s) => (
-            <div key={s.label} className="space-y-0.5">
-              <div className="text-xs text-muted-foreground">{s.label}</div>
-              <div className="text-sm font-medium tabular-nums">{fmtNum(s.value)}</div>
-            </div>
-          ))}
+          {stats.map((s) => {
+            const Icon = s.icon;
+            return (
+              <div key={s.label} className="space-y-0.5">
+                <div className="flex items-center gap-1 text-xs text-muted-foreground">
+                  <Icon className="h-3 w-3" />
+                  <span>{s.label}</span>
+                </div>
+                <div className="text-sm font-medium tabular-nums">{fmtNum(s.value)}</div>
+              </div>
+            );
+          })}
         </div>
 
         {/* stat.danmaku = 该视频收到的弹幕条数（B 站公开统计字段），非本项目采集的弹幕内容 */}
@@ -300,23 +322,42 @@ function CollectedBlock({
   );
 }
 
-// 服务端上报状态：仅作副标题提示（主数据来自本地），并说明一致性校验是否可用
-function ReportedSubstatus({ server }: { server: CollectedState }) {
-  let text: string | null = null;
-  if (server.state === 'ok') {
-    const updated = server.video.updated_at
-      ? new Date(server.video.updated_at).toLocaleString()
-      : null;
-    text = updated ? `上次上报 ${updated}` : '已上报';
-  } else if (server.state === 'not-collected') {
-    text = '未上报到服务端';
-  } else if (server.state === 'server-down') {
-    text = '服务端未运行（一致性校验不可用）';
-  } else if (server.state === 'loading') {
-    text = '校验查询中…';
+// 服务端同步状态 badge（标题旁）：颜色区分 + 上次同步时间；loading 用中性占位避免闪烁。
+function SyncStatusBadge({ server }: { server: CollectedState }) {
+  if (server.state === 'loading') {
+    return <StatusPlaceholder className="w-16" />;
   }
-  if (!text) return null;
-  return <div className="text-xs text-muted-foreground">{text}</div>;
+  let variant: 'success' | 'secondary' | 'destructive';
+  let text: string;
+  if (server.state === 'ok') {
+    const t = server.video.updated_at ? fmtSyncTime(server.video.updated_at) : '';
+    variant = 'success';
+    text = t ? `上次同步 ${t}` : '已同步';
+  } else if (server.state === 'not-collected') {
+    variant = 'secondary';
+    text = '未同步';
+  } else {
+    // server-down：服务端未运行，一致性校验随之不可用
+    variant = 'destructive';
+    text = '服务端未运行';
+  }
+  return (
+    <Badge variant={variant} className="font-normal">
+      {text}
+    </Badge>
+  );
+}
+
+// 同步时间短格式：M/D HH:MM（badge 内显示，比 toLocaleString 短）。
+function fmtSyncTime(ts: number | string): string {
+  const d = new Date(ts);
+  if (Number.isNaN(d.getTime())) return '';
+  return new Intl.DateTimeFormat('zh-CN', {
+    month: 'numeric',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  }).format(d);
 }
 
 // 默认折叠；展开后选格式（横向抽屉，记忆）+ 每轨右侧复制按钮，点即复制「该轨 × 当前格式」。
@@ -365,7 +406,7 @@ function SubtitleCopySection({
         <ChevronIcon
           className={cn('h-3 w-3 transition-transform', open && 'rotate-90')}
         />
-        <span>复制字幕（{copyableSubs.length}/{subs.length} 轨已获取）</span>
+        <span>复制字幕 · {copyableSubs.length}/{subs.length} 轨</span>
       </CollapsibleTrigger>
       <CollapsibleContent className="space-y-2 pt-2">
         <div className="flex flex-wrap gap-1">
@@ -449,7 +490,8 @@ function SubtitleCopySection({
 }
 
 // lucide-react 未引入（避免新增依赖），用等高线 inline SVG 替代，stroke 跟随 currentColor。
-function TrackIcon({ className }: { className?: string }) {
+// 统计项图标（B 站语义）：播放▶ / 点赞👍 / 投币🪙 / 收藏⭐ / 转发↗ / 弹幕💬。
+function PlayIcon({ className }: { className?: string }) {
   return (
     <svg
       xmlns="http://www.w3.org/2000/svg"
@@ -462,10 +504,106 @@ function TrackIcon({ className }: { className?: string }) {
       className={className}
       aria-hidden="true"
     >
-      <path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z" />
-      <path d="M14 2v5h5" />
-      <path d="M9 13h6" />
-      <path d="M9 17h4" />
+      <polygon points="6 3 20 12 6 21 6 3" />
+    </svg>
+  );
+}
+
+function LikeIcon({ className }: { className?: string }) {
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={className}
+      aria-hidden="true"
+    >
+      <path d="M7 10v12" />
+      <path d="M15 5.88 14 10h5.83a2 2 0 0 1 1.92 2.56l-2.33 8A2 2 0 0 1 17.5 22H4a2 2 0 0 1-2-2v-8a2 2 0 0 1 2-2h2.76a2 2 0 0 0 1.79-1.11L12 2a3.13 3.13 0 0 1 3 3.88Z" />
+    </svg>
+  );
+}
+
+function CoinIcon({ className }: { className?: string }) {
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={className}
+      aria-hidden="true"
+    >
+      <circle cx="9" cy="9" r="6" />
+      <path d="M18.09 11.37A6 6 0 1 1 10.34 19" />
+      <path d="M8 7h1v4" />
+      <path d="m17 14.88.7.71-2.82 2.82" />
+    </svg>
+  );
+}
+
+function StarIcon({ className }: { className?: string }) {
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={className}
+      aria-hidden="true"
+    >
+      <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" />
+    </svg>
+  );
+}
+
+function ShareIcon({ className }: { className?: string }) {
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={className}
+      aria-hidden="true"
+    >
+      <circle cx="18" cy="5" r="3" />
+      <circle cx="6" cy="12" r="3" />
+      <circle cx="18" cy="19" r="3" />
+      <line x1="8.59" y1="13.51" x2="15.42" y2="17.49" />
+      <line x1="15.41" y1="6.51" x2="8.59" y2="10.49" />
+    </svg>
+  );
+}
+
+function DanmakuIcon({ className }: { className?: string }) {
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={className}
+      aria-hidden="true"
+    >
+      <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+      <path d="M8 9h8" />
     </svg>
   );
 }

@@ -416,27 +416,31 @@ background.js 是扩展的 WS 客户端，连 `ws://localhost:21527`，承担双
 布局自上而下（实现在 [Popup.tsx](apps/subtitle-collector/src/popup/Popup.tsx)）：
 
 ```
-[连接]      已连接 / 未连接
+[连接]      已连接 ✓ / 未连接 ✗
 [B站登录]   已登录(uname) / 未登录
-[当前视频]  BV1xxx / 非视频页
-┌ 视频信息 ───────────────────────────────┐
-│ 上次上报 xxx / 未上报到服务端（副标题）   │
-│ ▾复制字幕（N/M 轨已获取）                 │
+（非视频页精简：仅连接 + 登录 + 自动上报开关）
+[当前视频]  BV1xxx                         ← 仅视频页
+┌ 视频信息  [上次同步 7/5 12:00] ─────────┐  ← 同步 badge：绿=已同步/灰=未同步/红=服务端未运行
+│ ▾复制字幕 · N/M 轨                       │  ← 轨数并入触发器
 │   [纯文本 ▸]   ← 横向抽屉：点开→三格式横排 │
 │   简体中文 zh-Hans           [复制]       │
 │   AI                         [复制]       │ ← url 含 aisubtitle
 │   en  English                [复制]       │
-│ 播放/点赞/投币/收藏/转发/弹幕数 统计网格   │
+│ ▶播放 👍点赞 🪙投币 ⭐收藏 ↗转发 💬弹幕    │  ← 统计带 inline SVG 图标
 └──────────────────────────────────────────┘
-[自动上报]  关/开 [开关] [手动补采]
+[自动上报]  关/开 [开关] [手动补采]          ← 手动补采仅视频页显示
 ```
 
 关键交互：
 
 - **格式横向抽屉**（`SubtitleCopySection`）：替换原 Radix Select——后者在扩展 popup 里 popper+Portal 触发"打开即关"已知不兼容。收缩态只渲染当前格式 1 个按钮（`▸` 提示），点击横向展开全部 3 个（纯文本/带时间戳/SRT），点选其一即折叠回单个并写回 `chrome.storage.local` 记忆。纯 button + Tailwind，不走 Portal，规避 popup 视口 bug。
 - **每轨右复制按钮**：点即复制「该轨 × 当前格式」，按钮内联反馈"已复制/失败"1.5s。`subtitle_url` 含 `aisubtitle.hdslb.com` 的轨左侧标 "AI"（B 站 AI 字幕 URL 特征），否则显示 `lan_doc`（+ `lan` 副标）。无 body 的轨按钮置灰"未获取"。
-- **「视频信息」**（原"已收集"）：主数据来自本地 content.js（未上报），副标题才提示服务端上报时间——纠正"已收集"暗示已上报的歧义。
-- **手动补采**：缩小（`h-7 text-xs`）并入"自动上报"行右侧，不再 `w-full` 独占整行。
+- **轨数并入触发器**：原头部"N 轨字幕"统计与"复制字幕（N/M 轨已获取）"两处冗余，合并为触发器一行 `复制字幕 · N/M 轨`；头部统计区只留多 P / 分类（无则不渲染）。
+- **统计项图标**：6 项统计（播放/点赞/投币/收藏/转发/弹幕数）各配等高线 inline SVG（lucide 风格，零依赖），与文件内既有 `*Icon` 一致；B 站语义一一对应（弹幕=对话气泡+横线、投币=硬币堆）。
+- **同步状态 badge**（`SyncStatusBadge`，标题旁）：替代原文字副标题。颜色区分——`success` 已同步（含"上次同步 M/D HH:MM"，`fmtSyncTime`）、`secondary` 未同步、`destructive` 服务端未运行（措辞从"服务端未运行（一致性校验不可用）"简化为"服务端未运行"）；loading 期间用 `StatusPlaceholder` 占位避免闪烁。
+- **「视频信息」**（原"已收集"）：主数据来自本地 content.js（未上报），纠正"已收集"暗示已上报的歧义。
+- **手动补采**：缩小（`h-7 text-xs`）并入"自动上报"行右侧，不再 `w-full` 独占整行；仅视频页显示。
+- **非视频页精简**（`isVideoPage`）：`currentBvid === null` 时隐藏「当前视频 / 视频信息 / 手动补采」，只留连接 + 登录 + 自动上报开关。
 
 ## 8. 网页（apps/collector-web）
 
@@ -515,6 +519,7 @@ TrackSwitcher / SubtitleView 的交互思路复用 subtitle-extractor 的"字幕
 | R1 | 2026-07-05 | collector-server 全量 `pnpm test` | 141 pass / 0 fail | 含新增心跳清理用例（`setup(heartbeatMs?)` 注入） |
 | R1 | 2026-07-05 | `tsc --noEmit`（collector-server） | exit 0 | `isAlive` 经 `as WebSocket & { isAlive }` cast，类型干净 |
 | R2 | 2026-07-05 | popup 复制区重构（横向抽屉+每轨复制）/「视频信息」/手动补采布局 | `vite build` 通过 | Radix Select 在 popup 打不开→换纯 button 横向抽屉；复制改每轨一键；76 模块 700ms。复制交互（clipboard+真实字幕）难自动化，由 build 冒烟 + 人工覆盖 |
+| R3 | 2026-07-05 | popup 统计图标 + 轨数合并 + 同步状态 badge 化 + 非视频页精简 | `vite build` 通过 | 6 统计项配 lucide 风格 inline SVG；轨字幕并入复制触发器；ReportedSubstatus→SyncStatusBadge（颜色+同步时间）；76 模块 711ms |
 
 ## 12. 风险
 
