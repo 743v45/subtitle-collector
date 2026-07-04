@@ -75,6 +75,56 @@ export function collectDedupe(
   return { collected, missing };
 }
 
+/** `collect upper-info <mid>`：下发 get-upper-info，扩展 fetch acc/info+stat → ingest-upper 入库。 */
+export async function collectUpperInfo(
+  client: CollectClient,
+  clientId: string,
+  mid: string,
+  timeout: number,
+): Promise<unknown> {
+  return client.sendCommand(clientId, 'get-upper-info', { mid }, timeout);
+}
+
+export interface UpperVideosOpts { page?: number; size?: number; }
+
+/** `collect upper-videos <mid>`：下发 list-upper-videos，返回视频列表（不入库）。 */
+export async function collectUpperVideos(
+  client: CollectClient,
+  clientId: string,
+  mid: string,
+  opts: UpperVideosOpts,
+  timeout: number,
+): Promise<unknown> {
+  return client.sendCommand(clientId, 'list-upper-videos',
+    { mid, page: opts.page ?? 1, page_size: opts.size ?? 30 }, timeout);
+}
+
+/** `collect new-videos <mid>`：拉 UP 主视频列表（经扩展）+ 直读 SQLite 对比 → 返回 new/collected。 */
+export async function collectNewVideos(
+  client: CollectClient,
+  clientId: string,
+  mid: string,
+  db: Database.Database,
+  opts: UpperVideosOpts,
+  timeout: number,
+): Promise<{ total: number; new: string[]; collected: string[] }> {
+  const resp = await collectUpperVideos(client, clientId, mid, opts, timeout) as {
+    ok: boolean; result?: { ok: boolean; data?: { total?: number; items?: Array<{ bvid: string }> } };
+  };
+  const items = resp.result?.data?.items ?? [];
+  const bvids = items.map((it) => it.bvid).filter(Boolean);
+  if (bvids.length === 0) return { total: resp.result?.data?.total ?? 0, new: [], collected: [] };
+  const placeholders = bvids.map(() => '?').join(',');
+  const rows = db.prepare(
+    `SELECT source_vid FROM videos WHERE source = 'bilibili' AND source_vid IN (${placeholders})`,
+  ).all(...bvids) as Array<{ source_vid: string }>;
+  const set = new Set(rows.map((r) => r.source_vid));
+  const collected: string[] = [];
+  const newArr: string[] = [];
+  for (const b of bvids) (set.has(b) ? collected : newArr).push(b);
+  return { total: resp.result?.data?.total ?? bvids.length, new: newArr, collected };
+}
+
 // ── commander 装配 ──
 
 /**
@@ -159,6 +209,71 @@ export function buildCollectCommand(): Command {
       }
       const data = collectDedupe(db, bvids);
       emitResult(data, ctx.format);
+    });
+
+  collect
+    .command('upper-info <mid>')
+    .description('采集 UP 主资料入库（扩展 fetch acc/info + relation/stat）')
+    .option('--client <id>', '扩展 client_id（缺省取第一个在线）')
+    .option('--timeout <ms>', '超时毫秒（默认 15000）', (v) => Number.parseInt(v, 10), DEFAULT_COLLECT_TIMEOUT_MS)
+    .action(async (mid: string, opts: { client?: string; timeout: number }) => {
+      if (!Number.isFinite(opts.timeout) || opts.timeout <= 0) emitError(`invalid --timeout: ${opts.timeout}`, 'ARGS');
+      const ctx = getCliContext();
+      const client = new ServerClient(ctx.serverUrl, ctx.token);
+      try {
+        const clientId = await resolveClientId(client as CollectClient, opts.client);
+        const data = await collectUpperInfo(client as CollectClient, clientId, mid, opts.timeout);
+        emitResult(data, ctx.format);
+      } catch (err) {
+        handleHttpError(err);
+      }
+    });
+
+  collect
+    .command('upper-videos <mid>')
+    .description('拉 UP 主视频列表（不入库）')
+    .option('--page <n>', '页码（默认 1）', (v) => Number.parseInt(v, 10), 1)
+    .option('--size <n>', '每页条数（默认 30）', (v) => Number.parseInt(v, 10), 30)
+    .option('--client <id>', '扩展 client_id')
+    .option('--timeout <ms>', '超时毫秒（默认 15000）', (v) => Number.parseInt(v, 10), DEFAULT_COLLECT_TIMEOUT_MS)
+    .action(async (mid: string, opts: { page: number; size: number; client?: string; timeout: number }) => {
+      if (!Number.isFinite(opts.timeout) || opts.timeout <= 0) emitError(`invalid --timeout: ${opts.timeout}`, 'ARGS');
+      const ctx = getCliContext();
+      const client = new ServerClient(ctx.serverUrl, ctx.token);
+      try {
+        const clientId = await resolveClientId(client as CollectClient, opts.client);
+        const data = await collectUpperVideos(client as CollectClient, clientId, mid, { page: opts.page, size: opts.size }, opts.timeout);
+        emitResult(data, ctx.format);
+      } catch (err) {
+        handleHttpError(err);
+      }
+    });
+
+  collect
+    .command('new-videos <mid>')
+    .description('发现 UP 主新视频：拉列表 + 对比库 → 返回 new/collected')
+    .option('--page <n>', '页码（默认 1）', (v) => Number.parseInt(v, 10), 1)
+    .option('--size <n>', '每页条数（默认 30）', (v) => Number.parseInt(v, 10), 30)
+    .option('--client <id>', '扩展 client_id')
+    .option('--timeout <ms>', '超时毫秒（默认 15000）', (v) => Number.parseInt(v, 10), DEFAULT_COLLECT_TIMEOUT_MS)
+    .action(async (mid: string, opts: { page: number; size: number; client?: string; timeout: number }) => {
+      if (!Number.isFinite(opts.timeout) || opts.timeout <= 0) emitError(`invalid --timeout: ${opts.timeout}`, 'ARGS');
+      const ctx = getCliContext();
+      const client = new ServerClient(ctx.serverUrl, ctx.token);
+      let db: Database.Database;
+      try {
+        db = openReadonlyDb(ctx.dbPath);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        emitError(msg, 'DB_UNREADABLE');
+      }
+      try {
+        const clientId = await resolveClientId(client as CollectClient, opts.client);
+        const data = await collectNewVideos(client as CollectClient, clientId, mid, db, { page: opts.page, size: opts.size }, opts.timeout);
+        emitResult(data, ctx.format);
+      } catch (err) {
+        handleHttpError(err);
+      }
     });
 
   return collect;

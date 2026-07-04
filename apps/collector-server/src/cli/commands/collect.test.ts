@@ -5,7 +5,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import Database from 'better-sqlite3';
-import { collectSearch, collectSubtitle, collectDedupe, resolveClientId } from './collect.js';
+import { collectSearch, collectSubtitle, collectDedupe, collectUpperInfo, collectUpperVideos, collectNewVideos, resolveClientId } from './collect.js';
 
 function mockClient(sendCommandResult: unknown, listClientsResult: unknown[] = [{ client_id: 'c1' }]) {
   const calls: Array<{ clientId: string; action: string; params: unknown; timeout: number }> = [];
@@ -65,4 +65,29 @@ test('collectDedupe 按视频是否在库分 collected/missing', () => {
 test('collectDedupe 空输入 → 空结果', () => {
   const db = makeDb();
   assert.deepEqual(collectDedupe(db, []), { collected: [], missing: [] });
+});
+
+test('collectUpperInfo 下发 get-upper-info', async () => {
+  const c = mockClient({ ok: true, result: { ok: true, data: { mid: '123', name: 'up1', fans: 1000 } } });
+  const out = await collectUpperInfo(c as any, 'c1', '123', 15000);
+  assert.deepEqual(c.calls[0], { clientId: 'c1', action: 'get-upper-info', params: { mid: '123' }, timeout: 15000 });
+  assert.deepEqual(out, { ok: true, result: { ok: true, data: { mid: '123', name: 'up1', fans: 1000 } } });
+});
+
+test('collectUpperVideos 下发 list-upper-videos', async () => {
+  const c = mockClient({ ok: true, result: { ok: true, data: { total: 2, items: [{ bvid: 'BV1' }] } } });
+  const out = await collectUpperVideos(c as any, 'c1', '123', { page: 1, size: 30 }, 15000);
+  assert.deepEqual(c.calls[0], { clientId: 'c1', action: 'list-upper-videos', params: { mid: '123', page: 1, page_size: 30 }, timeout: 15000 });
+  assert.deepEqual(out, { ok: true, result: { ok: true, data: { total: 2, items: [{ bvid: 'BV1' }] } } });
+});
+
+test('collectNewVideos 拉列表 + 对比库 → 返回 new/collected', async () => {
+  const c = mockClient({ ok: true, result: { ok: true, data: { total: 3, items: [
+    { bvid: 'BV1' }, { bvid: 'BV2' }, { bvid: 'BV3' },
+  ] } } });
+  const db = makeDb();
+  db.prepare("INSERT INTO videos (source, source_vid, title, first_seen_at) VALUES ('bilibili','BV2','t',1)").run();
+  const out = await collectNewVideos(c as any, 'c1', '123', db, { page: 1, size: 30 }, 15000);
+  assert.deepEqual(out.new.sort(), ['BV1', 'BV3']);
+  assert.deepEqual(out.collected, ['BV2']);
 });
