@@ -3,11 +3,13 @@ import {
   useBiliLogin,
   useCollected,
   useConnectionStatus,
+  useCreator,
   useLocalCollected,
   useReporting,
   diffConsistency,
   type CollectedState,
   type ConnState,
+  type CreatorState,
   type LocalCollectedState,
   type LoginState,
 } from './hooks';
@@ -96,6 +98,10 @@ export function Popup() {
   // 回调后视频页才出现——既精简非视频页，也避免"非视频页 → BVxxx"的初始值闪烁。
   // 多平台时这里改用 detectPlatform(tabUrl)，平台头/统计自动按当前平台渲染。
   const isVideoPage = currentBvid !== null;
+  // server ok 时从 video.creator_id 查 UP 主详情；其它态（loading/server-down/not-collected）
+  // 没有 creator_id → useCreator 返回 none，CreatorCard 不渲染，无噪音。
+  const creatorId =
+    serverCollected.state === 'ok' ? serverCollected.video.creator_id : undefined;
 
   const onCapture = () => {
     chrome.runtime.sendMessage({ type: 'MANUAL_CAPTURE' });
@@ -110,13 +116,16 @@ export function Popup() {
     <div className="space-y-3 p-3">
       <PlatformHead platform={bili} conn={conn} login={login} />
       {currentBvid && (
-        <CollectedBlock
-          platform={bili}
-          bvid={currentBvid}
-          local={local}
-          server={serverCollected}
-          consistency={consistency}
-        />
+        <>
+          <CollectedBlock
+            platform={bili}
+            bvid={currentBvid}
+            local={local}
+            server={serverCollected}
+            consistency={consistency}
+          />
+          <CreatorCard creatorId={creatorId} />
+        </>
       )}
       <FooterActions
         reporting={reporting}
@@ -396,6 +405,55 @@ function CollectedBlock({
             ))}
             {tags.length > 8 && (
               <span className="text-xs text-muted-foreground">+{tags.length - 8}</span>
+            )}
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+// UP 主资料卡：视频信息卡下方，name + level + official 认证 Badge + sign + fans/following。
+// loading 显示查询中；none（无 creator_id / server-down / 未采集）不渲染，避免噪音。
+function CreatorCard({ creatorId }: { creatorId: number | null | undefined }) {
+  const creator = useCreator(creatorId);
+
+  if (creator.state === 'loading') {
+    return (
+      <Card>
+        <CardContent className="p-3 text-sm text-muted-foreground">UP 主查询中…</CardContent>
+      </Card>
+    );
+  }
+  if (creator.state === 'none') return null;
+
+  const c = creator.creator;
+  return (
+    <Card>
+      <CardContent className="space-y-2 p-3">
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="text-sm font-semibold">{c.name ?? '未知 UP'}</div>
+          {c.level != null && (
+            <Badge variant="secondary" className="font-normal tabular-nums">
+              Lv{c.level}
+            </Badge>
+          )}
+          {c.official_title && (
+            <Badge variant="success" className="font-normal">
+              {c.official_title}
+            </Badge>
+          )}
+        </div>
+        {c.sign && (
+          <div className="line-clamp-2 text-xs text-muted-foreground">{c.sign}</div>
+        )}
+        {(c.fans != null || c.following != null) && (
+          <div className="flex items-center gap-3 text-xs text-muted-foreground">
+            {c.fans != null && (
+              <span className="tabular-nums">粉丝 {fmtNum(c.fans)}</span>
+            )}
+            {c.following != null && (
+              <span className="tabular-nums">关注 {fmtNum(c.following)}</span>
             )}
           </div>
         )}

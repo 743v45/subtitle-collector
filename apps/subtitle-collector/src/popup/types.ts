@@ -23,7 +23,28 @@ export interface CollectedExtra {
 export interface CollectedVideo {
   // schema.sql 中 updated_at 为 INTEGER（epoch ms），服务端 SELECT v.* 直返数字；兼容字符串。
   updated_at?: number | string | null;
+  // 服务端 getVideo SELECT v.* 含 creator_id（creators 表外键）；视频未关联 UP 时为 null。
+  creator_id?: number | null;
   extra?: string | CollectedExtra | null;
+}
+
+// UP 主详情：对齐服务端 GET /api/creators/:id 返回的 creator 对象
+// （server CreatorDetail，schema creators 表 P2 字段 sign/level/sex/official_*/fans/following）。
+export interface CreatorDetail {
+  id: number;
+  source: string;
+  source_uid: string;
+  name: string | null;
+  avatar: string | null;
+  sign: string | null;
+  level: number | null;
+  sex: string | null;
+  official_type: number | null;
+  official_title: string | null;
+  fans: number | null;
+  following: number | null;
+  first_seen_at: number;
+  updated_at: number;
 }
 
 export interface CollectedResponse {

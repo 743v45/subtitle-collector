@@ -7,6 +7,7 @@ import type {
   CollectedResponse,
   CollectedVideo,
   ConsistencyIssue,
+  CreatorDetail,
   LocalStateResponse,
   LocalSub,
   SubtitleBody,
@@ -156,6 +157,33 @@ export function useCollected(): {
 
   const refresh = useCallback(() => setRefreshKey((k) => k + 1), []);
   return { collected, currentBvid, refresh };
+}
+
+// —— UP 主详情：从 useCollected 的 serverCollected.video.creator_id 查 /api/creators/:id ——
+// creator_id 为空（视频未关联 UP / server-down / 非 ok 态）→ none，popup 不展示卡片。
+// fetch 失败（server 关）也落到 none，优雅降级为不显示，避免红色错误噪音。
+export type CreatorState =
+  | { state: 'loading' }
+  | { state: 'none' }
+  | { state: 'ok'; creator: CreatorDetail };
+
+export function useCreator(creatorId: number | null | undefined): CreatorState {
+  const [creator, setCreator] = useState<CreatorState>({ state: 'loading' });
+  useEffect(() => {
+    if (creatorId == null) {
+      setCreator({ state: 'none' });
+      return;
+    }
+    setCreator({ state: 'loading' });
+    fetch(`${API_BASE}/api/creators/${creatorId}`)
+      .then((r) => r.json())
+      .then((d: { ok: boolean; creator?: CreatorDetail }) => {
+        if (d?.ok && d.creator) setCreator({ state: 'ok', creator: d.creator });
+        else setCreator({ state: 'none' });
+      })
+      .catch(() => setCreator({ state: 'none' }));
+  }, [creatorId]);
+  return creator;
 }
 
 // —— 上报开关：启动从 storage 读（默认开，!==false），切换时发 SET_REPORTING ——
