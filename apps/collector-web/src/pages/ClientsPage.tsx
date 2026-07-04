@@ -38,7 +38,7 @@ export function ClientsPage() {
   };
 
   return (
-    <div className="space-y-3 p-4">
+    <div className="space-y-3">
       <div className="text-sm text-muted-foreground">在线客户端 {clients.length} 个 · 每 {REFRESH_MS / 1000}s 刷新</div>
       {err && <div className="text-sm text-destructive">操作失败：{err}</div>}
       <div className="space-y-2">

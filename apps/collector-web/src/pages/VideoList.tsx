@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { listVideos } from '../api';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
-import { Card, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
+import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/components/ui/card';
 import type { VideoListItem } from '../types';
 
 const PAGE_SIZE = 20;
@@ -28,10 +28,14 @@ export function VideoList({ onOpen }: { onOpen: (source: string, sourceVid: stri
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
 
   return (
-    <div className="space-y-3 p-4">
-      <Input value={q} onChange={e => onQChange(e.target.value)} placeholder="搜索标题/创作者" className="mb-3" />
-      <div className="flex items-center justify-between text-sm text-muted-foreground">
-        <div>共 {total} 条 · 第 {page}/{totalPages} 页</div>
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <h2 className="text-lg font-semibold">视频库</h2>
+        <span className="text-sm text-muted-foreground">共 {total} 条</span>
+      </div>
+      <Input value={q} onChange={e => onQChange(e.target.value)} placeholder="搜索标题/创作者" />
+      <div className="flex items-center justify-between rounded-md border bg-muted/40 px-4 py-2 text-sm text-muted-foreground">
+        <div>第 {page}/{totalPages} 页</div>
         <div className="flex gap-2">
           <Button variant="outline" size="sm" disabled={page <= 1} onClick={() => setPage(p => Math.max(1, p - 1))}>上一页</Button>
           <Button variant="outline" size="sm" disabled={page >= totalPages || total === 0} onClick={() => setPage(p => p + 1)}>下一页</Button>
@@ -52,7 +56,11 @@ export function VideoList({ onOpen }: { onOpen: (source: string, sourceVid: stri
             </CardHeader>
           </Card>
         ))}
-        {items.length === 0 && <div className="text-sm text-muted-foreground">暂无数据</div>}
+        {items.length === 0 && (
+          <Card>
+            <CardContent className="p-6 text-center text-sm text-muted-foreground">暂无数据</CardContent>
+          </Card>
+        )}
       </div>
     </div>
   );
