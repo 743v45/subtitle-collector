@@ -1,5 +1,7 @@
 import { SERVER_URL, PING_URL, TOKEN } from "./config.js";
 import { shouldReport, genClientId, CLIENT_ID_KEY, REPORTING_KEY } from "./reporting.mjs";
+import { extractKeysFromNav } from "./wbi.js";
+import { biliFetch, formatSearchResult } from "./bili-fetch.js";
 const EXT_VERSION = chrome.runtime.getManifest().version;
 
 let ws = null;
@@ -8,6 +10,15 @@ let reportingEnabled = true; // 内存态；启动从 storage 载入，默认 tr
 let clientId = null;         // 内存态；启动载入或首次生成
 const RECONNECT_BASE_MS = 2000;
 const RECONNECT_MAX_MS = 10000;
+
+// Wbi img_key/sub_key 缓存（全站每日更替，进程内缓存，按需 refresh）
+let wbiKeys = null;
+async function refreshWbiKeys() {
+  const parsed = await biliFetch('/x/web-interface/nav');
+  if (!parsed.ok) throw new Error('nav fetch failed: ' + (parsed.code ?? ''));
+  wbiKeys = extractKeysFromNav(parsed);
+  return wbiKeys;
+}
 
 // MV3 SW 保活兜底：周期 alarm 唤醒 SW，若 ws 未 OPEN 则触发重连（C1）
 chrome.alarms.create("keepalive", { periodInMinutes: 0.4 });
@@ -91,6 +102,28 @@ async function connect() {
           ws.send(JSON.stringify({ type: "result", id: msg.id, ok: resp?.ok !== false, data: resp }));
         } catch (err) {
           ws.send(JSON.stringify({ type: "result", id: msg.id, ok: false, error: "content script 通信失败: " + (err.message || err) }));
+        }
+      } else if (msg.action === "search") {
+        try {
+          if (!wbiKeys) await refreshWbiKeys();
+          const parsed = await biliFetch('/x/web-interface/wbi/search/type', {
+            wbi: true,
+            params: {
+              search_type: 'video',
+              keyword: msg.keyword,
+              page: msg.page ?? 1,
+              order: msg.order ?? 'pubdate',
+              ...(msg.tid ? { tid: msg.tid } : {}),
+            },
+            wbiKeys,
+          });
+          if (!parsed.ok) {
+            ws.send(JSON.stringify({ type: "result", id: msg.id, ok: false, error: parsed.code }));
+          } else {
+            ws.send(JSON.stringify({ type: "result", id: msg.id, ok: true, data: formatSearchResult(parsed.data) }));
+          }
+        } catch (err) {
+          ws.send(JSON.stringify({ type: "result", id: msg.id, ok: false, error: String(err.message || err) }));
         }
       } else if (msg.action === "fetch-subtitle") {
         // MVP 占位（spec §6.2/§7.3 明列，协议闭环不吞 id；后续可接真实逻辑）
