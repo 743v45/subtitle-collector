@@ -1,6 +1,7 @@
 # 主动采集 / 服务端控制中心 —— 设计探索笔记
 
 > 日期：2026-06-23
+> ⛔ **已被 [2026-07-05-active-collection-design.md](./2026-07-05-active-collection-design.md) 取代**（2026-07-05）。本文件保留作历史思路记录，不再作为实现依据。
 > 状态：**探索中（未定稿），主架构已收敛** —— brainstorming 思路沉淀。架构岔路已收敛到 **D（AI 作纯决策者 + 复用被动采集链路）**，采集终端定为复用现有扩展；剩 MCP 工具粒度 + 采集完成判定两小点待拍。
 > 关联：[2026-06-20-media-subtitle-collector-design.md](./2026-06-20-media-subtitle-collector-design.md) §4（任务调度层预留）、§9（批量采集推迟）
 
