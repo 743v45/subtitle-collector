@@ -14,11 +14,17 @@ const RECONNECT_MAX_MS = 10000;
 
 // Wbi img_key/sub_key 缓存（全站每日更替，进程内缓存，按需 refresh）
 let wbiKeys = null;
+let wbiKeysAt = 0;
+const WBI_KEYS_TTL_MS = 60 * 60 * 1000; // 1 小时：B 站 wbi keys 每日更替，TTL 兜底防 stale
 async function refreshWbiKeys() {
   const parsed = await biliFetch('/x/web-interface/nav');
   if (!parsed.ok) throw new Error('nav fetch failed: ' + (parsed.code ?? ''));
   wbiKeys = extractKeysFromNav(parsed);
+  wbiKeysAt = Date.now();
   return wbiKeys;
+}
+async function ensureWbiKeys() {
+  if (!wbiKeys || Date.now() - wbiKeysAt > WBI_KEYS_TTL_MS) await refreshWbiKeys();
 }
 
 // MV3 SW 保活兜底：周期 alarm 唤醒 SW，若 ws 未 OPEN 则触发重连（C1）
@@ -106,7 +112,7 @@ async function connect() {
         }
       } else if (msg.action === "search") {
         try {
-          if (!wbiKeys) await refreshWbiKeys();
+          await ensureWbiKeys();
           const parsed = await biliFetch('/x/web-interface/wbi/search/type', {
             wbi: true,
             params: {
@@ -134,7 +140,7 @@ async function connect() {
           if (!viewRes.ok) { ws.send(JSON.stringify({ type: "result", id: msg.id, ok: false, error: viewRes.code })); return; }
           const view = viewRes.data;
           // 2. player/wbi/v2：字幕轨
-          if (!wbiKeys) await refreshWbiKeys();
+          await ensureWbiKeys();
           const playerRes = await biliFetch('/x/player/wbi/v2', { wbi: true, params: { bvid, aid: view.aid, cid: view.cid }, wbiKeys });
           if (!playerRes.ok) { ws.send(JSON.stringify({ type: "result", id: msg.id, ok: false, error: playerRes.code })); return; }
           const subs = playerRes.data?.subtitle?.subtitles ?? [];
@@ -166,7 +172,7 @@ async function connect() {
         }
       } else if (msg.action === "get-upper-info") {
         try {
-          if (!wbiKeys) await refreshWbiKeys();
+          await ensureWbiKeys();
           const mid = msg.mid;
           // 1. acc/info（Wbi）：name/sign/level/sex/official/face
           const infoRes = await biliFetch('/x/space/wbi/acc/info', { wbi: true, params: { mid }, wbiKeys });
@@ -197,7 +203,7 @@ async function connect() {
         }
       } else if (msg.action === "list-upper-videos") {
         try {
-          if (!wbiKeys) await refreshWbiKeys();
+          await ensureWbiKeys();
           const parsed = await biliFetch('/x/space/wbi/arc/search', {
             wbi: true,
             params: { mid: msg.mid, pn: msg.page ?? 1, ps: msg.page_size ?? 30, order: 'pubdate' },
