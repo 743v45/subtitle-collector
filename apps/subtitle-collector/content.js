@@ -93,6 +93,33 @@ window.addEventListener("message", (event) => {
 });
 
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+  // popup「已收集」改用本地数据源：直取 content.js 内存里 collected 的轨道/正文/extra。
+  // 走 chrome.tabs.sendMessage（popup → 当前 tab 的 content script），不经 background。
+  if (msg?.type === "GET_LOCAL_STATE") {
+    const bvid = msg.bvid;
+    const cur = bvid ? collected.get(bvid) : null;
+    if (!cur?.meta) {
+      sendResponse({ ok: true, state: "not-loaded" });
+      return false;
+    }
+    const subs = cur.meta.subs ?? [];
+    sendResponse({
+      ok: true,
+      state: subs.length === 0 ? "no-subtitle" : "has-subtitle",
+      bvid,
+      extra: cur.meta.extra ?? {},
+      subs: subs.map((s) => ({
+        lan: s.lan,
+        lan_doc: s.lan_doc,
+        track_type: s.track_type,
+        subtitle_url: s.subtitle_url,
+        url_missing: !!s.url_missing,
+        has_body: cur.bodies.has(s.subtitle_url),
+      })),
+      bodies: Object.fromEntries(cur.bodies),
+    });
+    return false;
+  }
   // RE_AGG：手动补采 / collect-now 触发，强制重发已收集的 record。
   // msg.force=true（collect-now）会透传到 INGEST，让 background 绕过上报开关。
   if (msg?.type === "RE_AGG") {

@@ -37,3 +37,43 @@ export interface BiliNavResponse {
   code: number;
   data?: { isLogin?: boolean; uname?: string };
 }
+
+// —— 本地数据源（content.js collected Map，popup 经 chrome.tabs.sendMessage 直取）——
+
+// B 站字幕正文结构（inject 拦到 / background 抓取的 JSON）。
+// 主流为 { body: [{from, to, content}, ...] }；非标准字段从宽。
+export interface SubtitleCue {
+  from?: number;
+  to?: number;
+  content?: string;
+}
+export interface SubtitleBody {
+  body?: SubtitleCue[];
+}
+
+// 单轨元信息（来自 inject buildPlayerMeta 的 subs）。
+export interface LocalSub {
+  lan?: string;
+  lan_doc?: string;
+  track_type?: string | null;
+  subtitle_url?: string;
+  url_missing?: boolean;
+  has_body?: boolean; // 该轨正文是否已在 content.js bodies Map 内
+}
+
+// content.js 对 GET_LOCAL_STATE 的响应。
+export interface LocalStateResponse {
+  ok: boolean;
+  state: 'not-loaded' | 'no-subtitle' | 'has-subtitle';
+  bvid?: string;
+  extra?: CollectedExtra;
+  subs?: LocalSub[];
+  bodies?: Record<string, SubtitleBody>;
+}
+
+// 一致性校验：本地 vs server 的差异项（仅轨数；stat 是时点值不校验）。
+export interface ConsistencyIssue {
+  field: string;
+  local: string;
+  server: string;
+}

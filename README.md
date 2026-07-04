@@ -73,7 +73,7 @@ pnpm test        # turbo run test：collector-server 单测 + subtitle-collector
 pnpm test:ext    # puppeteer mock 扩展回归（scripts/verify-collector.mjs）
 ```
 
-- **单测**（`pnpm test`）：跑 [apps/collector-server](apps/collector-server) 的 4 个 `*.test.ts`（db/http/ws）与 [apps/subtitle-collector](apps/subtitle-collector) 的 `reporting.test.mjs`。
+- **单测**（`pnpm test`）：跑 [apps/collector-server](apps/collector-server) 的 4 个 `*.test.ts`（db/http/ws）与 [apps/subtitle-collector](apps/subtitle-collector) 的 `reporting/wbi/subtitleFormat.test.mjs`（纯函数，import 源码）。
 - **扩展 e2e**（`pnpm test:ext`）：puppeteer 起 mock server + `--load-extension` 端到端回归。**仅在本地运行**（脚本当前按 macOS 的 Chrome 路径定位，且 MV3 扩展需要 headed 浏览器）。
 - **构建冒烟**：`pnpm --filter @bilibili-ext/collector-web build` 与 `pnpm --filter @bilibili-ext/subtitle-collector build`（见 CI）。
 

@@ -6,6 +6,10 @@ import type {
   CollectedExtra,
   CollectedResponse,
   CollectedVideo,
+  ConsistencyIssue,
+  LocalStateResponse,
+  LocalSub,
+  SubtitleBody,
 } from './types';
 
 // —— 连接状态：每 2s 向 background 查 WS_STATUS ——
@@ -167,4 +171,102 @@ export function useReporting(): { enabled: boolean; setEnabled: (v: boolean) => 
     chrome.runtime.sendMessage({ type: 'SET_REPORTING', enabled: v });
   }, []);
   return { enabled, setEnabled: set };
+}
+
+// —— 本地数据源：popup 经 chrome.tabs.sendMessage 直取 content.js 的 collected ——
+// 「已收集」改用本地提取的数据展示（轨道/正文/extra），server 数据仅作一致性校验。
+export type LocalCollectedState =
+  | { state: 'loading' }
+  | { state: 'non-video' }
+  | { state: 'not-loaded' } // 视频页但 content.js 还没拦到 player API / 正文未就绪
+  | { state: 'no-subtitle' } // player API subtitles 数组为空，真无字幕
+  | {
+      state: 'has-subtitle';
+      bvid: string;
+      extra: CollectedExtra;
+      subs: LocalSub[];
+      bodies: Record<string, SubtitleBody>;
+    };
+
+export function useLocalCollected(currentBvid: string | null): {
+  local: LocalCollectedState;
+  refreshLocal: () => void;
+} {
+  const [refreshKey, setRefreshKey] = useState(0);
+  const [local, setLocal] = useState<LocalCollectedState>({ state: 'loading' });
+
+  useEffect(() => {
+    if (!currentBvid) {
+      setLocal({ state: 'non-video' });
+      return;
+    }
+    setLocal({ state: 'loading' });
+    chrome.tabs.query({ active: true, currentWindow: true }, ([tab]) => {
+      if (!tab?.id) {
+        setLocal({ state: 'not-loaded' });
+        return;
+      }
+      chrome.tabs.sendMessage(
+        tab.id,
+        { type: 'GET_LOCAL_STATE', bvid: currentBvid },
+        (resp: LocalStateResponse | undefined) => {
+          if (chrome.runtime.lastError || !resp?.ok) {
+            setLocal({ state: 'not-loaded' });
+            return;
+          }
+          if (resp.state === 'not-loaded') {
+            setLocal({ state: 'not-loaded' });
+            return;
+          }
+          if (resp.state === 'no-subtitle') {
+            setLocal({ state: 'no-subtitle' });
+            return;
+          }
+          setLocal({
+            state: 'has-subtitle',
+            bvid: currentBvid,
+            extra: resp.extra ?? {},
+            subs: resp.subs ?? [],
+            bodies: resp.bodies ?? {},
+          });
+        }
+      );
+    });
+  }, [currentBvid, refreshKey]);
+
+  // background 上报成功后 content.js 的 collected 已更新，命中当前 bvid 时刷新本地
+  useEffect(() => {
+    if (!currentBvid) return;
+    const handler = (msg: unknown) => {
+      const m = msg as IngestResultMessage | undefined;
+      if (m?.type === 'INGEST_RESULT' && m.source_vid === currentBvid) {
+        setRefreshKey((k) => k + 1);
+      }
+    };
+    chrome.runtime.onMessage.addListener(handler);
+    return () => chrome.runtime.onMessage.removeListener(handler);
+  }, [currentBvid]);
+
+  const refreshLocal = useCallback(() => setRefreshKey((k) => k + 1), []);
+  return { local, refreshLocal };
+}
+
+// 一致性校验：仅对字幕轨数（本地有正文的轨数 vs server tracks）。
+// stat 是时点值（播放/点赞随时间涨），本地新拉的必然 ≠ server 上次上报，数值差不视为不一致。
+export function diffConsistency(
+  local: LocalCollectedState,
+  server: CollectedState
+): ConsistencyIssue[] {
+  if (local.state !== 'has-subtitle' || server.state !== 'ok') return [];
+  const localTrackCount = local.subs.filter((s) => s.has_body).length;
+  if (localTrackCount !== server.tracks) {
+    return [
+      {
+        field: '字幕轨数',
+        local: String(localTrackCount),
+        server: String(server.tracks),
+      },
+    ];
+  }
+  return [];
 }
