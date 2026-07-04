@@ -97,8 +97,6 @@ importers:
 
   apps/subtitle-collector: {}
 
-  apps/subtitle-extractor: {}
-
 packages:
 
   '@alloc/quick-lru@5.2.0':

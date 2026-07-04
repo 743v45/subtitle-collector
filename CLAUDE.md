@@ -13,7 +13,7 @@ B 站**字幕（subtitle）**相关浏览器扩展的 monorepo（pnpm + turbo，
 
 | App 类型 | 例子 | 构建链 | 样式规则 |
 |---|---|---|---|
-| 无构建链纯原生扩展 | `apps/subtitle-extractor`（popup/inject/content）等 | 无 | **豁免**全局规则，沿用原生手写 CSS（MV3 无构建链，引 Tailwind 需 CDN/构建属过度工程） |
+| 无构建链纯原生扩展 | `apps/subtitle-collector`（popup/inject/content）等 | 无 | **豁免**全局规则，沿用原生手写 CSS（MV3 无构建链，引 Tailwind 需 CDN/构建属过度工程） |
 | 有构建链前端 | `apps/collector-web`（React + Vite） | 有 | **无豁免**，强制 Tailwind 工具类 + shadcn/ui；禁 `style={{}}` 内联、禁手写 `.css`、禁 CSS-in-JS |
 | 纯后端 | `apps/collector-server` | — | 无 UI，不涉及 |
 
