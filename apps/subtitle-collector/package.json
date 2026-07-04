@@ -16,7 +16,8 @@
     "tailwind-merge": "^2.5.0",
     "tailwindcss-animate": "^1.0.7",
     "@radix-ui/react-slot": "^1.1.0",
-    "@radix-ui/react-switch": "^1.1.1"
+    "@radix-ui/react-switch": "^1.1.1",
+    "md5": "^2.3.0"
   },
   "devDependencies": {
     "@crxjs/vite-plugin": "^2.0.0",
