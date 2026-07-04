@@ -77,9 +77,20 @@ function parseExtra(s: string | CollectedExtra | null | undefined): CollectedExt
   }
 }
 
-export function useCollected(
-  refreshKey: number
-): { collected: CollectedState; currentBvid: string | null } {
+// background.js 上报成功后广播：{type:'INGEST_RESULT', source_vid, inserted, skipped}
+interface IngestResultMessage {
+  type?: string;
+  source_vid?: string;
+  inserted?: number;
+  skipped?: number;
+}
+
+export function useCollected(): {
+  collected: CollectedState;
+  currentBvid: string | null;
+  refresh: () => void;
+} {
+  const [refreshKey, setRefreshKey] = useState(0);
   const [collected, setCollected] = useState<CollectedState>({ state: 'loading' });
   const [currentBvid, setCurrentBvid] = useState<string | null>(null);
 
@@ -98,24 +109,49 @@ export function useCollected(
         .then((r) => r.json())
         .then((d: CollectedResponse) => {
           if (!d.ok) {
+            console.log('[popup] collected query: not collected', { bvid, ok: false });
             setCollected({ state: 'not-collected' });
             return;
           }
           const video = d.video ?? {};
           const extra = parseExtra(video.extra);
+          const trackCount = d.tracks?.length ?? 0;
+          console.log('[popup] collected query: ok', { bvid, ok: true, tracks: trackCount });
           setCollected({
             state: 'ok',
             bvid,
             video,
             extra,
-            tracks: d.tracks?.length ?? 0,
+            tracks: trackCount,
           });
         })
-        .catch(() => setCollected({ state: 'server-down' }));
+        .catch((err) => {
+          console.log('[popup] collected query: error', { bvid, err: String(err) });
+          setCollected({ state: 'server-down' });
+        });
     });
   }, [refreshKey]);
 
-  return { collected, currentBvid };
+  // background 上报成功后广播 INGEST_RESULT：source_vid 命中当前 bvid 时触发重查
+  useEffect(() => {
+    const handler = (msg: unknown) => {
+      const m = msg as IngestResultMessage | undefined;
+      if (!m || m.type !== 'INGEST_RESULT') return;
+      if (currentBvid && m.source_vid === currentBvid) {
+        console.log('[popup] INGEST_RESULT received', {
+          source_vid: m.source_vid,
+          inserted: m.inserted,
+          skipped: m.skipped,
+        });
+        setRefreshKey((k) => k + 1);
+      }
+    };
+    chrome.runtime.onMessage.addListener(handler);
+    return () => chrome.runtime.onMessage.removeListener(handler);
+  }, [currentBvid]);
+
+  const refresh = useCallback(() => setRefreshKey((k) => k + 1), []);
+  return { collected, currentBvid, refresh };
 }
 
 // —— 上报开关：启动从 storage 读（默认开，!==false），切换时发 SET_REPORTING ——

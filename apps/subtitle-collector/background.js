@@ -60,6 +60,20 @@ async function connect() {
   };
   ws.onmessage = async (event) => {
     let msg; try { msg = JSON.parse(event.data); } catch { return; }
+    // 无 id 的服务端推送（ingest-ack / hello-ack / hello-nack）须在 id 守卫前消费
+    if (msg.type === "ingest-ack") {
+      if (msg.ok === false) {
+        console.log(`[background] 上报失败 source_vid=${msg.source_vid}`);
+      } else {
+        console.log(`[background] 上报完成 source_vid=${msg.source_vid} 新增 ${msg.inserted_tracks} 条版本 / 跳过 ${msg.skipped_tracks} 条（已存在）`);
+      }
+      chrome.runtime.sendMessage({ type: "INGEST_RESULT", source_vid: msg.source_vid, inserted: msg.inserted_tracks, skipped: msg.skipped_tracks });
+      return;
+    }
+    if (msg.type === "hello-ack" || msg.type === "hello-nack") {
+      console.log(`[background] 握手结果 type=${msg.type}`);
+      return;
+    }
     if (!msg.id) return;
     try {
       if (msg.action === "navigate") {
@@ -85,6 +99,19 @@ async function connect() {
         const newEnabled = await applyReporting(msg.enabled === true);
         ws.send(JSON.stringify({ type: "result", id: msg.id, ok: true, data: { reporting_enabled: newEnabled } }));
         // set-reporting 路径不发 reporting-state：server 作为发起方据 result 更新状态
+      } else if (msg.action === "collect-now") {
+        // 找当前激活的 B 站视频页 tab，下发 RE_AGG{force:true} 触发即时采集
+        const [tab] = await chrome.tabs.query({ active: true, currentWindow: true, url: "*://www.bilibili.com/video/*" });
+        if (!tab?.id) {
+          ws.send(JSON.stringify({ type: "result", id: msg.id, ok: false, error: "no active bilibili video tab" }));
+          return;
+        }
+        const m = tab.url?.match(/\/video\/(BV[\w]+)/);
+        const bvid = m?.[1] ?? null;
+        chrome.tabs.sendMessage(tab.id, { type: "RE_AGG", force: true }, () => {
+          if (chrome.runtime.lastError) console.warn("[background] collect-now RE_AGG 失败:", chrome.runtime.lastError.message);
+        });
+        ws.send(JSON.stringify({ type: "result", id: msg.id, ok: true, data: { dispatched: true, bvid } }));
       } else {
         ws.send(JSON.stringify({ type: "result", id: msg.id, ok: false, error: "unknown action: " + msg.action }));
       }
@@ -96,20 +123,33 @@ async function connect() {
   ws.onerror = () => { try { ws.close(); } catch {} };
 }
 
+// 生成 ingest payload 摘要字符串，供各分支日志复用
+function payloadSummary(payload) {
+  const v = payload?.video || {};
+  const tracks = payload?.tracks || [];
+  const bodySizes = tracks.map((t) => t?.versions?.[0]?.payload?.length || 0).join(",");
+  return `source_vid=${v.source_vid} title=${v.title} UP=${v.creator?.name} 轨数=${tracks.length} 各轨body_size=${bodySizes}`;
+}
+
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (msg?.type === "INGEST" && msg.payload) {
-    const bvid = msg.payload.video?.source_vid ?? '?';
-    if (!shouldReport(reportingEnabled)) {
-      console.log(`[background] ingest 丢弃（上报开关关）bvid=${bvid}`);
+    const payload = msg.payload;
+    const summary = payloadSummary(payload);
+    const force = msg.force === true;
+    if (force) {
+      console.log(`[background] ingest 强制上报（collect-now，绕过开关）source_vid=${payload.video?.source_vid}`);
+    } else if (!shouldReport(reportingEnabled)) {
+      console.log(`[background] ingest 丢弃（开关关）${summary}`);
       sendResponse({ ok: true, dropped: true });
       return true;
     }
-    console.log(`[background] ingest 转发 bvid=${bvid} ws_open=${ws?.readyState === WebSocket.OPEN}`);
     if (ws?.readyState === WebSocket.OPEN) {
-      ws.send(JSON.stringify({ type: "ingest", payload: msg.payload }));
+      console.log(`[background] 上报中 ${summary}`);
+      ws.send(JSON.stringify({ type: "ingest", payload }));
     } else {
+      console.log(`[background] ingest 暂存（WS 未连接）${summary}`);
       chrome.storage.local.get(["pendingIngests"], ({ pendingIngests = [] }) => {
-        chrome.storage.local.set({ pendingIngests: [...pendingIngests, msg.payload] });
+        chrome.storage.local.set({ pendingIngests: [...pendingIngests, payload] });
       });
     }
     sendResponse({ ok: true });

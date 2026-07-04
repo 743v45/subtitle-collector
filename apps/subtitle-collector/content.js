@@ -49,7 +49,7 @@ function fetchSubtitleBodiesViaBg(bvid, subs) {
   }
 }
 
-function flushIfReady(bvid) {
+function flushIfReady(bvid, force = false) {
   const cur = collected.get(bvid);
   if (!cur?.meta) return;
   const urlMissing = cur.meta.subs.filter((s) => !s.subtitle_url || s.url_missing);
@@ -80,8 +80,8 @@ function flushIfReady(bvid) {
     },
     tracks,
   };
-  console.log(`[content] INGEST bvid=${cur.meta.bvid} tracks=${tracks.length}`);
-  chrome.runtime.sendMessage({ type: "INGEST", payload: record });
+  console.log(`[content] INGEST bvid=${cur.meta.bvid} tracks=${tracks.length}${force ? " force=true（绕过开关）" : ""}`);
+  chrome.runtime.sendMessage({ type: "INGEST", payload: record, ...(force ? { force: true } : {}) });
 }
 
 // operate 观察窗口：点击字幕开关后，若 inject 检测到真实字幕请求 → 视为生效
@@ -93,9 +93,11 @@ window.addEventListener("message", (event) => {
 });
 
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
-  // RE_AGG：手动补采按钮触发，强制重发已收集的 record（修复 review I-3）
+  // RE_AGG：手动补采 / collect-now 触发，强制重发已收集的 record。
+  // msg.force=true（collect-now）会透传到 INGEST，让 background 绕过上报开关。
   if (msg?.type === "RE_AGG") {
-    for (const bvid of collected.keys()) flushIfReady(bvid);
+    const force = msg.force === true;
+    for (const bvid of collected.keys()) flushIfReady(bvid, force);
     return false;
   }
   if (msg?.type === "OPERATE") {

@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from 'react';
+import { type ReactNode } from 'react';
 import {
   useBiliLogin,
   useCollected,
@@ -16,12 +16,11 @@ export function Popup() {
   const conn = useConnectionStatus();
   const login = useBiliLogin();
   const reporting = useReporting();
-  const [refreshKey, setRefreshKey] = useState(0);
-  const { collected, currentBvid } = useCollected(refreshKey);
+  const { collected, currentBvid, refresh } = useCollected();
 
   const onCapture = () => {
     chrome.runtime.sendMessage({ type: 'MANUAL_CAPTURE' });
-    setTimeout(() => setRefreshKey((k) => k + 1), 1500);
+    setTimeout(refresh, 1500);
   };
 
   return (
@@ -106,31 +105,128 @@ function CollectedBlock({ state }: { state: CollectedState }) {
   const pages = Array.isArray(extra.pages) ? extra.pages : [];
   const updated = video.updated_at ? new Date(video.updated_at).toLocaleString() : '-';
 
+  // 字段名对齐 inject.js readVideoExtra 写入的 stat：view/like/coin/favorite/share/danmaku
+  const stats: Array<{ label: string; value: number | null | undefined }> = [
+    { label: '播放', value: stat.view },
+    { label: '点赞', value: stat.like },
+    { label: '投币', value: stat.coin },
+    { label: '收藏', value: stat.favorite },
+    { label: '转发', value: stat.share },
+    { label: '弹幕数', value: stat.danmaku },
+  ];
+
   return (
     <Card>
-      <CardContent className="space-y-1 p-3 text-sm">
-        <div className="font-medium">已收集</div>
-        <div className="text-muted-foreground">上次收集 {updated}</div>
-        <div className="text-muted-foreground">
-          字幕轨 {tracks}
-          {pages.length > 1 ? ` · 分P ${pages.length}` : ''}
-          {extra.tname ? ` · ${extra.tname}` : ''}
+      <CardContent className="space-y-3 p-3">
+        <div className="space-y-0.5">
+          <div className="text-sm font-medium">已收集</div>
+          <div className="text-xs text-muted-foreground">上次收集 {updated}</div>
         </div>
-        <div className="text-muted-foreground tabular-nums">
-          播放 {fmtNum(stat.view)} · 点赞 {fmtNum(stat.like)} · 投币 {fmtNum(stat.coin)} · 收藏{' '}
-          {fmtNum(stat.fav)}
+
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
+          <span className="inline-flex items-center gap-1">
+            <TrackIcon className="h-3.5 w-3.5" />
+            <span className="tabular-nums">{tracks}</span>
+            <span>轨字幕</span>
+          </span>
+          {pages.length > 1 && (
+            <span className="inline-flex items-center gap-1">
+              <PagesIcon className="h-3.5 w-3.5" />
+              <span className="tabular-nums">{pages.length}</span>
+              <span>P</span>
+            </span>
+          )}
+          {extra.tname && (
+            <span className="inline-flex items-center gap-1">
+              <CategoryIcon className="h-3.5 w-3.5" />
+              <span>{extra.tname}</span>
+            </span>
+          )}
         </div>
+
+        <div className="grid grid-cols-3 gap-x-2 gap-y-2">
+          {stats.map((s) => (
+            <div key={s.label} className="space-y-0.5">
+              <div className="text-xs text-muted-foreground">{s.label}</div>
+              <div className="text-sm font-medium tabular-nums">{fmtNum(s.value)}</div>
+            </div>
+          ))}
+        </div>
+
         {/* stat.danmaku = 该视频收到的弹幕条数（B 站公开统计字段），非本项目采集的弹幕内容 */}
-        <div className="text-muted-foreground tabular-nums">
-          转发 {fmtNum(stat.share)} · 弹幕数 {fmtNum(stat.danmaku)}
-        </div>
         {tags.length > 0 && (
-          <div className="text-muted-foreground">
-            标签({tags.length}): {tags.slice(0, 6).map((t) => t.tag_name).join(' / ')}
-            {tags.length > 6 ? ' …' : ''}
+          <div className="flex flex-wrap items-center gap-1">
+            {tags.slice(0, 8).map((t, i) => (
+              <Badge key={`${t.tag_name}-${i}`} variant="secondary" className="font-normal">
+                {t.tag_name}
+              </Badge>
+            ))}
+            {tags.length > 8 && (
+              <span className="text-xs text-muted-foreground">+{tags.length - 8}</span>
+            )}
           </div>
         )}
       </CardContent>
     </Card>
+  );
+}
+
+// lucide-react 未引入（避免新增依赖），用等高线 inline SVG 替代，stroke 跟随 currentColor。
+function TrackIcon({ className }: { className?: string }) {
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={className}
+      aria-hidden="true"
+    >
+      <path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z" />
+      <path d="M14 2v5h5" />
+      <path d="M9 13h6" />
+      <path d="M9 17h4" />
+    </svg>
+  );
+}
+
+function PagesIcon({ className }: { className?: string }) {
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={className}
+      aria-hidden="true"
+    >
+      <path d="M12 2 2 7l10 5 10-5-10-5Z" />
+      <path d="m2 17 10 5 10-5" />
+      <path d="m2 12 10 5 10-5" />
+    </svg>
+  );
+}
+
+function CategoryIcon({ className }: { className?: string }) {
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={className}
+      aria-hidden="true"
+    >
+      <path d="M4 4h6l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2Z" />
+    </svg>
   );
 }

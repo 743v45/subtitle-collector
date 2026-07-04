@@ -79,8 +79,10 @@ export function attachWsServer(httpServer: Server, _db: Database.Database, expec
         try {
           const result = ingestVideo(_db, msg.payload as IngestRequest);
           ws.send(JSON.stringify({ type: 'ingest-ack', ok: true, ...result }));
+          console.log(`[server] ingest source=${result.source} source_vid=${result.source_vid} 新增 ${result.inserted_tracks} 条版本 / 跳过 ${result.skipped_tracks} 条（已存在）`);
         } catch (err) {
           ws.send(JSON.stringify({ type: 'ingest-ack', ok: false, error: (err as Error).message }));
+          console.log(`[server] ingest 失败 source=${msg.payload?.source} source_vid=${msg.payload?.video?.source_vid} error=${(err as Error).message}`);
         }
         return;
       }
