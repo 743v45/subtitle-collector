@@ -41,7 +41,7 @@ program
   .description('bilibili 字幕采集项目的 agent 友好 CLI（数据查询 / 导出 / 汇总 / 客户端管控 / server 运维）')
   .version(VERSION, '-v, --version', '输出版本号')
   .option('--format <json|ndjson|csv|table>', '输出格式', 'json')
-  .option('--db <path>', 'SQLite 路径（默认 $COLLECTOR_DB_PATH 或 ./apps/collector-server/bilibili-collector.db）')
+  .option('--db <path>', 'SQLite 路径（默认 $COLLECTOR_DB_PATH 或 apps/collector-server/bilibili-collector.db 绝对解析）')
   .option('--server <url>', 'server URL（默认 $COLLECTOR_SERVER 或 http://127.0.0.1:21527）')
   .option('--token <token>', '鉴权 token（默认 $COLLECTOR_TOKEN）')
   .option('-q, --quiet', '抑制 stderr 人类日志（stdout JSON 仍输出）', false);

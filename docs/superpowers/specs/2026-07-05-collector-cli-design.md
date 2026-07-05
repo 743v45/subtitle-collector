@@ -32,7 +32,7 @@
 全局选项（所有命令）：
 ```
 --format <json|ndjson|csv|table>   输出格式，默认 json
---db <path>                        SQLite 路径，默认 $COLLECTOR_DB_PATH 或 ./apps/collector-server/bilibili-collector.db
+--db <path>                        SQLite 路径，默认 $COLLECTOR_DB_PATH 或 apps/collector-server/bilibili-collector.db（import.meta.url 绝对解析）
 --server <url>                     server URL，默认 http://127.0.0.1:21527
 --token <token>                    鉴权 token，默认 $COLLECTOR_TOKEN
 -q, --quiet                        抑制 stderr 日志
