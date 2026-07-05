@@ -93,14 +93,24 @@ export interface CreatorDetail {
   official_title: string | null;
   fans: number | null;
   following: number | null;
+  category_agent_id: number | null;
+  category_agent_name: string | null;
+  category_human_id: number | null;
+  category_human_name: string | null;
   first_seen_at: number;
   updated_at: number;
 }
 
-// 按 creators 表自增 id 取 UP 主详情（含 P2 字段 sign/level/sex/official_*/fans/following）。
+// 按 creators 表自增 id 取 UP 主详情（含 P2 字段 sign/level/sex/official_*/fans/following + 分类名 join）。
 // 供 popup/web 展示 UP 主资料。null = 未找到。
 export function getCreator(db: Database.Database, id: number): CreatorDetail | null {
-  const row = db.prepare('SELECT * FROM creators WHERE id = ?').get(id) as CreatorDetail | undefined;
+  const row = db.prepare(
+    `SELECT c.*, ca.name AS category_agent_name, ch.name AS category_human_name
+     FROM creators c
+     LEFT JOIN categories ca ON ca.id = c.category_agent_id
+     LEFT JOIN categories ch ON ch.id = c.category_human_id
+     WHERE c.id = ?`,
+  ).get(id) as CreatorDetail | undefined;
   return row ?? null;
 }
 

@@ -143,6 +143,23 @@ test('getCreator: 未命中返回 null', () => {
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
+test('getCreator: 详情带分类名（join categories，agent/human 两套）', () => {
+  const { db, dir } = freshDb();
+  try {
+    // 建两个分类 + 一个 creator 关联到两个分类
+    const now = Date.now();
+    const ca = db.prepare("INSERT INTO categories (name, scope, sort_order, created_at) VALUES ('股票','agent',0,?)").run(now);
+    const ch = db.prepare("INSERT INTO categories (name, scope, sort_order, created_at) VALUES ('关注','human',0,?)").run(now);
+    db.prepare(
+      "INSERT INTO creators (source, source_uid, name, first_seen_at, updated_at, category_agent_id, category_human_id) " +
+      "VALUES ('bilibili','123','up1',1,2,?,?)",
+    ).run(Number(ca.lastInsertRowid), Number(ch.lastInsertRowid));
+    const c = getCreator(db, 1);
+    assert.equal(c?.category_agent_name, '股票');
+    assert.equal(c?.category_human_name, '关注');
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
 // ── categories CRUD + creators 列表/打分类（Task B2）──
 // 用 :memory: 库跑 migrate + runMigrations（验证双轨），不需要 FS 目录。
 function memDb() {
