@@ -5,6 +5,7 @@ import {
   useConnectionStatus,
   useCreator,
   useLocalCollected,
+  useClientId,
   useReporting,
   useUpperVideos,
   diffConsistency,
@@ -173,6 +174,7 @@ export function Popup() {
         reportStatus={reportStatus}
         hasSubtitle={hasSubtitle}
       />
+      <ClientIdFoot />
     </div>
   );
 }
@@ -363,6 +365,28 @@ function FooterActions({
         </Button>
       )}
     </div>
+  );
+}
+
+// 底部客户端 ID：极小灰字（不抢视线），点击复制 —— CLI 用此 id 寻址本机。
+function ClientIdFoot() {
+  const clientId = useClientId();
+  const [copied, setCopied] = useState(false);
+  if (!clientId) return null;
+  return (
+    <button
+      type="button"
+      onClick={async () => {
+        if (await copyText(clientId)) {
+          setCopied(true);
+          setTimeout(() => setCopied(false), 1500);
+        }
+      }}
+      title="客户端 ID（点击复制，CLI 用此 id 寻址本机）"
+      className="w-full text-center text-[10px] tabular-nums text-muted-foreground/50 transition-colors hover:text-muted-foreground"
+    >
+      {copied ? '已复制 ✓' : `ID ${clientId}`}
+    </button>
   );
 }
 

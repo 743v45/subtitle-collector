@@ -31,7 +31,10 @@
       if (vd.state != null) extra.state = vd.state;
       const publoc = vd.pub_location ?? vd.publocation;
       if (publoc != null) extra.publocation = publoc;
-      if (Array.isArray(vd.tags)) extra.tags = vd.tags.map((t) => ({ tag_id: t.tag_id, tag_name: t.tag_name }));
+      // B 站 SSR 把视频标签放在 __INITIAL_STATE__.tags（顶层，非 videoData.tags）；
+      // 主动路径另由 background 调 /x/tag/archive/tags 兜底。两源都无则不设。
+      const tagSrc = Array.isArray(window.__INITIAL_STATE__?.tags) ? window.__INITIAL_STATE__.tags : (Array.isArray(vd.tags) ? vd.tags : null);
+      if (tagSrc) extra.tags = tagSrc.map((t) => ({ tag_id: t.tag_id, tag_name: t.tag_name }));
       if (vd.dimension) extra.dimension = { width: vd.dimension.width, height: vd.dimension.height, rotate: vd.dimension.rotate };
       if (Array.isArray(vd.pages)) extra.pages = vd.pages.map((p) => ({ cid: p.cid, page: p.page, part: p.part, duration: p.duration }));
       if (vd.rights) extra.rights = vd.rights;

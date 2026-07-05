@@ -7,6 +7,7 @@ import { handleQueryHttp } from './http/queries.js';
 import { handleClientsHttp } from './http/clients.js';
 import { handleCategoriesHttp } from './http/categories.js';
 import { handleCreatorsHttp } from './http/creators.js';
+import { handleStatsHttp } from './http/stats.js';
 
 const DB_PATH = process.env.COLLECTOR_DB_PATH ?? './bilibili-collector.db';
 const PORT = Number(process.env.COLLECTOR_PORT ?? 21527);
@@ -58,6 +59,7 @@ const httpServer = createServer((req, res) => {
   if (req.url?.startsWith('/api/clients')) { handleClientsHttp(req, res); return; }
   if (req.url?.startsWith('/api/categories')) { handleCategoriesHttp(req, res, db); return; }
   if (req.url?.startsWith('/api/creators')) { handleCreatorsHttp(req, res, db); return; }
+  if (req.url?.startsWith('/api/stats')) { handleStatsHttp(req, res, db); return; }
   if (req.url?.startsWith('/api/')) { handleQueryHttp(req, res, db); return; }
   // 静态托管 collector-web 产物（非 /ping 非 /api/ 的请求）——C2 校验已在上方通过
   if (req.url && !req.url.startsWith('/api/') && req.url !== '/ping') { serveStatic(req, res); return; }

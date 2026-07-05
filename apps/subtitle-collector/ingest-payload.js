@@ -27,6 +27,12 @@ export function extractExtraFromView(v) {
   return extra;
 }
 
+// 规整 /x/tag/archive/tags 响应 data → [{tag_id, tag_name}]（对齐 extra.tags schema）
+export function normalizeTags(data) {
+  if (!Array.isArray(data)) return [];
+  return data.map((t) => ({ tag_id: t.tag_id, tag_name: t.tag_name }));
+}
+
 // // → https: 归一化（对齐 Task 5 plan 调用方：fetch 需要 https，故 bodies 的 key 为 normalize 后的 url）
 export function normalizeUrl(u) {
   return typeof u === 'string' && u.startsWith('//') ? 'https:' + u : u;
@@ -34,7 +40,10 @@ export function normalizeUrl(u) {
 
 // 组装 ingest payload（结构对齐 content.js flushIfReady 的 record）
 // 注：subtitle_url 查找键与 source_url 均经 normalizeUrl 归一化，与 Task 5 plan 调用方存 bodies 的 key 对齐。
-export function buildIngestPayload(view, subs, subtitleBodies) {
+// tags：B 站视频标签须单独调 /x/tag/archive/tags（view 响应无 tags 数组），由调用方传入并覆盖默认空。
+export function buildIngestPayload(view, subs, subtitleBodies, tags) {
+  const extra = extractExtraFromView(view);
+  if (Array.isArray(tags) && tags.length > 0) extra.tags = tags;
   return {
     source: 'bilibili',
     video: {
@@ -45,7 +54,7 @@ export function buildIngestPayload(view, subs, subtitleBodies) {
         avatar: view.owner?.face ?? null,
       },
       title: view.title,
-      extra: extractExtraFromView(view),
+      extra,
       duration: view.duration ?? null,
       published_at: view.pubdate ? view.pubdate * 1000 : null,
     },

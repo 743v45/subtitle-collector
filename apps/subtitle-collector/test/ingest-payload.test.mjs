@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { extractExtraFromView, buildIngestPayload } from '../ingest-payload.js';
+import { extractExtraFromView, buildIngestPayload, normalizeTags } from '../ingest-payload.js';
 
 const view = {
   bvid: 'BV1xx', aid: 11, cid: 22, title: '标题', pic: 'https://pic',
@@ -47,4 +47,35 @@ test('buildIngestPayload 无字幕 → tracks:[]', () => {
   const payload = buildIngestPayload(view, [], {});
   assert.deepEqual(payload.tracks, []);
   assert.equal(payload.video.source_vid, 'BV1xx'); // video 仍组装
+});
+
+test('normalizeTags 规整 /x/tag/archive/tags 响应 data → [{tag_id,tag_name}]', () => {
+  // 真实接口 data 元素含大量额外字段，只取 tag_id/tag_name（对齐 extra.tags schema）
+  const data = [
+    { tag_id: 1, tag_name: '游戏', cover: '', type: 3, likes: 5, hated: 0 },
+    { tag_id: 2, tag_name: '实况', cover: 'x', count: 10 },
+  ];
+  assert.deepEqual(normalizeTags(data), [{ tag_id: 1, tag_name: '游戏' }, { tag_id: 2, tag_name: '实况' }]);
+  assert.deepEqual(normalizeTags(undefined), []); // 接口失败兜底
+  assert.deepEqual(normalizeTags(null), []);
+  assert.deepEqual(normalizeTags('not-array'), []);
+  assert.deepEqual(normalizeTags([]), []);
+});
+
+test('buildIngestPayload tags 参数覆盖 extra.tags（主动路径 /x/tag/archive/tags）', () => {
+  // view 响应不含 tags（对齐 /x/web-interface/view 实际），由 background 单独抓标签传入
+  const viewNoTags = { ...view, tags: undefined };
+  const tags = [{ tag_id: 7, tag_name: '科技' }, { tag_id: 8, tag_name: '数码' }];
+  const payload = buildIngestPayload(viewNoTags, [], {}, tags);
+  assert.deepEqual(payload.video.extra.tags, tags);
+});
+
+test('buildIngestPayload tags 为空/缺省 → 不覆盖 extractExtraFromView 的 tags', () => {
+  // 缺省：保留 view 自带 tags
+  assert.deepEqual(buildIngestPayload(view, [], {}).video.extra.tags, [{ tag_id: 1, tag_name: '游戏' }]);
+  // 空数组：主动路径接口失败时 tags=[]，保留 view 自带 tags（不写成空）
+  assert.deepEqual(buildIngestPayload(view, [], {}, []).video.extra.tags, [{ tag_id: 1, tag_name: '游戏' }]);
+  // view 无 tags 且未传 → extra 不含 tags 键
+  const viewNoTags = { ...view, tags: undefined };
+  assert.ok(!('tags' in buildIngestPayload(viewNoTags, [], {}).video.extra));
 });

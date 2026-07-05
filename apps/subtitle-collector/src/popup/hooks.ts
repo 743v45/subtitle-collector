@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { REPORTING_KEY } from '../../reporting.mjs';
+import { CLIENT_ID_KEY, REPORTING_KEY } from '../../reporting.mjs';
 import { API_BASE } from '../../config.js';
 import type {
   BiliNavResponse,
@@ -237,6 +237,18 @@ export function useReporting(): { enabled: boolean | null; setEnabled: (v: boole
     chrome.runtime.sendMessage({ type: 'SET_REPORTING', enabled: v });
   }, []);
   return { enabled, setEnabled: set };
+}
+
+// —— 客户端 ID：从 storage 读（background 首次启动生成并回写），popup 只读不写 ——
+// null=尚未读到（首帧），调用方据此隐藏，避免空 ID 闪烁。
+export function useClientId(): string | null {
+  const [id, setId] = useState<string | null>(null);
+  useEffect(() => {
+    chrome.storage.local.get([CLIENT_ID_KEY], (items) => {
+      setId((items[CLIENT_ID_KEY] as string | undefined) ?? null);
+    });
+  }, []);
+  return id;
 }
 
 // —— 本地数据源：popup 经 chrome.tabs.sendMessage 直取 content.js 的 collected ——

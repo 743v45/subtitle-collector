@@ -2,7 +2,7 @@ import { SERVER_URL, PING_URL, TOKEN } from "./config.js";
 import { shouldReport, genClientId, CLIENT_ID_KEY, REPORTING_KEY } from "./reporting.mjs";
 import { extractKeysFromNav } from "./wbi.js";
 import { biliFetch, formatSearchResult } from "./bili-fetch.js";
-import { buildIngestPayload, normalizeUrl } from "./ingest-payload.js";
+import { buildIngestPayload, normalizeUrl, normalizeTags } from "./ingest-payload.js";
 const EXT_VERSION = chrome.runtime.getManifest().version;
 
 let ws = null;
@@ -173,6 +173,16 @@ async function connect() {
           const viewRes = await biliFetch('/x/web-interface/view', { params: { bvid } });
           if (!viewRes.ok) { ws.send(JSON.stringify({ type: "result", id: msg.id, ok: false, error: viewRes.code })); return; }
           const view = viewRes.data;
+          // 1.5. 标签：/x/tag/archive/tags（免 wbi 签名，GET ?aid=）。view 响应无 tags 数组，须单独抓。
+          //       失败（404/风控/网络）绝不阻断主字幕采集——try/catch 吞掉，tags 保持 []。
+          let tags = [];
+          try {
+            const tagRes = await biliFetch('/x/tag/archive/tags', { params: { aid: view.aid } });
+            if (tagRes.ok) tags = normalizeTags(tagRes.data);
+            else console.warn(`[background] fetch-subtitle 标签接口失败 aid=${view.aid} code=${tagRes.code}`);
+          } catch (e) {
+            console.warn(`[background] fetch-subtitle 标签接口异常 aid=${view.aid}`, String(e?.message ?? e));
+          }
           // 2. player/wbi/v2：字幕轨
           await ensureWbiKeys();
           const playerRes = await biliFetch('/x/player/wbi/v2', { wbi: true, params: { bvid, aid: view.aid, cid: view.cid }, wbiKeys });
@@ -194,7 +204,7 @@ async function connect() {
             const u = normalizeUrl(s.subtitle_url);
             return u && bodies[u] != null;
           });
-          const payload = buildIngestPayload(view, validSubs, bodies);
+          const payload = buildIngestPayload(view, validSubs, bodies, tags);
           sendIngest(payload);
           // 5. 回执（不阻塞等 ingest-ack；ingest 由 server 异步入库，result 只报实际入库轨数）
           ws.send(JSON.stringify({

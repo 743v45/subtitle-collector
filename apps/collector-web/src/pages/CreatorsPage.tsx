@@ -1,55 +1,68 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Badge } from '@/components/ui/badge';
+import { Skeleton } from '@/components/ui/skeleton';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { useToast } from '@/components/ui/toast';
+import { useAsync } from '@/lib/useAsync';
 import { listCategories, listCreators, setCreatorCategory, type Category, type CreatorListItem } from '@/api';
 
 const PAGE_SIZE = 20;
 
-export function CreatorsPage() {
+export function CreatorsPage({ onOpen }: { onOpen: (id: number) => void }) {
+  const toast = useToast();
   const [q, setQ] = useState('');
+  const [debouncedQ, setDebouncedQ] = useState('');
+  const [scope, setScope] = useState<'agent' | 'human'>('human');
   const [catFilter, setCatFilter] = useState<string>('');
-  const [humanCats, setHumanCats] = useState<Category[]>([]);
-  const [items, setItems] = useState<CreatorListItem[]>([]);
-  const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
-  const seqRef = useRef(0);
+  const [busyUid, setBusyUid] = useState<string | null>(null);
 
+  // 搜索防抖（300ms），避免每次按键都打后端。
   useEffect(() => {
-    listCategories('human').then(setHumanCats).catch(() => setHumanCats([]));
-  }, []);
-
-  useEffect(() => {
-    const seq = ++seqRef.current;
-    const t = setTimeout(() => {
-      listCreators({
-        q: q || undefined,
-        category: catFilter || undefined,
-        scope: catFilter ? 'human' : undefined,
-        page,
-        size: PAGE_SIZE,
-      })
-        .then((r) => { if (seq === seqRef.current) { setItems(r.items); setTotal(r.total); } })
-        .catch(() => { if (seq === seqRef.current) { setItems([]); setTotal(0); } });
-    }, 300);
+    const t = setTimeout(() => setDebouncedQ(q), 300);
     return () => clearTimeout(t);
-  }, [q, catFilter, page]);
+  }, [q]);
 
-  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
-
-  async function setHuman(uid: string, name: string) {
-    await setCreatorCategory(uid, 'human', name);
-    const seq = ++seqRef.current;
-    const r = await listCreators({
-      q: q || undefined,
+  // 列表：useAsync 驱动，error 显式落到 UI（不再 .catch 静默吞）。
+  const { data: listResult, loading, error, reload } = useAsync(
+    () => listCreators({
+      q: debouncedQ || undefined,
       category: catFilter || undefined,
-      scope: catFilter ? 'human' : undefined,
+      scope: catFilter ? scope : undefined,
       page,
       size: PAGE_SIZE,
-    });
-    if (seq === seqRef.current) { setItems(r.items); setTotal(r.total); }
+    }),
+    [debouncedQ, catFilter, scope, page],
+  );
+  const items = listResult?.items ?? [];
+  const total = listResult?.total ?? 0;
+  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+
+  // 筛选下拉随 scope 切换重新拉；表格内两套可编辑选项各拉一次。
+  const { data: filterCats } = useAsync<Category[]>(() => listCategories(scope), [scope]);
+  const { data: agentCats } = useAsync<Category[]>(() => listCategories('agent'), []);
+  const { data: humanCats } = useAsync<Category[]>(() => listCategories('human'), []);
+
+  function switchScope(s: 'agent' | 'human') {
+    if (s === scope) return;
+    setScope(s);
+    setCatFilter('');   // 切 scope 后旧分类名对新 scope 无意义，清空。
+    setPage(1);
+  }
+
+  async function changeCategory(c: CreatorListItem, catScope: 'agent' | 'human', name: string) {
+    setBusyUid(c.source_uid);
+    try {
+      await setCreatorCategory(c.source_uid, catScope, name);
+      toast('已更新', 'success');
+      reload();
+    } catch (e: unknown) {
+      toast(`失败：${e instanceof Error ? e.message : String(e)}`, 'error');
+    } finally {
+      setBusyUid(null);
+    }
   }
 
   return (
@@ -58,21 +71,41 @@ export function CreatorsPage() {
         <h2 className="text-lg font-semibold">UP 主管理</h2>
         <span className="text-sm text-muted-foreground">共 {total} 条</span>
       </div>
-      <div className="flex gap-2 items-center">
+
+      <div className="flex flex-wrap items-center gap-2">
         <Input
           placeholder="搜索 UP 主名/mid"
           value={q}
           onChange={(e) => { setQ(e.target.value); setPage(1); }}
           className="max-w-xs"
         />
-        <Select value={catFilter || '__all'} onValueChange={(v) => { setCatFilter(v === '__all' ? '' : v); setPage(1); }}>
-          <SelectTrigger className="w-48"><SelectValue placeholder="按人工分类筛选" /></SelectTrigger>
+        <div className="flex gap-1">
+          {(['agent', 'human'] as const).map((s) => (
+            <Button
+              key={s}
+              variant={s === scope ? 'default' : 'outline'}
+              size="sm"
+              onClick={() => switchScope(s)}
+            >
+              {s === 'agent' ? 'Agent 分类' : '人工分类'}
+            </Button>
+          ))}
+        </div>
+        <Select
+          value={catFilter || undefined}
+          onValueChange={(v) => { setCatFilter(v); setPage(1); }}
+        >
+          <SelectTrigger className="w-48">
+            <SelectValue placeholder={`按${scope === 'agent' ? 'Agent' : '人工'}分类筛选`} />
+          </SelectTrigger>
           <SelectContent>
-            <SelectItem value="__all">全部</SelectItem>
-            {humanCats.map((c) => <SelectItem key={c.id} value={c.name}>{c.name}</SelectItem>)}
+            {(filterCats ?? []).map((c) => (
+              <SelectItem key={c.id} value={c.name}>{c.name}</SelectItem>
+            ))}
           </SelectContent>
         </Select>
       </div>
+
       <Table>
         <TableHeader>
           <TableRow>
@@ -84,32 +117,72 @@ export function CreatorsPage() {
           </TableRow>
         </TableHeader>
         <TableBody>
-          {items.map((c) => (
-            <TableRow key={c.id}>
-              <TableCell>{c.name ?? '(未知)'}</TableCell>
-              <TableCell className="text-muted-foreground">{c.source_uid}</TableCell>
-              <TableCell>{c.category_agent_name ? <Badge>{c.category_agent_name}</Badge> : '—'}</TableCell>
-              <TableCell>
-                <Select
-                  value={c.category_human_name ?? '__none'}
-                  onValueChange={(v) => setHuman(c.source_uid, v)}
-                >
-                  <SelectTrigger className="w-32"><SelectValue placeholder="未分类" /></SelectTrigger>
-                  <SelectContent>
-                    {humanCats.map((h) => <SelectItem key={h.id} value={h.name}>{h.name}</SelectItem>)}
-                  </SelectContent>
-                </Select>
+          {error ? (
+            <TableRow>
+              <TableCell colSpan={5} className="text-sm text-destructive">
+                加载失败：{error}
+                <Button variant="link" size="sm" onClick={reload}>重试</Button>
               </TableCell>
-              <TableCell className="text-right">{c.video_count}</TableCell>
             </TableRow>
-          ))}
-          {items.length === 0 && (
+          ) : loading && items.length === 0 ? (
+            Array.from({ length: 5 }).map((_, i) => (
+              <TableRow key={i}>
+                <TableCell><Skeleton className="h-4 w-24" /></TableCell>
+                <TableCell><Skeleton className="h-4 w-20" /></TableCell>
+                <TableCell><Skeleton className="h-8 w-32" /></TableCell>
+                <TableCell><Skeleton className="h-8 w-32" /></TableCell>
+                <TableCell className="text-right"><Skeleton className="ml-auto h-4 w-8" /></TableCell>
+              </TableRow>
+            ))
+          ) : items.length === 0 ? (
             <TableRow>
               <TableCell colSpan={5} className="text-center text-sm text-muted-foreground">暂无数据</TableCell>
             </TableRow>
+          ) : (
+            items.map((c) => (
+              <TableRow key={c.id} className="cursor-pointer hover:bg-accent" onClick={() => onOpen(c.id)}>
+                <TableCell>{c.name ?? '(未知)'}</TableCell>
+                <TableCell className="font-mono text-muted-foreground">{c.source_uid}</TableCell>
+                {/* stopPropagation：点 Select 触发器不能冒泡到行触发行跳转。SelectContent 走 Portal 不会冒泡到行。 */}
+                <TableCell onClick={(e) => e.stopPropagation()}>
+                  <Select
+                    value={c.category_agent_name ?? undefined}
+                    onValueChange={(v) => changeCategory(c, 'agent', v)}
+                    disabled={busyUid === c.source_uid}
+                  >
+                    <SelectTrigger className="w-32">
+                      <SelectValue placeholder="未分类" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {(agentCats ?? []).map((h) => (
+                        <SelectItem key={h.id} value={h.name}>{h.name}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </TableCell>
+                <TableCell onClick={(e) => e.stopPropagation()}>
+                  <Select
+                    value={c.category_human_name ?? undefined}
+                    onValueChange={(v) => changeCategory(c, 'human', v)}
+                    disabled={busyUid === c.source_uid}
+                  >
+                    <SelectTrigger className="w-32">
+                      <SelectValue placeholder="未分类" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {(humanCats ?? []).map((h) => (
+                        <SelectItem key={h.id} value={h.name}>{h.name}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </TableCell>
+                <TableCell className="text-right">{c.video_count}</TableCell>
+              </TableRow>
+            ))
           )}
         </TableBody>
       </Table>
+
       <div className="flex items-center justify-between rounded-md border bg-muted/40 px-4 py-2 text-sm text-muted-foreground">
         <div>第 {page}/{totalPages} 页</div>
         <div className="flex gap-2">
