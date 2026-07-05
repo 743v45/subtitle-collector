@@ -85,6 +85,7 @@ function parseExtra(s: string | CollectedExtra | null | undefined): CollectedExt
 // background.js 上报成功后广播：{type:'INGEST_RESULT', source_vid, inserted, skipped}
 interface IngestResultMessage {
   type?: string;
+  ok?: boolean;
   source_vid?: string;
   inserted?: number;
   skipped?: number;
@@ -208,7 +209,7 @@ export function useReporting(): { enabled: boolean | null; setEnabled: (v: boole
 export type LocalCollectedState =
   | { state: 'loading' }
   | { state: 'not-loaded' } // 视频页但 content.js 还没拦到 player API / 正文未就绪
-  | { state: 'no-subtitle' } // player API subtitles 数组为空，真无字幕
+  | { state: 'no-subtitle'; extra: CollectedExtra } // player API subtitles 数组为空，真无字幕（但仍带视频元数据 extra）
   | {
       state: 'has-subtitle';
       bvid: string;
@@ -254,7 +255,7 @@ export function useLocalCollected(currentBvid: string | null): {
             return;
           }
           if (resp.state === 'no-subtitle') {
-            setLocal({ state: 'no-subtitle' });
+            setLocal({ state: 'no-subtitle', extra: resp.extra ?? {} });
             return;
           }
           setLocal({

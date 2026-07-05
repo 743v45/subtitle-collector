@@ -103,33 +103,36 @@ export function Popup() {
   const creatorId =
     serverCollected.state === 'ok' ? serverCollected.video.creator_id : undefined;
 
-  // 手动采集反馈：capturing → success（收到 INGEST_RESULT）/ 兜底回 idle。
+  // 手动上报反馈：reporting → success/failed（INGEST_RESULT.ok）/ 超时 failed（未连接 / 上报未达 server）。
+  // 字幕数据视频页加载时已由 content.js 自动采集，这里只是把已采集数据上报到 collector-server。
   // 数据刷新交给 useCollected / useLocalCollected 各自监听 INGEST_RESULT（刷新不再清 loading，无闪烁）。
-  const [captureStatus, setCaptureStatus] = useState<'idle' | 'capturing' | 'success'>('idle');
-  const captureRef = useRef(false);
+  const [reportStatus, setReportStatus] = useState<'idle' | 'reporting' | 'success' | 'failed'>('idle');
+  const reportRef = useRef(false);
 
-  const onCapture = () => {
-    setCaptureStatus('capturing');
-    captureRef.current = true;
+  const onReport = () => {
+    setReportStatus('reporting');
+    reportRef.current = true;
     chrome.runtime.sendMessage({ type: 'MANUAL_CAPTURE' });
-    // 兜底：6s 内没收到 INGEST_RESULT 则回 idle（避免一直"采集中"）
+    // 兜底：8s 没收到 INGEST_RESULT → 失败（未连接 / 上报未达 server）
     setTimeout(() => {
-      if (captureRef.current) {
-        captureRef.current = false;
-        setCaptureStatus('idle');
+      if (reportRef.current) {
+        reportRef.current = false;
+        setReportStatus('failed');
+        setTimeout(() => setReportStatus('idle'), 2500);
       }
-    }, 6000);
+    }, 8000);
   };
 
-  // 收到当前 bvid 的 INGEST_RESULT → 采集成功 2s
+  // 收到当前 bvid 的 INGEST_RESULT → 按 ok 显示上报成功/失败
   useEffect(() => {
     if (!currentBvid) return;
     const handler = (msg: unknown) => {
-      const m = msg as { type?: string; source_vid?: string };
-      if (m?.type === 'INGEST_RESULT' && m.source_vid === currentBvid && captureRef.current) {
-        captureRef.current = false;
-        setCaptureStatus('success');
-        setTimeout(() => setCaptureStatus('idle'), 2000);
+      const m = msg as { type?: string; ok?: boolean; source_vid?: string };
+      if (m?.type === 'INGEST_RESULT' && m.source_vid === currentBvid && reportRef.current) {
+        reportRef.current = false;
+        const ok = m.ok !== false;
+        setReportStatus(ok ? 'success' : 'failed');
+        setTimeout(() => setReportStatus('idle'), ok ? 2000 : 2500);
       }
     };
     chrome.runtime.onMessage.addListener(handler);
@@ -153,9 +156,9 @@ export function Popup() {
       )}
       <FooterActions
         reporting={reporting}
-        onCapture={onCapture}
+        onReport={onReport}
         isVideoPage={isVideoPage}
-        captureStatus={captureStatus}
+        reportStatus={reportStatus}
       />
     </div>
   );
@@ -205,37 +208,44 @@ function ConnDot({ conn }: { conn: ConnState }) {
 }
 
 function LoginBadge({ login }: { login: LoginState }) {
+  const [showUid, setShowUid] = useState(false);
   if (login.state === 'loading') return <StatusPlaceholder className="h-5 w-16" />;
-  if (login.state === 'logged')
-    return (
-      <Badge variant="success" className="font-normal tabular-nums">
-        UID {login.mid}
-      </Badge>
-    );
   if (login.state === 'guest')
     return (
       <Badge variant="destructive" className="font-normal">
         未登录
       </Badge>
     );
+  if (login.state === 'error')
+    return (
+      <Badge variant="destructive" className="font-normal">
+        检查失败
+      </Badge>
+    );
+  // logged：默认显示名称，点击切 UID，再点切回（toggle）
   return (
-    <Badge variant="destructive" className="font-normal">
-      检查失败
-    </Badge>
+    <button
+      type="button"
+      onClick={() => setShowUid((v) => !v)}
+      title={showUid ? '点击显示名称' : '点击显示 UID'}
+      className="inline-flex items-center rounded-md border border-transparent bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-700 transition-colors hover:bg-emerald-200 tabular-nums"
+    >
+      {showUid ? `UID ${login.mid}` : login.uname}
+    </button>
   );
 }
 
 // 底部操作：上报开关（开=自动 / 关=手动）+ 手动补采（视频页）。无外部文字 label。
 function FooterActions({
   reporting,
-  onCapture,
+  onReport,
   isVideoPage,
-  captureStatus,
+  reportStatus,
 }: {
   reporting: { enabled: boolean | null; setEnabled: (v: boolean) => void };
-  onCapture: () => void;
+  onReport: () => void;
   isVideoPage: boolean;
-  captureStatus: 'idle' | 'capturing' | 'success';
+  reportStatus: 'idle' | 'reporting' | 'success' | 'failed';
 }) {
   return (
     <div className="flex items-center gap-2">
@@ -253,20 +263,24 @@ function FooterActions({
       {isVideoPage && (
         <Button
           size="sm"
-          onClick={onCapture}
-          disabled={captureStatus === 'capturing'}
+          onClick={onReport}
+          disabled={reportStatus === 'reporting'}
           className={cn(
             'ml-auto h-7 px-3 text-xs',
-            captureStatus === 'success'
+            reportStatus === 'success'
               ? 'bg-emerald-500 text-white hover:bg-emerald-600'
-              : 'bg-brand text-brand-foreground hover:bg-brand/90'
+              : reportStatus === 'failed'
+                ? 'bg-destructive text-destructive-foreground hover:bg-destructive/90'
+                : 'bg-brand text-brand-foreground hover:bg-brand/90'
           )}
         >
-          {captureStatus === 'capturing'
-            ? '采集中…'
-            : captureStatus === 'success'
-              ? '采集成功 ✓'
-              : '采集字幕'}
+          {reportStatus === 'reporting'
+            ? '上报中…'
+            : reportStatus === 'success'
+              ? '上报成功 ✓'
+              : reportStatus === 'failed'
+                ? '上报失败 ✗'
+                : '上报'}
         </Button>
       )}
     </div>
@@ -362,15 +376,12 @@ function CollectedBlock({
   // 主信息 + 叹号圈图标（点击展开原因），细节默认折叠 → 见 NotLoadedCard。
   if (local.state === 'not-loaded') return <NotLoadedCard />;
 
-  if (local.state === 'no-subtitle') {
-    return (
-      <Card>
-        <CardContent className="p-3 text-sm text-muted-foreground">当前视频没有字幕</CardContent>
-      </Card>
-    );
-  }
-
-  const { extra, subs, bodies } = local;
+  // no-subtitle 与 has-subtitle 都带 extra（视频元数据），统一渲染视频卡；区别只在字幕区。
+  // 没字幕不代表没视频数据（统计/tags 仍展示）；上报是上报字幕，没字幕→同步未达 + 上报按钮置灰。
+  const hasSubtitle = local.state === 'has-subtitle';
+  const { extra } = local;
+  const subs = hasSubtitle ? local.subs : [];
+  const bodies = hasSubtitle ? local.bodies : {};
   const stat = extra.stat ?? {};
   const tags = Array.isArray(extra.tags) ? extra.tags : [];
   const pages = Array.isArray(extra.pages) ? extra.pages : [];
@@ -381,7 +392,7 @@ function CollectedBlock({
         <div className="space-y-0.5">
           <div className="flex flex-wrap items-center gap-2">
             <div className="text-sm font-semibold">视频信息</div>
-            <SyncStatusBadge server={server} />
+            <SyncStatusBadge server={server} hasSubtitle={hasSubtitle} />
             {consistency.map((c) => (
               <Badge
                 key={c.field}
@@ -430,7 +441,12 @@ function CollectedBlock({
           })}
         </div>
 
-        <SubtitleCopySection subs={subs} bodies={bodies} />
+        {/* 字幕区：有字幕→复制区；无字幕→提示留在字幕位置（视频数据仍展示） */}
+        {hasSubtitle ? (
+          <SubtitleCopySection subs={subs} bodies={bodies} />
+        ) : (
+          <div className="text-xs text-muted-foreground">无字幕</div>
+        )}
 
         {/* stat.danmaku = 该视频收到的弹幕条数（B 站公开统计字段），非本项目采集的弹幕内容 */}
         {tags.length > 0 && (

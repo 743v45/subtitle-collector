@@ -85,7 +85,7 @@ async function connect() {
       } else {
         console.log(`[background] 上报完成 source_vid=${msg.source_vid} 新增 ${msg.inserted_tracks} 条版本 / 跳过 ${msg.skipped_tracks} 条（已存在）`);
       }
-      chrome.runtime.sendMessage({ type: "INGEST_RESULT", source_vid: msg.source_vid, inserted: msg.inserted_tracks, skipped: msg.skipped_tracks });
+      chrome.runtime.sendMessage({ type: "INGEST_RESULT", ok: msg.ok !== false, source_vid: msg.source_vid, inserted: msg.inserted_tracks, skipped: msg.skipped_tracks });
       return;
     }
     if (msg.type === "hello-ack" || msg.type === "hello-nack") {
@@ -292,7 +292,8 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     // 只找 B 站视频页（避免对 chrome:// 等无 content script 的 tab sendMessage 抛 "Receiving end does not exist"）
     chrome.tabs.query({ active: true, currentWindow: true, url: "*://www.bilibili.com/video/*" }, ([tab]) => {
       if (tab?.id) {
-        chrome.tabs.sendMessage(tab.id, { type: "RE_AGG" }, () => {
+        // force:true 绕过上报开关：用户在「手动」模式下点「上报」就是明确要上报，不该被自动开关拦截
+        chrome.tabs.sendMessage(tab.id, { type: "RE_AGG", force: true }, () => {
           if (chrome.runtime.lastError) console.warn('[collector] RE_AGG 失败:', chrome.runtime.lastError.message);
         });
       }
