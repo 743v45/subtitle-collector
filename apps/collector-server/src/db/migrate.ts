@@ -27,6 +27,8 @@ const CREATOR_COLUMNS: Array<{ name: string; type: string }> = [
   { name: 'official_title', type: 'TEXT' },
   { name: 'fans', type: 'INTEGER' },
   { name: 'following', type: 'INTEGER' },
+  { name: 'category_agent_id', type: 'INTEGER' },
+  { name: 'category_human_id', type: 'INTEGER' },
 ];
 
 export function runMigrations(db: Database.Database): void {
