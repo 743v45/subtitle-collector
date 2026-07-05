@@ -57,6 +57,7 @@ export interface VideosListOpts {
   sort?: VideoSortKey;
   desc?: boolean;
   page?: number;
+  subtitleQ?: string;        // 字幕正文关键词模糊匹配（命中 subtitle_versions.payload）
   size?: number;
 }
 
@@ -72,6 +73,7 @@ export function videosList(
     tid: opts.tid,
     tname: opts.tname,
     tag: opts.tag,
+    subtitle_q: opts.subtitleQ,
     lang: opts.lang,
     track_type: opts.trackType,
     has_subtitle: opts.hasSubtitle,
@@ -126,6 +128,7 @@ interface ListRawOpts {
   sort?: string;
   desc?: boolean;
   page?: string;
+  subtitleQ?: string;
   size?: string;
 }
 
@@ -180,6 +183,7 @@ export function buildVideosCommand(): Command {
     .option('--tid <id>', '分区 tid（精确）')
     .option('--tname <name>', '分区名模糊匹配')
     .option('--tag <tag>', '标签名模糊匹配（extra.tags[].tag_name）')
+    .option('--subtitle-q <text>', '字幕正文关键词模糊匹配（命中 subtitle_versions.payload）')
     .option('--lang <lang>', '字幕语言模糊匹配（如 zh 命中 zh-Hans）')
     .option('--track-type <type>', '字幕轨类型（1=AI 2=CC），精确')
     .option('--has-subtitle', '仅含至少一条字幕版本的视频')
@@ -201,6 +205,7 @@ export function buildVideosCommand(): Command {
         tid: parseNum(raw.tid, '--tid'),
         tname: raw.tname,
         tag: raw.tag,
+        subtitleQ: raw.subtitleQ,
         lang: raw.lang,
         trackType: parseNum(raw.trackType, '--track-type'),
         hasSubtitle: raw.hasSubtitle,

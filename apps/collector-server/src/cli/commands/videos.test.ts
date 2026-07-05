@@ -177,3 +177,21 @@ test('videosGetById: 按 db id 取详情；不存在返回 null', () => {
     assert.equal(videosGetById(db, 99999), null);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
+
+// ── videosList: subtitleQ 透传（字幕正文检索，对齐 HTTP subtitle_q）──
+
+test('videosList: subtitleQ 透传，命中字幕正文 content 的视频', () => {
+  const { db, dir } = setup();
+  try {
+    // 额外 ingest 一个带正文字幕的视频（setup 样本的 payload body 都是 []）
+    ingestVideo(db, {
+      source: 'bilibili',
+      video: { source_vid: 'BV9', title: '通胀专题', creator: { source_uid: '9', name: '经济UP' }, extra: { stat: { view: 0 } }, duration: 100, published_at: T + 5000 },
+      tracks: [{ lan: 'zh-Hans', lan_doc: 'AI中文', track_type: 1, versions: [{ origin: 'asr', payload: { body: [{ from: 0, to: 2, content: '今天聊通胀和CPI' }] } }] }],
+    });
+    // subtitleQ='通胀' 只命中 BV9（其余样本 payload 为空）
+    assert.deepEqual(titles(videosList(db, { subtitleQ: '通胀' }).items), ['通胀专题']);
+    // 不存在的词 → 0
+    assert.equal(videosList(db, { subtitleQ: '不存在的词XYZ' }).total, 0);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
