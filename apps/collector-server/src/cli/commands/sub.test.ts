@@ -125,6 +125,46 @@ test('extractSnippets: 多命中点各自独立产出片段', () => {
   assert.equal(out[1].content, 'A');
 });
 
+// ── extractSnippets cluster-merge（M6：邻近命中合并，避免 context 重叠浪费 token）──
+
+test('extractSnippets: 邻近命中 cluster-merge 合并成一个片段', () => {
+  // body: A(0-1) B(2-3) C(4-5)；hit=[A, C]，ctxSec=10 → A 与 C 邻近（窗口连片）
+  const body = [
+    { from: 0, to: 1, content: 'A' },
+    { from: 2, to: 3, content: 'B' },
+    { from: 4, to: 5, content: 'C' },
+  ];
+  const out = extractSnippets(body, [0, 2], 10, {});
+  assert.equal(out.length, 1);                                    // 1 cluster
+  assert.equal(out[0].content, 'AC');                             // 两命中段 content 拼接
+  assert.equal(out[0].from, 0);                                   // 首段 from
+  assert.equal(out[0].to, 5);                                     // 末段 to
+  assert.deepEqual(out[0].context, '[0-1] A [2-3] B [4-5] C');   // 全窗口（含夹层 B）
+});
+
+test('extractSnippets: 邻近合并 + 远离独立混合 → 2 cluster', () => {
+  // body: A(0-1) B(2-3) C(4-5) D(100-101)；hit=[A, C, D]
+  // A 与 C 邻近（合并为 cluster1，含夹层 B）；D 远离（独立 cluster2）
+  const body = [
+    { from: 0, to: 1, content: 'A' },
+    { from: 2, to: 3, content: 'B' },
+    { from: 4, to: 5, content: 'C' },
+    { from: 100, to: 101, content: 'D' },
+  ];
+  const out = extractSnippets(body, [0, 2, 3], 10, {});
+  assert.equal(out.length, 2);
+  // cluster1: A+C 合并
+  assert.equal(out[0].content, 'AC');
+  assert.equal(out[0].from, 0);
+  assert.equal(out[0].to, 5);
+  assert.deepEqual(out[0].context, '[0-1] A [2-3] B [4-5] C');
+  // cluster2: D 独立
+  assert.equal(out[1].content, 'D');
+  assert.equal(out[1].from, 100);
+  assert.equal(out[1].to, 101);
+  assert.deepEqual(out[1].context, '[100-101] D');
+});
+
 // ── searchSubtitles（注入 mock PayloadSource + 临时 DB）──
 const T2 = 1_700_000_000_000;
 function setupSub(): { db: Database.Database; dir: string } {

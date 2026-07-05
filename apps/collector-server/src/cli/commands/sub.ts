@@ -72,10 +72,20 @@ export interface ExtractOpts {
 }
 
 /**
- * 对每个命中索引产出片段：从命中段向前后贪心吞并「时间差 <= ctxSec」的邻段，
- * 拼成 context。时间差定义：向前 = center.from - body[lo-1].to；向后 = body[hi+1].from - center.to。
- * - plain=true：context 只留纯文本（邻段 content 直接拼接）。
- * - maxPerVideo：按命中顺序取前 N（默认不限）。
+ * 邻近命中 cluster-merge：邻近命中（ctxSec 时间窗内）合并成一个 snippet，
+ * 避免每个命中独立产出导致 context 重叠重复浪费 token（M6）。
+ *
+ * 算法：按 hit 顺序遍历，每个 hit 向前后贪心扩张（时间差 <= ctxSec 即吞并邻段）
+ * 得到 body 索引区间 [lo, hi]。若该 hit 的 lo <= 当前 cluster 的 hi，并入当前
+ * cluster（hi 取大）；否则开新 cluster。
+ * - 时间差定义：向前 = center.from - body[lo-1].to；向后 = body[hi+1].from - center.to。
+ * - 每个 cluster 产一个 snippet：
+ *   - from = cluster 首个 hit 段的 from；to = cluster 末个 hit 段的 to。
+ *   - content = cluster 内所有 hit 段 content 顺序拼接（无分隔符）。
+ *   - context = 从 cluster 首 hit 的 lo 到末 hit 的 hi 的所有 body 段拼接
+ *     （plain=true 直接 content 拼；否则 "[from-to] content" 空格连接）。
+ * - plain=true：context 只留纯文本。
+ * - maxPerVideo：限制合并后的 cluster 数（按命中顺序取前 N，默认不限）。
  */
 export function extractSnippets(
   body: BodyItem[],
@@ -84,17 +94,41 @@ export function extractSnippets(
   opts: ExtractOpts = {},
 ): Snippet[] {
   const max = opts.maxPerVideo ?? Number.MAX_SAFE_INTEGER;
-  return hitIndices.slice(0, max).map((idx) => {
+
+  // 每个 hit 的左右贪心扩张范围（body 索引）
+  const expansions = hitIndices.map((idx) => {
     const center = body[idx];
     let lo = idx;
     while (lo > 0 && center.from - body[lo - 1].to <= ctxSec) lo--;
     let hi = idx;
     while (hi < body.length - 1 && body[hi + 1].from - center.to <= ctxSec) hi++;
-    const segs = body.slice(lo, hi + 1);
+    return { idx, lo, hi };
+  });
+
+  // 邻接分组：cluster 用 hitIndices 上的 [hitStart, hitEnd] 区间表示
+  const clusters: Array<{ hitStart: number; hitEnd: number; lo: number; hi: number }> = [];
+  for (let i = 0; i < expansions.length; i++) {
+    const e = expansions[i];
+    const last = clusters[clusters.length - 1];
+    if (last && e.lo <= last.hi) {
+      // 并入当前 cluster：扩张 hi（lo 不变——cluster lo 锁定首个 hit 的 lo）
+      last.hitEnd = i;
+      last.hi = Math.max(last.hi, e.hi);
+    } else {
+      clusters.push({ hitStart: i, hitEnd: i, lo: e.lo, hi: e.hi });
+    }
+  }
+
+  return clusters.slice(0, max).map((c) => {
+    const firstHit = body[hitIndices[c.hitStart]];
+    const lastHit = body[hitIndices[c.hitEnd]];
+    let content = '';
+    for (let i = c.hitStart; i <= c.hitEnd; i++) content += body[hitIndices[i]].content;
+    const segs = body.slice(c.lo, c.hi + 1);
     const context = opts.plain
       ? segs.map((s) => s.content).join('')
       : segs.map((s) => `[${s.from}-${s.to}] ${s.content}`).join(' ');
-    return { from: center.from, to: center.to, content: center.content, context };
+    return { from: firstHit.from, to: lastHit.to, content, context };
   });
 }
 
