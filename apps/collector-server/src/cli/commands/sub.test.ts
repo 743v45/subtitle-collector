@@ -16,7 +16,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { openDb, migrate } from '../../db/migrate.js';
 import { ingestVideo } from '../../db/ingest.js';
-import { matchBody, extractSnippets, searchSubtitles, makeDbPayloadSource, type PayloadSource, type PayloadEntry } from './sub.js';
+import { matchBody, extractSnippets, searchSubtitles, makeDbPayloadSource, type PayloadSource } from './sub.js';
 
 // ── matchBody ──
 
@@ -150,10 +150,6 @@ function setupSub(): { db: Database.Database; dir: string } {
   db.prepare('UPDATE videos SET first_seen_at = ? WHERE source_vid = ?').run(T2 + 100, 'BV1');
   db.prepare('UPDATE videos SET first_seen_at = ? WHERE source_vid = ?').run(T2 + 200, 'BV2');
   return { db, dir };
-}
-
-function mockSource(map: Record<number, PayloadEntry[]>): PayloadSource {
-  return { getPayloads: (vid: number) => map[vid] ?? [] };
 }
 
 test('searchSubtitles: 子串模式命中 + 片段时间戳 + matched_videos/total_snippets', () => {

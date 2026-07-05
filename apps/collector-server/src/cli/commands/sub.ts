@@ -247,7 +247,7 @@ export function searchSubtitles(
     const item: SubtitleSearchItem = {
       video: {
         id: v.id, source: v.source, source_vid: v.source_vid, title: v.title,
-        creator_name: (v as { creator_name: string | null }).creator_name,
+        creator_name: v.creator_name,
         duration: v.duration, published_at: v.published_at,
       },
       track: chosen.track,
