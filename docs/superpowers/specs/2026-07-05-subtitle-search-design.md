@@ -276,7 +276,7 @@ interface PayloadSource {
 | R2 | 2026-07-05 | `videos list --subtitle-q` 单测（F1-F2） | ✅ PASS（Task 1，commit `f4e4112`，12/12） |
 | R3 | 2026-07-05 | matchBody / extractSnippets 纯函数（F4-F8） | ✅ PASS（Task 2/3，commit `f25b2f2` + `59e1f11`，11 用例） |
 | R4 | 2026-07-05 | searchSubtitles 编排 + mock PayloadSource（F9-F14） | ✅ PASS（Task 4，commit `cbfa852` + `9a81495` 清理，20 用例含 F9b 关键回归） |
-| R5 | 2026-07-05 | 回归 | ⚠️ 部分：`sub.test.ts` 20 + `videos.test.ts` 12 局部 PASS；全量 `pnpm test` 未跑（main 有并发在制品干扰，与本次无关） |
+| R5 | 2026-07-06 | 全量回归 | ✅ 字幕检索相关全过（sub 23 + videos 15 = 38/38）；全量 219/226，7 个 changes（changesList/getChanges）失败是别人「变更日志」特性 in-flight（`5a6ca2b` 等）引入，与字幕检索无关（未碰 changes.ts/getChanges） |
 | R6 | 2026-07-05 | E2E 真实检索（F17）+ 省 token 对照（F18） | ✅ PASS（真实库命中；省 token 1723 vs 78399 ≈ 2.2%） |
 
 > 实现 commits（`feat/subtitle-search` 分支废弃，按用户裁定留 main 并发）：`f4e4112`(T1) → `f25b2f2`(T2) → `59e1f11`(T3) → `cbfa852`(T4) → `9a81495`(T4 清理) → `232655c`(T5)。T6 = E2E + 文档同步（本节）。F11（allTracks）已补单测，标记 ✅。
