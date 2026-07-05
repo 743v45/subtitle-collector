@@ -87,6 +87,29 @@ export async function collectUpperInfo(
 
 export interface UpperVideosOpts { page?: number; size?: number; }
 
+/** 单条 UP 视频元数据（扩展 list-upper-videos 返回）。 */
+export interface UpperVideoItem {
+  bvid: string;
+  title?: string;
+  created?: number;
+  play?: number;
+  length?: string;
+}
+
+/** list-upper-videos 扩展回执形状（外层 server 包装 + result.data 列表）。 */
+export interface UpperVideosResp {
+  ok: boolean;
+  client_id?: string;
+  action?: string;
+  result?: {
+    type?: string;
+    id?: string;
+    ok: boolean;
+    error?: string;
+    data?: { total?: number; items?: UpperVideoItem[] };
+  };
+}
+
 /** `collect upper-videos <mid>`：下发 list-upper-videos，返回视频列表（不入库）。 */
 export async function collectUpperVideos(
   client: CollectClient,
@@ -97,6 +120,44 @@ export async function collectUpperVideos(
 ): Promise<unknown> {
   return client.sendCommand(clientId, 'list-upper-videos',
     { mid, page: opts.page ?? 1, page_size: opts.size ?? 30 }, timeout);
+}
+
+/** `collect upper-videos --all`：循环翻页拉完 UP 主所有视频，合并 items 后按单页响应形状返回。 */
+// page 从 1 起，每页 size 条；翻到本页 items 不足 size（到尾）或累计达 total 停。
+// maxPages 兜底防异常 total 导致的无限翻页。列表 API 轻量，页间不额外 sleep（CLI↔扩展↔B站 往返即延迟）。
+export async function collectUpperVideosAll(
+  client: CollectClient,
+  clientId: string,
+  mid: string,
+  size: number,
+  timeout: number,
+): Promise<UpperVideosResp> {
+  const allItems: UpperVideoItem[] = [];
+  let total = 0;
+  let lastResp: UpperVideosResp | undefined;
+  const maxPages = 200;
+  for (let page = 1; page <= maxPages; page++) {
+    const resp = await client.sendCommand(clientId, 'list-upper-videos',
+      { mid, page, page_size: size }, timeout) as UpperVideosResp;
+    if (!resp.ok || !resp.result?.ok) {
+      throw new Error(`list-upper-videos page=${page} failed: ${resp.result?.error ?? 'server error'}`);
+    }
+    lastResp = resp;
+    const data = resp.result?.data ?? {};
+    total = data.total ?? total;
+    const items = data.items ?? [];
+    allItems.push(...items);
+    if (items.length < size || (total > 0 && allItems.length >= total)) break;
+  }
+  // 用最后一次外层包装 + 合并后的全量 data，保持与单页输出形状一致。
+  return {
+    ...(lastResp ?? { ok: true }),
+    result: {
+      ...(lastResp?.result ?? { ok: true }),
+      ok: true,
+      data: { total, items: allItems },
+    },
+  };
 }
 
 /** `collect new-videos <mid>`：拉 UP 主视频列表（经扩展）+ 直读 SQLite 对比 → 返回 new/collected。 */
@@ -260,18 +321,21 @@ export function buildCollectCommand(): Command {
 
   collect
     .command('upper-videos <mid>')
-    .description('拉 UP 主视频列表（不入库）')
-    .option('--page <n>', '页码（默认 1）', (v) => Number.parseInt(v, 10), 1)
+    .description('拉 UP 主视频列表（不入库；--all 全量翻页拉完）')
+    .option('--page <n>', '页码（默认 1，--all 时忽略）', (v) => Number.parseInt(v, 10), 1)
     .option('--size <n>', '每页条数（默认 30）', (v) => Number.parseInt(v, 10), 30)
+    .option('--all', '全量翻页拉完所有视频（默认仅首页）')
     .option('--client <id>', '扩展 client_id')
     .option('--timeout <ms>', '超时毫秒（默认 15000）', (v) => Number.parseInt(v, 10), DEFAULT_COLLECT_TIMEOUT_MS)
-    .action(async (mid: string, opts: { page: number; size: number; client?: string; timeout: number }) => {
+    .action(async (mid: string, opts: { page: number; size: number; all?: boolean; client?: string; timeout: number }) => {
       if (!Number.isFinite(opts.timeout) || opts.timeout <= 0) emitError(`invalid --timeout: ${opts.timeout}`, 'ARGS');
       const ctx = getCliContext();
       const client = new ServerClient(ctx.serverUrl, ctx.token);
       try {
         const clientId = await resolveClientId(client as CollectClient, opts.client);
-        const data = await collectUpperVideos(client as CollectClient, clientId, mid, { page: opts.page, size: opts.size }, opts.timeout);
+        const data = opts.all
+          ? await collectUpperVideosAll(client as CollectClient, clientId, mid, opts.size, opts.timeout)
+          : await collectUpperVideos(client as CollectClient, clientId, mid, { page: opts.page, size: opts.size }, opts.timeout);
         emitResult(data, ctx.format);
       } catch (err) {
         handleHttpError(err);

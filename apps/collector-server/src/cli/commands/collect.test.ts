@@ -5,7 +5,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import Database from 'better-sqlite3';
-import { collectSearch, collectSubtitle, collectDedupe, collectUpperInfo, collectUpperVideos, collectNewVideos, collectDiscover, resolveClientId } from './collect.js';
+import { collectSearch, collectSubtitle, collectDedupe, collectUpperInfo, collectUpperVideos, collectUpperVideosAll, collectNewVideos, collectDiscover, resolveClientId } from './collect.js';
 
 function mockClient(sendCommandResult: unknown, listClientsResult: unknown[] = [{ client_id: 'c1' }]) {
   const calls: Array<{ clientId: string; action: string; params: unknown; timeout: number }> = [];
@@ -79,6 +79,41 @@ test('collectUpperVideos 下发 list-upper-videos', async () => {
   const out = await collectUpperVideos(c as any, 'c1', '123', { page: 1, size: 30 }, 15000);
   assert.deepEqual(c.calls[0], { clientId: 'c1', action: 'list-upper-videos', params: { mid: '123', page: 1, page_size: 30 }, timeout: 15000 });
   assert.deepEqual(out, { ok: true, result: { ok: true, data: { total: 2, items: [{ bvid: 'BV1' }] } } });
+});
+
+test('collectUpperVideosAll 翻页合并直到拿满 total', async () => {
+  // total=5、size=2：page1=[a,b] page2=[c,d] page3=[e]（本页 items < size 即到尾终止）
+  const pages = [
+    { total: 5, items: [{ bvid: 'a' }, { bvid: 'b' }] },
+    { total: 5, items: [{ bvid: 'c' }, { bvid: 'd' }] },
+    { total: 5, items: [{ bvid: 'e' }] },
+  ];
+  let call = 0;
+  const c = {
+    calls: [] as Array<{ page: number }>,
+    async listClients() { return [{ client_id: 'c1' }]; },
+    async sendCommand(clientId: string, action: string, params: Record<string, unknown>, timeout: number) {
+      c.calls.push({ page: params.page as number });
+      return { ok: true, result: { ok: true, data: pages[call++] } };
+    },
+  };
+  const out = await collectUpperVideosAll(c as any, 'c1', '123', 2, 15000);
+  assert.equal(c.calls.length, 3);
+  assert.deepEqual(c.calls.map((x) => x.page), [1, 2, 3]);
+  assert.deepEqual(out.result?.data?.items?.map((x) => x.bvid), ['a', 'b', 'c', 'd', 'e']);
+  assert.equal(out.result?.data?.total, 5);
+});
+
+test('collectUpperVideosAll 一次拿完（items < size 即停，不超翻）', async () => {
+  const c = mockClient({ ok: true, result: { ok: true, data: { total: 2, items: [{ bvid: 'a' }, { bvid: 'b' }] } } });
+  const out = await collectUpperVideosAll(c as any, 'c1', '123', 30, 15000);
+  assert.equal(c.calls.length, 1);
+  assert.equal(out.result?.data?.total, 2);
+});
+
+test('collectUpperVideosAll 单页失败抛错', async () => {
+  const c = mockClient({ ok: true, result: { ok: false, error: 'bili_-412' } });
+  await assert.rejects(() => collectUpperVideosAll(c as any, 'c1', '123', 30, 15000), /bili_-412|list-upper-videos failed/);
 });
 
 test('collectNewVideos 拉列表 + 对比库 → 返回 new/collected', async () => {
