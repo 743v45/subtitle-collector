@@ -23,7 +23,7 @@ export interface VideoListItem {
   duration: number | null; published_at?: number | null;
   track_count: number; first_seen_at: number;
   tid?: number | null; tname?: string | null; tags?: string[];
-  view?: number | null; pic?: string | null;
+  view?: number | null;
 }
 export interface VideoInfo {
   title: string; creator_name: string | null; duration: number | null;
@@ -57,6 +57,7 @@ export interface VideoFilter {
   tid?: number;
   tname?: string;
   tag?: string;
+  subtitle_q?: string; // 字幕正文关键词
   lang?: string;
   has_subtitle?: boolean;
   since?: number;       // 毫秒时间戳

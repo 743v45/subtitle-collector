@@ -13,6 +13,7 @@ export interface VideoFilter {
   tid?: number;              // extra.tid 精确
   tname?: string;            // extra.tname 模糊
   tag?: string;              // extra.tags[].tag_name 模糊
+  subtitle_q?: string;       // 字幕正文关键词模糊（命中 subtitle_versions.payload）
   lang?: string;             // subtitle_tracks.lan 模糊（zh 命中 zh-Hans）
   track_type?: number;       // subtitle_tracks.track_type 精确（1=AI 2=CC）
   has_subtitle?: boolean;    // 至少有一条 subtitle_versions
@@ -115,6 +116,11 @@ function buildVideoWhere(f: VideoFilter): { where: string; params: unknown[] } {
     // extra.tags 是数组：json_each 遍历后对 tag_name 做 LIKE
     conds.push("EXISTS (SELECT 1 FROM json_each(v.extra, '$.tags') WHERE json_extract(json_each.value, '$.tag_name') LIKE ?)");
     params.push(`%${f.tag}%`);
+  }
+  if (f.subtitle_q) {
+    // 字幕正文：subtitle_versions.payload 是 JSON，LIKE 命中 body[].content
+    conds.push('EXISTS (SELECT 1 FROM subtitle_versions sv JOIN subtitle_tracks st ON st.id = sv.track_id WHERE st.video_id = v.id AND sv.payload LIKE ?)');
+    params.push(`%${f.subtitle_q}%`);
   }
   if (f.lang) {
     conds.push('EXISTS (SELECT 1 FROM subtitle_tracks st WHERE st.video_id = v.id AND st.lan LIKE ?)');

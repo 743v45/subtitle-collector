@@ -47,9 +47,11 @@ function formatView(n: number | null | undefined): string {
 }
 
 export function VideoList({ onOpen }: { onOpen: (source: string, sourceVid: string) => void }) {
-  // q 走防抖（输入即时更新 qInput，300ms 后落到 q 驱动查询）
+  // q / 字幕关键词 都走防抖（300ms）
   const [qInput, setQInput] = useState('');
   const [q, setQ] = useState('');
+  const [subtitleQInput, setSubtitleQInput] = useState('');
+  const [subtitleQ, setSubtitleQ] = useState('');
   // 分区（下拉，选项从 aggregate 拉）
   const [tname, setTname] = useState('');
   // 次要筛选（折叠区）
@@ -75,6 +77,10 @@ export function VideoList({ onOpen }: { onOpen: (source: string, sourceVid: stri
     const t = setTimeout(() => setQ(qInput), 300);
     return () => clearTimeout(t);
   }, [qInput]);
+  useEffect(() => {
+    const t = setTimeout(() => setSubtitleQ(subtitleQInput), 300);
+    return () => clearTimeout(t);
+  }, [subtitleQInput]);
 
   // 分区下拉选项：从 aggregate groupBy=tname 拉（过滤空/unknown），topN=200 覆盖常见分区
   const { data: partitionsData } = useAsync(() => getStatsAggregate('tname', {}, 200), []);
@@ -92,6 +98,7 @@ export function VideoList({ onOpen }: { onOpen: (source: string, sourceVid: stri
     () =>
       listVideos({
         q: q || undefined,
+        subtitle_q: subtitleQ || undefined,
         tname: tname || undefined,
         tag: tag || undefined,
         lang: lang || undefined,
@@ -108,7 +115,7 @@ export function VideoList({ onOpen }: { onOpen: (source: string, sourceVid: stri
         page,
         size: PAGE_SIZE,
       }),
-    [q, tname, tag, lang, hasSubtitle, dateField, since, until, min_duration, max_duration, min_view, max_view, sort, desc, page],
+    [q, subtitleQ, tname, tag, lang, hasSubtitle, dateField, since, until, min_duration, max_duration, min_view, max_view, sort, desc, page],
   );
 
   const items = data?.items ?? [];
@@ -124,6 +131,8 @@ export function VideoList({ onOpen }: { onOpen: (source: string, sourceVid: stri
   function resetAll() {
     setQInput('');
     setQ('');
+    setSubtitleQInput('');
+    setSubtitleQ('');
     setTname('');
     setTag('');
     setLang('');
@@ -153,10 +162,16 @@ export function VideoList({ onOpen }: { onOpen: (source: string, sourceVid: stri
       {/* 主筛选行 */}
       <div className="flex flex-wrap items-center gap-2">
         <Input
-          className="min-w-[200px] flex-1"
+          className="min-w-[180px] flex-1"
           placeholder="搜索标题 / UP主"
           value={qInput}
           onChange={(e) => setQInput(e.target.value)}
+        />
+        <Input
+          className="min-w-[160px] flex-1"
+          placeholder="搜字幕内容"
+          value={subtitleQInput}
+          onChange={(e) => setSubtitleQInput(e.target.value)}
         />
         <Select
           value={tname || '__all'}
@@ -368,38 +383,27 @@ function VideoRow({ v, onOpen }: { v: VideoListItem; onOpen: (source: string, so
       onClick={() => onOpen(v.source, v.source_vid)}
       className="cursor-pointer transition-colors hover:bg-accent"
     >
-      <div className="flex gap-3 p-3">
-        {v.pic && (
-          <img
-            src={v.pic}
-            alt=""
-            loading="lazy"
-            referrerPolicy="no-referrer"
-            className="h-[68px] w-[120px] shrink-0 rounded object-cover bg-muted"
-          />
+      <CardHeader className="space-y-1 p-4">
+        <CardTitle className="text-base font-medium">{v.title}</CardTitle>
+        <CardDescription className="text-xs flex flex-wrap items-center gap-x-2">
+          <span>{v.creator_name ?? '—'}</span>
+          {v.view != null && <span>· 播放 {formatView(v.view)}</span>}
+          {dur && <span>· {dur}</span>}
+          <span>· {v.track_count} 轨</span>
+          {v.published_at ? <span>· 发布 {formatTs(v.published_at)}</span> : null}
+        </CardDescription>
+        {(v.tname || tags.length > 0) && (
+          <div className="flex flex-wrap gap-1 pt-0.5">
+            {v.tname && <Badge variant="secondary">{v.tname}</Badge>}
+            {shownTags.map((t) => (
+              <Badge key={t} variant="outline">
+                {t}
+              </Badge>
+            ))}
+            {extraTags > 0 && <Badge variant="outline">+{extraTags}</Badge>}
+          </div>
         )}
-        <div className="min-w-0 flex-1 space-y-1">
-          <CardTitle className="text-base font-medium leading-snug line-clamp-2">{v.title}</CardTitle>
-          <CardDescription className="text-xs flex flex-wrap items-center gap-x-2">
-            <span>{v.creator_name ?? '—'}</span>
-            {v.view != null && <span>· 播放 {formatView(v.view)}</span>}
-            {dur && <span>· {dur}</span>}
-            <span>· {v.track_count} 轨</span>
-            {v.published_at ? <span>· 发布 {formatTs(v.published_at)}</span> : null}
-          </CardDescription>
-          {(v.tname || tags.length > 0) && (
-            <div className="flex flex-wrap gap-1 pt-0.5">
-              {v.tname && <Badge variant="secondary">{v.tname}</Badge>}
-              {shownTags.map((t) => (
-                <Badge key={t} variant="outline">
-                  {t}
-                </Badge>
-              ))}
-              {extraTags > 0 && <Badge variant="outline">+{extraTags}</Badge>}
-            </div>
-          )}
-        </div>
-      </div>
+      </CardHeader>
     </Card>
   );
 }

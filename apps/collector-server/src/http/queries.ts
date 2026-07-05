@@ -11,12 +11,12 @@ function json(res: ServerResponse, status: number, body: unknown): void {
 
 const SORT_KEYS: readonly VideoSortKey[] = ['first_seen', 'published_at', 'title', 'duration', 'view'];
 
-// 列表项富化：用 json_extract 从 extra 取 tid/tname/tags/view/pic，前端列表直接展示分区/标签/播放量/封面，避免逐条再请求。
+// 列表项富化：用 json_extract 从 extra 取 tid/tname/tags/view，前端列表直接展示分区/标签/播放量，避免逐条再请求。
 // tags 在 extra 是对象数组 [{tag_id,tag_name}]，这里降维成 tag_name 字符串数组；非合法 JSON → 空数组（不 500）。
 function enrichItems(
   db: Database.Database,
   items: VideoListItemAdvanced[],
-): Array<VideoListItemAdvanced & { tid: number | null; tname: string | null; tags: string[]; view: number | null; pic: string | null }> {
+): Array<VideoListItemAdvanced & { tid: number | null; tname: string | null; tags: string[]; view: number | null }> {
   if (items.length === 0) return [];
   const ids = items.map((i) => i.id);
   const placeholders = ids.map(() => '?').join(',');
@@ -25,10 +25,9 @@ function enrichItems(
             json_extract(extra, '$.tid') AS tid,
             json_extract(extra, '$.tname') AS tname,
             json_extract(extra, '$.tags') AS tags,
-            CAST(json_extract(extra, '$.stat.view') AS INTEGER) AS view,
-            json_extract(extra, '$.pic') AS pic
+            CAST(json_extract(extra, '$.stat.view') AS INTEGER) AS view
        FROM videos WHERE id IN (${placeholders})`,
-  ).all(...ids) as Array<{ id: number; tid: number | null; tname: string | null; tags: string | null; view: number | null; pic: string | null }>;
+  ).all(...ids) as Array<{ id: number; tid: number | null; tname: string | null; tags: string | null; view: number | null }>;
   const byId = new Map(rows.map((r) => [r.id, r]));
   return items.map((it) => {
     const r = byId.get(it.id);
@@ -45,7 +44,7 @@ function enrichItems(
         tags = []; // extra.tags 非合法 JSON → 空数组
       }
     }
-    return { ...it, tid: r?.tid ?? null, tname: r?.tname ?? null, tags, view: r?.view ?? null, pic: r?.pic ?? null };
+    return { ...it, tid: r?.tid ?? null, tname: r?.tname ?? null, tags, view: r?.view ?? null };
   });
 }
 

@@ -43,6 +43,7 @@ export async function listVideos(filter: VideoFilter = {}): Promise<{ total: num
   if (filter.tid != null) u.set('tid', String(filter.tid));
   if (filter.tname) u.set('tname', filter.tname);
   if (filter.tag) u.set('tag', filter.tag);
+  if (filter.subtitle_q) u.set('subtitle_q', filter.subtitle_q);
   if (filter.lang) u.set('lang', filter.lang);
   if (filter.has_subtitle) u.set('has_subtitle', 'true');
   if (filter.since != null) u.set('since', String(filter.since));

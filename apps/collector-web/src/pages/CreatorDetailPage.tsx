@@ -222,24 +222,13 @@ export function CreatorDetailPage({
                 <div
                   key={v.id}
                   onClick={() => onOpenVideo(v.source, v.source_vid)}
-                  className="flex cursor-pointer gap-3 rounded-md p-2 transition-colors hover:bg-accent"
+                  className="cursor-pointer rounded-md p-2 transition-colors hover:bg-accent"
                 >
-                  {v.pic && (
-                    <img
-                      src={v.pic}
-                      alt=""
-                      loading="lazy"
-                      referrerPolicy="no-referrer"
-                      className="h-[54px] w-[96px] shrink-0 rounded bg-muted object-cover"
-                    />
-                  )}
-                  <div className="min-w-0 flex-1 space-y-0.5">
-                    <div className="line-clamp-1 text-sm font-medium">{v.title}</div>
-                    <div className="text-xs text-muted-foreground">
-                      {v.view != null && <span>播放 {fmtView(v.view)}</span>}
-                      {v.view != null && fmtDur(v.duration) && ' · '}
-                      {fmtDur(v.duration)}
-                    </div>
+                  <div className="line-clamp-1 text-sm font-medium">{v.title}</div>
+                  <div className="text-xs text-muted-foreground">
+                    {v.view != null && <span>播放 {fmtView(v.view)}</span>}
+                    {v.view != null && fmtDur(v.duration) && ' · '}
+                    {fmtDur(v.duration)}
                   </div>
                 </div>
               ))}

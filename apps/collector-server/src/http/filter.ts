@@ -36,6 +36,8 @@ export function parseVideoFilter(p: URLSearchParams): VideoFilter {
   if (tname) f.tname = tname;
   const tag = p.get('tag');
   if (tag) f.tag = tag;
+  const subtitle_q = p.get('subtitle_q');
+  if (subtitle_q) f.subtitle_q = subtitle_q;
   const lang = p.get('lang');
   if (lang) f.lang = lang;
   const track_type = toInt(p.get('track_type'));
