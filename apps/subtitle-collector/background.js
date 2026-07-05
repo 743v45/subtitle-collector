@@ -273,19 +273,6 @@ async function connect() {
         const newEnabled = await applyReporting(msg.enabled === true);
         ws.send(JSON.stringify({ type: "result", id: msg.id, ok: true, data: { reporting_enabled: newEnabled } }));
         // set-reporting 路径不发 reporting-state：server 作为发起方据 result 更新状态
-      } else if (msg.action === "collect-now") {
-        // 找当前激活的 B 站视频页 tab，下发 RE_AGG{force:true} 触发即时采集
-        const [tab] = await chrome.tabs.query({ active: true, currentWindow: true, url: "*://www.bilibili.com/video/*" });
-        if (!tab?.id) {
-          ws.send(JSON.stringify({ type: "result", id: msg.id, ok: false, error: "no active bilibili video tab" }));
-          return;
-        }
-        const m = tab.url?.match(/\/video\/(BV[\w]+)/);
-        const bvid = m?.[1] ?? null;
-        chrome.tabs.sendMessage(tab.id, { type: "RE_AGG", force: true }, () => {
-          if (chrome.runtime.lastError) console.warn("[background] collect-now RE_AGG 失败:", chrome.runtime.lastError.message);
-        });
-        ws.send(JSON.stringify({ type: "result", id: msg.id, ok: true, data: { dispatched: true, bvid } }));
       } else {
         ws.send(JSON.stringify({ type: "result", id: msg.id, ok: false, error: "unknown action: " + msg.action }));
       }
@@ -311,7 +298,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     const summary = payloadSummary(payload);
     const force = msg.force === true;
     if (force) {
-      console.log(`[background] ingest 强制上报（collect-now，绕过开关）source_vid=${payload.video?.source_vid}`);
+      console.log(`[background] ingest 强制上报（手动上报，绕过开关）source_vid=${payload.video?.source_vid}`);
     } else if (!shouldReport(reportingEnabled)) {
       console.log(`[background] ingest 丢弃（开关关）${summary}`);
       sendResponse({ ok: true, dropped: true });

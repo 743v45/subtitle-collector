@@ -134,8 +134,8 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     });
     return false;
   }
-  // RE_AGG：手动补采 / collect-now 触发，强制重发已收集的 record。
-  // msg.force=true（collect-now）会透传到 INGEST，让 background 绕过上报开关。
+  // RE_AGG：popup「手动上报」触发，强制重发已收集的 record。
+  // msg.force=true 会透传到 INGEST，让 background 绕过上报开关。
   if (msg?.type === "RE_AGG") {
     const force = msg.force === true;
     for (const bvid of collected.keys()) flushIfReady(bvid, force);
