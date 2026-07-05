@@ -126,3 +126,27 @@
 | VideoList 多维筛选 | web-videolist | `pages/VideoList.tsx` |
 | UP 主详情 + CreatorsPage 升级 | web-creators | `pages/CreatorDetailPage.tsx` + `pages/CreatorsPage.tsx` |
 | CategoriesPage 加固 | web-categories | `pages/CategoriesPage.tsx` |
+
+## 10. 第二轮修复（2026-07-05，实机重采验证发现）
+
+实机重采真实视频 BV1qETs6QEkk 暴露老数据 + 第一批遗留缺陷，追加修复：
+
+### 10.1 creator_id 不更新 → 作者永远显示不出（server bug）
+- **现象**：VideoDetail「作者」始终空；DB 查 video.creator_id 锁在 `source_uid='unknown'` 的 creator（id=1），但正确 creator（`37938807/勇哥餐饮避坑指南`，id=11）已存在。
+- **根因**：[ingest.ts:77](apps/collector-server/src/db/ingest.ts#L77) `videoUpd` 的 UPDATE **不含 creator_id**——老视频首采时 creator 没抓到（unknown），后续重采即使 `buildIngestPayload` 传了正确 creator，video.creator_id 也不修正。
+- **修复**：videoUpd 加 `creator_id = ?`（定义 + run 调用都加 creatorId）。
+- **验证**：重采后 `creator_name=勇哥餐饮避坑指南`、`duration=2350`、`published_at=2026/7/3`、`desc` 简介全有。
+
+### 10.2 tname（分区名）= B 站 view 接口硬限制
+- `/x/web-interface/view` **不返回 tname**（只给 tid 数字）；web 查 tid 分区表有歧义（21=日常/绘画、36=知识/科技，B 站 2020 改组过）。
+- 主动采集拿不到分区名；被动采集（浏览视频页）从 `__INITIAL_STATE__.videoData.tname` 能拿到（[inject.js:29](apps/subtitle-collector/inject.js#L29)）。
+- **决策**：不做静态映射（歧义会误导），靠被动采集补。
+
+### 10.3 VideoDetail 去封面 + popup 加字段（用户要求）
+- VideoDetail 去掉封面字段。
+- popup CollectedBlock 加时长（duration）/发布时间（published_at）/简介（desc）展示；[popup/types.ts](apps/subtitle-collector/src/popup/types.ts) 补 3 个可选字段（`CollectedVideo.duration/published_at`、`CollectedExtra.desc`，零破坏）。
+
+### 10.4 tag 采集端到端
+- `/x/tag/archive/tags` 免 wbi 免 cookie，curl 直连返回 7 个标签（sample `{tag_id:128384,tag_name:"创业"}`）。
+- 扩展新代码（dist 含 tag 采集）需用户 reload 扩展（`chrome://extensions`）让新 MV3 service worker 生效——旧 SW 跑旧代码是 tags 没进 DB 的直接原因。
+- **验证状态**：待用户 reload 扩展后端到端重采确认 `extra.tags` 非空。

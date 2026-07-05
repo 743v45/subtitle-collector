@@ -101,10 +101,6 @@ export function VideoDetail({ source, sourceVid, onBack }: { source: string; sou
           <Field label="版权" value={copyrightLabel(e?.copyright) ?? '-'} />
           <Field label="P 数" value={e?.pages?.length != null ? String(e.pages.length) : '-'} />
           <Field label="状态" value={v.status ?? '-'} />
-          <div className="col-span-2 sm:col-span-3 md:col-span-4">
-            <div className="text-xs text-muted-foreground">封面</div>
-            <div>{e?.pic ? <a href={e.pic} target="_blank" rel="noreferrer" className="underline">查看</a> : '-'}</div>
-          </div>
         </CardContent>
       </Card>
 

@@ -74,7 +74,7 @@ export function ingestVideo(db: Database.Database, req: IngestRequest): IngestRe
     // 2. video upsert + change_log（按字段）
     const videoSel = db.prepare('SELECT * FROM videos WHERE source = ? AND source_vid = ?');
     const videoIns = db.prepare('INSERT INTO videos (source, source_vid, creator_id, title, extra, duration, status, published_at, first_seen_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
-    const videoUpd = db.prepare('UPDATE videos SET title = ?, extra = ?, duration = ?, status = ?, published_at = ?, updated_at = ? WHERE id = ?');
+    const videoUpd = db.prepare('UPDATE videos SET creator_id = ?, title = ?, extra = ?, duration = ?, status = ?, published_at = ?, updated_at = ? WHERE id = ?');
 
     const existingVideo = videoSel.get(r.source, r.video.source_vid) as Record<string, unknown> | undefined;
     let videoId: number;
@@ -101,7 +101,7 @@ export function ingestVideo(db: Database.Database, req: IngestRequest): IngestRe
           changeIns.run('video', videoId, f, oldVal == null ? null : oldCmp, newVal == null ? null : newCmp, now);
         }
       }
-      videoUpd.run(fields.title, fields.extra, fields.duration, fields.status, fields.published_at, now, videoId);
+      videoUpd.run(creatorId, fields.title, fields.extra, fields.duration, fields.status, fields.published_at, now, videoId);
     }
 
     // 3. track upsert

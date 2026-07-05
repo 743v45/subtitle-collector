@@ -488,6 +488,11 @@ function CollectedBlock({
   const stat = extra.stat ?? {};
   const tags = Array.isArray(extra.tags) ? extra.tags : [];
   const pages = Array.isArray(extra.pages) ? extra.pages : [];
+  // server.state === 'ok' 时 duration（秒）/published_at（毫秒）才可用；其它态省略不渲染（不报错、不显占位）。
+  // desc 与 tname/tags 同源（local.extra，B 站 view.desc）；为空则不渲染。
+  const duration = server.state === 'ok' ? server.video.duration ?? null : null;
+  const publishedAt = server.state === 'ok' ? server.video.published_at ?? null : null;
+  const desc = extra.desc ?? null;
 
   return (
     <Card>
@@ -510,7 +515,7 @@ function CollectedBlock({
           <div className="text-xs text-muted-foreground tabular-nums">{bvid}</div>
         </div>
 
-        {(pages.length > 1 || extra.tname) && (
+        {(pages.length > 1 || extra.tname || duration != null || publishedAt != null) && (
           <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
             {pages.length > 1 && (
               <span className="inline-flex items-center gap-1">
@@ -523,6 +528,18 @@ function CollectedBlock({
               <span className="inline-flex items-center gap-1">
                 <CategoryIcon className="h-3.5 w-3.5" />
                 <span>{extra.tname}</span>
+              </span>
+            )}
+            {duration != null && (
+              <span className="inline-flex items-center gap-1 tabular-nums">
+                <ClockIcon className="h-3.5 w-3.5" />
+                <span>{fmtDuration(duration)}</span>
+              </span>
+            )}
+            {publishedAt != null && (
+              <span className="inline-flex items-center gap-1 tabular-nums">
+                <CalendarIcon className="h-3.5 w-3.5" />
+                <span>{new Date(publishedAt).toLocaleDateString('zh-CN')}</span>
               </span>
             )}
           </div>
@@ -543,6 +560,11 @@ function CollectedBlock({
             );
           })}
         </div>
+
+        {/* 简介：extra.desc，截断 2 行；空则不渲染 */}
+        {desc && (
+          <div className="line-clamp-2 text-xs text-muted-foreground">{desc}</div>
+        )}
 
         {/* 字幕区：有字幕→复制区；无字幕→提示留在字幕位置（视频数据仍展示） */}
         {hasSubtitle ? (
@@ -685,6 +707,17 @@ function fmtTimeAgo(ts: number | string): string {
   const hour = Math.floor(min / 60);
   if (hour < 24) return `${hour}小时前`;
   return `${Math.floor(hour / 24)}天前`;
+}
+
+// 时长格式化：秒 → "分:SS"（如 2350 → "39:10"）；超 1 小时 → "时:分:SS"（如 3661 → "1:01:01"）。
+function fmtDuration(sec: number): string {
+  if (!Number.isFinite(sec) || sec < 0) return '0:00';
+  const total = Math.floor(sec);
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  const s = total % 60;
+  const ss = String(s).padStart(2, '0');
+  return h > 0 ? `${h}:${String(m).padStart(2, '0')}:${ss}` : `${m}:${ss}`;
 }
 
 // 默认折叠；展开后选格式（横向抽屉，记忆）+ 每轨右侧复制按钮，点即复制「该轨 × 当前格式」。
@@ -890,6 +923,26 @@ function CategoryIcon({ className }: { className?: string }) {
   return (
     <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className} aria-hidden="true">
       <path d="M4 4h6l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2Z" />
+    </svg>
+  );
+}
+
+function ClockIcon({ className }: { className?: string }) {
+  return (
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className} aria-hidden="true">
+      <circle cx="12" cy="12" r="10" />
+      <polyline points="12 6 12 12 16 14" />
+    </svg>
+  );
+}
+
+function CalendarIcon({ className }: { className?: string }) {
+  return (
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className} aria-hidden="true">
+      <rect x="3" y="4" width="18" height="18" rx="2" />
+      <line x1="16" y1="2" x2="16" y2="6" />
+      <line x1="8" y1="2" x2="8" y2="6" />
+      <line x1="3" y1="10" x2="21" y2="10" />
     </svg>
   );
 }

@@ -17,6 +17,8 @@ export interface CollectedStat {
 
 export interface CollectedExtra {
   tname?: string;
+  // B 站 view.desc（视频简介），与 tname/tags 同源（__INITIAL_STATE__.videoData.desc）。
+  desc?: string | null;
   pages?: unknown[];
   stat?: CollectedStat;
   tags?: { tag_name: string }[];
@@ -27,6 +29,9 @@ export interface CollectedVideo {
   updated_at?: number | string | null;
   // 服务端 getVideo SELECT v.* 含 creator_id（creators 表外键）；视频未关联 UP 时为 null。
   creator_id?: number | null;
+  // duration（秒）与 published_at（毫秒，ingest-payload.js pubdate*1000）：服务端 SELECT v.* 直返。
+  duration?: number | null;
+  published_at?: number | null;
   extra?: string | CollectedExtra | null;
 }
 
