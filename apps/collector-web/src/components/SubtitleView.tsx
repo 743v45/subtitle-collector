@@ -32,15 +32,29 @@ export function toVtt(body: SubtitleLine[]): string {
     .join('\n\n');
 }
 
-export function SubtitleView({ body }: { body: SubtitleLine[] }) {
+export function SubtitleView({ body, sourceVid }: { body: SubtitleLine[]; sourceVid?: string }) {
   const fmt = (sec: number) => { const m = Math.floor(sec / 60); const s = Math.floor(sec % 60); return `${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`; };
   const copy = (text: string) => { navigator.clipboard.writeText(text); };
+  // 下载：生成文本 → Blob → 触发浏览器下载，文件名用 BV 号
+  const download = (fmt: 'srt' | 'vtt' | 'txt') => {
+    const text = fmt === 'srt' ? toSrt(body) : fmt === 'vtt' ? toVtt(body) : toTxt(body);
+    const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${sourceVid || 'subtitle'}.${fmt}`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
   return (
     <div>
-      <div className="flex gap-2 mb-2">
+      <div className="flex flex-wrap gap-2 mb-2">
         <Button variant="outline" size="sm" onClick={() => copy(toSrt(body))}>复制 SRT</Button>
         <Button variant="outline" size="sm" onClick={() => copy(toVtt(body))}>复制 VTT</Button>
         <Button variant="outline" size="sm" onClick={() => copy(toTxt(body))}>复制 TXT</Button>
+        <Button variant="outline" size="sm" onClick={() => download('srt')}>下载 SRT</Button>
+        <Button variant="outline" size="sm" onClick={() => download('vtt')}>下载 VTT</Button>
+        <Button variant="outline" size="sm" onClick={() => download('txt')}>下载 TXT</Button>
       </div>
       <div className="max-h-[400px] overflow-y-auto rounded border border-border p-2">
         {body.map((l, i) => (

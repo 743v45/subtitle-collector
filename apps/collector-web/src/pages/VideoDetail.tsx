@@ -167,7 +167,7 @@ export function VideoDetail({ source, sourceVid, onBack }: { source: string; sou
           </div>
         )}
         {!bodyQ.loading && !bodyQ.error && (
-          <SubtitleView body={(bodyQ.data?.version?.payload?.body ?? []) as SubtitleLine[]} />
+          <SubtitleView body={(bodyQ.data?.version?.payload?.body ?? []) as SubtitleLine[]} sourceVid={sourceVid} />
         )}
       </section>
     </div>
