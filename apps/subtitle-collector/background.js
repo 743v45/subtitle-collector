@@ -1,7 +1,7 @@
 import { SERVER_URL, PING_URL, TOKEN } from "./config.js";
 import { shouldReport, genClientId, CLIENT_ID_KEY, REPORTING_KEY } from "./reporting.mjs";
 import { extractKeysFromNav } from "./wbi.js";
-import { biliFetch, formatSearchResult } from "./bili-fetch.js";
+import { biliFetch, formatSearchResult, fetchSubtitleView } from "./bili-fetch.js";
 import { buildIngestPayload, normalizeUrl, normalizeTags } from "./ingest-payload.js";
 const EXT_VERSION = chrome.runtime.getManifest().version;
 
@@ -187,29 +187,52 @@ async function connect() {
           await ensureWbiKeys();
           const playerRes = await biliFetch('/x/player/wbi/v2', { wbi: true, params: { bvid, aid: view.aid, cid: view.cid }, wbiKeys });
           if (!playerRes.ok) { ws.send(JSON.stringify({ type: "result", id: msg.id, ok: false, error: playerRes.code })); return; }
-          const subs = playerRes.data?.subtitle?.subtitles ?? [];
+          const pData = playerRes.data ?? {};
+          // 2.5 AI 字幕独立接口 /x/v2/subtitle/web/view：新版播放器把 AI 字幕移到这里（player/wbi/v2 只剩 CC 字幕）。
+          //     充电专属等「只有 AI 字幕、无 CC」的视频，player/wbi/v2 的 subtitles 为空，必须补这个接口才采得到。
+          const aiSubs = await fetchSubtitleView(view.cid, view.aid);
+          // 合并 CC（player/wbi/v2）+ AI（subtitle/web/view），按 subtitle_url 去重
+          const seenUrl = new Set();
+          const subs = [...(pData.subtitle?.subtitles ?? []), ...aiSubs].filter((s) => {
+            const u = normalizeUrl(s.subtitle_url);
+            if (!u || seenUrl.has(u)) return false;
+            seenUrl.add(u); return true;
+          });
+          // 付费/充电标志（写 extra.paid，供 server 落独立列 + CLI --paid 过滤）
+          const elecType = pData.elec_high_level?.privilege_type ?? null;
+          const isPaid = !!(pData.is_upower_exclusive || pData.is_ugc_pay_preview || elecType || view.rights?.pay || view.rights?.ugc_pay || view.rights?.arc_pay);
+          const paidInfo = isPaid ? {
+            is_upower_exclusive: pData.is_upower_exclusive ?? false,
+            is_ugc_pay_preview: pData.is_ugc_pay_preview ?? false,
+            elec_privilege_type: elecType,
+          } : null;
           // 3. 字幕体：fetch 用 normalize 后的 url，bodies key 也用 normalize 后的 url（对齐 ingest-payload.js 的 normalizeUrl 查找）
           const bodies = {};
           for (const s of subs) {
             const url = normalizeUrl(s.subtitle_url);
             if (!url) continue;
-            const r = await fetch(url, { headers: { Referer: 'https://www.bilibili.com/' } });
-            if (!r.ok) { console.warn(`[background] fetch-subtitle 字幕体 HTTP ${r.status} bvid=${msg.bvid} url=${url}`); continue; }
-            const body = await r.json().catch(() => null);
-            if (body) bodies[url] = body;
-            else console.warn(`[background] fetch-subtitle 字幕体 JSON 解析失败 bvid=${msg.bvid} url=${url}`);
+            try {
+              const r = await fetch(url, { headers: { Referer: 'https://www.bilibili.com/' } });
+              if (!r.ok) { console.warn(`[background] fetch-subtitle 字幕体 HTTP ${r.status} bvid=${msg.bvid} url=${url}`); continue; }
+              const body = await r.json().catch(() => null);
+              if (body) bodies[url] = body;
+              else console.warn(`[background] fetch-subtitle 字幕体 JSON 解析失败 bvid=${msg.bvid} url=${url}`);
+            } catch (e) {
+              // 单轨字幕体抓取失败（如加密 URL Chrome 拒绝 fetch）不阻断其它轨 + 主流程
+              console.warn(`[background] fetch-subtitle 字幕体抓取异常 bvid=${msg.bvid} url=${url} err=${String(e?.message ?? e)}`);
+            }
           }
           // 4. ingest（无字幕也入库 video，避免下次重采）；过滤字幕体抓取失败的轨，避免 payload:null 入库污染 external 去重
           const validSubs = subs.filter((s) => {
             const u = normalizeUrl(s.subtitle_url);
             return u && bodies[u] != null;
           });
-          const payload = buildIngestPayload(view, validSubs, bodies, tags);
+          const payload = buildIngestPayload(view, validSubs, bodies, tags, paidInfo);
           sendIngest(payload);
           // 5. 回执（不阻塞等 ingest-ack；ingest 由 server 异步入库，result 只报实际入库轨数）
           ws.send(JSON.stringify({
             type: "result", id: msg.id, ok: true,
-            data: { bvid, tracks: validSubs.length, ingested: true, ...(validSubs.length === 0 ? { reason: 'no_subtitle' } : {}) },
+            data: { bvid, tracks: validSubs.length, ai_tracks: aiSubs.length, ingested: true, ...(isPaid ? { paid: true } : {}), ...(validSubs.length === 0 ? { reason: 'no_subtitle' } : {}) },
           }));
         } catch (err) {
           ws.send(JSON.stringify({ type: "result", id: msg.id, ok: false, error: String(err.message || err) }));

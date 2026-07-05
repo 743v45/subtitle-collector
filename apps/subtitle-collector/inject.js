@@ -15,6 +15,18 @@
   }
   function post(type, data) { window.postMessage({ type, data }, "*"); }
 
+  // AI 字幕独立接口 /x/v2/subtitle/web/view 拦截：
+  // player/wbi/v2 只剩 CC 字幕，AI 字幕在这里（protobuf，URL 是加密的，扩展无法直接 fetch）。
+  // 检测到 AI 字幕（ai-zh）时通知 content 自动点 AI 字幕按钮——让播放器解码加密 URL 并 fetch
+  // 明文 aisubtitle（inject 拦截 SUBTITLE_BODY 入库），绕过加密墙。
+  function isSubtitleMetaApi(url) {
+    return typeof url === "string" && url.includes("/x/v2/subtitle/web/view");
+  }
+  function currentPageBvid() {
+    const m = location.pathname.match(/(BV[a-zA-Z0-9]+)/);
+    return m ? m[1] : "";
+  }
+
   // 从页面 __INITIAL_STATE__.videoData 补充结构性 + 统计字段（player API 不含这些）。
   // __INITIAL_STATE__ 由 B 站 SSR 写入 HTML，PLAYER_META 触发时（已拦到 player API）通常已就绪；
   // 取不到则降级为只含 player API 的 aid/cid/pic，不阻塞字幕采集。
@@ -54,10 +66,19 @@
 
   // 统一组装 PLAYER_META（fetch/XHR 共用），含从 __INITIAL_STATE__ 读到的 extra
   function buildPlayerMeta(d, subs) {
+    const extra = readVideoExtra(d);
+    // 付费/充电标志（player 响应字段；readVideoExtra 只读 __INITIAL_STATE__.videoData 拿不到这些）
+    const elecType = d.elec_high_level?.privilege_type ?? null;
+    if (d.is_upower_exclusive || d.is_ugc_pay_preview || elecType) {
+      extra.paid = true;
+      extra.paid_detail = { is_upower_exclusive: d.is_upower_exclusive ?? false, is_ugc_pay_preview: d.is_ugc_pay_preview ?? false, elec_privilege_type: elecType };
+    }
     return {
       bvid: d.bvid, aid: d.aid, cid: d.cid,
       title: d.title ?? document.title,
-      up_mid: d.up_info?.mid ?? null, up_name: d.up_info?.name ?? null,
+      // UP：player/wbi/v2 响应不含 UP（只有登录用户 login_mid/name），从 __INITIAL_STATE__.videoData.owner 拿
+      up_mid: (window.__INITIAL_STATE__?.videoData?.owner)?.mid ?? d.up_info?.mid ?? null,
+      up_name: (window.__INITIAL_STATE__?.videoData?.owner)?.name ?? d.up_info?.name ?? null,
       pic: d.pic, duration: d.video_info?.duration ?? null,
       published_at: d.pubdate ? d.pubdate * 1000 : null,
       extra: readVideoExtra(d),
@@ -83,9 +104,10 @@
           if (d.need_login_subtitle === true) { console.warn('[inject] player API need_login_subtitle=true（建议登录，但已登录用户可能仍可拿字幕，继续检查 subtitles 数组）'); }
           const subs = d.subtitle?.subtitles ?? [];
           if (subs.length === 0) {
-            // 无字幕（subtitles 数组空），区分风控/登录/真无字幕：
-            if (d.need_login_subtitle === true) { console.warn('[inject] player API 真需登录（subtitles 数组空 + need_login_subtitle=true）'); post("NEED_LOGIN", { url }); }
-            else { console.log('[inject] player API 无字幕（subtitles 数组空）'); }
+            if (d.need_login_subtitle === true) { console.warn('[inject] player API 真需登录'); post("NEED_LOGIN", { url }); }
+            // CC 字幕空也发 PLAYER_META：AI 字幕视频（如充电专属）player 无 CC，但 subtitle/web/view 有 AI 字幕；
+            // content 需 meta 建态，等 inject 拦到播放器 fetch 的明文 aisubtitle 后构造 AI 轨入库。
+            if (d.bvid) post("PLAYER_META", buildPlayerMeta(d, []));
             return;
           }
           const meta = buildPlayerMeta(d, subs);
@@ -97,8 +119,16 @@
         response.clone().json().then((data) => {
           const text = JSON.stringify(data);
           console.log(`[inject] subtitle body 拦到 url=${normalizeUrl(url)} body_size=${text.length}`);
-          post("SUBTITLE_BODY", { url: normalizeUrl(url), body: data, body_size: text.length });
+          post("SUBTITLE_BODY", { url: normalizeUrl(url), body: data, body_size: text.length, bvid: currentPageBvid() });
         }).catch((e) => console.error('[inject] subtitle parse error', e));
+      }
+      if (isSubtitleMetaApi(url)) {
+        response.clone().text().then((text) => {
+          if (/\bai-zh\b/.test(text)) {
+            console.log(`[inject] AI 字幕可用 bvid=${currentPageBvid()}`);
+            post("AI_SUBTITLE_AVAILABLE", { bvid: currentPageBvid() });
+          }
+        }).catch(() => {});
       }
     } catch (e) { console.error('[inject] fetch hook error', e); }
     return response;
@@ -123,7 +153,23 @@
     }
     if (isSubtitleUrl(this._url)) {
       this.addEventListener("load", function () {
-        try { post("SUBTITLE_BODY", { url: normalizeUrl(this._url), body: JSON.parse(this.responseText), body_size: this.responseText.length }); } catch {}
+        try {
+          // 兼容 responseType（text/json/arraybuffer）——播放器可能用 arraybuffer 接字幕
+          let body = this.response;
+          if (typeof body === "string") body = JSON.parse(body);
+          else if (body instanceof ArrayBuffer) body = JSON.parse(new TextDecoder().decode(body));
+          if (body) post("SUBTITLE_BODY", { url: normalizeUrl(this._url), body, body_size: JSON.stringify(body).length, bvid: currentPageBvid() });
+        } catch {}
+      });
+    }
+    if (isSubtitleMetaApi(this._url)) {
+      this.addEventListener("load", function () {
+        try {
+          // octet-stream/protobuf：兼容 arraybuffer（responseText 在 responseType=arraybuffer 时抛异常）
+          const r = this.response;
+          const t = typeof r === "string" ? r : (r instanceof ArrayBuffer ? new TextDecoder().decode(r) : "");
+          if (/\bai-zh\b/.test(t)) post("AI_SUBTITLE_AVAILABLE", { bvid: currentPageBvid() });
+        } catch {}
       });
     }
     return ORIGINAL_XHR_SEND.apply(this, args);

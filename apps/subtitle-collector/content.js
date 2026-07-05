@@ -14,6 +14,14 @@ window.addEventListener("message", (event) => {
     // inject 的 isSubtitleUrl 不再能拦到字幕请求；改由 background 用 host_permissions 免 CORS 抓取）
     fetchSubtitleBodiesViaBg(data.bvid, cur.meta.subs);
     flushIfReady(data.bvid);
+    // player 无 CC 字幕：可能是只有 AI 字幕的视频（如充电专属）。直接点 AI 字幕按钮——
+    // 让播放器内部解码加密 URL 并 XHR 明文 aisubtitle（inject 拦截 SUBTITLE_BODY 构造 ai-zh 轨入库）。
+    // 不依赖读 subtitle/web/view（protobuf/octet-stream，responseType=arraybuffer 时 responseText 抛异常）。
+    if ((cur.meta.subs ?? []).length === 0 && !cur.aiTriggered) {
+      cur.aiTriggered = true;
+      cur.expectAi = true;
+      setTimeout(triggerAiSubtitle, 1500); // 等播放器 UI 就绪
+    }
   } else if (type === "SUBTITLE_BODY") {
     for (const [bvid, cur] of collected.entries()) {
       if (cur.meta.subs.some((s) => s.subtitle_url === data.url)) {
@@ -22,10 +30,32 @@ window.addEventListener("message", (event) => {
         return;
       }
     }
+    // AI 字幕体（aisubtitle URL，player 无 CC、inject 触发播放器解码后到达）：构造 ai-zh 轨入库
+    const bvid = data.bvid;
+    if (bvid && /aisubtitle/.test(data.url)) {
+      const cur = collected.get(bvid);
+      if (cur?.meta && cur.expectAi && !cur.meta.subs.some((s) => s.subtitle_url === data.url)) {
+        cur.meta.subs.push({ lan: "ai-zh", lan_doc: "AI（简中）", track_type: 1, subtitle_url: data.url });
+        cur.bodies.set(data.url, data.body);
+        console.log(`[content] AI 字幕体到达，构造 ai-zh 轨 bvid=${bvid}`);
+        flushIfReady(bvid);
+      }
+    }
   } else if (type === "RISK_CONTROL") {
     if (collected.size > 0) riskControl.add([...collected.keys()].pop());
   } else if (type === "NEED_LOGIN") {
     if (collected.size > 0) needLogin.add([...collected.keys()].pop());
+  } else if (type === "AI_SUBTITLE_AVAILABLE") {
+    // inject 检测到 AI 字幕可用（subtitle/web/view 含 ai-zh）：自动点 AI 字幕按钮，
+    // 让播放器解码加密 URL + fetch 明文 aisubtitle（inject 拦截 SUBTITLE_BODY 入库）。
+    // 仅当 player/wbi/v2 无 CC 字幕（subs 空）时才点，避免对已有 CC 字幕的视频干扰。
+    const bvid = data.bvid;
+    const cur = collected.get(bvid);
+    if (!cur?.meta) return;
+    if ((cur.meta.subs ?? []).length > 0) return;
+    cur.expectAi = true;
+    console.log(`[content] AI 字幕可用，自动点击触发 bvid=${bvid}`);
+    triggerAiSubtitle();
   }
 });
 
@@ -96,6 +126,29 @@ function flushIfReady(bvid, force = false) {
   } catch (e) {
     console.warn(`[content] INGEST 发送异常（扩展上下文可能已失效）bvid=${cur.meta.bvid} err=${e?.message}`);
   }
+}
+
+// 自动点击 AI 字幕按钮，触发播放器 fetch 明文 aisubtitle（inject 拦截 SUBTITLE_BODY 入库）。
+// 用于 player/wbi/v2 无 CC 字幕、但 subtitle/web/view 有 AI 字幕的视频（如充电专属）：B 站新版 AI 字幕
+// URL 加密（含 %00，Chrome 拒绝 fetch）；让播放器内部解码，inject 拦截其 aisubtitle 请求拿明文结果。
+function triggerAiSubtitle(round = 0) {
+  const btn = document.querySelector(".bpx-player-ctrl-subtitle");
+  if (!btn) {
+    // 播放器 UI 未就绪（PLAYER_META 可能早于播放器渲染）：等一会重试，最多 ~10s
+    if (round < 20) setTimeout(() => triggerAiSubtitle(round + 1), 500);
+    else console.warn("[content] AI 字幕：字幕按钮长时间未找到");
+    return;
+  }
+  try { btn.click(); } catch {}
+  let tries = 0;
+  const pick = () => {
+    const items = [...document.querySelectorAll(".bpx-player-ctrl-subtitle-language-item")];
+    const ai = items.find((el) => /中文|AI|简体/i.test(el.textContent));
+    if (ai) { try { ai.click(); console.log("[content] 已点选 AI 字幕语言项"); } catch {} return; }
+    if (++tries < 10) setTimeout(pick, 300); // 等菜单渲染，最多 ~3s
+    else console.warn("[content] AI 字幕语言项未找到（菜单可能未开）");
+  };
+  setTimeout(pick, 500);
 }
 
 // operate 观察窗口：点击字幕开关后，若 inject 检测到真实字幕请求 → 视为生效

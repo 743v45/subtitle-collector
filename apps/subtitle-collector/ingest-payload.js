@@ -40,9 +40,11 @@ export function normalizeUrl(u) {
 // 组装 ingest payload（结构对齐 content.js flushIfReady 的 record）
 // 注：subtitle_url 查找键与 source_url 均经 normalizeUrl 归一化，与 Task 5 plan 调用方存 bodies 的 key 对齐。
 // tags：B 站视频标签须单独调 /x/tag/archive/tags（view 响应无 tags 数组），由调用方传入并覆盖默认空。
-export function buildIngestPayload(view, subs, subtitleBodies, tags) {
+export function buildIngestPayload(view, subs, subtitleBodies, tags, paidInfo = null) {
   const extra = extractExtraFromView(view);
   if (Array.isArray(tags) && tags.length > 0) extra.tags = tags;
+  // 付费/充电标志：extra.paid（boolean 主标志，server 落独立列 + CLI --paid）+ extra.paid_detail（详情）
+  if (paidInfo) { extra.paid = true; extra.paid_detail = paidInfo; }
   return {
     source: 'bilibili',
     video: {
