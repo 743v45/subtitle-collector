@@ -183,12 +183,12 @@ category_human_id INTEGER REFERENCES categories(id)
 
 | 轮次 | 范围 | 结果 | 备注 |
 |---|---|---|---|
-| R1 | collect.test.ts 扩展（AC1/AC2） | 待跑 | — |
-| R2 | migrate.test.ts + queries.test.ts（AC7/AC9/AC10） | 待跑 | — |
-| R3 | curl 打 API（AC8/AC9/AC10） | 待跑 | 需 server 在线 |
-| R4 | collect-uppers --dry-run（AC3/AC4/AC5/AC6） | 待跑 | 需 server+扩展在线 |
-| R5 | 浏览器走管理页（AC11/AC12/AC13） | 待跑 | 需 server 在线 |
-| R6 | turbo run test + vite build（AC14） | 待跑 | — |
+| R1 | collect.test.ts 扩展（AC1/AC2） | ✅ PASS | 18/18：sinceCreated 过滤（含 null 保留）+ collectNosub 识别（有轨/无轨/不在库）+ 空输入 |
+| R2 | migrate.test.ts + queries.test.ts（AC7/AC9/AC10） | ✅ PASS | migrate 幂等（跑两次不报错 + 列存在）；categories CRUD（UNIQUE 冲突/同 name 不同 scope）；setCreatorCategory upsert（agent/human 互不覆盖）；listCreators 分类筛选 |
+| R3 | curl 打 API（AC8/AC9/AC10） | ✅ PASS | 8/8：POST 建分类 → GET 列分类 → POST 打 agent 分类 → GET 按 category+scope 筛选(total 正确) → 重复 POST 409 → PATCH 改名 → 详情 join 出新名；打 human 分类 agent 不被覆盖 |
+| R4 | collect-uppers（AC3/AC4/AC5/AC6） | ⚠️ 部分 PASS | AC5/AC6 实测通过（HTTP 解析 agent 分类 id + 从 DB 并入 mid + 采后 POST 打标，临时 server 验证）；AC3 `marketOpenTs` 周末回溯 + AC4 `--retry-nosub` 并入队列逻辑代码就绪 + 单测覆盖；**完整 dry-run 队列需扩展拉视频列表，本环境无扩展，待用户扩展环境手验** |
+| R5 | 浏览器走管理页（AC11/AC12/AC13） | ✅ PASS | chrome-devtools 自动化：分类管理页(agent/human sub-tab + 列表 + 改名/删除)；UP 主管理页(列表 + 行内打 human 分类实测写入 + 按 human 分类筛选实测生效)；VideoList 引导文案 |
+| R6 | turbo run test + vite build（AC14） | ✅ PASS | turbo run test 3/3：collector-server 173 tests / collector-web vite build(1881 modules) / subtitle-collector tests |
 
 ## 9. agent teams 实现拆分
 
