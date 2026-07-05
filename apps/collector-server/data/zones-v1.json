@@ -1,0 +1,896 @@
+{
+  "1": {
+    "name": "动画",
+    "code": "douga",
+    "parent": "动画",
+    "main": true
+  },
+  "3": {
+    "name": "音乐",
+    "code": "music",
+    "parent": "音乐",
+    "main": true
+  },
+  "4": {
+    "name": "游戏",
+    "code": "game",
+    "parent": "游戏",
+    "main": true
+  },
+  "5": {
+    "name": "娱乐",
+    "code": "ent",
+    "parent": "娱乐",
+    "main": true
+  },
+  "11": {
+    "name": "电视剧",
+    "code": "tv",
+    "parent": "电视剧",
+    "main": true
+  },
+  "13": {
+    "name": "番剧",
+    "code": "anime",
+    "parent": "番剧",
+    "main": true
+  },
+  "17": {
+    "name": "单机游戏",
+    "code": "stand_alone",
+    "parent": "游戏",
+    "main": false
+  },
+  "19": {
+    "name": "Mugen",
+    "code": "mugen",
+    "parent": "游戏",
+    "main": false
+  },
+  "20": {
+    "name": "宅舞",
+    "code": "otaku",
+    "parent": "舞蹈",
+    "main": false
+  },
+  "21": {
+    "name": "日常",
+    "code": "daily",
+    "parent": "生活",
+    "main": false
+  },
+  "22": {
+    "name": "鬼畜调教",
+    "code": "guide",
+    "parent": "鬼畜",
+    "main": false
+  },
+  "23": {
+    "name": "电影",
+    "code": "movie",
+    "parent": "电影",
+    "main": true
+  },
+  "24": {
+    "name": "MAD·AMV",
+    "code": "mad",
+    "parent": "动画",
+    "main": false
+  },
+  "25": {
+    "name": "MMD·3D",
+    "code": "mmd",
+    "parent": "动画",
+    "main": false
+  },
+  "26": {
+    "name": "音MAD",
+    "code": "mad",
+    "parent": "鬼畜",
+    "main": false
+  },
+  "27": {
+    "name": "综合",
+    "code": "other",
+    "parent": "动画",
+    "main": false
+  },
+  "28": {
+    "name": "原创音乐",
+    "code": "original",
+    "parent": "音乐",
+    "main": false
+  },
+  "29": {
+    "name": "音乐现场",
+    "code": "live",
+    "parent": "音乐",
+    "main": false
+  },
+  "30": {
+    "name": "VOCALOID·UTAU",
+    "code": "vocaloid",
+    "parent": "音乐",
+    "main": false
+  },
+  "31": {
+    "name": "翻唱",
+    "code": "cover",
+    "parent": "音乐",
+    "main": false
+  },
+  "32": {
+    "name": "完结动画",
+    "code": "finish",
+    "parent": "番剧",
+    "main": false
+  },
+  "33": {
+    "name": "连载动画",
+    "code": "serial",
+    "parent": "番剧",
+    "main": false
+  },
+  "36": {
+    "name": "知识",
+    "code": "knowledge",
+    "parent": "知识",
+    "main": true
+  },
+  "37": {
+    "name": "人文·历史",
+    "code": "history",
+    "parent": "纪录片",
+    "main": false
+  },
+  "47": {
+    "name": "同人·手书",
+    "code": "handdrawn",
+    "parent": "动画",
+    "main": false
+  },
+  "51": {
+    "name": "资讯",
+    "code": "information",
+    "parent": "番剧",
+    "main": false
+  },
+  "59": {
+    "name": "演奏",
+    "code": "perform",
+    "parent": "音乐",
+    "main": false
+  },
+  "65": {
+    "name": "网络游戏",
+    "code": "online",
+    "parent": "游戏",
+    "main": false
+  },
+  "71": {
+    "name": "综艺",
+    "code": "variety",
+    "parent": "娱乐",
+    "main": false
+  },
+  "75": {
+    "name": "动物综合",
+    "code": "animal_composite",
+    "parent": "动物圈",
+    "main": false
+  },
+  "76": {
+    "name": "美食制作",
+    "code": "make",
+    "parent": "美食",
+    "main": false
+  },
+  "83": {
+    "name": "其他国家",
+    "code": "movie",
+    "parent": "电影",
+    "main": false
+  },
+  "85": {
+    "name": "小剧场",
+    "code": "shortplay",
+    "parent": "影视",
+    "main": false
+  },
+  "86": {
+    "name": "特摄",
+    "code": "tokusatsu",
+    "parent": "动画",
+    "main": false
+  },
+  "95": {
+    "name": "数码",
+    "code": "digital",
+    "parent": "科技",
+    "main": false
+  },
+  "119": {
+    "name": "鬼畜",
+    "code": "kichiku",
+    "parent": "鬼畜",
+    "main": true
+  },
+  "121": {
+    "name": "GMV",
+    "code": "gmv",
+    "parent": "游戏",
+    "main": false
+  },
+  "122": {
+    "name": "野生技术协会",
+    "code": "skill",
+    "parent": "知识",
+    "main": false
+  },
+  "124": {
+    "name": "社科·法律·心理",
+    "code": "social_science",
+    "parent": "知识",
+    "main": false
+  },
+  "126": {
+    "name": "人力VOCALOID",
+    "code": "manual_vocaloid",
+    "parent": "鬼畜",
+    "main": false
+  },
+  "127": {
+    "name": "教程演示",
+    "code": "course",
+    "parent": "鬼畜",
+    "main": false
+  },
+  "129": {
+    "name": "舞蹈",
+    "code": "dance",
+    "parent": "舞蹈",
+    "main": true
+  },
+  "130": {
+    "name": "音乐综合",
+    "code": "other",
+    "parent": "音乐",
+    "main": false
+  },
+  "136": {
+    "name": "音游",
+    "code": "music",
+    "parent": "游戏",
+    "main": false
+  },
+  "137": {
+    "name": "明星综合",
+    "code": "celebrity",
+    "parent": "娱乐",
+    "main": false
+  },
+  "138": {
+    "name": "搞笑",
+    "code": "funny",
+    "parent": "生活",
+    "main": false
+  },
+  "145": {
+    "name": "欧美电影",
+    "code": "west",
+    "parent": "电影",
+    "main": false
+  },
+  "146": {
+    "name": "日本电影",
+    "code": "japan",
+    "parent": "电影",
+    "main": false
+  },
+  "147": {
+    "name": "华语电影",
+    "code": "chinese",
+    "parent": "电影",
+    "main": false
+  },
+  "152": {
+    "name": "官方延伸",
+    "code": "offical",
+    "parent": "番剧",
+    "main": false
+  },
+  "153": {
+    "name": "国产动画",
+    "code": "chinese",
+    "parent": "国创",
+    "main": false
+  },
+  "154": {
+    "name": "舞蹈综合",
+    "code": "three_d",
+    "parent": "舞蹈",
+    "main": false
+  },
+  "155": {
+    "name": "时尚",
+    "code": "fashion",
+    "parent": "时尚",
+    "main": true
+  },
+  "156": {
+    "name": "舞蹈教程",
+    "code": "demo",
+    "parent": "舞蹈",
+    "main": false
+  },
+  "157": {
+    "name": "美妆护肤",
+    "code": "makeup",
+    "parent": "时尚",
+    "main": false
+  },
+  "158": {
+    "name": "穿搭",
+    "code": "clothing",
+    "parent": "时尚",
+    "main": false
+  },
+  "159": {
+    "name": "时尚潮流",
+    "code": "catwalk",
+    "parent": "时尚",
+    "main": false
+  },
+  "160": {
+    "name": "生活",
+    "code": "life",
+    "parent": "生活",
+    "main": true
+  },
+  "161": {
+    "name": "手工",
+    "code": "handmake",
+    "parent": "生活",
+    "main": false
+  },
+  "162": {
+    "name": "绘画",
+    "code": "painting",
+    "parent": "生活",
+    "main": false
+  },
+  "164": {
+    "name": "健身",
+    "code": "aerobics",
+    "parent": "运动",
+    "main": false
+  },
+  "167": {
+    "name": "国创",
+    "code": "guochuang",
+    "parent": "国创",
+    "main": true
+  },
+  "168": {
+    "name": "国产原创相关",
+    "code": "original",
+    "parent": "国创",
+    "main": false
+  },
+  "169": {
+    "name": "布袋戏",
+    "code": "puppetry",
+    "parent": "国创",
+    "main": false
+  },
+  "170": {
+    "name": "资讯",
+    "code": "information",
+    "parent": "国创",
+    "main": false
+  },
+  "171": {
+    "name": "电子竞技",
+    "code": "esports",
+    "parent": "游戏",
+    "main": false
+  },
+  "172": {
+    "name": "手机游戏",
+    "code": "mobile",
+    "parent": "游戏",
+    "main": false
+  },
+  "173": {
+    "name": "桌游棋牌",
+    "code": "board",
+    "parent": "游戏",
+    "main": false
+  },
+  "176": {
+    "name": "汽车生活",
+    "code": "life",
+    "parent": "汽车",
+    "main": false
+  },
+  "177": {
+    "name": "纪录片",
+    "code": "documentary",
+    "parent": "纪录片",
+    "main": true
+  },
+  "178": {
+    "name": "科学·探索·自然",
+    "code": "science",
+    "parent": "纪录片",
+    "main": false
+  },
+  "179": {
+    "name": "军事",
+    "code": "military",
+    "parent": "纪录片",
+    "main": false
+  },
+  "180": {
+    "name": "社会·美食·旅行",
+    "code": "travel",
+    "parent": "纪录片",
+    "main": false
+  },
+  "181": {
+    "name": "影视",
+    "code": "cinephile",
+    "parent": "影视",
+    "main": true
+  },
+  "182": {
+    "name": "影视杂谈",
+    "code": "cinecism",
+    "parent": "影视",
+    "main": false
+  },
+  "183": {
+    "name": "影视剪辑",
+    "code": "montage",
+    "parent": "影视",
+    "main": false
+  },
+  "184": {
+    "name": "预告·资讯",
+    "code": "trailer_info",
+    "parent": "影视",
+    "main": false
+  },
+  "185": {
+    "name": "国产剧",
+    "code": "mainland",
+    "parent": "电视剧",
+    "main": false
+  },
+  "187": {
+    "name": "海外剧",
+    "code": "overseas",
+    "parent": "电视剧",
+    "main": false
+  },
+  "188": {
+    "name": "科技",
+    "code": "tech",
+    "parent": "科技",
+    "main": true
+  },
+  "193": {
+    "name": "MV",
+    "code": "mv",
+    "parent": "音乐",
+    "main": false
+  },
+  "195": {
+    "name": "动态漫·广播剧",
+    "code": "motioncomic",
+    "parent": "国创",
+    "main": false
+  },
+  "198": {
+    "name": "街舞",
+    "code": "hiphop",
+    "parent": "舞蹈",
+    "main": false
+  },
+  "199": {
+    "name": "明星舞蹈",
+    "code": "star",
+    "parent": "舞蹈",
+    "main": false
+  },
+  "200": {
+    "name": "国风舞蹈",
+    "code": "china",
+    "parent": "舞蹈",
+    "main": false
+  },
+  "201": {
+    "name": "科学科普",
+    "code": "science",
+    "parent": "知识",
+    "main": false
+  },
+  "202": {
+    "name": "资讯",
+    "code": "information",
+    "parent": "资讯",
+    "main": true
+  },
+  "203": {
+    "name": "热点",
+    "code": "hotspot",
+    "parent": "资讯",
+    "main": false
+  },
+  "204": {
+    "name": "环球",
+    "code": "global",
+    "parent": "资讯",
+    "main": false
+  },
+  "205": {
+    "name": "社会",
+    "code": "social",
+    "parent": "资讯",
+    "main": false
+  },
+  "206": {
+    "name": "综合",
+    "code": "multiple",
+    "parent": "资讯",
+    "main": false
+  },
+  "207": {
+    "name": "财经商业",
+    "code": "business",
+    "parent": "知识",
+    "main": false
+  },
+  "208": {
+    "name": "校园学习",
+    "code": "campus",
+    "parent": "知识",
+    "main": false
+  },
+  "209": {
+    "name": "职业职场",
+    "code": "career",
+    "parent": "知识",
+    "main": false
+  },
+  "210": {
+    "name": "手办·模玩",
+    "code": "garage_kit",
+    "parent": "动画",
+    "main": false
+  },
+  "211": {
+    "name": "美食",
+    "code": "food",
+    "parent": "美食",
+    "main": true
+  },
+  "212": {
+    "name": "美食侦探",
+    "code": "detective",
+    "parent": "美食",
+    "main": false
+  },
+  "213": {
+    "name": "美食测评",
+    "code": "measurement",
+    "parent": "美食",
+    "main": false
+  },
+  "214": {
+    "name": "田园美食",
+    "code": "rural",
+    "parent": "美食",
+    "main": false
+  },
+  "215": {
+    "name": "美食记录",
+    "code": "record",
+    "parent": "美食",
+    "main": false
+  },
+  "216": {
+    "name": "鬼畜剧场",
+    "code": "theatre",
+    "parent": "鬼畜",
+    "main": false
+  },
+  "217": {
+    "name": "动物圈",
+    "code": "animal",
+    "parent": "动物圈",
+    "main": true
+  },
+  "218": {
+    "name": "喵星人",
+    "code": "cat",
+    "parent": "动物圈",
+    "main": false
+  },
+  "219": {
+    "name": "汪星人",
+    "code": "dog",
+    "parent": "动物圈",
+    "main": false
+  },
+  "220": {
+    "name": "动物二创",
+    "code": "second_edition",
+    "parent": "动物圈",
+    "main": false
+  },
+  "221": {
+    "name": "野生动物",
+    "code": "wild_animal",
+    "parent": "动物圈",
+    "main": false
+  },
+  "222": {
+    "name": "小宠异宠",
+    "code": "reptiles",
+    "parent": "动物圈",
+    "main": false
+  },
+  "223": {
+    "name": "汽车",
+    "code": "car",
+    "parent": "汽车",
+    "main": true
+  },
+  "227": {
+    "name": "购车攻略",
+    "code": "strategy",
+    "parent": "汽车",
+    "main": false
+  },
+  "228": {
+    "name": "人文历史",
+    "code": "humanity_history",
+    "parent": "知识",
+    "main": false
+  },
+  "229": {
+    "name": "设计·创意",
+    "code": "design",
+    "parent": "知识",
+    "main": false
+  },
+  "230": {
+    "name": "软件应用",
+    "code": "application",
+    "parent": "科技",
+    "main": false
+  },
+  "231": {
+    "name": "计算机技术",
+    "code": "computer_tech",
+    "parent": "科技",
+    "main": false
+  },
+  "232": {
+    "name": "科工机械",
+    "code": "industry",
+    "parent": "科技",
+    "main": false
+  },
+  "233": {
+    "name": "极客DIY",
+    "code": "diy",
+    "parent": "科技",
+    "main": false
+  },
+  "234": {
+    "name": "运动",
+    "code": "sports",
+    "parent": "运动",
+    "main": true
+  },
+  "235": {
+    "name": "篮球",
+    "code": "basketball",
+    "parent": "运动",
+    "main": false
+  },
+  "236": {
+    "name": "竞技体育",
+    "code": "athletic",
+    "parent": "运动",
+    "main": false
+  },
+  "237": {
+    "name": "运动文化",
+    "code": "culture",
+    "parent": "运动",
+    "main": false
+  },
+  "238": {
+    "name": "运动综合",
+    "code": "comprehensive",
+    "parent": "运动",
+    "main": false
+  },
+  "239": {
+    "name": "家居房产",
+    "code": "home",
+    "parent": "生活",
+    "main": false
+  },
+  "240": {
+    "name": "摩托车",
+    "code": "motorcycle",
+    "parent": "汽车",
+    "main": false
+  },
+  "241": {
+    "name": "娱乐杂谈",
+    "code": "talker",
+    "parent": "娱乐",
+    "main": false
+  },
+  "242": {
+    "name": "娱乐粉丝创作",
+    "code": "fans",
+    "parent": "娱乐",
+    "main": false
+  },
+  "243": {
+    "name": "乐评盘点",
+    "code": "commentary",
+    "parent": "音乐",
+    "main": false
+  },
+  "244": {
+    "name": "音乐教学",
+    "code": "tutorial",
+    "parent": "音乐",
+    "main": false
+  },
+  "245": {
+    "name": "赛车",
+    "code": "racing",
+    "parent": "汽车",
+    "main": false
+  },
+  "246": {
+    "name": "改装玩车",
+    "code": "modifiedvehicle",
+    "parent": "汽车",
+    "main": false
+  },
+  "247": {
+    "name": "新能源车",
+    "code": "newenergyvehicle",
+    "parent": "汽车",
+    "main": false
+  },
+  "248": {
+    "name": "房车",
+    "code": "touringcar",
+    "parent": "汽车",
+    "main": false
+  },
+  "249": {
+    "name": "足球",
+    "code": "football",
+    "parent": "运动",
+    "main": false
+  },
+  "250": {
+    "name": "出行",
+    "code": "travel",
+    "parent": "生活",
+    "main": false
+  },
+  "251": {
+    "name": "三农",
+    "code": "rurallife",
+    "parent": "生活",
+    "main": false
+  },
+  "252": {
+    "name": "仿妆cos",
+    "code": "cos",
+    "parent": "时尚",
+    "main": false
+  },
+  "253": {
+    "name": "动漫杂谈",
+    "code": "acgntalks",
+    "parent": "动画",
+    "main": false
+  },
+  "254": {
+    "name": "亲子",
+    "code": "parenting",
+    "parent": "生活",
+    "main": false
+  },
+  "255": {
+    "name": "颜值·网红舞",
+    "code": "gestures",
+    "parent": "舞蹈",
+    "main": false
+  },
+  "256": {
+    "name": "短片",
+    "code": "shortfilm",
+    "parent": "影视",
+    "main": false
+  },
+  "257": {
+    "name": "配音",
+    "code": "voice",
+    "parent": "动画",
+    "main": false
+  },
+  "258": {
+    "name": "汽车知识科普",
+    "code": "knowledge",
+    "parent": "汽车",
+    "main": false
+  },
+  "259": {
+    "name": "AI影像",
+    "code": "ai_imaging",
+    "parent": "影视",
+    "main": false
+  },
+  "260": {
+    "name": "影视整活",
+    "code": "mashup",
+    "parent": "影视",
+    "main": false
+  },
+  "261": {
+    "name": "影视综合",
+    "code": "comprehensive",
+    "parent": "影视",
+    "main": false
+  },
+  "262": {
+    "name": "CP安利",
+    "code": "cp_recommendation",
+    "parent": "娱乐",
+    "main": false
+  },
+  "263": {
+    "name": "颜值安利",
+    "code": "beauty",
+    "parent": "娱乐",
+    "main": false
+  },
+  "264": {
+    "name": "娱乐资讯",
+    "code": "entertainment_news",
+    "parent": "娱乐",
+    "main": false
+  },
+  "265": {
+    "name": "AI音乐",
+    "code": "ai_music",
+    "parent": "音乐",
+    "main": false
+  },
+  "266": {
+    "name": "音乐粉丝饭拍",
+    "code": "fan_videos",
+    "parent": "音乐",
+    "main": false
+  },
+  "267": {
+    "name": "电台",
+    "code": "radio",
+    "parent": "音乐",
+    "main": false
+  }
+}

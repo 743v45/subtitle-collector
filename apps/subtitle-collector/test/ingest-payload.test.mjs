@@ -20,7 +20,8 @@ test('extractExtraFromView 抽齐 extra 字段', () => {
   assert.equal(extra.pic, 'https://pic');
   assert.equal(extra.desc, '简介');
   assert.equal(extra.tid, 17);
-  assert.equal(extra.tname, '单机游戏');
+  // tname 不再由扩展抽取（view API 的 tname 恒空串），改由 server 用 zones 字典按 tid 反查 enrich
+  assert.equal(extra.tname, undefined);
   assert.equal(extra.publocation, 'IP 上海');
   assert.deepEqual(extra.tags, [{ tag_id: 1, tag_name: '游戏' }]);
   assert.equal(extra.stat.view, 10);

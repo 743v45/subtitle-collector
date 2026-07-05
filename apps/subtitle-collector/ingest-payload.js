@@ -5,7 +5,6 @@ export function extractExtraFromView(v) {
   if (v.desc != null) extra.desc = v.desc;
   if (v.ctime != null) extra.ctime = v.ctime;
   if (v.tid != null) extra.tid = v.tid;
-  if (v.tname != null) extra.tname = v.tname;
   if (v.copyright != null) extra.copyright = v.copyright;
   if (v.state != null) extra.state = v.state;
   const publoc = v.pub_location ?? v.publocation;

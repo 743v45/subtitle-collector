@@ -1,4 +1,7 @@
 import type Database from 'better-sqlite3';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { dirname, join } from 'node:path';
 
 export interface IngestVideo {
   source_vid: string;
@@ -49,9 +52,24 @@ function structuralExtra(v: unknown): string {
   } catch { return v; }
 }
 
+// 分区字典（data/zones-v1.json，{ tid: { name, code, parent, main } }），模块级懒加载只读一次；读失败降级空字典。
+const ZONES: Record<number, { name: string }> = (() => {
+  try {
+    const p = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'data', 'zones-v1.json');
+    return JSON.parse(readFileSync(p, 'utf8'));
+  } catch { return {}; }
+})();
+
 export function ingestVideo(db: Database.Database, req: IngestRequest): IngestResult {
   const now = Date.now();
   const tx = db.transaction((r: IngestRequest) => {
+    // view API 的 tname 恒为空串，extra.tname 由 server 按 tid 用 ZONES 字典反查补全（须在 change_log 比较前生效）。
+    const extra = { ...(r.video.extra ?? {}) };
+    if (extra.tid != null && ZONES[extra.tid as number]?.name) {
+      extra.tname = ZONES[extra.tid as number]!.name;
+    }
+    r.video.extra = extra;
+
     // 1. creator upsert + change_log
     const creatorSel = db.prepare('SELECT id, name FROM creators WHERE source = ? AND source_uid = ?');
     const creatorIns = db.prepare('INSERT INTO creators (source, source_uid, name, avatar, first_seen_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)');

@@ -194,6 +194,26 @@ test('extra 结构字段（tname/tags 等）变化记 change_log', () => {
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
+test('enrich tname：extra 有 tid 时按 zones 字典反查填 tname（view API 的 tname 恒空）', () => {
+  const { db, dir } = freshDb();
+  try {
+    ingestVideo(db, {
+      source: 'bilibili',
+      video: {
+        source_vid: 'BV207', title: 't',
+        creator: { source_uid: '1', name: 'up' },
+        extra: { aid: 1, cid: 2, tid: 207 }, // view API 只返回 tid，tname 恒为空串
+        duration: 1, published_at: 1,
+      },
+      tracks: [],
+    });
+    const v = db.prepare('SELECT extra FROM videos WHERE source_vid = ?').get('BV207') as any;
+    const extra = JSON.parse(v.extra);
+    assert.equal(extra.tid, 207);
+    assert.equal(extra.tname, '财经商业', 'tid=207 应被 zones-v1.json 字典 enrich 为「财经商业」');
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
 test('ingestUpper 首次插入 creator（含新字段）', () => {
   const { db, dir } = freshDb();
   try {
