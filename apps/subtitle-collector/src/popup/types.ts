@@ -3,6 +3,8 @@
 // 字段名以扩展 inject.js readVideoExtra 实际写入为准（来自 __INITIAL_STATE__.videoData.stat）：
 // view / danmaku / reply / favorite / coin / share / like。注意收藏键是 `favorite`，不是 `fav`。
 export interface CollectedStat {
+  // 数据驱动访问（platform adapter 的 statFields.key 动态索引），允许任意 string key
+  [key: string]: number | null | undefined;
   view?: number | null;
   like?: number | null;
   coin?: number | null;

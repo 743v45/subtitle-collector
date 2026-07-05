@@ -20,6 +20,7 @@ import { fmtNum } from './format';
 import { cn } from '@/lib/utils';
 import type { ConsistencyIssue, LocalSub, SubtitleBody } from './types';
 import { formatSubtitle, SUBTITLE_FORMATS, type SubtitleFormat } from '../../subtitleFormat.mjs';
+import { isAiSubtitle, subtitleTrackLabel } from '../../subtitleLabel.mjs';
 import { Badge } from '@/components/ui/badge';
 import { Switch } from '@/components/ui/switch';
 import { Button } from '@/components/ui/button';
@@ -350,13 +351,15 @@ function FooterActions({
                 : 'bg-brand text-brand-foreground hover:bg-brand/90'
           )}
         >
-          {reportStatus === 'reporting'
-            ? '上报中…'
-            : reportStatus === 'success'
-              ? '上报成功 ✓'
-              : reportStatus === 'failed'
-                ? '上报失败 ✗'
-                : '上报'}
+          {!hasSubtitle
+            ? '无字幕'
+            : reportStatus === 'reporting'
+              ? '上报中…'
+              : reportStatus === 'success'
+                ? '上报成功 ✓'
+                : reportStatus === 'failed'
+                  ? '上报失败 ✗'
+                  : '上报'}
         </Button>
       )}
     </div>
@@ -732,9 +735,10 @@ function SubtitleCopySection({
           {subs.map((s, i) => {
             const url = s.subtitle_url;
             const selectable = !!s.has_body && !!url;
-            // B 站 AI 字幕走 aisubtitle.hdslb.com，用 URL 特征识别最稳。
-            const isAi = !!url && url.includes('aisubtitle');
-            const label = isAi ? 'AI' : (s.lan_doc ?? s.lan ?? '未知');
+            // B 站 AI 字幕走 aisubtitle.hdslb.com；识别用 URL 特征最稳（见 subtitleLabel.mjs）。
+            const isAi = isAiSubtitle(s);
+            // 语言名始终取 lan_doc/lan；AI 不再霸占语言位，改作下方 badge 叠加（BUG-2）。
+            const label = subtitleTrackLabel(s);
             const justCopied = !!url && copiedUrl === url;
             const justFailed = !!url && failedUrl === url;
             return (
@@ -744,8 +748,13 @@ function SubtitleCopySection({
               >
                 <span className="flex min-w-0 items-center gap-2">
                   <span className="font-medium">{label}</span>
-                  {!isAi && s.lan && s.lan_doc && (
+                  {s.lan && s.lan_doc && (
                     <span className="text-muted-foreground">{s.lan}</span>
+                  )}
+                  {isAi && (
+                    <Badge variant="secondary" className="shrink-0 px-1.5 py-0 text-[10px] leading-tight font-normal">
+                      AI
+                    </Badge>
                   )}
                 </span>
                 <button
