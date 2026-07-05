@@ -629,32 +629,38 @@ function SyncStatusBadge({ server, hasSubtitle }: { server: CollectedState; hasS
   if (server.state === 'server-down') return null;
   let variant: 'success' | 'secondary';
   let text: string;
+  let title: string | undefined;
   // 上报是上报字幕：没字幕就算 video 入库也不算「同步」（没字幕轨上报）→ 显示未同步
   if (server.state === 'ok' && hasSubtitle) {
-    const t = server.video.updated_at ? fmtSyncTime(server.video.updated_at) : '';
+    const ts = server.video.updated_at;
+    const ago = ts ? fmtTimeAgo(ts) : '';
     variant = 'success';
-    text = t ? `同步 ${t}` : '已同步';
+    text = ago ? `同步 ${ago}` : '已同步';
+    // badge 模糊显示「多久前」，鼠标悬停 title 给精确时间。
+    title = ts ? new Date(ts).toLocaleString() : undefined;
   } else {
     variant = 'secondary';
     text = '未同步';
   }
   return (
-    <Badge variant={variant} className="font-normal">
+    <Badge variant={variant} className="font-normal" title={title}>
       {text}
     </Badge>
   );
 }
 
-// 同步时间短格式：M/D HH:MM（badge 内显示，比 toLocaleString 短）。
-function fmtSyncTime(ts: number | string): string {
+// 同步时间相对格式：秒/分/时/天前（badge 内模糊显示，悬停 title 给精确时间）。
+// popup 每次打开重新渲染，相对时间基于打开时刻计算，无需定时刷新。
+function fmtTimeAgo(ts: number | string): string {
   const d = new Date(ts);
   if (Number.isNaN(d.getTime())) return '';
-  return new Intl.DateTimeFormat('zh-CN', {
-    month: 'numeric',
-    day: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-  }).format(d);
+  const sec = Math.floor((Date.now() - d.getTime()) / 1000);
+  if (sec < 60) return sec <= 0 ? '刚刚' : `${sec}秒前`;
+  const min = Math.floor(sec / 60);
+  if (min < 60) return `${min}分钟前`;
+  const hour = Math.floor(min / 60);
+  if (hour < 24) return `${hour}小时前`;
+  return `${Math.floor(hour / 24)}天前`;
 }
 
 // 默认折叠；展开后选格式（横向抽屉，记忆）+ 每轨右侧复制按钮，点即复制「该轨 × 当前格式」。
