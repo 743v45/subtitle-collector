@@ -133,7 +133,7 @@ interface ListRawOpts {
 }
 
 // 字符串 → 数字；非法 → ARGS。undefined 透传（filter 不应用）。
-function parseNum(raw: string | undefined, name: string): number | undefined {
+export function parseNum(raw: string | undefined, name: string): number | undefined {
   if (raw === undefined) return undefined;
   const n = Number(raw);
   if (!Number.isFinite(n)) {
@@ -152,7 +152,7 @@ function parseSort(raw: string | undefined): VideoSortKey | undefined {
 }
 
 // since/until 字符串 → 毫秒数字；格式非法（normalizeTimestamp 抛错）→ ARGS。
-function parseTime(raw: string | undefined, name: string): number | undefined {
+export function parseTime(raw: string | undefined, name: string): number | undefined {
   if (raw === undefined) return undefined;
   try {
     return normalizeTimestamp(raw);
