@@ -195,3 +195,30 @@ test('videosList: subtitleQ 透传，命中字幕正文 content 的视频', () =
     assert.equal(videosList(db, { subtitleQ: '不存在的词XYZ' }).total, 0);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
+
+// ── videosList: minView/maxView 播放量过滤（跨层一致：对齐 DB advanced / HTTP / sub search CLI）──
+// setup 样本 view：BV1=1000 / BV2=5000 / BV3=200 / BV4=50
+
+test('videosList: minView 下界过滤', () => {
+  const { db, dir } = setup();
+  try {
+    // minView=1000 → BV1(1000) + BV2(5000)
+    assert.deepEqual(titles(videosList(db, { minView: 1000 }).items).sort(), ['标题A', '标题B']);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('videosList: maxView 上界过滤', () => {
+  const { db, dir } = setup();
+  try {
+    // maxView=200 → BV3(200) + BV4(50)
+    assert.deepEqual(titles(videosList(db, { maxView: 200 }).items).sort(), ['标题C', '标题D']);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('videosList: minView+maxView 区间过滤', () => {
+  const { db, dir } = setup();
+  try {
+    // minView=200, maxView=1000 → BV1(1000) + BV3(200)
+    assert.deepEqual(titles(videosList(db, { minView: 200, maxView: 1000 }).items).sort(), ['标题A', '标题C']);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});

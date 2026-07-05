@@ -54,6 +54,8 @@ export interface VideosListOpts {
   until?: number;
   minDuration?: number;     // 秒
   maxDuration?: number;
+  minView?: number;         // 最小播放量
+  maxView?: number;         // 最大播放量
   sort?: VideoSortKey;
   desc?: boolean;
   page?: number;
@@ -81,6 +83,8 @@ export function videosList(
     until: opts.until,
     min_duration: opts.minDuration,
     max_duration: opts.maxDuration,
+    min_view: opts.minView,
+    max_view: opts.maxView,
     sort: opts.sort,
     desc: opts.desc,
     page: opts.page,
@@ -125,6 +129,8 @@ interface ListRawOpts {
   until?: string;
   minDuration?: string;
   maxDuration?: string;
+  minView?: string;
+  maxView?: string;
   sort?: string;
   desc?: boolean;
   page?: string;
@@ -191,6 +197,8 @@ export function buildVideosCommand(): Command {
     .option('--until <ts>', '结束时间（Unix 秒/毫秒 或 ISO8601），比对 first_seen_at')
     .option('--min-duration <s>', '最小时长（秒）')
     .option('--max-duration <s>', '最大时长（秒）')
+    .option('--min-view <n>', '最小播放量')
+    .option('--max-view <n>', '最大播放量')
     .option('--sort <key>', '排序键：first_seen|published_at|title|duration|view')
     .option('--desc', '降序（默认升序）')
     .option('--page <n>', '页码（从 1 起，默认 1）')
@@ -213,6 +221,8 @@ export function buildVideosCommand(): Command {
         until: parseTime(raw.until, '--until'),
         minDuration: parseNum(raw.minDuration, '--min-duration'),
         maxDuration: parseNum(raw.maxDuration, '--max-duration'),
+        minView: parseNum(raw.minView, '--min-view'),
+        maxView: parseNum(raw.maxView, '--max-view'),
         sort: parseSort(raw.sort),
         desc: raw.desc,
         page: parseNum(raw.page, '--page'),
