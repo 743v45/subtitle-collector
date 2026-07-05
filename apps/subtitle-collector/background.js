@@ -27,6 +27,40 @@ async function ensureWbiKeys() {
   if (!wbiKeys || Date.now() - wbiKeysAt > WBI_KEYS_TTL_MS) await refreshWbiKeys();
 }
 
+// P4：被动采 UP 资料（7 天 TTL）。TTL 用 chrome.storage 持久（SW 重启不丢）。失败抛错由调用方 catch。
+async function ensureUpperInfo(mid) {
+  const key = `upperInfoAt:${mid}`;
+  const { [key]: at = 0 } = await chrome.storage.local.get(key);
+  if (Date.now() - at < 7 * 24 * 3600 * 1000) return; // 7 天内跳过
+  await ensureWbiKeys();
+  const infoRes = await biliFetch('/x/space/wbi/acc/info', { wbi: true, params: { mid }, wbiKeys });
+  if (!infoRes.ok) throw new Error('acc/info ' + infoRes.code);
+  const statRes = await biliFetch('/x/relation/stat', { params: { vmid: mid } });
+  const stat = statRes.ok ? statRes.data : {};
+  const info = infoRes.data;
+  const creator = {
+    source_uid: String(mid),
+    name: info.name ?? null, avatar: info.face ?? null,
+    sign: info.sign ?? null, level: info.level ?? null, sex: info.sex ?? null,
+    official_type: info.official?.type ?? null, official_title: info.official?.title ?? null,
+    fans: stat.follower ?? null, following: stat.following ?? null,
+  };
+  ws.send(JSON.stringify({ type: "ingest-upper", payload: { source: "bilibili", creator } }));
+  await chrome.storage.local.set({ [key]: Date.now() });
+}
+
+// P4：被动采 UP 最新视频（1h TTL，chrome.storage 缓存，不入库）。失败抛错由调用方 catch。
+async function ensureUpperVideos(mid) {
+  const key = `upperVideosAt:${mid}`;
+  const { [key]: at = 0 } = await chrome.storage.local.get(key);
+  if (Date.now() - at < 3600 * 1000) return; // 1h 内跳过
+  await ensureWbiKeys();
+  const parsed = await biliFetch('/x/space/wbi/arc/search', { wbi: true, params: { mid, pn: 1, ps: 10, order: 'pubdate' }, wbiKeys });
+  if (!parsed.ok) throw new Error('arc/search ' + parsed.code);
+  const items = (parsed.data?.list?.vlist ?? []).map((v) => ({ bvid: v.bvid, title: v.title, created: v.created ?? null }));
+  await chrome.storage.local.set({ [`upperVideos:${mid}`]: { items, fetchedAt: Date.now() }, [key]: Date.now() });
+}
+
 // MV3 SW 保活兜底：周期 alarm 唤醒 SW，若 ws 未 OPEN 则触发重连（C1）
 chrome.alarms.create("keepalive", { periodInMinutes: 0.4 });
 chrome.alarms.onAlarm.addListener((a) => {
@@ -274,6 +308,12 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       return true;
     }
     sendIngest(payload);
+    // P4：顺带被动采 UP 资料（7天）+ 最新视频（1h），异步、失败静默（不影响字幕主链路）
+    const mid = payload.video?.creator?.source_uid;
+    if (mid) {
+      ensureUpperInfo(mid).catch((e) => console.warn('[background] passive upper-info failed', String(e?.message ?? e)));
+      ensureUpperVideos(mid).catch((e) => console.warn('[background] passive upper-videos failed', String(e?.message ?? e)));
+    }
     sendResponse({ ok: true });
   } else if (msg?.type === "WS_STATUS") {
     sendResponse({ ok: true, connected: ws?.readyState === WebSocket.OPEN });
