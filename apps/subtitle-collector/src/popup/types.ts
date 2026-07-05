@@ -56,7 +56,7 @@ export interface CollectedResponse {
 // 对应 GET https://api.bilibili.com/x/web-interface/nav 的响应结构。
 export interface BiliNavResponse {
   code: number;
-  data?: { isLogin?: boolean; uname?: string };
+  data?: { isLogin?: boolean; uname?: string; mid?: number };
 }
 
 // —— 本地数据源（content.js collected Map，popup 经 chrome.tabs.sendMessage 直取）——

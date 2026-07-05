@@ -1,4 +1,4 @@
-import { type ComponentType, useCallback, useEffect, useState } from 'react';
+import { type ComponentType, useCallback, useEffect, useRef, useState } from 'react';
 import {
   useBiliLogin,
   useCollected,
@@ -90,8 +90,8 @@ export function Popup() {
   const conn = useConnectionStatus();
   const login = useBiliLogin();
   const reporting = useReporting();
-  const { collected: serverCollected, currentBvid, refresh } = useCollected();
-  const { local, refreshLocal } = useLocalCollected(currentBvid);
+  const { collected: serverCollected, currentBvid } = useCollected();
+  const { local } = useLocalCollected(currentBvid);
   const consistency = diffConsistency(local, serverCollected);
   // 非视频页精简：只显示平台头 + 底部上报开关；视频信息卡 / 手动补采是视频页专属。
   // currentBvid 在 tabs.query 回调后才就绪（视频页=bvid / 非视频页=null），首帧 null 即隐藏，
@@ -103,14 +103,38 @@ export function Popup() {
   const creatorId =
     serverCollected.state === 'ok' ? serverCollected.video.creator_id : undefined;
 
+  // 手动采集反馈：capturing → success（收到 INGEST_RESULT）/ 兜底回 idle。
+  // 数据刷新交给 useCollected / useLocalCollected 各自监听 INGEST_RESULT（刷新不再清 loading，无闪烁）。
+  const [captureStatus, setCaptureStatus] = useState<'idle' | 'capturing' | 'success'>('idle');
+  const captureRef = useRef(false);
+
   const onCapture = () => {
+    setCaptureStatus('capturing');
+    captureRef.current = true;
     chrome.runtime.sendMessage({ type: 'MANUAL_CAPTURE' });
-    // RE_AGG → INGEST → INGEST_RESULT 会自动触发两边刷新；setTimeout 作兜底
+    // 兜底：6s 内没收到 INGEST_RESULT 则回 idle（避免一直"采集中"）
     setTimeout(() => {
-      refresh();
-      refreshLocal();
-    }, 1500);
+      if (captureRef.current) {
+        captureRef.current = false;
+        setCaptureStatus('idle');
+      }
+    }, 6000);
   };
+
+  // 收到当前 bvid 的 INGEST_RESULT → 采集成功 2s
+  useEffect(() => {
+    if (!currentBvid) return;
+    const handler = (msg: unknown) => {
+      const m = msg as { type?: string; source_vid?: string };
+      if (m?.type === 'INGEST_RESULT' && m.source_vid === currentBvid && captureRef.current) {
+        captureRef.current = false;
+        setCaptureStatus('success');
+        setTimeout(() => setCaptureStatus('idle'), 2000);
+      }
+    };
+    chrome.runtime.onMessage.addListener(handler);
+    return () => chrome.runtime.onMessage.removeListener(handler);
+  }, [currentBvid]);
 
   return (
     <div className="space-y-3 p-3">
@@ -131,6 +155,7 @@ export function Popup() {
         reporting={reporting}
         onCapture={onCapture}
         isVideoPage={isVideoPage}
+        captureStatus={captureStatus}
       />
     </div>
   );
@@ -160,9 +185,9 @@ function PlatformHead({
         </svg>
       </span>
       <span className="text-sm font-semibold">{platform.name}</span>
+      <LoginBadge login={login} />
       <div className="ml-auto flex items-center gap-2">
         <ConnDot conn={conn} />
-        <LoginBadge login={login} />
       </div>
     </div>
   );
@@ -183,8 +208,8 @@ function LoginBadge({ login }: { login: LoginState }) {
   if (login.state === 'loading') return <StatusPlaceholder className="h-5 w-16" />;
   if (login.state === 'logged')
     return (
-      <Badge variant="success" className="font-normal">
-        已登录 {login.uname}
+      <Badge variant="success" className="font-normal tabular-nums">
+        UID {login.mid}
       </Badge>
     );
   if (login.state === 'guest')
@@ -205,10 +230,12 @@ function FooterActions({
   reporting,
   onCapture,
   isVideoPage,
+  captureStatus,
 }: {
   reporting: { enabled: boolean | null; setEnabled: (v: boolean) => void };
   onCapture: () => void;
   isVideoPage: boolean;
+  captureStatus: 'idle' | 'capturing' | 'success';
 }) {
   return (
     <div className="flex items-center gap-2">
@@ -227,9 +254,19 @@ function FooterActions({
         <Button
           size="sm"
           onClick={onCapture}
-          className="ml-auto h-7 bg-brand px-3 text-xs text-brand-foreground hover:bg-brand/90"
+          disabled={captureStatus === 'capturing'}
+          className={cn(
+            'ml-auto h-7 px-3 text-xs',
+            captureStatus === 'success'
+              ? 'bg-emerald-500 text-white hover:bg-emerald-600'
+              : 'bg-brand text-brand-foreground hover:bg-brand/90'
+          )}
         >
-          手动补采
+          {captureStatus === 'capturing'
+            ? '采集中…'
+            : captureStatus === 'success'
+              ? '采集成功 ✓'
+              : '采集字幕'}
         </Button>
       )}
     </div>
@@ -541,7 +578,7 @@ function SubtitleCopySection({
     <Collapsible open={open} onOpenChange={setOpen}>
       <CollapsibleTrigger className="flex w-full items-center gap-1 text-xs text-muted-foreground hover:text-foreground">
         <ChevronIcon className={cn('h-3 w-3 transition-transform', open && 'rotate-90')} />
-        <span>复制字幕 · {copyableSubs.length}/{subs.length} 轨</span>
+        <span>字幕</span>
       </CollapsibleTrigger>
       <CollapsibleContent className="space-y-2 pt-2">
         <div className="flex flex-wrap gap-1">

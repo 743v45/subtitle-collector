@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { REPORTING_KEY } from '../../reporting.mjs';
 import { API_BASE } from '../../config.js';
 import type {
@@ -34,7 +34,7 @@ export function useConnectionStatus(): ConnState {
 // —— B 站登录态：每 30s 直连官方 nav 接口 ——
 export type LoginState =
   | { state: 'loading' }
-  | { state: 'logged'; uname: string }
+  | { state: 'logged'; uname: string; mid: number }
   | { state: 'guest' }
   | { state: 'error' };
 
@@ -46,7 +46,7 @@ export function useBiliLogin(): LoginState {
         .then((r) => r.json())
         .then((d: BiliNavResponse) => {
           if (d.code === 0 && d.data?.isLogin) {
-            setLogin({ state: 'logged', uname: d.data.uname || '用户' });
+            setLogin({ state: 'logged', uname: d.data.uname || '用户', mid: d.data.mid ?? 0 });
           } else {
             setLogin({ state: 'guest' });
           }
@@ -109,7 +109,7 @@ export function useCollected(): {
       }
       const bvid = m[1];
       setCurrentBvid(bvid);
-      setCollected({ state: 'loading' });
+      // 不清 loading：保留上次数据，避免刷新（手动补采 / INGEST_RESULT）时"数据→查询中→数据"闪烁
       fetch(`${API_BASE}/api/videos/bilibili/${bvid}`)
         .then((r) => r.json())
         .then((d: CollectedResponse) => {
@@ -223,6 +223,8 @@ export function useLocalCollected(currentBvid: string | null): {
 } {
   const [refreshKey, setRefreshKey] = useState(0);
   const [local, setLocal] = useState<LocalCollectedState>({ state: 'loading' });
+  // 记上次 bvid：仅切视频时清 loading，refreshKey 变（刷新）保留旧数据避免闪烁
+  const lastBvidRef = useRef<string | null | undefined>(undefined);
 
   useEffect(() => {
     if (!currentBvid) {
@@ -231,7 +233,9 @@ export function useLocalCollected(currentBvid: string | null): {
       setLocal({ state: 'loading' });
       return;
     }
-    setLocal({ state: 'loading' });
+    const isNewBvid = currentBvid !== lastBvidRef.current;
+    lastBvidRef.current = currentBvid;
+    if (isNewBvid) setLocal({ state: 'loading' });
     chrome.tabs.query({ active: true, currentWindow: true }, ([tab]) => {
       if (!tab?.id) {
         setLocal({ state: 'not-loaded' });
