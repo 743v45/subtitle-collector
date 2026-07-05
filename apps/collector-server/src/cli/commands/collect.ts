@@ -604,7 +604,7 @@ export function buildCollectCommand(): Command {
   collect
     .command('find <keyword>')
     .description('条件检索：关键词(+分区) 多页搜索，按发布时间/UP 粉丝数过滤出候选（fans 优先读 creators 表缓存，miss 实时查）')
-    .option('--tid <id>', '分区 tid（如 207 财经商业）', (v) => Number.parseInt(v, 10))
+    .option('--tid <id>', '分区 tid（⚠ 实测 search API 忽略 tid，当前不生效；分区收敛请用关键词。保留供未来 post-filter 改造）', (v) => Number.parseInt(v, 10))
     .option('--order <o>', '排序（默认 pubdate 最新）', 'pubdate')
     .option('--pages <n>', '翻多少页候选（默认 3，每页约 20 条）', (v) => Number.parseInt(v, 10), 3)
     .option('--min-fans <n>', '最低 UP 主粉丝数（默认 0=不过滤）', (v) => Number.parseInt(v, 10), 0)

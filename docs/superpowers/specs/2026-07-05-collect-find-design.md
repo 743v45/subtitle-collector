@@ -15,7 +15,7 @@
 
 `search` action 做不到这件事，原因有三（详见 [collect.ts:246](apps/collector-server/src/cli/commands/collect.ts#L246) 注释）：
 
-1. **B 站 `search/type` API 服务端只接受 关键词 / 分区(tid) / 排序(order) 等参数**——见扩展装配 [background.js:147](apps/subtitle-collector/background.js#L147) 的 `/x/web-interface/wbi/search/type` 调用，参数只有 `search_type/keyword/page/order/tid`，没有「粉丝数 ≥ X」「发布时间 ≥ Y」这类服务端过滤。（**注意**：`tid` 参数虽存在并被透传，但实测对视频分区 tid 不生效，见 [§8 已知局限](#8-已知局限--分区过滤说明)。）
+1. **B 站 `search/type` API 服务端只接受 关键词 / 分区(tid) / 排序(order) 等参数**——见扩展装配 [background.js:147](apps/subtitle-collector/background.js#L147) 的 `/x/web-interface/wbi/search/type` 调用，参数只有 `search_type/keyword/page/order/tid`，没有「粉丝数 ≥ X」「发布时间 ≥ Y」这类服务端过滤。（**注意**：`tid` 参数虽存在并被透传，但实测被服务端**完全忽略**——一级（36/1）二级（207）都不改变结果，见 [§8 已知局限](#8-已知局限--分区过滤说明)。）
 2. **粉丝数不在搜索结果里**——[formatSearchResult](apps/subtitle-collector/bili-fetch.js#L17) 产出的每条 item 只有 `{bvid,title,up,mid,play,duration,pubdate}`，没有 `fans` 字段。
 3. **粉丝数必须拿 mid 另查 UP 主信息**——见扩展 [background.js:217](apps/subtitle-collector/background.js#L217) 的 `get-upper-info` action：它要分别抓 `/x/space/wbi/acc/info`（Wbi）和 `/x/relation/stat`（cookie），取 `stat.follower` 当 fans（[background.js:239](apps/subtitle-collector/background.js#L239)）。一次 UP 信息请求 = 两次 B 站 API 往返。
 
@@ -49,7 +49,7 @@ collector-cli collect find <keyword> [options]
 
 | Option | 默认值 | 语义（精确行为取自 [collect.ts:607-617](apps/collector-server/src/cli/commands/collect.ts#L607)） |
 |---|---|---|
-| `--tid <id>` | （无，不按分区） | 分区 tid，示例 `207` = 财经商业（属"知识"主区，见 [zones-v1.json:548](apps/collector-server/data/zones-v1.json#L548)）。透传给 `search` action 的 `tid` 参数（[background.js:157](apps/subtitle-collector/background.js#L157)）。**⚠️ 实测对视频分区 tid 不生效**——见 [§8 已知局限](#8-已知局限--分区过滤说明)，分区收敛实际靠关键词 |
+| `--tid <id>` | （无，不按分区） | 分区 tid，示例 `207` = 财经商业（属"知识"主区，见 [zones-v1.json:548](apps/collector-server/data/zones-v1.json#L548)）。透传给 `search` action 的 `tid` 参数（[background.js:157](apps/subtitle-collector/background.js#L157)）。**⚠️ 实测 tid 完全不生效（一级 36/1、二级 207 均被服务端忽略）**——见 [§8 已知局限](#8-已知局限--分区过滤说明)，分区收敛只能靠关键词 |
 | `--order <o>` | `pubdate`（最新优先） | 排序，透传给 `search` action 的 `order`（[background.js:156](apps/subtitle-collector/background.js#L156)）。常见取值 `pubdate`/`click`/`scores`/`stolen` 等 |
 | `--pages <n>` | `3`（约 60 条候选） | 翻多少页搜索结果，每页约 20 条。在 [collectFindSearch](apps/collector-server/src/cli/commands/collect.ts#L358) 里循环 `page=1..pages` 合并 |
 | `--min-fans <n>` | `0`（不过滤） | 候选 UP 主最低粉丝数。`<=0` 不过滤；`<0` 报 ARGS 退出（[collect.ts:624](apps/collector-server/src/cli/commands/collect.ts#L624)）。fans 未知（`null`）的条目**保留**（保守，宁可多列） |
@@ -248,13 +248,19 @@ B 站对短时高频请求会回 `-412`（`risk_control`，见 [parseBiliRespons
 
 ## 8. 已知局限 / 分区过滤说明
 
-> **实测发现（2026-07-05）**：`collect search 财经 --order pubdate` 加或不加 `--tid 207`，返回的 `total`（都为 20）和前 5 条标题**完全相同**。即 B 站 `/x/web-interface/wbi/search/type` 的 `tid` 参数对 [zones-v1.json](apps/collector-server/data/zones-v1.json) 里的**视频分区 tid（如 207 财经商业）不生效**——搜索 API 用的是另一套搜索分类体系，与视频分区 tid 不是同一套。
+> **一手实测**（2026-07-05，经扩展 `/x/web-interface/wbi/search/type` wbi 签名调用）：`collect search <关键词>` 加任何 `--tid` 都**不改变**返回的 `total`/`items`/`mids`：
+>
+> - `股票` 无 tid / `--tid 36`（知识一级主区）/ `--tid 207`（财经商业二级）→ 三者 total=20、mids=14、前几条标题**完全一致**。
+> - `--tid 1`（动画主区）搜「股票」→ 返回的还是股票投资内容（CCI 指标 / 年金 / 甲骨文），没一个动画；搜「动画」无 tid vs `--tid 1` → total/mids 完全相同。
+>
+> 即 `--tid`（无论一级还是二级）对当前 search API 调用**完全不生效**。这推翻了二手资料「search/type 只认一级主分区 tid」的说法——实测一级也被忽略。原因未深究（疑似 wbi 签名下服务端忽略 tid，或前端移除分区筛选入口后后端跟进）。
 
 要点：
 
-1. `find` / `search` 的 `--tid` 会**透传**给 B 站 search API（代码层 [collectFindSearch](apps/collector-server/src/cli/commands/collect.ts#L358) → 扩展 [background.js:157](apps/subtitle-collector/background.js#L157)），但当前对视频分区 tid（[zones-v1.json](apps/collector-server/data/zones-v1.json) 体系）**无效**。「财经相关」实际靠**关键词收敛**（关键词"财经 / A股 / 基金 / 财报"等本身效果就很好）。
-2. 如未来需要真正的分区收敛，需找到 search API 自己的**搜索分类 tid**（非本项目命令范围，留作后续）。
-3. 本文档**不宣称 `--tid` 能精确过滤分区**——与实测不符。`--tid` 当前价值仅在于「语义自文档 + 万一 B 站恢复/换分类体系时即生效」，**不作为筛选保证**。
+1. `find` / `search` 的 `--tid` 会**透传**给 search API（[collectFindSearch](apps/collector-server/src/cli/commands/collect.ts#L358) → [background.js:157](apps/subtitle-collector/background.js#L157)），但实测**完全无效**。「财经相关」实际靠**关键词收敛**（财经 / A股 / 基金 / 股票 / 财报 等本身效果很好）。
+2. [`zones-v1.json`](apps/collector-server/data/zones-v1.json)（207=财经商业，36=知识）是给 `view` API 的 `extra.tid/tname` 反查用的（[backfill-region.mjs](apps/collector-server/scripts/backfill-region.mjs)），**对 search 无意义**——并非「另一套搜索分类体系」。
+3. 若未来要让分区过滤生效，唯一出路是客户端 post-filter（先让 [bili-fetch.js:18](apps/subtitle-collector/bili-fetch.js#L18) 的 `formatSearchResult` 保留 item 的 `tid` 字段，再在 `collectFind` 按 `item.tid` 过滤）；但 search 不按 tid 收窄，post-filter 命中会很少，价值有限，**当前不做**。
+4. `--tid` 选项**保留**（语义自文档 + 万一 B 站恢复分区筛选即生效），CLI help 与本文档已标明「实测不生效」，**不作为筛选保证**。
 
 ---
 
@@ -283,11 +289,11 @@ B 站对短时高频请求会回 `-412`（`risk_control`，见 [parseBiliRespons
 | F14 | fans 实时查询后 sleep 防风控 | 单测：mock `fetchFans` 串行 + `setTimeout` 被调（[collect.ts:659](apps/collector-server/src/cli/commands/collect.ts#L659)） | ✅ 单测通过 |
 | F15 | `FindResult` 形状完整（含三类 fans 计数） | 单测：[collectFind](apps/collector-server/src/cli/commands/collect.ts#L385) 返回字段齐全 | ✅ 单测通过 |
 | F16 | 参数校验：`--timeout<=0` / `--min-fans<0` / `--since` 非法格式 → ARGS | 单测 / 手测：三个非法输入各退码 2（[collect.ts:623-629](apps/collector-server/src/cli/commands/collect.ts#L623)） | ✅ 单测通过 |
-| F17 | `--collect`：串行采字幕 + 间隔 `max(sleep,1000)` | E2E / 单测：mock `collectSubtitle`，断言间隔与 `data.collected` 回填（[collect.ts:669-687](apps/collector-server/src/cli/commands/collect.ts#L669)） | ⏳ 待 E2E（--collect 在 action 层未导出纯函数单测） |
+| F17 | `--collect`：串行采字幕 + 间隔 `max(sleep,1000)` | E2E / 单测：mock `collectSubtitle`，断言间隔与 `data.collected` 回填（[collect.ts:669-687](apps/collector-server/src/cli/commands/collect.ts#L669)） | ✅ 实测（3 条串行采，BV1zqMu67EQU 字幕入库；`collected` 回填见 [collect.ts:681](apps/collector-server/src/cli/commands/collect.ts#L681)） |
 | F18 | `--collect` 遇 `need_login`/`risk_control` 即停 | E2E：mock 扩展回执 `error:'risk_control'` → 命令停（[collect.ts:676](apps/collector-server/src/cli/commands/collect.ts#L676)） | ⏳ 待 E2E |
-| F19 | `--collect` 遇 `no_subtitle` 不停，继续下一条 | E2E：mock 第一条 `reason:'no_subtitle'`，第二条仍采（[collect.ts:681](apps/collector-server/src/cli/commands/collect.ts#L681)） | ⏳ 待 E2E |
+| F19 | `--collect` 遇 `no_subtitle` 不停，继续下一条 | E2E：mock 第一条 `reason:'no_subtitle'`，第二条仍采（[collect.ts:681](apps/collector-server/src/cli/commands/collect.ts#L681)） | ✅ 实测（3 条命中里第 1/3 条 `no_subtitle`，仍采第 2 条 ok 入库） |
 | F20 | 真实财经条件检索端到端跑通（靠关键词收敛） | E2E：`collect find "A股" --min-fans 10000 --since-days 7 --format json` 返回非空 `items`（财经主题由关键词"A股"收敛，**非依赖 tid**） | ✅ 完成（命中李大霄 33.4 万粉等；fans 缓存二次累积 0→7） |
-| F21 | `--tid` 对视频分区 tid 不生效（已知局限，[§8](#8-已知局限--分区过滤说明)） | 实测：`collect search 财经 --order pubdate` 加 / 不加 `--tid 207`，`total`（均 20）与前 5 条标题一致；**不宣称 tid 精确过滤分区** | ✅ 已实测确认（2026-07-05） |
+| F21 | `--tid` 实测完全不生效（一级 36/1、二级 207 均被忽略） | 实测：`collect search 股票` 无 tid / `--tid 36` / `--tid 207` 三者 total/mids/标题全同；`--tid 1`（动画）搜「股票」返回全是股票内容。分区收敛靠关键词 | ✅ 已实测确认（2026-07-05） |
 
 ### 9.2 测试轮次记录表
 
@@ -296,7 +302,8 @@ B 站对短时高频请求会回 `-412`（`risk_control`，见 [parseBiliRespons
 | R1 | 2026-07-05 | 设计文档落盘（本文档）；验收清单 F1-F20 制定 | ✅ 完成 |
 | R2 | 2026-07-05 | 单元测试 `collect.test.ts`：覆盖 F2-F16 纯函数与参数校验（注入 mock `client` + `FansSource` + `now`） | ✅ 完成（16 个 find 用例 PASS，[collect.test.ts:228-449](apps/collector-server/src/cli/commands/collect.test.ts#L228)） |
 | R3 | 2026-07-05 | `turbo run test` 全量回归（确认 `find` 新增不破坏既有 `collect` 子命令与 `commands/*.test.ts`） | ✅ 完成（`pnpm -C apps/collector-server test` → pass 199 / fail 0） |
-| R4 | 2026-07-05 | E2E 真实财经检索：F17-F20（关键词收敛、`--collect` 采字幕、风控即停） | ✅ 完成（命中李大霄 33.4 万粉等；fans 缓存二次累积 0→7） |
+| R4 | 2026-07-05 | E2E 真实财经检索：F20（关键词收敛财经、`--min-fans`/`--since-days` 过滤生效） | ✅ 完成（命中李大霄 33.4 万粉等；fans 缓存二次累积 0→7） |
 | R5 | 2026-07-05 | 实测 `--tid` 对视频分区 tid 不生效：`collect search 财经` ±`--tid 207`，`total`（均 20）/ 前 5 条标题一致 → 写入 [§8](#8-已知局限--分区过滤说明) 与 F21，文档不宣称 tid 精确过滤 | ✅ 已确认 |
+| R6 | 2026-07-05 | `--collect` E2E：F17/F19（3 条命中串行采字幕，BV1zqMu67EQU「股价的秘密」字幕入库；遇 `no_subtitle` 不停继续下一条）；F18 风控未触发，逻辑待 mock | ✅ 完成 |
 
 > 回归纪律（对齐项目 CLAUDE.md §3）：bug 修复 commit 必须含对应「失败→通过」测试用例；验收清单每项都要有测试覆盖，未覆盖项标记 ⏳。
