@@ -1,6 +1,6 @@
 import type {
   VideoListItem, VideoDetail, VideoFilter, ClientInfo,
-  StatsOverview, KeyValue, StatsGroupBy, CreatorDetail,
+  StatsOverview, KeyValue, StatsGroupBy, CreatorDetail, ChangeRow,
 } from './types';
 import type { SubtitleLine } from '@/components/SubtitleView';
 
@@ -78,6 +78,20 @@ export async function getVideo(source: string, sourceVid: string): Promise<Video
 export async function getVersion(versionId: number): Promise<{ version: { id: number; origin: string; payload: { body: SubtitleLine[] }; captured_at: number } }> {
   const r = await fetch(`${BASE}/api/versions/${versionId}`);
   return ensureOk(r, (j) => j);
+}
+
+// ── change_log（最近采集/变更流水）──
+export async function getChanges(params: {
+  entity?: string;       // 'video' | 'creator'
+  page?: number;
+  size?: number;
+}): Promise<{ total: number; items: ChangeRow[] }> {
+  const u = new URLSearchParams();
+  if (params.entity) u.set('entity', params.entity);
+  u.set('page', String(params.page ?? 1));
+  u.set('size', String(params.size ?? 20));
+  const r = await fetch(`${BASE}/api/changes?${u}`);
+  return ensureOk(r, (j) => ({ total: j.total, items: j.items ?? [] }));
 }
 
 // ── 统计看板 ──

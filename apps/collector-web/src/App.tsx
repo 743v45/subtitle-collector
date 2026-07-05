@@ -6,9 +6,10 @@ import { ClientsPage } from './pages/ClientsPage';
 import { CategoriesPage } from './pages/CategoriesPage';
 import { CreatorsPage } from './pages/CreatorsPage';
 import { CreatorDetailPage } from './pages/CreatorDetailPage';
+import { ChangesLog } from './pages/ChangesLog';
 import { Button } from '@/components/ui/button';
 
-type Tab = 'videos' | 'stats' | 'clients' | 'categories' | 'creators';
+type Tab = 'videos' | 'stats' | 'clients' | 'categories' | 'creators' | 'changes';
 
 const TABS: { key: Tab; label: string }[] = [
   { key: 'videos', label: '视频' },
@@ -16,6 +17,7 @@ const TABS: { key: Tab; label: string }[] = [
   { key: 'creators', label: 'UP 主' },
   { key: 'categories', label: '分类' },
   { key: 'clients', label: '客户端' },
+  { key: 'changes', label: '日志' },
 ];
 
 export default function App() {
@@ -46,6 +48,8 @@ export default function App() {
           <ClientsPage />
         ) : tab === 'categories' ? (
           <CategoriesPage />
+        ) : tab === 'changes' ? (
+          <ChangesLog />
         ) : tab === 'creators' ? (
           creatorView != null
             ? <CreatorDetailPage

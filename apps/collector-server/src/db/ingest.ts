@@ -81,6 +81,7 @@ export function ingestVideo(db: Database.Database, req: IngestRequest): IngestRe
     if (!existingCreator) {
       const info = creatorIns.run(r.source, r.video.creator.source_uid, r.video.creator.name ?? null, r.video.creator.avatar ?? null, now, now);
       creatorId = Number(info.lastInsertRowid);
+      changeIns.run('creator', creatorId, 'created', null, r.video.creator.name ?? null, now);
     } else {
       creatorId = existingCreator.id;
       if (r.video.creator.name != null && r.video.creator.name !== existingCreator.name) {
@@ -99,6 +100,7 @@ export function ingestVideo(db: Database.Database, req: IngestRequest): IngestRe
     if (!existingVideo) {
       const info = videoIns.run(r.source, r.video.source_vid, creatorId, r.video.title, JSON.stringify(r.video.extra ?? {}), r.video.duration ?? null, 'online', r.video.published_at ?? null, now, now);
       videoId = Number(info.lastInsertRowid);
+      changeIns.run('video', videoId, 'created', null, r.video.title, now);
     } else {
       videoId = existingVideo.id as number;
       const fields: Record<string, unknown> = {

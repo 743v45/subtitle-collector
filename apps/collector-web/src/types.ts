@@ -44,6 +44,17 @@ export interface TrackInfo {
 }
 export interface VideoDetail { video: VideoInfo; tracks: TrackInfo[]; }
 
+// change_log（最近采集/变更流水，对应 server getChanges）
+export interface ChangeRow {
+  id: number;
+  entity: string;       // 'creator' | 'video'
+  entity_id: number;
+  field: string;
+  old_value: string | null;
+  new_value: string | null;
+  changed_at: number;
+}
+
 export interface ClientInfo {
   client_id: string;
   ext_version: string | null;

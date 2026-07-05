@@ -1,7 +1,7 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type Database from 'better-sqlite3';
 import { getVideo, getVersionPayload } from '../db/queries.js';
-import { listVideosFiltered, type VideoSortKey, type VideoListItemAdvanced } from '../db/advanced.js';
+import { listVideosFiltered, getChanges, type VideoSortKey, type VideoListItemAdvanced, type ChangeFilter } from '../db/advanced.js';
 import { parseVideoFilter, parseBool } from './filter.js';
 
 function json(res: ServerResponse, status: number, body: unknown): void {
@@ -52,6 +52,22 @@ export function handleQueryHttp(req: IncomingMessage, res: ServerResponse, db: D
   const url = new URL(req.url ?? '/', 'http://localhost');
   const pathname = url.pathname;
 
+  if (pathname === '/api/changes') {
+    const entity = url.searchParams.get('entity') ?? undefined;
+    const entityIdRaw = url.searchParams.get('entity_id');
+    const entity_id = entityIdRaw != null && /^\d+$/.test(entityIdRaw) ? Number(entityIdRaw) : undefined;
+    const field = url.searchParams.get('field') ?? undefined;
+    const filter: ChangeFilter = { entity, entity_id, field };
+    const sinceParam = url.searchParams.get('since');
+    if (sinceParam != null && Number.isFinite(Number(sinceParam))) filter.since = Number(sinceParam);
+    const untilParam = url.searchParams.get('until');
+    if (untilParam != null && Number.isFinite(Number(untilParam))) filter.until = Number(untilParam);
+    const page = Math.max(1, Math.floor(Number(url.searchParams.get('page') ?? '1')) || 1);
+    const size = Math.min(100, Math.max(1, Math.floor(Number(url.searchParams.get('size') ?? '20')) || 20));
+    const data = getChanges(db, filter, page, size);
+    json(res, 200, { ok: true, total: data.total, page: data.page, size: data.size, items: data.items });
+    return;
+  }
   if (pathname === '/api/videos') {
     const filter = parseVideoFilter(url.searchParams);
     // sort：非法值落回默认 first_seen（不报错）
