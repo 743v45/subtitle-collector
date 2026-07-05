@@ -75,6 +75,23 @@ export function collectDedupe(
   return { collected, missing };
 }
 
+/** `collect nosub`（内部用）：返回 bvids 中「已入 videos 但无 subtitle_tracks」的子集（供 --retry-nosub 重采）。
+ *  与 collectDedupe 互补：dedupe 只看 video 行存在即标 collected（含「无字幕也入库」），nosub 进一步挑出
+ *  「video 在库但无字幕轨」者——刚发布的视频字幕可能尚未生成，采过后入库 video 但无 track，需可重采。 */
+export function collectNosub(
+  db: Database.Database,
+  bvids: string[],
+): string[] {
+  if (bvids.length === 0) return [];
+  const placeholders = bvids.map(() => '?').join(',');
+  const rows = db.prepare(
+    `SELECT v.source_vid FROM videos v
+     LEFT JOIN subtitle_tracks t ON t.video_id = v.id
+     WHERE v.source = 'bilibili' AND v.source_vid IN (${placeholders}) AND t.id IS NULL`,
+  ).all(...bvids) as Array<{ source_vid: string }>;
+  return rows.map((r) => r.source_vid);
+}
+
 /** `collect upper-info <mid>`：下发 get-upper-info，扩展 fetch acc/info+stat → ingest-upper 入库。 */
 export async function collectUpperInfo(
   client: CollectClient,
@@ -125,12 +142,16 @@ export async function collectUpperVideos(
 /** `collect upper-videos --all`：循环翻页拉完 UP 主所有视频，合并 items 后按单页响应形状返回。 */
 // page 从 1 起，每页 size 条；翻到本页 items 不足 size（到尾）或累计达 total 停。
 // maxPages 兜底防异常 total 导致的无限翻页。列表 API 轻量，页间不额外 sleep（CLI↔扩展↔B站 往返即延迟）。
+// sinceCreated（可选）：发布时间窗起点（UNIX 秒）。非空时过滤掉 created < sinceCreated 的视频；
+//   created == null 的视频保留（避免漏采刚发布还未带发布时间的条目）。
+//   total 语义：未传 sinceCreated 保持 API 原 total；传了则用过滤后长度（便于调用方判断队列规模）。
 export async function collectUpperVideosAll(
   client: CollectClient,
   clientId: string,
   mid: string,
   size: number,
   timeout: number,
+  sinceCreated?: number,
 ): Promise<UpperVideosResp> {
   const allItems: UpperVideoItem[] = [];
   let total = 0;
@@ -149,13 +170,19 @@ export async function collectUpperVideosAll(
     allItems.push(...items);
     if (items.length < size || (total > 0 && allItems.length >= total)) break;
   }
+  // sinceCreated 过滤：null created 保留（避免漏采）；不传则不过滤（向后兼容）。
+  const filtered = sinceCreated != null
+    ? allItems.filter((it) => it.created == null || (it.created ?? 0) >= sinceCreated)
+    : allItems;
+  // total 语义：未传 sinceCreated 时保持原 total（来自 API）；传了则用过滤后长度。
+  const resultTotal = sinceCreated != null ? filtered.length : total;
   // 用最后一次外层包装 + 合并后的全量 data，保持与单页输出形状一致。
   return {
     ...(lastResp ?? { ok: true }),
     result: {
       ...(lastResp?.result ?? { ok: true }),
       ok: true,
-      data: { total, items: allItems },
+      data: { total: resultTotal, items: filtered },
     },
   };
 }
@@ -325,16 +352,17 @@ export function buildCollectCommand(): Command {
     .option('--page <n>', '页码（默认 1，--all 时忽略）', (v) => Number.parseInt(v, 10), 1)
     .option('--size <n>', '每页条数（默认 30）', (v) => Number.parseInt(v, 10), 30)
     .option('--all', '全量翻页拉完所有视频（默认仅首页）')
+    .option('--since-created <unix>', '只保留发布时间 >= 该 UNIX 秒的视频（null 保留，--all 时生效）', (v) => Number.parseInt(v, 10))
     .option('--client <id>', '扩展 client_id')
     .option('--timeout <ms>', '超时毫秒（默认 15000）', (v) => Number.parseInt(v, 10), DEFAULT_COLLECT_TIMEOUT_MS)
-    .action(async (mid: string, opts: { page: number; size: number; all?: boolean; client?: string; timeout: number }) => {
+    .action(async (mid: string, opts: { page: number; size: number; all?: boolean; sinceCreated?: number; client?: string; timeout: number }) => {
       if (!Number.isFinite(opts.timeout) || opts.timeout <= 0) emitError(`invalid --timeout: ${opts.timeout}`, 'ARGS');
       const ctx = getCliContext();
       const client = new ServerClient(ctx.serverUrl, ctx.token);
       try {
         const clientId = await resolveClientId(client as CollectClient, opts.client);
         const data = opts.all
-          ? await collectUpperVideosAll(client as CollectClient, clientId, mid, opts.size, opts.timeout)
+          ? await collectUpperVideosAll(client as CollectClient, clientId, mid, opts.size, opts.timeout, opts.sinceCreated)
           : await collectUpperVideos(client as CollectClient, clientId, mid, { page: opts.page, size: opts.size }, opts.timeout);
         emitResult(data, ctx.format);
       } catch (err) {

@@ -11,4 +11,10 @@ export default defineConfig({
     outDir: resolve(__dirname, '../collector-server/public'),
     emptyOutDir: true,
   },
+  server: {
+    proxy: {
+      '/api': 'http://127.0.0.1:21527',
+      '/ping': 'http://127.0.0.1:21527',
+    },
+  },
 });

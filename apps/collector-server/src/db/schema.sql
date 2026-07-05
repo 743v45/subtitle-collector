@@ -1,3 +1,14 @@
+-- UP 主分类（agent 自动分类 / human 人工分类，两套隔离）。
+CREATE TABLE IF NOT EXISTS categories (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  name        TEXT NOT NULL,
+  scope       TEXT NOT NULL CHECK(scope IN ('agent','human')),
+  sort_order  INTEGER NOT NULL DEFAULT 0,
+  created_at  INTEGER NOT NULL,
+  UNIQUE(name, scope)
+);
+CREATE INDEX IF NOT EXISTS idx_categories_scope ON categories(scope, sort_order);
+
 -- 四层 + 通用 change_log
 CREATE TABLE IF NOT EXISTS creators (
   id            INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -12,6 +23,8 @@ CREATE TABLE IF NOT EXISTS creators (
   official_title TEXT,
   fans          INTEGER,
   following     INTEGER,
+  category_agent_id INTEGER REFERENCES categories(id),
+  category_human_id INTEGER REFERENCES categories(id),
   first_seen_at INTEGER NOT NULL,
   updated_at    INTEGER NOT NULL,
   UNIQUE(source, source_uid)

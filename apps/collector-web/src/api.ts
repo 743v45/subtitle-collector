@@ -3,6 +3,29 @@ import type { SubtitleLine } from '@/components/SubtitleView';
 
 const BASE = '';
 
+export interface Category {
+  id: number;
+  name: string;
+  scope: 'agent' | 'human';
+  sort_order: number;
+  created_at: number;
+}
+
+export interface CreatorListItem {
+  id: number;
+  source: string;
+  source_uid: string;
+  name: string | null;
+  avatar: string | null;
+  fans: number | null;
+  video_count: number;
+  category_agent_id: number | null;
+  category_agent_name: string | null;
+  category_human_id: number | null;
+  category_human_name: string | null;
+  first_seen_at: number;
+}
+
 async function ensureOk<T>(r: Response, parse: (json: any) => T): Promise<T> {
   if (!r.ok) throw new Error(`HTTP ${r.status}`);
   const json = await r.json();
@@ -37,4 +60,63 @@ export async function setReporting(clientId: string, enabled: boolean): Promise<
     body: JSON.stringify({ enabled }),
   });
   return ensureOk(r, (j) => j.reporting_enabled);
+}
+
+export async function listCategories(scope?: 'agent' | 'human'): Promise<Category[]> {
+  const q = scope ? `?scope=${scope}` : '';
+  const r = await fetch(`${BASE}/api/categories${q}`);
+  return ensureOk(r, (j) => j.items ?? []);
+}
+
+export async function createCategory(name: string, scope: 'agent' | 'human'): Promise<Category> {
+  const r = await fetch(`${BASE}/api/categories`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name, scope }),
+  });
+  return ensureOk(r, (j) => j.category);
+}
+
+export async function updateCategory(id: number, patch: { name?: string; sort_order?: number }): Promise<Category> {
+  const r = await fetch(`${BASE}/api/categories/${id}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(patch),
+  });
+  return ensureOk(r, (j) => j.category);
+}
+
+export async function deleteCategory(id: number): Promise<void> {
+  const r = await fetch(`${BASE}/api/categories/${id}`, { method: 'DELETE' });
+  ensureOk(r, () => undefined);
+}
+
+export async function listCreators(params: {
+  q?: string;
+  category?: string;
+  scope?: 'agent' | 'human';
+  page?: number;
+  size?: number;
+}): Promise<{ total: number; items: CreatorListItem[] }> {
+  const u = new URLSearchParams();
+  if (params.q) u.set('q', params.q);
+  if (params.category) u.set('category', params.category);
+  if (params.scope) u.set('scope', params.scope);
+  u.set('page', String(params.page ?? 1));
+  u.set('size', String(params.size ?? 20));
+  const r = await fetch(`${BASE}/api/creators?${u}`);
+  return ensureOk(r, (j) => ({ total: j.total ?? 0, items: j.items ?? [] }));
+}
+
+export async function setCreatorCategory(
+  source_uid: string,
+  scope: 'agent' | 'human',
+  name: string,
+): Promise<void> {
+  const r = await fetch(`${BASE}/api/creators/by-uid/${encodeURIComponent(source_uid)}/category`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ scope, name }),
+  });
+  ensureOk(r, () => undefined);
 }

@@ -33,6 +33,7 @@ export function VideoList({ onOpen }: { onOpen: (source: string, sourceVid: stri
         <h2 className="text-lg font-semibold">视频库</h2>
         <span className="text-sm text-muted-foreground">共 {total} 条</span>
       </div>
+      <div className="text-sm text-muted-foreground">按 UP 主分类筛选请到「UP 主」页</div>
       <Input value={q} onChange={e => onQChange(e.target.value)} placeholder="搜索标题/创作者" />
       <div className="flex items-center justify-between rounded-md border bg-muted/40 px-4 py-2 text-sm text-muted-foreground">
         <div>第 {page}/{totalPages} 页</div>

@@ -5,7 +5,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import Database from 'better-sqlite3';
-import { collectSearch, collectSubtitle, collectDedupe, collectUpperInfo, collectUpperVideos, collectUpperVideosAll, collectNewVideos, collectDiscover, resolveClientId } from './collect.js';
+import { migrate, runMigrations } from '../../db/migrate.js';
+import { collectSearch, collectSubtitle, collectDedupe, collectUpperInfo, collectUpperVideos, collectUpperVideosAll, collectNewVideos, collectDiscover, resolveClientId, collectNosub, type CollectClient } from './collect.js';
 
 function mockClient(sendCommandResult: unknown, listClientsResult: unknown[] = [{ client_id: 'c1' }]) {
   const calls: Array<{ clientId: string; action: string; params: unknown; timeout: number }> = [];
@@ -177,4 +178,46 @@ test('collectDiscover 单 mid 失败记 error，不影响其他', async () => {
   assert.equal(out.per_mid[1].total, 0);               // m2 失败
   assert.match(out.per_mid[1].error ?? '', /bili_-400|list-upper-videos failed/);
   assert.deepEqual(out.all_new, ['BV1']);              // m1 的 new 仍在汇总
+});
+
+test('collectUpperVideosAll sinceCreated 过滤（保留 null created）', async () => {
+  // 时间窗起点 1700000001：BV1(1700000000) 被 filter；BV2(1750000000) 保留；BV3(null) 保留避免漏采。
+  const items = [
+    { bvid: 'BV1', created: 1700000000 },
+    { bvid: 'BV2', created: 1750000000 },
+    { bvid: 'BV3', created: null as unknown as undefined },
+  ];
+  const client: CollectClient = {
+    listClients: async () => [{ client_id: 'c1' }],
+    sendCommand: async () => ({ ok: true, result: { ok: true, data: { total: 3, items } } }),
+  };
+  const resp = await collectUpperVideosAll(client, 'c1', 'mid123', 30, 1000, 1700000001);
+  const bv = resp.result!.data!.items!.map((i) => i.bvid);
+  assert.deepEqual(bv.sort(), ['BV2', 'BV3']); // BV1 被时间窗过滤；BV3 null 保留
+});
+
+test('collectNosub 识别「有 video 无 track」', () => {
+  // 完整 schema：creators + videos + subtitle_tracks（migrate 建 categories/creators，schema.sql 建其余）。
+  const db = new Database(':memory:');
+  migrate(db);
+  runMigrations(db);
+  // creator + 3 视频：V1 有轨 / V2 无轨 / V3 无轨
+  const now = Date.now();
+  const ci = db.prepare('INSERT INTO creators (source, source_uid, first_seen_at, updated_at) VALUES (?,?,?,?)').run('bilibili', 'u', now, now);
+  const ins = db.prepare('INSERT INTO videos (source, source_vid, creator_id, title, first_seen_at, updated_at) VALUES (?,?,?,?,?,?)');
+  const v1 = ins.run('bilibili', 'BV1', ci.lastInsertRowid, 't1', now, now);
+  const v2 = ins.run('bilibili', 'BV2', ci.lastInsertRowid, 't2', now, now);
+  ins.run('bilibili', 'BV3', ci.lastInsertRowid, 't3', now, now);
+  db.prepare('INSERT INTO subtitle_tracks (video_id, lan, lan_doc, track_type) VALUES (?,?,?,?)').run(v1.lastInsertRowid, 'zh', '', 1);
+  // 故意复用 v2 变量名占位（避免 lint 未用告警，同时构造「无轨」场景）
+  void v2;
+  const nosub = collectNosub(db, ['BV1', 'BV2', 'BV3', 'BVx']);
+  assert.deepEqual(nosub.sort(), ['BV2', 'BV3']); // BV1 有轨不算；BVx 不在库不算
+});
+
+test('collectNosub 空输入 → 空结果', () => {
+  const db = new Database(':memory:');
+  migrate(db);
+  runMigrations(db);
+  assert.deepEqual(collectNosub(db, []), []);
 });
