@@ -35,17 +35,27 @@ function fetchSubtitleBodiesViaBg(bvid, subs) {
     const url = s.subtitle_url;
     if (!url || s.url_missing) continue;
     if (collected.get(bvid)?.bodies.has(url)) continue; // 已有（inject 拦到的）不重复
-    chrome.runtime.sendMessage({ type: "FETCH_SUBTITLE", url }, (resp) => {
-      const cur = collected.get(bvid);
-      if (!cur) return;
-      if (resp?.ok && resp.body) {
-        cur.bodies.set(url, resp.body);
-        console.log(`[content] background 抓到字幕体 bvid=${bvid} url=${url.slice(-30)} size=${JSON.stringify(resp.body).length}`);
-        flushIfReady(bvid);
-      } else {
-        console.warn(`[content] background 抓字幕失败 bvid=${bvid} url=${url.slice(-30)} err=${resp?.error}`);
-      }
-    });
+    // 上下文失效（扩展 reload/更新后旧 content 驻留）时 sendMessage 同步抛
+    // "Extension context invalidated"；try/catch 兜底同步异常，回调查 lastError 兜底异步错误。
+    try {
+      chrome.runtime.sendMessage({ type: "FETCH_SUBTITLE", url }, (resp) => {
+        if (chrome.runtime.lastError) {
+          console.warn(`[content] FETCH_SUBTITLE 失败 bvid=${bvid} url=${url.slice(-30)} err=${chrome.runtime.lastError.message}`);
+          return;
+        }
+        const cur = collected.get(bvid);
+        if (!cur) return;
+        if (resp?.ok && resp.body) {
+          cur.bodies.set(url, resp.body);
+          console.log(`[content] background 抓到字幕体 bvid=${bvid} url=${url.slice(-30)} size=${JSON.stringify(resp.body).length}`);
+          flushIfReady(bvid);
+        } else {
+          console.warn(`[content] background 抓字幕失败 bvid=${bvid} url=${url.slice(-30)} err=${resp?.error}`);
+        }
+      });
+    } catch (e) {
+      console.warn(`[content] FETCH_SUBTITLE 发送异常（扩展上下文可能已失效）bvid=${bvid} url=${url.slice(-30)} err=${e?.message}`);
+    }
   }
 }
 
@@ -81,7 +91,11 @@ function flushIfReady(bvid, force = false) {
     tracks,
   };
   console.log(`[content] INGEST bvid=${cur.meta.bvid} tracks=${tracks.length}${force ? " force=true（绕过开关）" : ""}`);
-  chrome.runtime.sendMessage({ type: "INGEST", payload: record, ...(force ? { force: true } : {}) });
+  try {
+    chrome.runtime.sendMessage({ type: "INGEST", payload: record, ...(force ? { force: true } : {}) });
+  } catch (e) {
+    console.warn(`[content] INGEST 发送异常（扩展上下文可能已失效）bvid=${cur.meta.bvid} err=${e?.message}`);
+  }
 }
 
 // operate 观察窗口：点击字幕开关后，若 inject 检测到真实字幕请求 → 视为生效
