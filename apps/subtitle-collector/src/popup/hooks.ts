@@ -187,6 +187,41 @@ export function useCreator(creatorId: number | null | undefined): CreatorState {
   return creator;
 }
 
+// P4：UP 最新视频（从 background passive 缓存读，chrome.storage）。
+// background 的 ensureUpperVideos 在被动采集时把 UP 最新视频写入
+// chrome.storage.local[`upperVideos:${mid}`]（1h TTL）；本 hook 只读不写。
+// 无缓存（首次/该 UP 从未被动采过）→ empty；缓存命中 → ok 携带 items + fetchedAt。
+export interface UpperVideoItem {
+  bvid: string;
+  title: string;
+  created: number | null;
+}
+export type UpperVideosState =
+  | { state: 'loading' }
+  | { state: 'empty' }
+  | { state: 'ok'; items: UpperVideoItem[]; fetchedAt: number };
+
+export function useUpperVideos(mid: string | null | undefined): UpperVideosState {
+  const [state, setState] = useState<UpperVideosState>({ state: 'loading' });
+  useEffect(() => {
+    if (!mid) {
+      setState({ state: 'empty' });
+      return;
+    }
+    chrome.storage.local.get([`upperVideos:${mid}`], (items) => {
+      const cached = items[`upperVideos:${mid}`] as
+        | { items: UpperVideoItem[]; fetchedAt: number }
+        | undefined;
+      if (cached?.items?.length) {
+        setState({ state: 'ok', items: cached.items, fetchedAt: cached.fetchedAt });
+      } else {
+        setState({ state: 'empty' });
+      }
+    });
+  }, [mid]);
+  return state;
+}
+
 // —— 上报开关：启动从 storage 读（默认开，!==false），切换时发 SET_REPORTING ——
 // enabled 初始 null=未知：避免首帧硬编码 true（"开"）→ storage 实际 false 时"开→关"的翻转闪烁；
 // storage 回调回来才落到真实 boolean，Popup 在 null 期间显示中性占位。

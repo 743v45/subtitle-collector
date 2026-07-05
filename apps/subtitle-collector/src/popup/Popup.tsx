@@ -6,12 +6,14 @@ import {
   useCreator,
   useLocalCollected,
   useReporting,
+  useUpperVideos,
   diffConsistency,
   type CollectedState,
   type ConnState,
   type CreatorState,
   type LocalCollectedState,
   type LoginState,
+  type UpperVideosState,
 } from './hooks';
 import { bili, type Platform, type StatIconName } from './platforms';
 import { fmtNum } from './format';
@@ -104,6 +106,11 @@ export function Popup() {
   // 没有 creator_id → useCreator 返回 none，CreatorCard 不渲染，无噪音。
   const creatorId =
     serverCollected.state === 'ok' ? serverCollected.video.creator_id : undefined;
+  // 在 Popup 顶层取 creator（而非 CreatorCard 内部）：source_uid 还要喂给 useUpperVideos
+  // 读 background passive 缓存，避免在 CreatorCard 里再调一次 useCreator 双发请求。
+  const creatorState = useCreator(creatorId);
+  const upMid = creatorState.state === 'ok' ? creatorState.creator.source_uid : null;
+  const upperVideos = useUpperVideos(upMid);
 
   // 手动上报反馈：reporting → success/failed（INGEST_RESULT.ok）/ 超时 failed（未连接 / 上报未达 server）。
   // 字幕数据视频页加载时已由 content.js 自动采集，这里只是把已采集数据上报到 collector-server。
@@ -153,7 +160,8 @@ export function Popup() {
             server={serverCollected}
             consistency={consistency}
           />
-          <CreatorCard creatorId={creatorId} />
+          <CreatorCard creator={creatorState} />
+          <UpperVideosList state={upperVideos} />
         </>
       )}
       <FooterActions
@@ -474,9 +482,8 @@ function CollectedBlock({
 
 // UP 主资料卡：视频信息卡下方，name + level + official 认证 Badge + sign + fans/following。
 // loading 显示查询中；none（无 creator_id / server-down / 未采集）不渲染，避免噪音。
-function CreatorCard({ creatorId }: { creatorId: number | null | undefined }) {
-  const creator = useCreator(creatorId);
-
+// creator 由 Popup 顶层 useCreator 提供（source_uid 复用给 useUpperVideos，避免双发请求）。
+function CreatorCard({ creator }: { creator: CreatorState }) {
   if (creator.state === 'loading') {
     return (
       <Card>
@@ -516,6 +523,32 @@ function CreatorCard({ creatorId }: { creatorId: number | null | undefined }) {
             )}
           </div>
         )}
+      </CardContent>
+    </Card>
+  );
+}
+
+// UP 最新视频列表：读 background passive 缓存（ensureUpperVideos 在被动采集时写入）。
+// loading / empty 不渲染（避免无缓存时的空白闪烁），仅在 ok 时展示最近 5 条 + 缓存时间。
+function UpperVideosList({ state }: { state: UpperVideosState }) {
+  if (state.state !== 'ok') return null;
+  return (
+    <Card>
+      <CardContent className="space-y-1 p-3">
+        <div className="text-xs text-muted-foreground">
+          UP 最新视频（被动缓存 · {new Date(state.fetchedAt).toLocaleString()}）
+        </div>
+        {state.items.slice(0, 5).map((it) => (
+          <a
+            key={it.bvid}
+            href={`https://www.bilibili.com/video/${it.bvid}`}
+            target="_blank"
+            rel="noreferrer"
+            className="block truncate text-xs hover:text-primary"
+          >
+            {it.title}
+          </a>
+        ))}
       </CardContent>
     </Card>
   );
