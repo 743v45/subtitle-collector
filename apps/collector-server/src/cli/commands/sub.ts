@@ -157,15 +157,13 @@ export function makeDbPayloadSource(db: Database.Database): PayloadSource {
 }
 
 // ── searchSubtitles 结果形状 ──
-export interface SubtitleSnippet extends Snippet {}
-
 export interface SubtitleSearchItem {
   // video 元信息：刻意不含 pic / 封面 / 视频链接等媒体字段（AI 看不了且占 token —— 用户明确要求剔除）
   video: { id: number; source: string; source_vid: string; title: string;
            creator_name: string | null; duration: number | null; published_at: number | null };
   track: TrackInfo;
   version: VersionInfo;
-  snippets: SubtitleSnippet[];
+  snippets: Snippet[];
   full?: string;
 }
 
@@ -228,7 +226,7 @@ export function searchSubtitles(
   for (const v of candidates) {
     if (totalSnippets >= maxSnippets) { truncated = true; break; }
     const payloads = source.getPayloads(v.id, !!opts.allTracks);
-    let chosen: { track: TrackInfo; version: VersionInfo; snippets: SubtitleSnippet[]; payload: unknown } | null = null;
+    let chosen: { track: TrackInfo; version: VersionInfo; snippets: Snippet[]; payload: unknown } | null = null;
     for (const pe of payloads) {
       const body = payloadBody(pe.payload);
       if (!body) continue;  // 结构异常跳过

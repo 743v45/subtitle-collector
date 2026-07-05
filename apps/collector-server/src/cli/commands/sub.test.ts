@@ -266,3 +266,25 @@ test('searchSubtitles: --full 回整条字幕文本', () => {
     assert.ok((out.items[0].full ?? '').includes('开场白'));
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
+
+test('searchSubtitles: F11 --all-tracks 搜全部轨（默认轨未命中时回退其他轨）', () => {
+  const { db, dir } = setupSub();
+  try {
+    const v1Id = (db.prepare('SELECT id FROM videos WHERE source_vid=?').get('BV1') as { id: number }).id;
+    const src: PayloadSource = {
+      getPayloads: (vid: number, allTracks: boolean) => {
+        if (vid !== v1Id) return [];
+        const defaultTrack = { track: { id: 1, lan: 'zh', track_type: 1 }, version: { id: 1, origin: 'asr' }, payload: { body: [{ from: 0, to: 1, content: '这段不含关键词' }] } };
+        const otherTrack = { track: { id: 2, lan: 'en', track_type: 1 }, version: { id: 2, origin: 'asr' }, payload: { body: [{ from: 0, to: 1, content: '通胀在这里' }] } };
+        return allTracks ? [defaultTrack, otherTrack] : [defaultTrack];
+      },
+    };
+    // 默认 allTracks=false：只搜默认轨（不含「通胀」）→ 不命中（BV1 的 DB payload 含「通胀」所以进候选池，但 mock 默认轨 content 无「通胀」→ JS 不命中）
+    const out1 = searchSubtitles(db, src, { keyword: '通胀' });
+    assert.equal(out1.matched_videos, 0);
+    // allTracks=true：默认轨不命中，回退第二轨命中
+    const out2 = searchSubtitles(db, src, { keyword: '通胀', allTracks: true });
+    assert.equal(out2.matched_videos, 1);
+    assert.equal(out2.items[0].track.id, 2);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});

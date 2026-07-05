@@ -259,7 +259,7 @@ interface PayloadSource {
 | F8 | `extractSnippets`：`--max-snippets-per-video` 截断 | 单测 | ✅ |
 | F9 | `searchSubtitles` 召回正确性：(a) 子串 LIKE 预筛 ⊇ JS 精确；(b) 正则模式**不加** LIKE 预筛 | 单测 F9a/F9b；spec review 独立推理确认 F9b 能抓住「正则误加预筛」bug | ✅ `cbfa852` |
 | F10 | `--max-snippets` 全局截断 + `truncated:true` | 单测 | ✅ |
-| F11 | 默认轨 vs `--all-tracks` | makeDbPayloadSource 的 allTracks 分支逻辑直接；setupSub 视频均单轨，**未专门断言 allTracks=true**；F12 间接覆盖 getPayloads 调用 | ⏳ 未专门覆盖 |
+| F11 | 默认轨 vs `--all-tracks` | 单测 mock 双轨 source：allTracks=false 只搜默认轨（不命中）；allTracks=true 回退第二轨命中 | ✅ |
 | F12 | 无字幕 / payload 异常 → 跳过不崩 | 单测 mock 异常 payloadSource | ✅ |
 | F13 | `--full` 回整条（convertSubtitle 默认 txt） | 单测 | ✅ |
 | F14 | `--plain` 片段去时间戳 | 单测 | ✅ |
@@ -279,7 +279,7 @@ interface PayloadSource {
 | R5 | 2026-07-05 | 回归 | ⚠️ 部分：`sub.test.ts` 20 + `videos.test.ts` 12 局部 PASS；全量 `pnpm test` 未跑（main 有并发在制品干扰，与本次无关） |
 | R6 | 2026-07-05 | E2E 真实检索（F17）+ 省 token 对照（F18） | ✅ PASS（真实库命中；省 token 1723 vs 78399 ≈ 2.2%） |
 
-> 实现 commits（`feat/subtitle-search` 分支废弃，按用户裁定留 main 并发）：`f4e4112`(T1) → `f25b2f2`(T2) → `59e1f11`(T3) → `cbfa852`(T4) → `9a81495`(T4 清理) → `232655c`(T5)。T6 = E2E + 文档同步（本节）。F11（allTracks）未专门覆盖，标记 ⏳。
+> 实现 commits（`feat/subtitle-search` 分支废弃，按用户裁定留 main 并发）：`f4e4112`(T1) → `f25b2f2`(T2) → `59e1f11`(T3) → `cbfa852`(T4) → `9a81495`(T4 清理) → `232655c`(T5)。T6 = E2E + 文档同步（本节）。F11（allTracks）已补单测，标记 ✅。
 
 > 回归纪律（对齐项目 CLAUDE.md §3）：bug 修复 commit 必须含对应「失败→通过」测试用例；验收清单每项都要有测试覆盖，未覆盖项标记 ⏳。
 
