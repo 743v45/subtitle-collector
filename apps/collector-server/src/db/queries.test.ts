@@ -1,11 +1,12 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import Database from 'better-sqlite3';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { openDb, migrate } from './migrate.js';
+import { openDb, migrate, runMigrations } from './migrate.js';
 import { ingestVideo } from './ingest.js';
-import { listVideos, getVideo, getVersionPayload, getCreator } from './queries.js';
+import { listVideos, getVideo, getVersionPayload, getCreator, listCategories, createCategory, updateCategory, deleteCategory, listCreators, setCreatorCategory } from './queries.js';
 
 function freshDb() {
   const dir = mkdtempSync(join(tmpdir(), 'collector-q-'));
@@ -140,4 +141,54 @@ test('getCreator: 未命中返回 null', () => {
   try {
     assert.equal(getCreator(db, 999), null);
   } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+// ── categories CRUD + creators 列表/打分类（Task B2）──
+// 用 :memory: 库跑 migrate + runMigrations（验证双轨），不需要 FS 目录。
+function memDb() {
+  const db = new Database(':memory:');
+  migrate(db); runMigrations(db);
+  return db;
+}
+
+test('categories CRUD', () => {
+  const db = memDb();
+  const a = createCategory(db, '股票', 'agent');
+  assert.equal(a.name, '股票');
+  assert.equal(a.scope, 'agent');
+  // UNIQUE(name, scope) 冲突
+  assert.throws(() => createCategory(db, '股票', 'agent'));
+  // 同名不同 scope 允许
+  const h = createCategory(db, '股票', 'human');
+  assert.notEqual(a.id, h.id);
+  // list by scope
+  const agentCats = listCategories(db, 'agent');
+  assert.equal(agentCats.length, 1);
+  assert.equal(agentCats[0].name, '股票');
+  // update
+  updateCategory(db, a.id, { name: 'A股' });
+  assert.equal(listCategories(db, 'agent')[0].name, 'A股');
+  // delete
+  deleteCategory(db, a.id);
+  assert.equal(listCategories(db, 'agent').length, 0);
+});
+
+test('setCreatorCategory upsert creator 并设分类', () => {
+  const db = memDb();
+  const c = setCreatorCategory(db, 'bilibili', '123', 'agent', '股票');
+  assert.equal(c.category_agent_name, '股票');
+  // 再设 human 分类，agent 分类不被覆盖
+  setCreatorCategory(db, 'bilibili', '123', 'human', '关注');
+  const c2 = setCreatorCategory(db, 'bilibili', '123', 'agent', '股票');
+  assert.equal(c2.category_agent_name, '股票');
+  assert.equal(c2.category_human_name, '关注');
+});
+
+test('listCreators 按分类筛选', () => {
+  const db = memDb();
+  setCreatorCategory(db, 'bilibili', '1', 'agent', '股票');
+  setCreatorCategory(db, 'bilibili', '2', 'agent', '股票');
+  setCreatorCategory(db, 'bilibili', '3', 'agent', '基金');
+  const r = listCreators(db, { category: '股票', scope: 'agent' }, 1, 20);
+  assert.equal(r.total, 2);
 });
