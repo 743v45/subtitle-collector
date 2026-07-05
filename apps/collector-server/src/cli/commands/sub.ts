@@ -49,3 +49,62 @@ export function matchBody(body: BodyItem[], keyword: string, opts: MatchOpts = {
   });
   return hits;
 }
+
+// ── 片段（命中点 + 上下文）──
+export interface Snippet {
+  from: number;       // 命中段起始秒
+  to: number;         // 命中段结束秒
+  content: string;    // 命中段原文
+  context: string;    // ±ctxSec 邻段拼接；默认 "[from-to] content" 空格连接，plain=true 去前缀
+}
+
+export interface ExtractOpts {
+  plain?: boolean;
+  maxPerVideo?: number;
+}
+
+/**
+ * 对每个命中索引产出片段：从命中段向前后贪心吞并「时间差 <= ctxSec」的邻段，
+ * 拼成 context。时间差定义：向前 = center.from - body[lo-1].to；向后 = body[hi+1].from - center.to。
+ * - plain=true：context 只留纯文本（邻段 content 直接拼接）。
+ * - maxPerVideo：按命中顺序取前 N（默认不限）。
+ */
+export function extractSnippets(
+  body: BodyItem[],
+  hitIndices: number[],
+  ctxSec: number,
+  opts: ExtractOpts = {},
+): Snippet[] {
+  const max = opts.maxPerVideo ?? Number.MAX_SAFE_INTEGER;
+  return hitIndices.slice(0, max).map((idx) => {
+    const center = body[idx];
+    let lo = idx;
+    while (lo > 0 && center.from - body[lo - 1].to <= ctxSec) lo--;
+    let hi = idx;
+    while (hi < body.length - 1 && body[hi + 1].from - center.to <= ctxSec) hi++;
+    const segs = body.slice(lo, hi + 1);
+    const context = opts.plain
+      ? segs.map((s) => s.content).join('')
+      : segs.map((s) => `[${s.from}-${s.to}] ${s.content}`).join(' ');
+    return { from: center.from, to: center.to, content: center.content, context };
+  });
+}
+
+/**
+ * 从 payload（B 站字幕 JSON 对象）校验并提取 body 数组。
+ * 结构不符（非对象/缺 body/body 非数组/条目缺字段）→ 返回 null（调用方跳过该视频，不崩）。
+ * 校验逻辑镜像 subtitleFormat.ts 的 extractBody，但返回 null 而非抛错（检索场景容错优先）。
+ */
+export function payloadBody(payload: unknown): BodyItem[] | null {
+  if (typeof payload !== 'object' || payload === null) return null;
+  const body = (payload as { body?: unknown }).body;
+  if (!Array.isArray(body)) return null;
+  const items: BodyItem[] = [];
+  for (const raw of body) {
+    if (typeof raw !== 'object' || raw === null) return null;
+    const { from, to, content } = raw as Record<string, unknown>;
+    if (typeof from !== 'number' || typeof to !== 'number' || typeof content !== 'string') return null;
+    items.push({ from, to, content });
+  }
+  return items;
+}
