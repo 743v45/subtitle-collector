@@ -242,6 +242,186 @@ export async function collectDiscover(
   return { per_mid, all_new };
 }
 
+// ── collect find：条件检索（多页搜索 + 发布时间/粉丝数后过滤）──
+// 背景：search action 只能按关键词/分区/排序返回候选，不支持「粉丝数/发布时间」过滤；
+//   粉丝数更不在搜索结果里（需拿 mid 查 UP 主信息）。find 命令把这层胶水做进 CLI：
+//   多页 search → pubdate 后过滤 → 按 mid 解析 fans（creators 表缓存优先，miss 实时 get-upper-info）
+//   → fans 过滤 → 输出候选。可选 --collect 直接采字幕。
+
+/** search action 单条结果形状（扩展 formatSearchResult 后）。mid 可能是 number 或 string。 */
+export interface SearchItem {
+  bvid: string;
+  title?: string;
+  up?: string;
+  mid?: number | string;
+  play?: number;
+  duration?: string | number;
+  pubdate?: number;
+}
+
+/** find 命令输出条目（在 SearchItem 基础上补 fans）。 */
+export interface FindItem extends SearchItem {
+  fans?: number | null;
+}
+
+/** find 命令最终输出形状。 */
+export interface FindResult {
+  keyword: string;
+  tid?: number;
+  order: string;
+  raw_total: number;      // 搜索首页 page.count（B 站声称的总匹配数）
+  fetched: number;        // 多页合并后的候选条数
+  after_date: number;     // 经发布时间过滤后条数
+  after_fans: number;     // 经粉丝过滤后条数（= items 长度）
+  fans_cache_hit: number; // fans 取自 creators 表缓存的 unique mid 数
+  fans_fetched: number;   // fans 取自实时 get-upper-info 的 unique mid 数
+  fans_unknown: number;   // fans 未能解析（缓存 miss + 实时查询失败）的 unique mid 数
+  items: FindItem[];
+}
+
+/** find 命令检索选项（commander 层映射）。 */
+export interface FindOpts {
+  pages?: number;     // 翻多少页候选（默认 3）
+  order?: string;     // 默认 pubdate
+  tid?: number;
+  minFans?: number;   // 最低粉丝数（<=0 不过滤）
+  since?: number;     // 发布时间下限 UNIX 秒（可选）
+}
+
+/** fans 来源抽象（resolveFans 用）：DB 缓存 + 实时查询双通道。便于测试注入 mock。 */
+export interface FansSource {
+  readFansFromDb(mids: string[]): Promise<Record<string, number>>;
+  fetchFans(mid: string): Promise<number | null>;
+}
+
+/** 按 pubdate 过滤：since 为空 → 不过滤；pubdate==null 保留（与 upper-videos 一致，避免漏新视频）。 */
+export function filterByPubdate(items: SearchItem[], since?: number): SearchItem[] {
+  if (since == null) return items;
+  return items.filter((it) => it.pubdate == null || (it.pubdate ?? 0) >= since);
+}
+
+/** 按 fans 过滤：minFans<=0 → 不过滤；fans==null（未知）保留（保守，宁可多列再人工筛）。 */
+export function filterByFans(items: FindItem[], minFans?: number): FindItem[] {
+  if (!minFans || minFans <= 0) return items;
+  return items.filter((it) => it.fans == null || (it.fans ?? 0) >= minFans);
+}
+
+/** 解析发布时间下限：since（UNIX 秒）优先；其次 sinceDays（天，转 now - days*86400）；都没 → undefined。
+ *  now 注入便于测试（避免 Date.now 不稳定）。 */
+export function parseSince(opts: { since?: number; sinceDays?: number; now?: number }): number | undefined {
+  if (opts.since != null && Number.isFinite(opts.since)) return opts.since;
+  if (opts.sinceDays != null && Number.isFinite(opts.sinceDays)) {
+    const now = opts.now ?? Math.floor(Date.now() / 1000);
+    return now - opts.sinceDays * 86400;
+  }
+  return undefined;
+}
+
+/** 解析 YYYY-MM-DD → UNIX 秒（本地时区 00:00:00）。非法 → undefined。 */
+export function parseDateToUnix(dateStr?: string): number | undefined {
+  if (!dateStr) return undefined;
+  const m = /^(\d{4})-(\d{1,2})-(\d{1,2})$/.exec(dateStr);
+  if (!m) return undefined;
+  const dt = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]), 0, 0, 0);
+  return Number.isNaN(dt.getTime()) ? undefined : Math.floor(dt.getTime() / 1000);
+}
+
+/** 合并 DB 缓存 + 实时补充，解析每个 mid 的 fans。
+ *  - 缓存（creators 表 fans>0）直接用；miss 的串行实时查（调用方在 fetchFans 内部 sleep 防风控）；
+ *  - 返回 unique mid → fans 映射 + 三类计数（cache_hit / fetched / unknown）。 */
+export async function resolveFans(
+  mids: string[],
+  src: FansSource,
+): Promise<{ fans: Map<string, number>; cacheHit: number; fetched: number; unknown: number }> {
+  const fans = new Map<string, number>();
+  let cacheHit = 0;
+  let fetched = 0;
+  let unknown = 0;
+  const unique = [...new Set(mids)];
+  const cached = await src.readFansFromDb(unique);
+  const missing: string[] = [];
+  for (const mid of unique) {
+    const f = cached[mid];
+    if (f != null && f > 0) { fans.set(mid, f); cacheHit++; }
+    else missing.push(mid);
+  }
+  for (const mid of missing) {
+    const f = await src.fetchFans(mid);
+    if (f != null && f > 0) { fans.set(mid, f); fetched++; }
+    else unknown++;
+  }
+  return { fans, cacheHit, fetched, unknown };
+}
+
+/** 多页搜索合并：循环 collectSearch page=1..pages，合并 items；首页取 raw_total。
+ *  提前终止：某页 items 为空、或累计达 raw_total、或翻满 pages。 */
+export async function collectFindSearch(
+  client: CollectClient,
+  clientId: string,
+  keyword: string,
+  opts: { order: string; tid?: number; pages: number },
+  timeout: number,
+): Promise<{ raw_total: number; items: SearchItem[] }> {
+  const all: SearchItem[] = [];
+  let rawTotal = 0;
+  for (let page = 1; page <= opts.pages; page++) {
+    const resp = await collectSearch(client, clientId, keyword, { page, order: opts.order, tid: opts.tid }, timeout) as {
+      ok: boolean; result?: { ok: boolean; error?: string; data?: { total?: number; items?: SearchItem[] } };
+    };
+    if (!resp.ok || !resp.result?.ok) {
+      throw new Error(`search page=${page} failed: ${resp.result?.error ?? 'server error'}`);
+    }
+    const data = resp.result.data ?? {};
+    if (page === 1) rawTotal = data.total ?? 0;
+    const items = data.items ?? [];
+    all.push(...items);
+    if (items.length === 0) break;                       // 没更多结果
+    if (rawTotal > 0 && all.length >= rawTotal) break;    // 拿够了
+  }
+  return { raw_total: rawTotal, items: all };
+}
+
+/** find 命令编排（纯函数，注入 client + fansSource + 选项；可测）。不含采字幕（--collect 在 action 层）。 */
+export async function collectFind(
+  client: CollectClient,
+  clientId: string,
+  keyword: string,
+  opts: FindOpts,
+  fansSrc: FansSource,
+  timeout: number,
+): Promise<FindResult> {
+  const pages = opts.pages && opts.pages > 0 ? opts.pages : 3;
+  const order = opts.order ?? 'pubdate';
+  // 1. 多页搜索
+  const { raw_total, items: raw } = await collectFindSearch(
+    client, clientId, keyword, { order, tid: opts.tid, pages }, timeout,
+  );
+  // 2. pubdate 过滤
+  const afterDateItems = filterByPubdate(raw, opts.since);
+  // 3. 解析 fans（对去重 mid）
+  const mids = afterDateItems.map((it) => it.mid).filter((m) => m != null).map(String);
+  const { fans, cacheHit, fetched, unknown } = await resolveFans(mids, fansSrc);
+  // 4. 把 fans 填回 + 按 fans 过滤
+  const withFans: FindItem[] = afterDateItems.map((it) => ({
+    ...it,
+    fans: it.mid != null ? (fans.get(String(it.mid)) ?? null) : null,
+  }));
+  const finalItems = filterByFans(withFans, opts.minFans);
+  return {
+    keyword,
+    tid: opts.tid,
+    order,
+    raw_total,
+    fetched: raw.length,
+    after_date: afterDateItems.length,
+    after_fans: finalItems.length,
+    fans_cache_hit: cacheHit,
+    fans_fetched: fetched,
+    fans_unknown: unknown,
+    items: finalItems,
+  };
+}
+
 // ── commander 装配 ──
 
 /**
@@ -419,6 +599,96 @@ export function buildCollectCommand(): Command {
         const data = await collectDiscover(client as CollectClient, clientId, db, mids, { page: opts.page, size: opts.size }, opts.timeout);
         emitResult(data, ctx.format);
       } catch (err) { handleHttpError(err); }
+    });
+
+  collect
+    .command('find <keyword>')
+    .description('条件检索：关键词(+分区) 多页搜索，按发布时间/UP 粉丝数过滤出候选（fans 优先读 creators 表缓存，miss 实时查）')
+    .option('--tid <id>', '分区 tid（如 207 财经商业）', (v) => Number.parseInt(v, 10))
+    .option('--order <o>', '排序（默认 pubdate 最新）', 'pubdate')
+    .option('--pages <n>', '翻多少页候选（默认 3，每页约 20 条）', (v) => Number.parseInt(v, 10), 3)
+    .option('--min-fans <n>', '最低 UP 主粉丝数（默认 0=不过滤）', (v) => Number.parseInt(v, 10), 0)
+    .option('--since <YYYY-MM-DD>', '发布日期下限（本地时区 00:00；与 --since-days 互斥，优先 --since）')
+    .option('--since-days <n>', '近 N 天发布的视频（与 --since 互斥）', (v) => Number.parseInt(v, 10))
+    .option('--collect', '命中候选后串行采字幕入库（默认仅列候选）')
+    .option('--no-cache', '忽略 creators 表 fans 缓存，全部实时查（用于刷新粉丝数）')
+    .option('--sleep <ms>', '实时查 fans / 采字幕 的间隔毫秒（默认 600）', (v) => Number.parseInt(v, 10), 600)
+    .option('--client <id>', '扩展 client_id（缺省取第一个在线）')
+    .option('--timeout <ms>', '等扩展回执的超时毫秒（默认 15000）', (v) => Number.parseInt(v, 10), DEFAULT_COLLECT_TIMEOUT_MS)
+    .action(async (keyword: string, opts: {
+      tid?: number; order: string; pages: number; minFans: number;
+      since?: string; sinceDays?: number; collect?: boolean; cache?: boolean; sleep: number;
+      client?: string; timeout: number;
+    }) => {
+      if (!Number.isFinite(opts.timeout) || opts.timeout <= 0) emitError(`invalid --timeout: ${opts.timeout}`, 'ARGS');
+      if (opts.minFans < 0) emitError(`invalid --min-fans: ${opts.minFans}`, 'ARGS');
+      // since 解析：--since（YYYY-MM-DD）优先；其次 --since-days（天）。都没则不过滤发布时间。
+      const sinceUnix = opts.since != null
+        ? parseDateToUnix(opts.since)
+        : parseSince({ sinceDays: opts.sinceDays });
+      if (opts.since != null && sinceUnix == null) emitError(`invalid --since: ${opts.since}（需 YYYY-MM-DD）`, 'ARGS');
+      const ctx = getCliContext();
+      const client = new ServerClient(ctx.serverUrl, ctx.token);
+      try {
+        const clientId = await resolveClientId(client as CollectClient, opts.client);
+        const dbPath = ctx.dbPath;
+        const sleepMs = opts.sleep;
+        // fans 来源：DB 缓存（--no-cache 跳过）+ 实时 get-upper-info（带 sleep 防风控）。
+        const fansSrc: FansSource = {
+          async readFansFromDb(mids) {
+            if (opts.cache === false || mids.length === 0) return {};
+            try {
+              const db = openReadonlyDb(dbPath);
+              try {
+                const placeholders = mids.map(() => '?').join(',');
+                const rows = db.prepare(
+                  `SELECT source_uid, fans FROM creators WHERE source='bilibili' AND source_uid IN (${placeholders})`,
+                ).all(...mids) as Array<{ source_uid: string; fans: number | null }>;
+                const out: Record<string, number> = {};
+                for (const r of rows) if (r.fans != null && r.fans > 0) out[String(r.source_uid)] = r.fans;
+                return out;
+              } finally { db.close(); }
+            } catch {
+              return {}; // DB 读失败降级：全部实时查
+            }
+          },
+          async fetchFans(mid) {
+            const resp = await collectUpperInfo(client as CollectClient, clientId, mid, opts.timeout) as {
+              ok: boolean; result?: { ok: boolean; data?: { fans?: number }; error?: string };
+            };
+            await new Promise((r) => setTimeout(r, sleepMs)); // 防风控
+            if (!resp.ok || !resp.result?.ok) return null;
+            const f = resp.result.data?.fans;
+            return f != null && f > 0 ? f : null;
+          },
+        };
+        const data = await collectFind(client as CollectClient, clientId, keyword,
+          { pages: opts.pages, order: opts.order, tid: opts.tid, minFans: opts.minFans, since: sinceUnix },
+          fansSrc, opts.timeout);
+        // --collect：对最终候选串行采字幕入库（sleep>=1s 防风控；遇 need_login/risk_control 即停）。
+        if (opts.collect && data.items.length > 0) {
+          const collected: Array<{ bvid: string; ok: boolean; reason?: string }> = [];
+          for (const it of data.items) {
+            const out = await collectSubtitle(client as CollectClient, clientId, it.bvid, opts.timeout) as {
+              result?: { error?: string; data?: { reason?: string; tracks?: number } };
+            };
+            const err = out.result?.error;
+            if (err === 'need_login' || err === 'risk_control') {
+              emitError(`collect ${it.bvid} STOP: ${err}（请处理后重跑）`, 'RUNTIME');
+            }
+            collected.push({
+              bvid: it.bvid,
+              ok: !err && out.result?.data?.reason !== 'no_subtitle',
+              reason: err ?? out.result?.data?.reason,
+            });
+            await new Promise((r) => setTimeout(r, Math.max(sleepMs, 1000)));
+          }
+          (data as FindResult & { collected?: unknown }).collected = collected;
+        }
+        emitResult(data, ctx.format);
+      } catch (err) {
+        handleHttpError(err);
+      }
     });
 
   return collect;

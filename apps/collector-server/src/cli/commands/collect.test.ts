@@ -6,7 +6,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import Database from 'better-sqlite3';
 import { migrate, runMigrations } from '../../db/migrate.js';
-import { collectSearch, collectSubtitle, collectDedupe, collectUpperInfo, collectUpperVideos, collectUpperVideosAll, collectNewVideos, collectDiscover, resolveClientId, collectNosub, type CollectClient } from './collect.js';
+import { collectSearch, collectSubtitle, collectDedupe, collectUpperInfo, collectUpperVideos, collectUpperVideosAll, collectNewVideos, collectDiscover, resolveClientId, collectNosub, filterByPubdate, filterByFans, parseSince, parseDateToUnix, resolveFans, collectFindSearch, collectFind, type CollectClient, type SearchItem, type FindItem, type FansSource } from './collect.js';
 
 function mockClient(sendCommandResult: unknown, listClientsResult: unknown[] = [{ client_id: 'c1' }]) {
   const calls: Array<{ clientId: string; action: string; params: unknown; timeout: number }> = [];
@@ -221,3 +221,229 @@ test('collectNosub 空输入 → 空结果', () => {
   runMigrations(db);
   assert.deepEqual(collectNosub(db, []), []);
 });
+
+// ── collect find：条件检索纯函数（多页搜索 + 发布时间/粉丝数过滤）──
+// 措辞：字幕（subtitle），非弹幕。
+
+test('filterByPubdate since=undefined → 原样返回全部（同引用）', () => {
+  const items: SearchItem[] = [
+    { bvid: 'BV1', pubdate: 100 },
+    { bvid: 'BV2', pubdate: 200 },
+    { bvid: 'BV3' }, // pubdate 缺失
+  ];
+  assert.equal(filterByPubdate(items, undefined), items);
+});
+
+test('filterByPubdate since=N → 只留 pubdate>=N，pubdate==null 保留', () => {
+  const items: SearchItem[] = [
+    { bvid: 'BV1', pubdate: 100 },
+    { bvid: 'BV2', pubdate: 200 },
+    { bvid: 'BV3', pubdate: 50 },
+    { bvid: 'BV4' }, // pubdate 缺失 → 保留（避免漏采刚发布的视频）
+  ];
+  const out = filterByPubdate(items, 100);
+  assert.deepEqual(out.map((i) => i.bvid), ['BV1', 'BV2', 'BV4']);
+});
+
+test('filterByFans minFans<=0 或 undefined → 不过滤（同引用）', () => {
+  const items: FindItem[] = [
+    { bvid: 'BV1', fans: 5 },
+    { bvid: 'BV2', fans: null },
+  ];
+  assert.equal(filterByFans(items, 0), items);
+  assert.equal(filterByFans(items, -1), items);
+  assert.equal(filterByFans(items, undefined), items);
+});
+
+test('filterByFans minFans=10000 → 只留 fans>=10000，fans==null 保留', () => {
+  const items: FindItem[] = [
+    { bvid: 'BV1', fans: 5000 },
+    { bvid: 'BV2', fans: 20000 },
+    { bvid: 'BV3', fans: 10000 },
+    { bvid: 'BV4', fans: null }, // 未知 → 保留（保守，宁可多列再人工筛）
+  ];
+  const out = filterByFans(items, 10000);
+  assert.deepEqual(out.map((i) => i.bvid), ['BV2', 'BV3', 'BV4']);
+});
+
+test('parseSince only since → 直接返回 since', () => {
+  assert.equal(parseSince({ since: 123456 }), 123456);
+});
+
+test('parseSince only sinceDays → now - sinceDays*86400（注入固定 now）', () => {
+  const now = 1_700_000_000;
+  assert.equal(parseSince({ sinceDays: 7, now }), now - 7 * 86400);
+});
+
+test('parseSince 都没传 → undefined', () => {
+  assert.equal(parseSince({}), undefined);
+  assert.equal(parseSince({ since: undefined, sinceDays: undefined }), undefined);
+});
+
+test('parseDateToUnix 合法 YYYY-MM-DD → UNIX 秒（本地时区 00:00）', () => {
+  const u = parseDateToUnix('2026-07-01');
+  assert.equal(u, Math.floor(new Date(2026, 6, 1, 0, 0, 0).getTime() / 1000));
+  assert.equal(typeof u, 'number');
+});
+
+test('parseDateToUnix 单位数月日也合法（正则允许 \\d{1,2}）', () => {
+  const u = parseDateToUnix('2026-7-1');
+  assert.equal(u, Math.floor(new Date(2026, 6, 1, 0, 0, 0).getTime() / 1000));
+});
+
+test('parseDateToUnix 非法格式 / 空 / undefined → undefined', () => {
+  assert.equal(parseDateToUnix('2026/07/01'), undefined);
+  assert.equal(parseDateToUnix('not-a-date'), undefined);
+  assert.equal(parseDateToUnix(''), undefined);
+  assert.equal(parseDateToUnix(undefined), undefined);
+});
+
+test('resolveFans 缓存命中部分 + miss 实时补充', async () => {
+  const src: FansSource = {
+    async readFansFromDb() { return { a: 5000 }; },
+    async fetchFans(mid) { return mid === 'b' ? 9999 : null; },
+  };
+  const out = await resolveFans(['a', 'b'], src);
+  assert.equal(out.fans.get('a'), 5000);
+  assert.equal(out.fans.get('b'), 9999);
+  assert.equal(out.cacheHit, 1);
+  assert.equal(out.fetched, 1);
+  assert.equal(out.unknown, 0);
+});
+
+test('resolveFans 全 miss 且实时失败 → unknown 计数', async () => {
+  const src: FansSource = {
+    async readFansFromDb() { return {}; },
+    async fetchFans() { return null; },
+  };
+  const out = await resolveFans(['x', 'y'], src);
+  assert.equal(out.fans.size, 0);
+  assert.equal(out.cacheHit, 0);
+  assert.equal(out.fetched, 0);
+  assert.equal(out.unknown, 2);
+});
+
+test('resolveFans 重复 mid 去重（readFansFromDb/fetchFans 各只查一次）', async () => {
+  let dbCalls = 0;
+  let fetchCalls = 0;
+  const src: FansSource = {
+    async readFansFromDb(mids) { dbCalls++; assert.deepEqual(mids, ['a']); return {}; },
+    async fetchFans(mid) { fetchCalls++; return mid === 'a' ? 100 : null; },
+  };
+  const out = await resolveFans(['a', 'a'], src);
+  assert.equal(out.fans.get('a'), 100);
+  assert.equal(out.fans.size, 1);
+  assert.equal(dbCalls, 1);
+  assert.equal(fetchCalls, 1); // 去重后只 fetch 一次
+  assert.equal(out.fetched, 1);
+});
+
+test('collectFindSearch 多页搜索合并 + 首页 raw_total + 拿够早停', async () => {
+  // page1 有 3 条（total=5），page2 有 2 条；累计达 total 后不翻 page3。
+  const pageData: Record<number, { total?: number; items?: SearchItem[] }> = {
+    1: { total: 5, items: [
+      { bvid: 'BV1', mid: 'm1', pubdate: 100, play: 1 },
+      { bvid: 'BV2', mid: 'm2', pubdate: 200, play: 2 },
+      { bvid: 'BV3', mid: 'm1', pubdate: 300, play: 3 },
+    ] },
+    2: { total: 5, items: [
+      { bvid: 'BV4', mid: 'm3', pubdate: 400, play: 4 },
+      { bvid: 'BV5', mid: 'm2', pubdate: 500, play: 5 },
+    ] },
+  };
+  const calls: number[] = [];
+  const client: CollectClient = {
+    listClients: async () => [{ client_id: 'c1' }],
+    async sendCommand(_clientId, action, params, _timeout) {
+      if (action === 'search') {
+        calls.push(params.page as number);
+        return { ok: true, result: { ok: true, data: pageData[params.page as number] ?? { total: 5, items: [] } } };
+      }
+      return { ok: true };
+    },
+  };
+  const out = await collectFindSearch(client, 'c1', 'kw', { order: 'pubdate', pages: 3 }, 15000);
+  assert.equal(out.raw_total, 5);
+  assert.equal(out.items.length, 5);
+  assert.deepEqual(calls, [1, 2]); // page2 后 all.length(5) >= raw_total(5) 早停，不翻 page3
+  assert.deepEqual(out.items.map((i) => i.bvid), ['BV1', 'BV2', 'BV3', 'BV4', 'BV5']);
+});
+
+test('collectFind 端到端：raw_total/fetched/after_date/after_fans + fans 填回', async () => {
+  // search：page1 3 条（total=5），page2 2 条。每条带 bvid/mid/pubdate/play。
+  const pageData: Record<number, { total?: number; items?: SearchItem[] }> = {
+    1: { total: 5, items: [
+      { bvid: 'BV1', mid: 'm1', pubdate: 100, play: 1 },
+      { bvid: 'BV2', mid: 'm2', pubdate: 200, play: 2 },
+      { bvid: 'BV3', mid: 'm1', pubdate: 300, play: 3 },
+    ] },
+    2: { total: 5, items: [
+      { bvid: 'BV4', mid: 'm3', pubdate: 400, play: 4 },
+      { bvid: 'BV5', mid: 'm2', pubdate: 500, play: 5 },
+    ] },
+  };
+  const client: CollectClient = {
+    listClients: async () => [{ client_id: 'c1' }],
+    async sendCommand(_clientId, action, params, _timeout) {
+      if (action === 'search') {
+        return { ok: true, result: { ok: true, data: pageData[params.page as number] ?? { total: 5, items: [] } } };
+      }
+      // get-upper-info 不会被 collectFind 直接调用（fans 走注入的 fansSrc）；兜底返回 ok。
+      return { ok: true, result: { ok: true, data: { fans: 0 } } };
+    },
+  };
+  // fansSrc：readFansFromDb 返回 {} → 全走 fetchFans（本地 mid→fans map，独立验证编排逻辑）。
+  const fansMap: Record<string, number> = { m1: 15000, m2: 8000, m3: 500 };
+  const fansSrc: FansSource = {
+    async readFansFromDb() { return {}; },
+    async fetchFans(mid) { return fansMap[mid] ?? null; },
+  };
+  // since=150 过滤掉 BV1(pubdate=100)；minFans=10000 只留 m1(=15000) 的 BV3。
+  const out = await collectFind(client, 'c1', 'kw',
+    { pages: 3, order: 'pubdate', minFans: 10000, since: 150 }, fansSrc, 15000);
+  assert.equal(out.raw_total, 5);
+  assert.equal(out.fetched, 5);
+  assert.equal(out.after_date, 4);     // BV1 被 since=150 过滤
+  assert.equal(out.after_fans, 1);     // 只 BV3(m1=15000>=10000) 留下
+  assert.equal(out.fans_cache_hit, 0); // readFansFromDb 返回 {}
+  assert.equal(out.fans_fetched, 3);   // unique mid {m1,m2,m3} 全走 fetch
+  assert.equal(out.fans_unknown, 0);
+  assert.deepEqual(out.items.map((i) => i.bvid), ['BV3']);
+  assert.equal(out.items[0].fans, 15000); // fans 正确填回
+});
+
+test('collectFind fans 部分缓存命中 + 部分实时补充', async () => {
+  const pageData: Record<number, { total?: number; items?: SearchItem[] }> = {
+    1: { total: 2, items: [
+      { bvid: 'BV1', mid: 'm1', pubdate: 100 },
+      { bvid: 'BV2', mid: 'm2', pubdate: 200 },
+    ] },
+  };
+  const client: CollectClient = {
+    listClients: async () => [{ client_id: 'c1' }],
+    async sendCommand(_clientId, action, params, _timeout) {
+      if (action === 'search') {
+        return { ok: true, result: { ok: true, data: pageData[params.page as number] ?? { total: 2, items: [] } } };
+      }
+      return { ok: true };
+    },
+  };
+  // m1 走缓存（5000），m2 走实时（20000）；minFans=10000 只留 BV2。
+  const fansSrc: FansSource = {
+    async readFansFromDb() { return { m1: 5000 }; },
+    async fetchFans(mid) { return mid === 'm2' ? 20000 : null; },
+  };
+  const out = await collectFind(client, 'c1', 'kw',
+    { pages: 1, order: 'pubdate', minFans: 10000 }, fansSrc, 15000);
+  assert.equal(out.fans_cache_hit, 1);
+  assert.equal(out.fans_fetched, 1);
+  assert.equal(out.fans_unknown, 0);
+  assert.equal(out.after_fans, 1);
+  assert.deepEqual(out.items.map((i) => i.bvid), ['BV2']);
+  assert.equal(out.items[0].fans, 20000);
+});
+
+// ── 测试轮次记录表（对齐全局 CLAUDE.md §8.2）──
+// | 轮次 | 日期       | 范围                                              | 结果 |
+// |------|------------|---------------------------------------------------|------|
+// | 1    | 2026-07-05 | collect find 纯函数单测首增（16 个用例）          | PASS |
