@@ -98,6 +98,8 @@ export function Popup() {
   // 回调后视频页才出现——既精简非视频页，也避免"非视频页 → BVxxx"的初始值闪烁。
   // 多平台时这里改用 detectPlatform(tabUrl)，平台头/统计自动按当前平台渲染。
   const isVideoPage = currentBvid !== null;
+  // 上报是上报字幕：没字幕（no-subtitle）→ 上报按钮置灰
+  const hasSubtitle = local.state === 'has-subtitle';
   // server ok 时从 video.creator_id 查 UP 主详情；其它态（loading/server-down/not-collected）
   // 没有 creator_id → useCreator 返回 none，CreatorCard 不渲染，无噪音。
   const creatorId =
@@ -159,6 +161,7 @@ export function Popup() {
         onReport={onReport}
         isVideoPage={isVideoPage}
         reportStatus={reportStatus}
+        hasSubtitle={hasSubtitle}
       />
     </div>
   );
@@ -241,11 +244,13 @@ function FooterActions({
   onReport,
   isVideoPage,
   reportStatus,
+  hasSubtitle,
 }: {
   reporting: { enabled: boolean | null; setEnabled: (v: boolean) => void };
   onReport: () => void;
   isVideoPage: boolean;
   reportStatus: 'idle' | 'reporting' | 'success' | 'failed';
+  hasSubtitle: boolean;
 }) {
   return (
     <div className="flex items-center gap-2">
@@ -264,7 +269,8 @@ function FooterActions({
         <Button
           size="sm"
           onClick={onReport}
-          disabled={reportStatus === 'reporting'}
+          disabled={!hasSubtitle || reportStatus === 'reporting'}
+          title={!hasSubtitle ? '当前视频无字幕，无法上报' : undefined}
           className={cn(
             'ml-auto h-7 px-3 text-xs',
             reportStatus === 'success'
@@ -380,8 +386,8 @@ function CollectedBlock({
   // 没字幕不代表没视频数据（统计/tags 仍展示）；上报是上报字幕，没字幕→同步未达 + 上报按钮置灰。
   const hasSubtitle = local.state === 'has-subtitle';
   const { extra } = local;
-  const subs = hasSubtitle ? local.subs : [];
-  const bodies = hasSubtitle ? local.bodies : {};
+  const subs = local.state === 'has-subtitle' ? local.subs : [];
+  const bodies = local.state === 'has-subtitle' ? local.bodies : {};
   const stat = extra.stat ?? {};
   const tags = Array.isArray(extra.tags) ? extra.tags : [];
   const pages = Array.isArray(extra.pages) ? extra.pages : [];
@@ -516,7 +522,7 @@ function CreatorCard({ creatorId }: { creatorId: number | null | undefined }) {
 }
 
 // 服务端同步状态 badge（标题旁）：颜色区分 + 上次同步时间；loading 用中性占位避免闪烁。
-function SyncStatusBadge({ server }: { server: CollectedState }) {
+function SyncStatusBadge({ server, hasSubtitle }: { server: CollectedState; hasSubtitle: boolean }) {
   if (server.state === 'loading') {
     return <StatusPlaceholder className="h-5 w-16" />;
   }
@@ -525,7 +531,8 @@ function SyncStatusBadge({ server }: { server: CollectedState }) {
   if (server.state === 'server-down') return null;
   let variant: 'success' | 'secondary';
   let text: string;
-  if (server.state === 'ok') {
+  // 上报是上报字幕：没字幕就算 video 入库也不算「同步」（没字幕轨上报）→ 显示未同步
+  if (server.state === 'ok' && hasSubtitle) {
     const t = server.video.updated_at ? fmtSyncTime(server.video.updated_at) : '';
     variant = 'success';
     text = t ? `同步 ${t}` : '已同步';
