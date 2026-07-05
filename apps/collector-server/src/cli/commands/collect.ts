@@ -14,7 +14,7 @@ import { getCliContext } from '../main.js';
 import { openReadonlyDb } from '../db.js';
 
 /** 采集类命令默认超时（高于管控类 5000，给扩展 fetch+入库留时间）。 */
-const DEFAULT_COLLECT_TIMEOUT_MS = 15000;
+const DEFAULT_COLLECT_TIMEOUT_MS = 30000; // 主动采集 navigate（充电视频）需等被动 INGEST ~20s + 间隔，15s 不够
 
 /** ServerClient 最小接口（便于测试注入 mock）。 */
 export interface CollectClient {

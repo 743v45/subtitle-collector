@@ -222,18 +222,35 @@ async function connect() {
               console.warn(`[background] fetch-subtitle 字幕体抓取异常 bvid=${msg.bvid} url=${url} err=${String(e?.message ?? e)}`);
             }
           }
-          // 4. ingest（无字幕也入库 video，避免下次重采）；过滤字幕体抓取失败的轨，避免 payload:null 入库污染 external 去重
+          // 4. 过滤字幕体抓取失败的轨，避免 payload:null 入库污染 external 去重
           const validSubs = subs.filter((s) => {
             const u = normalizeUrl(s.subtitle_url);
             return u && bodies[u] != null;
           });
-          const payload = buildIngestPayload(view, validSubs, bodies, tags, paidInfo);
-          sendIngest(payload);
-          // 5. 回执（不阻塞等 ingest-ack；ingest 由 server 异步入库，result 只报实际入库轨数）
-          ws.send(JSON.stringify({
-            type: "result", id: msg.id, ok: true,
-            data: { bvid, tracks: validSubs.length, ai_tracks: aiSubs.length, ingested: true, ...(isPaid ? { paid: true } : {}), ...(validSubs.length === 0 ? { reason: 'no_subtitle' } : {}) },
-          }));
+          if (validSubs.length > 0) {
+            // 有字幕（普通视频 CC / AI 明文）：直接入库
+            sendIngest(buildIngestPayload(view, validSubs, bodies, tags, paidInfo));
+            ws.send(JSON.stringify({
+              type: "result", id: msg.id, ok: true,
+              data: { bvid, tracks: validSubs.length, ai_tracks: aiSubs.length, ingested: true, ...(isPaid ? { paid: true } : {}) },
+            }));
+          } else if (isPaid) {
+            // 充电视频字幕加密（%00，Chrome 拒 fetch），API 拿不到 → navigate 打开页面，
+            // 复用被动采集链路（content 自动点 AI 字幕 → inject 拦明文 aisubtitle → INGEST）。频率可控（锁+间隔）。
+            sendIngest(buildIngestPayload(view, [], {}, tags, paidInfo)); // video 行先入库（含 paid 标记）
+            const ok = await collectViaNavigate(bvid, 20000);
+            ws.send(JSON.stringify({
+              type: "result", id: msg.id, ok: true,
+              data: { bvid, tracks: ok ? 1 : 0, ai_tracks: aiSubs.length, ingested: true, paid: true, navigated: true, ...(ok ? {} : { reason: 'no_subtitle' }) },
+            }));
+          } else {
+            // 真无字幕：video 入库（避免重采），无轨
+            sendIngest(buildIngestPayload(view, [], {}, tags, paidInfo));
+            ws.send(JSON.stringify({
+              type: "result", id: msg.id, ok: true,
+              data: { bvid, tracks: 0, ai_tracks: aiSubs.length, ingested: true, reason: 'no_subtitle' },
+            }));
+          }
         } catch (err) {
           ws.send(JSON.stringify({ type: "result", id: msg.id, ok: false, error: String(err.message || err) }));
         }
@@ -318,8 +335,13 @@ function payloadSummary(payload) {
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (msg?.type === "INGEST" && msg.payload) {
     const payload = msg.payload;
+    // navigate 采集：被动 INGEST 到达，唤醒等待中的 collectViaNavigate
+    const navBvid = payload?.video?.source_vid;
+    const pending = pendingNavCollect.get(navBvid);
+    const fromNavigate = !!pending; // navigate 采集的被动 INGEST，绕过上报开关（主动采集触发）
+    if (pending) { pendingNavCollect.delete(navBvid); pending.resolve(true); }
     const summary = payloadSummary(payload);
-    const force = msg.force === true;
+    const force = msg.force === true || fromNavigate;
     if (force) {
       console.log(`[background] ingest 强制上报（手动上报，绕过开关）source_vid=${payload.video?.source_vid}`);
     } else if (!shouldReport(reportingEnabled)) {
@@ -372,6 +394,41 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   return true;
 });
 
+// navigate 采集：主动采集对充电视频（字幕加密拿不到）打开页面，复用被动采集链路入库。
+// 频率控制：同时只 1 个 navigate（navCollectBusy 锁）；tab 关闭后间隔 = navGapBaseMs + 随机 navGapRandomMs（防风控）。
+let navCollectBusy = false;
+const pendingNavCollect = new Map(); // bvid -> { resolve }
+// 间隔配置（chrome.storage.local 可覆盖：nav_gap_base_ms / nav_gap_random_ms，单位 ms）。默认 1s + 随机 0-2s。
+let navGapBaseMs = 1000;
+let navGapRandomMs = 2000;
+async function loadNavGapConfig() {
+  const cfg = await chrome.storage.local.get(['nav_gap_base_ms', 'nav_gap_random_ms']);
+  if (typeof cfg.nav_gap_base_ms === 'number' && cfg.nav_gap_base_ms >= 0) navGapBaseMs = cfg.nav_gap_base_ms;
+  if (typeof cfg.nav_gap_random_ms === 'number' && cfg.nav_gap_random_ms >= 0) navGapRandomMs = cfg.nav_gap_random_ms;
+}
+async function collectViaNavigate(bvid, timeoutMs = 20000) {
+  while (navCollectBusy) await new Promise((r) => setTimeout(r, 500)); // 等锁（同时只 1 个 navigate）
+  navCollectBusy = true;
+  let tabId = null;
+  try {
+    const tab = await chrome.tabs.create({ url: `https://www.bilibili.com/video/${bvid}`, active: true }); // 前台：后台 tab 播放器不活跃，自动点触发不了 aisubtitle
+    tabId = tab.id;
+    // 等被动采集 INGEST 该 bvid（content 自动点 AI 字幕 → inject 拦明文 aisubtitle → INGEST）
+    const ok = await new Promise((resolve) => {
+      const t = setTimeout(() => { pendingNavCollect.delete(bvid); resolve(false); }, timeoutMs);
+      pendingNavCollect.set(bvid, { resolve: (v) => { clearTimeout(t); resolve(v); } });
+    });
+    return ok;
+  } catch (e) {
+    console.warn(`[background] navigate 采集失败 bvid=${bvid}`, String(e?.message ?? e));
+    return false;
+  } finally {
+    if (tabId != null) { try { await chrome.tabs.remove(tabId); } catch {} }
+    navCollectBusy = false;
+    await new Promise((r) => setTimeout(r, navGapBaseMs + Math.random() * navGapRandomMs)); // 关闭间隔（base+随机，防风控）
+  }
+}
+
 // 统一 ingest 上报：WS OPEN 直发；断线时落 pendingIngests storage，重连后 flushPendingIngests 补发。
 // fetch-subtitle（主动）与 content→background INGEST（被动）共用，保证 WS 断时不丢。
 function sendIngest(payload) {
@@ -394,4 +451,4 @@ async function flushPendingIngests() {
   await chrome.storage.local.set({ pendingIngests: [] });
 }
 
-loadPersistedState().then(connect);
+loadPersistedState().then(() => loadNavGapConfig()).then(connect);
