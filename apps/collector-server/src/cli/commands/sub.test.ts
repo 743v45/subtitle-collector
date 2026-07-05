@@ -10,7 +10,13 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { matchBody, extractSnippets } from './sub.js';
+import type Database from 'better-sqlite3';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { openDb, migrate } from '../../db/migrate.js';
+import { ingestVideo } from '../../db/ingest.js';
+import { matchBody, extractSnippets, searchSubtitles, makeDbPayloadSource, type PayloadSource, type PayloadEntry } from './sub.js';
 
 // ── matchBody ──
 
@@ -117,4 +123,150 @@ test('extractSnippets: 多命中点各自独立产出片段', () => {
   assert.equal(out.length, 2);
   assert.equal(out[0].content, 'B');
   assert.equal(out[1].content, 'A');
+});
+
+// ── searchSubtitles（注入 mock PayloadSource + 临时 DB）──
+const T2 = 1_700_000_000_000;
+function setupSub(): { db: Database.Database; dir: string } {
+  const dir = mkdtempSync(join(tmpdir(), 'cli-sub-'));
+  const db = openDb(join(dir, 'test.db'));
+  migrate(db);
+  ingestVideo(db, {
+    source: 'bilibili',
+    video: { source_vid: 'BV1', title: '通胀解读', creator: { source_uid: '1', name: 'UP1' }, extra: { stat: { view: 100 } }, duration: 200, published_at: T2 + 1000 },
+    tracks: [{ lan: 'zh-Hans', lan_doc: 'AI中文', track_type: 1, versions: [{ origin: 'asr', payload: { body: [
+      { from: 0, to: 2, content: '开场白' },
+      { from: 3, to: 5, content: '今天聊通胀成因' },
+      { from: 100, to: 101, content: '通胀的对策' },
+    ] } }] }],
+  });
+  ingestVideo(db, {
+    source: 'bilibili',
+    video: { source_vid: 'BV2', title: '天气播报', creator: { source_uid: '2', name: 'UP2' }, extra: { stat: { view: 50 } }, duration: 60, published_at: T2 + 2000 },
+    tracks: [{ lan: 'zh-Hans', lan_doc: 'AI中文', track_type: 1, versions: [{ origin: 'asr', payload: { body: [
+      { from: 0, to: 2, content: '今天天气晴朗' },
+    ] } }] }],
+  });
+  db.prepare('UPDATE videos SET first_seen_at = ? WHERE source_vid = ?').run(T2 + 100, 'BV1');
+  db.prepare('UPDATE videos SET first_seen_at = ? WHERE source_vid = ?').run(T2 + 200, 'BV2');
+  return { db, dir };
+}
+
+function mockSource(map: Record<number, PayloadEntry[]>): PayloadSource {
+  return { getPayloads: (vid: number) => map[vid] ?? [] };
+}
+
+test('searchSubtitles: 子串模式命中 + 片段时间戳 + matched_videos/total_snippets', () => {
+  const { db, dir } = setupSub();
+  try {
+    const src = makeDbPayloadSource(db);
+    const out = searchSubtitles(db, src, { keyword: '通胀' });
+    assert.equal(out.keyword, '通胀');
+    assert.equal(out.regex, false);
+    assert.equal(out.matched_videos, 1);
+    assert.equal(out.items.length, 1);
+    assert.equal(out.items[0].video.source_vid, 'BV1');
+    assert.equal(out.items[0].video.title, '通胀解读');
+    assert.equal('pic' in out.items[0].video, false);  // 强制不含 pic（媒体字段剔除）
+    assert.equal(out.items[0].snippets.length, 2);
+    assert.ok(out.items[0].snippets[0].context.includes('通胀'));
+    assert.ok(out.total_snippets >= 1);
+    assert.equal(out.truncated, false);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('searchSubtitles: F9a 子串模式 LIKE 预筛 ⊇ JS 精确（LIKE 噪声被 JS 滤掉，不漏召回）', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'cli-sub-noise-'));
+  const db = openDb(join(dir, 'test.db'));
+  migrate(db);
+  try {
+    ingestVideo(db, {
+      source: 'bilibili',
+      video: { source_vid: 'BVn', title: '噪声视频', creator: { source_uid: '9', name: 'UP9' }, extra: {}, duration: 200, published_at: T2 },
+      tracks: [{ lan: 'zh-Hans', lan_doc: 'AI中文', track_type: 1, versions: [{ origin: 'asr', payload: { body: [
+        { from: 137, to: 138, content: '这段内容完全不含数字关键词' },
+      ] } }] }],
+    });
+    const out = searchSubtitles(db, makeDbPayloadSource(db), { keyword: '137' });
+    assert.equal(out.matched_videos, 0);
+    assert.deepEqual(out.items, []);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('searchSubtitles: F9b 正则模式不加 LIKE 预筛（否则元字符致漏召回）', () => {
+  const { db, dir } = setupSub();
+  try {
+    const out = searchSubtitles(db, makeDbPayloadSource(db), { keyword: '通胀|对策', regex: true });
+    assert.equal(out.matched_videos, 1);
+    assert.equal(out.items[0].video.source_vid, 'BV1');
+    assert.ok(out.items[0].snippets.length >= 1);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('searchSubtitles: --max-snippets 全局截断 + truncated=true', () => {
+  const { db, dir } = setupSub();
+  try {
+    const out = searchSubtitles(db, makeDbPayloadSource(db), { keyword: '通胀', maxSnippets: 1 });
+    assert.equal(out.total_snippets, 1);
+    assert.equal(out.truncated, true);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('searchSubtitles: --max-snippets-per-video 单视频截断', () => {
+  const { db, dir } = setupSub();
+  try {
+    const out = searchSubtitles(db, makeDbPayloadSource(db), { keyword: '通胀', maxSnippetsPerVideo: 1 });
+    assert.equal(out.items[0].snippets.length, 1);
+    assert.equal(out.total_snippets, 1);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('searchSubtitles: --plain 片段去时间戳', () => {
+  const { db, dir } = setupSub();
+  try {
+    const out = searchSubtitles(db, makeDbPayloadSource(db), { keyword: '通胀', plain: true });
+    assert.equal(out.items[0].snippets[0].context.includes('['), false);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('searchSubtitles: 视频预筛 videoFilter（view 叠加）', () => {
+  const { db, dir } = setupSub();
+  try {
+    const out = searchSubtitles(db, makeDbPayloadSource(db), { keyword: '通胀', videoFilter: { min_view: 80 } });
+    assert.equal(out.matched_videos, 1);
+    assert.equal(out.items[0].video.source_vid, 'BV1');
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('searchSubtitles: F12 无字幕 / payload 结构异常 → 该视频跳过不崩（mock source）', () => {
+  const { db, dir } = setupSub();
+  try {
+    const v1Id = (db.prepare('SELECT id FROM videos WHERE source_vid=?').get('BV1') as { id: number }).id;
+    const v2Id = (db.prepare('SELECT id FROM videos WHERE source_vid=?').get('BV2') as { id: number }).id;
+    // 候选池 LIKE 预筛读 DB 存储 payload：让 BV2 也含关键词以进入候选池，
+    // 再由 mock 在匹配阶段注入「结构异常 / 正常」payload，验证异常跳过不崩。
+    db.prepare(`UPDATE subtitle_versions SET payload = ? WHERE track_id IN (SELECT id FROM subtitle_tracks WHERE video_id = ?)`).run(
+      JSON.stringify({ body: [{ from: 0, to: 1, content: '通胀 占位' }] }), v2Id,
+    );
+    const src: PayloadSource = {
+      getPayloads: (vid: number) => {
+        if (vid === v1Id) return [{ track: { id: 1, lan: 'zh', track_type: 1 }, version: { id: 1, origin: 'asr' }, payload: { body: '不是数组' } }];
+        if (vid === v2Id) return [{ track: { id: 2, lan: 'zh', track_type: 1 }, version: { id: 2, origin: 'asr' }, payload: { body: [{ from: 0, to: 1, content: '通胀' }] } }];
+        return [];
+      },
+    };
+    const out = searchSubtitles(db, src, { keyword: '通胀' });
+    assert.equal(out.matched_videos, 1);
+    assert.equal(out.items[0].video.source_vid, 'BV2');
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('searchSubtitles: --full 回整条字幕文本', () => {
+  const { db, dir } = setupSub();
+  try {
+    const out = searchSubtitles(db, makeDbPayloadSource(db), { keyword: '通胀', full: true });
+    assert.equal(typeof out.items[0].full, 'string');
+    assert.ok((out.items[0].full ?? '').includes('通胀'));
+    assert.ok((out.items[0].full ?? '').includes('开场白'));
+  } finally { rmSync(dir, { recursive: true, force: true }); }
 });
