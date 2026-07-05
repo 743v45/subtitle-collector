@@ -17,6 +17,7 @@ export interface VideoFilter {
   lang?: string;             // subtitle_tracks.lan 模糊（zh 命中 zh-Hans）
   track_type?: number;       // subtitle_tracks.track_type 精确（1=AI 2=CC）
   has_subtitle?: boolean;    // 至少有一条 subtitle_versions
+  paid?: boolean;            // 仅付费视频（v.paid = 1）
   since?: number;            // 毫秒，比对 date_field（默认 first_seen_at）
   until?: number;
   min_duration?: number;     // 秒
@@ -132,6 +133,9 @@ function buildVideoWhere(f: VideoFilter): { where: string; params: unknown[] } {
   }
   if (f.has_subtitle) {
     conds.push('EXISTS (SELECT 1 FROM subtitle_tracks st JOIN subtitle_versions sv ON sv.track_id = st.id WHERE st.video_id = v.id)');
+  }
+  if (f.paid) {
+    conds.push('v.paid = 1');
   }
   const dateCol = f.date_field === 'published_at' ? 'v.published_at' : 'v.first_seen_at';
   if (f.since != null) {

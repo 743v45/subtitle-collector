@@ -22,4 +22,8 @@ test('migrate + runMigrations 幂等：跑两次不报错且字段存在', () =>
   const names = cols.map((c) => c.name);
   assert.ok(names.includes('category_agent_id'), 'creators.category_agent_id 应存在');
   assert.ok(names.includes('category_human_id'), 'creators.category_human_id 应存在');
+
+  // videos.paid 列存在（schema.sql 新建库 + runMigrations 旧库补列双轨）
+  const vcols = db.prepare("PRAGMA table_info(videos)").all() as Array<{ name: string }>;
+  assert.ok(vcols.map((c) => c.name).includes('paid'), 'videos.paid 应存在');
 });

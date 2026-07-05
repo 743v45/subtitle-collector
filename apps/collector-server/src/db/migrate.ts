@@ -31,10 +31,23 @@ const CREATOR_COLUMNS: Array<{ name: string; type: string }> = [
   { name: 'category_human_id', type: 'INTEGER' },
 ];
 
+// videos 表后加列（同 CREATOR_COLUMNS 哲学）。paid：从 extra.paid 提取的付费标志（0/1），冗余独立列便于查询。
+const VIDEO_COLUMNS: Array<{ name: string; type: string }> = [
+  { name: 'paid', type: 'INTEGER NOT NULL DEFAULT 0' },
+];
+
 export function runMigrations(db: Database.Database): void {
   for (const col of CREATOR_COLUMNS) {
     try {
       db.exec(`ALTER TABLE creators ADD COLUMN ${col.name} ${col.type}`);
+    } catch (err) {
+      const msg = (err as Error).message;
+      if (!msg.includes('duplicate column name')) throw err;
+    }
+  }
+  for (const col of VIDEO_COLUMNS) {
+    try {
+      db.exec(`ALTER TABLE videos ADD COLUMN ${col.name} ${col.type}`);
     } catch (err) {
       const msg = (err as Error).message;
       if (!msg.includes('duplicate column name')) throw err;

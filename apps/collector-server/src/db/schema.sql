@@ -36,9 +36,11 @@ CREATE TABLE IF NOT EXISTS creators (
 --   { aid, cid, pic, desc, ctime, tid, tname, copyright, state, publocation,
 --     tags:[{tag_id,tag_name}], dimension:{width,height,rotate},
 --     pages:[{cid,page,part,duration}], rights:{...}, honor:{...}, ugc_season:{id,title}|null,
---     stat:{view,danmaku,reply,favorite,coin,share,like,now_rank,his_rank} }
+--     stat:{view,danmaku,reply,favorite,coin,share,like,now_rank,his_rank},
+--     paid:boolean（扩展综合 is_upower_exclusive/is_ugc_pay_preview/elec_high_level/rights 算好的付费标志） }
 -- change_log 策略：ingest 比较前先剔除 extra.stat，统计数字波动不记 change_log；
---                  其余结构字段（分区/标签/版权/pages 等）变化照常记 change_log。
+--                  其余结构字段（分区/标签/版权/pages/paid 等）变化照常记 change_log。
+-- paid 独立列：从 extra.paid 提取（0/1）冗余落库，便于直接 WHERE 过滤；extra.paid 仍存原值作详情/来源。
 CREATE TABLE IF NOT EXISTS videos (
   id            INTEGER PRIMARY KEY AUTOINCREMENT,
   source        TEXT NOT NULL,
@@ -49,6 +51,7 @@ CREATE TABLE IF NOT EXISTS videos (
   duration      INTEGER,
   status        TEXT DEFAULT 'online',
   published_at  INTEGER,
+  paid          INTEGER NOT NULL DEFAULT 0,
   first_seen_at INTEGER NOT NULL,
   updated_at    INTEGER NOT NULL,
   UNIQUE(source, source_vid)

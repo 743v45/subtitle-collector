@@ -66,6 +66,10 @@ function setup(): { db: Database.Database; dir: string; ids: Record<string, numb
   setSeen('BV3', T + 300);
   setSeen('BV4', T + 400);
 
+  // setup 走 ingestVideo 会留 field='created' 的 change_log（creator/video 首次入库，changed_at=Date.now()），
+  // 其 ~2026 真实时间戳会污染下方 change_log 查询测试（since/until/排序/分页）。清掉，只留下方手工插的确定性 3 条。
+  db.prepare("DELETE FROM change_log WHERE field='created'").run();
+
   const idOf = (sv: string) => (db.prepare('SELECT id FROM videos WHERE source_vid = ?').get(sv) as { id: number }).id;
   const creatorId = (uid: string) => (db.prepare('SELECT id FROM creators WHERE source_uid = ?').get(uid) as { id: number }).id;
   const ids = { v1: idOf('BV1'), v2: idOf('BV2'), v3: idOf('BV3'), v4: idOf('BV4'), alpha: creatorId('1'), beta: creatorId('2') };

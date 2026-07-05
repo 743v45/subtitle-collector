@@ -5,6 +5,7 @@
 // | 轮次 | 范围 | 结果 | 备注 |
 // |---|---|---|---|
 // | R1 | normalizeTimestamp + videosList/get/getById 纯函数 | 通过 | 全部用临时 DB，无副作用 |
+// | R2 | videosList paid 过滤（v.paid=1） | 通过 | 4 默认非付费 + 1 付费 ingest，--paid 仅命中付费 |
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -220,5 +221,22 @@ test('videosList: minView+maxView 区间过滤', () => {
   try {
     // minView=200, maxView=1000 → BV1(1000) + BV3(200)
     assert.deepEqual(titles(videosList(db, { minView: 200, maxView: 1000 }).items).sort(), ['标题A', '标题C']);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+// ── videosList: paid 过滤（独立列 v.paid = 1，对齐 DB advanced）──
+
+test('videosList: paid 过滤仅返回付费视频', () => {
+  const { db, dir } = setup();
+  try {
+    // setup 4 视频均无 paid 标志（列=0）；额外 ingest 一个付费视频
+    ingestVideo(db, {
+      source: 'bilibili',
+      video: { source_vid: 'BV9', title: '付费专题', creator: { source_uid: '9', name: '经济UP' }, extra: { paid: true, stat: { view: 0 } }, duration: 100, published_at: T + 5000 },
+      tracks: [],
+    });
+    assert.deepEqual(titles(videosList(db, { paid: true }).items), ['付费专题']);
+    // 不过滤 paid → 全部 5 个
+    assert.equal(videosList(db, {}).total, 5);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });

@@ -50,6 +50,7 @@ export interface VideosListOpts {
   lang?: string;
   trackType?: number;       // CLI --track-type（camelCase）
   hasSubtitle?: boolean;
+  paid?: boolean;           // 仅付费视频（v.paid = 1）
   since?: number;           // 已规范化的毫秒时间戳，比对 first_seen_at
   until?: number;
   minDuration?: number;     // 秒
@@ -79,6 +80,7 @@ export function videosList(
     lang: opts.lang,
     track_type: opts.trackType,
     has_subtitle: opts.hasSubtitle,
+    paid: opts.paid,
     since: opts.since,
     until: opts.until,
     min_duration: opts.minDuration,
@@ -125,6 +127,7 @@ interface ListRawOpts {
   lang?: string;
   trackType?: string;
   hasSubtitle?: boolean;
+  paid?: boolean;
   since?: string;
   until?: string;
   minDuration?: string;
@@ -193,6 +196,7 @@ export function buildVideosCommand(): Command {
     .option('--lang <lang>', '字幕语言模糊匹配（如 zh 命中 zh-Hans）')
     .option('--track-type <type>', '字幕轨类型（1=AI 2=CC），精确')
     .option('--has-subtitle', '仅含至少一条字幕版本的视频')
+    .option('--paid', '仅付费视频（v.paid = 1）')
     .option('--since <ts>', '起始时间（Unix 秒/毫秒 或 ISO8601），比对 first_seen_at')
     .option('--until <ts>', '结束时间（Unix 秒/毫秒 或 ISO8601），比对 first_seen_at')
     .option('--min-duration <s>', '最小时长（秒）')
@@ -217,6 +221,7 @@ export function buildVideosCommand(): Command {
         lang: raw.lang,
         trackType: parseNum(raw.trackType, '--track-type'),
         hasSubtitle: raw.hasSubtitle,
+        paid: raw.paid,
         since: parseTime(raw.since, '--since'),
         until: parseTime(raw.until, '--until'),
         minDuration: parseNum(raw.minDuration, '--min-duration'),

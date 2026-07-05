@@ -39,7 +39,7 @@ export interface IngestResult {
   skipped_tracks: number;
 }
 
-const VIDEO_FIELDS = ['title', 'extra', 'duration', 'status', 'published_at'] as const;
+const VIDEO_FIELDS = ['title', 'extra', 'duration', 'status', 'published_at', 'paid'] as const;
 
 // extra 的 change_log 比较辅助：剔除 stat 子对象后再比较，使统计数字波动不产生 change_log。
 // 库内 videos.extra 仍存完整 JSON（含最新 stat）；仅"是否记变更 + 记录的快照值"这一步忽略 stat。
@@ -70,6 +70,10 @@ export function ingestVideo(db: Database.Database, req: IngestRequest): IngestRe
     }
     r.video.extra = extra;
 
+    // paid 标志：扩展在 extra.paid 算好（综合 is_upower_exclusive/is_ugc_pay_preview/elec_high_level/rights），
+    // 可能是 boolean/number，统一 Number() 转 0/1 落独立列；extra.paid 原值随 JSON 整列存（双写）。
+    const paidInt = Number(r.video.extra?.paid) ? 1 : 0;
+
     // 1. creator upsert + change_log
     const creatorSel = db.prepare('SELECT id, name FROM creators WHERE source = ? AND source_uid = ?');
     const creatorIns = db.prepare('INSERT INTO creators (source, source_uid, name, avatar, first_seen_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)');
@@ -92,13 +96,13 @@ export function ingestVideo(db: Database.Database, req: IngestRequest): IngestRe
 
     // 2. video upsert + change_log（按字段）
     const videoSel = db.prepare('SELECT * FROM videos WHERE source = ? AND source_vid = ?');
-    const videoIns = db.prepare('INSERT INTO videos (source, source_vid, creator_id, title, extra, duration, status, published_at, first_seen_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
-    const videoUpd = db.prepare('UPDATE videos SET creator_id = ?, title = ?, extra = ?, duration = ?, status = ?, published_at = ?, updated_at = ? WHERE id = ?');
+    const videoIns = db.prepare('INSERT INTO videos (source, source_vid, creator_id, title, extra, duration, status, published_at, paid, first_seen_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
+    const videoUpd = db.prepare('UPDATE videos SET creator_id = ?, title = ?, extra = ?, duration = ?, status = ?, published_at = ?, paid = ?, updated_at = ? WHERE id = ?');
 
     const existingVideo = videoSel.get(r.source, r.video.source_vid) as Record<string, unknown> | undefined;
     let videoId: number;
     if (!existingVideo) {
-      const info = videoIns.run(r.source, r.video.source_vid, creatorId, r.video.title, JSON.stringify(r.video.extra ?? {}), r.video.duration ?? null, 'online', r.video.published_at ?? null, now, now);
+      const info = videoIns.run(r.source, r.video.source_vid, creatorId, r.video.title, JSON.stringify(r.video.extra ?? {}), r.video.duration ?? null, 'online', r.video.published_at ?? null, paidInt, now, now);
       videoId = Number(info.lastInsertRowid);
       changeIns.run('video', videoId, 'created', null, r.video.title, now);
     } else {
@@ -109,6 +113,7 @@ export function ingestVideo(db: Database.Database, req: IngestRequest): IngestRe
         duration: r.video.duration ?? null,
         status: 'online',
         published_at: r.video.published_at ?? null,
+        paid: paidInt,
       };
       for (const f of VIDEO_FIELDS) {
         const oldVal = existingVideo[f];
@@ -121,7 +126,7 @@ export function ingestVideo(db: Database.Database, req: IngestRequest): IngestRe
           changeIns.run('video', videoId, f, oldVal == null ? null : oldCmp, newVal == null ? null : newCmp, now);
         }
       }
-      videoUpd.run(creatorId, fields.title, fields.extra, fields.duration, fields.status, fields.published_at, now, videoId);
+      videoUpd.run(creatorId, fields.title, fields.extra, fields.duration, fields.status, fields.published_at, fields.paid, now, videoId);
     }
 
     // 3. track upsert

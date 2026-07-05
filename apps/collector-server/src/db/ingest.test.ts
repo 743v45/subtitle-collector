@@ -214,6 +214,53 @@ test('enrich tname：extra 有 tid 时按 zones 字典反查填 tname（view API
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
+test('paid 双写：extra.paid=true → 独立 paid 列=1 且 extra JSON 保留 paid（json_extract=1）', () => {
+  const { db, dir } = freshDb();
+  try {
+    ingestVideo(db, {
+      source: 'bilibili',
+      video: {
+        source_vid: 'BVpaid', title: '付费片',
+        creator: { source_uid: '1', name: 'up' },
+        extra: { aid: 1, cid: 2, paid: true },
+        duration: 1, published_at: 1,
+      },
+      tracks: [],
+    });
+    const v = db.prepare('SELECT paid, extra FROM videos WHERE source_vid = ?').get('BVpaid') as any;
+    assert.equal(v.paid, 1, '独立 paid 列应为 1（便于查询）');
+    const j = db.prepare("SELECT json_extract(extra, '$.paid') as p FROM videos WHERE source_vid = ?").get('BVpaid') as any;
+    assert.equal(j.p, 1, 'extra JSON 内 paid 也应为 1（双写：详情/来源；SQLite json_extract 把 true 规范成 1）');
+    // 非付费视频默认 0
+    ingestVideo(db, {
+      source: 'bilibili',
+      video: { source_vid: 'BVfree', title: '免费片', creator: { source_uid: '1', name: 'up' }, extra: { aid: 2 }, duration: 1, published_at: 1 },
+      tracks: [],
+    });
+    const free = db.prepare('SELECT paid FROM videos WHERE source_vid = ?').get('BVfree') as any;
+    assert.equal(free.paid, 0, '无 paid 标志默认 0');
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('paid 变更记 change_log（0→1）', () => {
+  const { db, dir } = freshDb();
+  try {
+    const rec = (paid: boolean) => ingestVideo(db, {
+      source: 'bilibili',
+      video: { source_vid: 'BVchg', title: 't', creator: { source_uid: '1', name: 'up' }, extra: { paid }, duration: 1, published_at: 1 },
+      tracks: [],
+    });
+    rec(false); // 首次：paid=0
+    rec(true);  // 变更：paid 0→1
+    const logs = db.prepare("SELECT * FROM change_log WHERE entity='video' AND field='paid'").all() as any[];
+    assert.equal(logs.length, 1, 'paid 0→1 应记一条 change_log');
+    assert.equal(logs[0].old_value, '0');
+    assert.equal(logs[0].new_value, '1');
+    const v = db.prepare('SELECT paid FROM videos WHERE source_vid = ?').get('BVchg') as any;
+    assert.equal(v.paid, 1, '列应为最新值 1');
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
 test('ingestUpper 首次插入 creator（含新字段）', () => {
   const { db, dir } = freshDb();
   try {
