@@ -15,7 +15,7 @@ import {
   type LoginState,
   type UpperVideosState,
 } from './hooks';
-import { bili, type Platform, type StatIconName } from './platforms';
+import { bili, LOGOS, type Platform, type StatIconName } from './platforms';
 import { fmtNum } from './format';
 import { cn } from '@/lib/utils';
 import type { ConsistencyIssue, LocalSub, SubtitleBody } from './types';
@@ -150,6 +150,7 @@ export function Popup() {
 
   return (
     <div className="space-y-3 p-3">
+      <BrandHeader />
       <PlatformHead platform={bili} conn={conn} login={login} />
       {currentBvid && (
         <>
@@ -172,6 +173,67 @@ export function Popup() {
         hasSubtitle={hasSubtitle}
       />
     </div>
+  );
+}
+
+// 顶部品牌条：SubCatch 图标 + 名称/副标题 + 支持平台 logo 行。
+// 平台 logo 从 platforms.ts LOGOS 引用（不硬编码）；品牌色粉蓝渐变与 master icon 同源。
+function BrandHeader() {
+  return (
+    <div className="flex items-center justify-between rounded-lg border border-slate-200 bg-gradient-to-r from-[#FB7299]/12 to-[#00A1D6]/12 px-3 py-2">
+      <div className="flex items-center gap-2">
+        <SubCatchLogo className="h-[26px] w-[26px]" />
+        <div className="leading-tight">
+          <div className="text-[15px] font-bold tracking-[0.3px] text-slate-900">SubCatch</div>
+          <div className="text-[11px] text-slate-500">字幕捕手 · 多平台视频字幕采集</div>
+        </div>
+      </div>
+      <div className="flex items-center gap-1.5">
+        <PlatformLogoBadge color="bg-[#FB7299]" path={LOGOS.bilibili} title="哔哩哔哩" />
+        <PlatformLogoBadge color="bg-black" path={LOGOS.tiktok} title="抖音" />
+        <PlatformLogoBadge color="bg-[#FF2442]" path={LOGOS.xiaohongshu} title="小红书" />
+        <PlatformLogoBadge color="bg-[#FF0000]" path={LOGOS.youtube} title="YouTube" />
+      </div>
+    </div>
+  );
+}
+
+// 支持平台 logo 小方块：品牌色底 + 白色 logo（fill 跟随 currentColor）。
+function PlatformLogoBadge({
+  color,
+  path,
+  title,
+}: {
+  color: string;
+  path: string;
+  title: string;
+}) {
+  return (
+    <span
+      title={title}
+      className={cn('flex h-6 w-6 items-center justify-center rounded-md text-white', color)}
+    >
+      <svg viewBox="0 0 24 24" fill="currentColor" className="h-[14px] w-[14px]" aria-hidden="true">
+        <path d={path} />
+      </svg>
+    </span>
+  );
+}
+
+// SubCatch 品牌 logo：与 icons/icon.svg master 主版同构（CC 双弧 + 粉蓝渐变）。
+function SubCatchLogo({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 72 72" fill="none" className={className} aria-hidden="true">
+      <defs>
+        <linearGradient id="sc-logo" x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0" stopColor="#FB7299" />
+          <stop offset="1" stopColor="#00A1D6" />
+        </linearGradient>
+      </defs>
+      <rect x="5" y="5" width="62" height="62" rx="16" fill="url(#sc-logo)" />
+      <path d="M27 28 A8 8 0 1 0 27 44" stroke="#ffffff" strokeWidth="4.5" strokeLinecap="round" />
+      <path d="M45 28 A8 8 0 1 0 45 44" stroke="#ffffff" strokeWidth="4.5" strokeLinecap="round" />
+    </svg>
   );
 }
 
