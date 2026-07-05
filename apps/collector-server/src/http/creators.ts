@@ -29,7 +29,9 @@ export async function handleCreatorsHttp(req: IncomingMessage, res: ServerRespon
     const scope = url.searchParams.get('scope');
     const page = Math.max(1, Number(url.searchParams.get('page') ?? 1));
     const size = Math.min(100, Math.max(1, Number(url.searchParams.get('size') ?? 20)));
-    const r = listCreators(db, { q, category, scope: scope === 'agent' || scope === 'human' ? scope : undefined }, page, size);
+    const sortRaw = url.searchParams.get('sort');
+    const sort = sortRaw === 'fans' || sortRaw === 'video_count' ? sortRaw : 'first_seen';
+    const r = listCreators(db, { q, category, scope: scope === 'agent' || scope === 'human' ? scope : undefined }, page, size, sort);
     json(res, 200, { ok: true, ...r });
     return;
   }

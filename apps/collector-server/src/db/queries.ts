@@ -172,6 +172,7 @@ export function listCreators(
   filter: { q?: string; category?: string; scope?: 'agent' | 'human' },
   page: number,
   size: number,
+  sort: 'first_seen' | 'fans' | 'video_count' = 'first_seen',
 ): { total: number; items: CreatorListItem[] } {
   const where: string[] = []; const vals: unknown[] = [];
   if (filter.q) { where.push('(c.name LIKE ? OR c.source_uid LIKE ?)'); vals.push(`%${filter.q}%`, `%${filter.q}%`); }
@@ -194,7 +195,7 @@ export function listCreators(
      LEFT JOIN categories ca ON ca.id = c.category_agent_id
      LEFT JOIN categories ch ON ch.id = c.category_human_id
      ${whereSql}
-     ORDER BY c.first_seen_at DESC LIMIT ? OFFSET ?`,
+     ORDER BY ${sort === 'fans' ? 'COALESCE(c.fans, 0)' : sort === 'video_count' ? 'video_count' : 'c.first_seen_at'} DESC, c.id DESC LIMIT ? OFFSET ?`,
   ).all(...vals, size, offset) as CreatorListItem[];
   return { total, items };
 }

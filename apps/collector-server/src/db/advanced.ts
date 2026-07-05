@@ -8,6 +8,7 @@ import type { VideoDetail, VideoListItem, VersionRow } from './queries.js';
 export interface VideoFilter {
   q?: string;                // title / creator 名 模糊
   creator?: string;          // creator 名 模糊
+  creator_id?: number;       // creator id 精确（UP 详情页拉该 UP 视频）
   source?: string;           // videos.source 精确
   tid?: number;              // extra.tid 精确
   tname?: string;            // extra.tname 模糊
@@ -15,10 +16,13 @@ export interface VideoFilter {
   lang?: string;             // subtitle_tracks.lan 模糊（zh 命中 zh-Hans）
   track_type?: number;       // subtitle_tracks.track_type 精确（1=AI 2=CC）
   has_subtitle?: boolean;    // 至少有一条 subtitle_versions
-  since?: number;            // 毫秒，比对 first_seen_at
+  since?: number;            // 毫秒，比对 date_field（默认 first_seen_at）
   until?: number;
   min_duration?: number;     // 秒
   max_duration?: number;
+  min_view?: number;         // extra.stat.view 范围（绝对值）
+  max_view?: number;
+  date_field?: 'first_seen' | 'published_at';  // since/until 比对的列，默认 first_seen
 }
 
 export type VideoSortKey = 'first_seen' | 'published_at' | 'title' | 'duration' | 'view';
@@ -91,6 +95,10 @@ function buildVideoWhere(f: VideoFilter): { where: string; params: unknown[] } {
     conds.push('c.name LIKE ?');
     params.push(`%${f.creator}%`);
   }
+  if (f.creator_id != null) {
+    conds.push('v.creator_id = ?');
+    params.push(f.creator_id);
+  }
   if (f.source) {
     conds.push('v.source = ?');
     params.push(f.source);
@@ -119,13 +127,22 @@ function buildVideoWhere(f: VideoFilter): { where: string; params: unknown[] } {
   if (f.has_subtitle) {
     conds.push('EXISTS (SELECT 1 FROM subtitle_tracks st JOIN subtitle_versions sv ON sv.track_id = st.id WHERE st.video_id = v.id)');
   }
+  const dateCol = f.date_field === 'published_at' ? 'v.published_at' : 'v.first_seen_at';
   if (f.since != null) {
-    conds.push('v.first_seen_at >= ?');
+    conds.push(`${dateCol} >= ?`);
     params.push(f.since);
   }
   if (f.until != null) {
-    conds.push('v.first_seen_at <= ?');
+    conds.push(`${dateCol} <= ?`);
     params.push(f.until);
+  }
+  if (f.min_view != null) {
+    conds.push("CAST(json_extract(v.extra, '$.stat.view') AS INTEGER) >= ?");
+    params.push(f.min_view);
+  }
+  if (f.max_view != null) {
+    conds.push("CAST(json_extract(v.extra, '$.stat.view') AS INTEGER) <= ?");
+    params.push(f.max_view);
   }
   if (f.min_duration != null) {
     conds.push('v.duration >= ?');

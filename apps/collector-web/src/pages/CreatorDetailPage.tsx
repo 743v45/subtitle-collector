@@ -6,11 +6,25 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useAsync } from '@/lib/useAsync';
 import { useToast } from '@/components/ui/toast';
-import { getCreatorDetail, listCategories, setCreatorCategory } from '@/api';
-import type { CreatorDetail } from '@/types';
+import { getCreatorDetail, listCategories, setCreatorCategory, listVideos } from '@/api';
+import type { CreatorDetail, VideoListItem } from '@/types';
 
 function fmtTime(ms: number): string {
   return new Date(ms).toLocaleString();
+}
+function fmtView(n: number | null | undefined): string {
+  if (n == null || !Number.isFinite(n)) return '';
+  if (n < 10000) return String(n);
+  if (n < 100000000) return `${(n / 10000).toFixed(1)}万`;
+  return `${(n / 100000000).toFixed(1)}亿`;
+}
+function fmtDur(sec: number | null | undefined): string {
+  if (sec == null || !Number.isFinite(sec) || sec < 0) return '';
+  const h = Math.floor(sec / 3600);
+  const m = Math.floor((sec % 3600) / 60);
+  const s = Math.floor(sec % 60);
+  const pad = (x: number) => String(x).padStart(2, '0');
+  return h > 0 ? `${h}:${pad(m)}:${pad(s)}` : `${m}:${pad(s)}`;
 }
 
 // 资料卡里的「label + 值」行；空值统一渲染为 —。
@@ -56,7 +70,15 @@ function DetailSkeleton() {
   );
 }
 
-export function CreatorDetailPage({ id, onBack }: { id: number; onBack: () => void }) {
+export function CreatorDetailPage({
+  id,
+  onBack,
+  onOpenVideo,
+}: {
+  id: number;
+  onBack: () => void;
+  onOpenVideo: (source: string, sourceVid: string) => void;
+}) {
   const toast = useToast();
   const { data: creator, loading, error, reload } = useAsync<CreatorDetail>(
     () => getCreatorDetail(id),
@@ -64,6 +86,13 @@ export function CreatorDetailPage({ id, onBack }: { id: number; onBack: () => vo
   );
   const { data: agentCats } = useAsync(() => listCategories('agent'), []);
   const { data: humanCats } = useAsync(() => listCategories('human'), []);
+  // 该 UP 已采集视频（按发布时间倒序，最多 100 条）
+  const { data: videosData, loading: videosLoading } = useAsync(
+    () => listVideos({ creator_id: id, size: 100, sort: 'published_at', desc: true }),
+    [id],
+  );
+  const videos: VideoListItem[] = videosData?.items ?? [];
+  const videoTotal = videosData?.total ?? 0;
   const [busyScope, setBusyScope] = useState<'agent' | 'human' | null>(null);
 
   async function changeCategory(scope: 'agent' | 'human', name: string) {
@@ -178,6 +207,44 @@ export function CreatorDetailPage({ id, onBack }: { id: number; onBack: () => vo
               </CardContent>
             </Card>
           </div>
+
+          {/* 该 UP 已采集视频列表（按发布时间倒序） */}
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">已采集视频（{videoTotal}{videoTotal > videos.length ? `，仅显示前 ${videos.length}` : ''}）</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-1">
+              {videosLoading && <Skeleton className="h-14 w-full" />}
+              {!videosLoading && videos.length === 0 && (
+                <div className="py-2 text-sm text-muted-foreground">暂无已采集视频</div>
+              )}
+              {!videosLoading && videos.map((v) => (
+                <div
+                  key={v.id}
+                  onClick={() => onOpenVideo(v.source, v.source_vid)}
+                  className="flex cursor-pointer gap-3 rounded-md p-2 transition-colors hover:bg-accent"
+                >
+                  {v.pic && (
+                    <img
+                      src={v.pic}
+                      alt=""
+                      loading="lazy"
+                      referrerPolicy="no-referrer"
+                      className="h-[54px] w-[96px] shrink-0 rounded bg-muted object-cover"
+                    />
+                  )}
+                  <div className="min-w-0 flex-1 space-y-0.5">
+                    <div className="line-clamp-1 text-sm font-medium">{v.title}</div>
+                    <div className="text-xs text-muted-foreground">
+                      {v.view != null && <span>播放 {fmtView(v.view)}</span>}
+                      {v.view != null && fmtDur(v.duration) && ' · '}
+                      {fmtDur(v.duration)}
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </CardContent>
+          </Card>
         </>
       )}
     </div>

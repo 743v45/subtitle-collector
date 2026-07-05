@@ -30,7 +30,9 @@ export function handleStatsHttp(req: IncomingMessage, res: ServerResponse, db: D
     }
     // 同 /api/videos 的全部 VideoFilter 透传（数字/布尔非法忽略）。
     const filter = parseVideoFilter(url.searchParams);
-    json(res, 200, { ok: true, items: aggregateStats(db, groupByRaw as StatsGroupBy, filter) });
+    // topN：覆盖默认 20（分区下拉等场景需更大列表），夹在 1..500，非法回落 20。
+    const topN = Math.min(500, Math.max(1, Math.floor(Number(url.searchParams.get('topN') ?? '20')) || 20));
+    json(res, 200, { ok: true, items: aggregateStats(db, groupByRaw as StatsGroupBy, filter, topN) });
     return;
   }
   json(res, 400, { ok: false, error: 'type must be overview|aggregate' });

@@ -26,6 +26,8 @@ export function parseVideoFilter(p: URLSearchParams): VideoFilter {
   if (q) f.q = q;
   const creator = p.get('creator');
   if (creator) f.creator = creator;
+  const creator_id = toInt(p.get('creator_id'));
+  if (creator_id !== undefined) f.creator_id = creator_id;
   const source = p.get('source');
   if (source) f.source = source;
   const tid = toInt(p.get('tid'));
@@ -48,5 +50,11 @@ export function parseVideoFilter(p: URLSearchParams): VideoFilter {
   if (min_duration !== undefined) f.min_duration = min_duration;
   const max_duration = toInt(p.get('max_duration'));
   if (max_duration !== undefined) f.max_duration = max_duration;
+  const min_view = toInt(p.get('min_view'));
+  if (min_view !== undefined) f.min_view = min_view;
+  const max_view = toInt(p.get('max_view'));
+  if (max_view !== undefined) f.max_view = max_view;
+  const dateFieldRaw = p.get('date_field');
+  if (dateFieldRaw === 'first_seen' || dateFieldRaw === 'published_at') f.date_field = dateFieldRaw;
   return f;
 }

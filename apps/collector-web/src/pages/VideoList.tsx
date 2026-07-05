@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { listVideos } from '../api';
+import { listVideos, getStatsAggregate } from '../api';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -14,6 +14,7 @@ import type { VideoFilter, VideoListItem } from '../types';
 const PAGE_SIZE = 20;
 
 type SortField = NonNullable<VideoFilter['sort']>;
+type DateField = NonNullable<VideoFilter['date_field']>;
 
 const SORT_OPTIONS: { value: SortField; label: string }[] = [
   { value: 'first_seen', label: '首见时间' },
@@ -27,15 +28,42 @@ function formatTs(ts: number | null | undefined): string {
   return new Date(ts).toLocaleString();
 }
 
+// 秒 → m:ss / h:mm:ss
+function formatDuration(sec: number | null | undefined): string {
+  if (sec == null || !Number.isFinite(sec) || sec < 0) return '';
+  const h = Math.floor(sec / 3600);
+  const m = Math.floor((sec % 3600) / 60);
+  const s = Math.floor(sec % 60);
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return h > 0 ? `${h}:${pad(m)}:${pad(s)}` : `${m}:${pad(s)}`;
+}
+
+// 播放量 → 万 / 亿
+function formatView(n: number | null | undefined): string {
+  if (n == null || !Number.isFinite(n)) return '';
+  if (n < 10000) return String(n);
+  if (n < 100000000) return `${(n / 10000).toFixed(1)}万`;
+  return `${(n / 100000000).toFixed(1)}亿`;
+}
+
 export function VideoList({ onOpen }: { onOpen: (source: string, sourceVid: string) => void }) {
   // q 走防抖（输入即时更新 qInput，300ms 后落到 q 驱动查询）
   const [qInput, setQInput] = useState('');
   const [q, setQ] = useState('');
-  // 次要筛选（折叠区）
+  // 分区（下拉，选项从 aggregate 拉）
   const [tname, setTname] = useState('');
+  // 次要筛选（折叠区）
   const [tag, setTag] = useState('');
   const [lang, setLang] = useState('');
   const [hasSubtitle, setHasSubtitle] = useState(false);
+  // 时间区间（YYYY-MM-DD）+ 时长区间（分钟）+ 播放量区间（万）
+  const [dateField, setDateField] = useState<DateField>('first_seen');
+  const [sinceDate, setSinceDate] = useState('');
+  const [untilDate, setUntilDate] = useState('');
+  const [minDur, setMinDur] = useState('');
+  const [maxDur, setMaxDur] = useState('');
+  const [minView, setMinView] = useState('');
+  const [maxView, setMaxView] = useState('');
   // 排序
   const [sort, setSort] = useState<SortField | undefined>(undefined);
   const [desc, setDesc] = useState(true);
@@ -48,6 +76,18 @@ export function VideoList({ onOpen }: { onOpen: (source: string, sourceVid: stri
     return () => clearTimeout(t);
   }, [qInput]);
 
+  // 分区下拉选项：从 aggregate groupBy=tname 拉（过滤空/unknown），topN=200 覆盖常见分区
+  const { data: partitionsData } = useAsync(() => getStatsAggregate('tname', {}, 200), []);
+  const partitions = (partitionsData ?? []).filter((p) => p.key && p.key !== '(unknown)');
+
+  // 日期 → 毫秒时间戳（since 当天 00:00，until 当天 23:59:59.999）；分钟 → 秒；万 → 绝对值
+  const since = sinceDate ? new Date(sinceDate + 'T00:00:00').getTime() : undefined;
+  const until = untilDate ? new Date(untilDate + 'T23:59:59.999').getTime() : undefined;
+  const min_duration = minDur && Number.isFinite(Number(minDur)) ? Math.floor(Number(minDur)) * 60 : undefined;
+  const max_duration = maxDur && Number.isFinite(Number(maxDur)) ? Math.floor(Number(maxDur)) * 60 : undefined;
+  const min_view = minView && Number.isFinite(Number(minView)) ? Math.floor(Number(minView)) * 10000 : undefined;
+  const max_view = maxView && Number.isFinite(Number(maxView)) ? Math.floor(Number(maxView)) * 10000 : undefined;
+
   const { data, loading, error, reload } = useAsync(
     () =>
       listVideos({
@@ -56,12 +96,19 @@ export function VideoList({ onOpen }: { onOpen: (source: string, sourceVid: stri
         tag: tag || undefined,
         lang: lang || undefined,
         has_subtitle: hasSubtitle || undefined,
+        date_field: dateField,
+        since,
+        until,
+        min_duration,
+        max_duration,
+        min_view,
+        max_view,
         sort,
         desc: sort ? desc : undefined,
         page,
         size: PAGE_SIZE,
       }),
-    [q, tname, tag, lang, hasSubtitle, sort, desc, page],
+    [q, tname, tag, lang, hasSubtitle, dateField, since, until, min_duration, max_duration, min_view, max_view, sort, desc, page],
   );
 
   const items = data?.items ?? [];
@@ -81,13 +128,20 @@ export function VideoList({ onOpen }: { onOpen: (source: string, sourceVid: stri
     setTag('');
     setLang('');
     setHasSubtitle(false);
+    setDateField('first_seen');
+    setSinceDate('');
+    setUntilDate('');
+    setMinDur('');
+    setMaxDur('');
+    setMinView('');
+    setMaxView('');
     setSort(undefined);
     setDesc(true);
     setPage(1);
   }
 
   // 任一次要筛选已激活时，"更多筛选"按钮给个视觉提示
-  const secondaryActive = !!(tname || tag || lang || hasSubtitle);
+  const secondaryActive = !!(tag || lang || hasSubtitle || sinceDate || untilDate || minDur || maxDur || minView || maxView);
 
   return (
     <div className="space-y-4">
@@ -104,6 +158,22 @@ export function VideoList({ onOpen }: { onOpen: (source: string, sourceVid: stri
           value={qInput}
           onChange={(e) => setQInput(e.target.value)}
         />
+        <Select
+          value={tname || '__all'}
+          onValueChange={(v) => onFilterChange(setTname)(v === '__all' ? '' : v)}
+        >
+          <SelectTrigger className="w-[150px]">
+            <SelectValue placeholder="分区" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="__all">全部分区</SelectItem>
+            {partitions.map((p) => (
+              <SelectItem key={p.key} value={p.key}>
+                {p.key} ({p.count})
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
         <div className="flex items-center gap-1">
           <Select
             value={sort ?? '__default'}
@@ -145,13 +215,7 @@ export function VideoList({ onOpen }: { onOpen: (source: string, sourceVid: stri
 
       {/* 次要筛选折叠区 */}
       {showMore && (
-        <div className="flex flex-wrap items-center gap-2 rounded-md border bg-muted/30 p-3">
-          <Input
-            className="max-w-[180px]"
-            placeholder="分区（模糊）"
-            value={tname}
-            onChange={(e) => onFilterChange(setTname)(e.target.value)}
-          />
+        <div className="flex flex-wrap items-center gap-3 rounded-md border bg-muted/30 p-3">
           <Input
             className="max-w-[180px]"
             placeholder="标签（模糊）"
@@ -164,6 +228,72 @@ export function VideoList({ onOpen }: { onOpen: (source: string, sourceVid: stri
             value={lang}
             onChange={(e) => onFilterChange(setLang)(e.target.value)}
           />
+          <div className="flex items-center gap-1 text-xs text-muted-foreground">
+            <span>时长</span>
+            <Input
+              type="number"
+              min={0}
+              className="w-20"
+              placeholder="最小"
+              value={minDur}
+              onChange={(e) => onFilterChange(setMinDur)(e.target.value)}
+            />
+            <span>~</span>
+            <Input
+              type="number"
+              min={0}
+              className="w-20"
+              placeholder="最大"
+              value={maxDur}
+              onChange={(e) => onFilterChange(setMaxDur)(e.target.value)}
+            />
+            <span>分钟</span>
+          </div>
+          <div className="flex items-center gap-1 text-xs text-muted-foreground">
+            <span>播放</span>
+            <Input
+              type="number"
+              min={0}
+              className="w-20"
+              placeholder="最小"
+              value={minView}
+              onChange={(e) => onFilterChange(setMinView)(e.target.value)}
+            />
+            <span>~</span>
+            <Input
+              type="number"
+              min={0}
+              className="w-20"
+              placeholder="最大"
+              value={maxView}
+              onChange={(e) => onFilterChange(setMaxView)(e.target.value)}
+            />
+            <span>万</span>
+          </div>
+          <div className="flex items-center gap-1 text-xs text-muted-foreground">
+            <Select value={dateField} onValueChange={(v) => onFilterChange(setDateField)(v as DateField)}>
+              <SelectTrigger className="h-8 w-[88px]">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="first_seen">首见</SelectItem>
+                <SelectItem value="published_at">发布</SelectItem>
+              </SelectContent>
+            </Select>
+            <Input
+              type="date"
+              className="w-36"
+              value={sinceDate}
+              onChange={(e) => onFilterChange(setSinceDate)(e.target.value)}
+            />
+            <span>~</span>
+            <Input
+              type="date"
+              className="w-36"
+              value={untilDate}
+              onChange={(e) => onFilterChange(setUntilDate)(e.target.value)}
+            />
+          </div>
           <Button
             variant={hasSubtitle ? 'default' : 'outline'}
             size="sm"
@@ -231,30 +361,45 @@ function VideoRow({ v, onOpen }: { v: VideoListItem; onOpen: (source: string, so
   const tags = v.tags ?? [];
   const shownTags = tags.slice(0, 3);
   const extraTags = Math.max(0, tags.length - shownTags.length);
+  const dur = formatDuration(v.duration);
 
   return (
     <Card
       onClick={() => onOpen(v.source, v.source_vid)}
       className="cursor-pointer transition-colors hover:bg-accent"
     >
-      <CardHeader className="space-y-1 p-4">
-        <CardTitle className="text-base font-medium">{v.title}</CardTitle>
-        <CardDescription className="text-xs">
-          {v.creator_name ?? '—'} · {v.track_count} 轨
-          {v.published_at ? ` · 发布 ${formatTs(v.published_at)}` : ''} · 首见 {formatTs(v.first_seen_at)}
-        </CardDescription>
-        {(v.tname || tags.length > 0) && (
-          <div className="flex flex-wrap gap-1 pt-1">
-            {v.tname && <Badge variant="secondary">{v.tname}</Badge>}
-            {shownTags.map((t) => (
-              <Badge key={t} variant="outline">
-                {t}
-              </Badge>
-            ))}
-            {extraTags > 0 && <Badge variant="outline">+{extraTags}</Badge>}
-          </div>
+      <div className="flex gap-3 p-3">
+        {v.pic && (
+          <img
+            src={v.pic}
+            alt=""
+            loading="lazy"
+            referrerPolicy="no-referrer"
+            className="h-[68px] w-[120px] shrink-0 rounded object-cover bg-muted"
+          />
         )}
-      </CardHeader>
+        <div className="min-w-0 flex-1 space-y-1">
+          <CardTitle className="text-base font-medium leading-snug line-clamp-2">{v.title}</CardTitle>
+          <CardDescription className="text-xs flex flex-wrap items-center gap-x-2">
+            <span>{v.creator_name ?? '—'}</span>
+            {v.view != null && <span>· 播放 {formatView(v.view)}</span>}
+            {dur && <span>· {dur}</span>}
+            <span>· {v.track_count} 轨</span>
+            {v.published_at ? <span>· 发布 {formatTs(v.published_at)}</span> : null}
+          </CardDescription>
+          {(v.tname || tags.length > 0) && (
+            <div className="flex flex-wrap gap-1 pt-0.5">
+              {v.tname && <Badge variant="secondary">{v.tname}</Badge>}
+              {shownTags.map((t) => (
+                <Badge key={t} variant="outline">
+                  {t}
+                </Badge>
+              ))}
+              {extraTags > 0 && <Badge variant="outline">+{extraTags}</Badge>}
+            </div>
+          )}
+        </div>
+      </div>
     </Card>
   );
 }

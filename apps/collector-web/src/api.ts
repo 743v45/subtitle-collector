@@ -49,6 +49,10 @@ export async function listVideos(filter: VideoFilter = {}): Promise<{ total: num
   if (filter.until != null) u.set('until', String(filter.until));
   if (filter.min_duration != null) u.set('min_duration', String(filter.min_duration));
   if (filter.max_duration != null) u.set('max_duration', String(filter.max_duration));
+  if (filter.creator_id != null) u.set('creator_id', String(filter.creator_id));
+  if (filter.min_view != null) u.set('min_view', String(filter.min_view));
+  if (filter.max_view != null) u.set('max_view', String(filter.max_view));
+  if (filter.date_field) u.set('date_field', filter.date_field);
   if (filter.sort) u.set('sort', filter.sort);
   if (filter.desc) u.set('desc', 'true');
   u.set('page', String(filter.page ?? 1));
@@ -80,11 +84,12 @@ export async function getStatsOverview(): Promise<StatsOverview> {
   const r = await fetch(`${BASE}/api/stats?type=overview`);
   return ensureOk(r, (j) => j.overview);
 }
-export async function getStatsAggregate(groupBy: StatsGroupBy, filter: VideoFilter = {}): Promise<KeyValue[]> {
+export async function getStatsAggregate(groupBy: StatsGroupBy, filter: VideoFilter = {}, topN?: number): Promise<KeyValue[]> {
   const u = new URLSearchParams({ type: 'aggregate', groupBy });
   if (filter.q) u.set('q', filter.q);
   if (filter.tag) u.set('tag', filter.tag);
   if (filter.tname) u.set('tname', filter.tname);
+  if (topN) u.set('topN', String(topN));
   const r = await fetch(`${BASE}/api/stats?${u}`);
   return ensureOk(r, (j) => j.items ?? []);
 }
@@ -139,6 +144,7 @@ export async function listCreators(params: {
   q?: string;
   category?: string;
   scope?: 'agent' | 'human';
+  sort?: 'first_seen' | 'fans' | 'video_count';
   page?: number;
   size?: number;
 }): Promise<{ total: number; items: CreatorListItem[] }> {
@@ -146,6 +152,7 @@ export async function listCreators(params: {
   if (params.q) u.set('q', params.q);
   if (params.category) u.set('category', params.category);
   if (params.scope) u.set('scope', params.scope);
+  if (params.sort) u.set('sort', params.sort);
   u.set('page', String(params.page ?? 1));
   u.set('size', String(params.size ?? 20));
   const r = await fetch(`${BASE}/api/creators?${u}`);

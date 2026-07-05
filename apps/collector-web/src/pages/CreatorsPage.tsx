@@ -9,6 +9,7 @@ import { useAsync } from '@/lib/useAsync';
 import { listCategories, listCreators, setCreatorCategory, type Category, type CreatorListItem } from '@/api';
 
 const PAGE_SIZE = 20;
+type CreatorSort = 'first_seen' | 'fans' | 'video_count';
 
 export function CreatorsPage({ onOpen }: { onOpen: (id: number) => void }) {
   const toast = useToast();
@@ -16,6 +17,7 @@ export function CreatorsPage({ onOpen }: { onOpen: (id: number) => void }) {
   const [debouncedQ, setDebouncedQ] = useState('');
   const [scope, setScope] = useState<'agent' | 'human'>('human');
   const [catFilter, setCatFilter] = useState<string>('');
+  const [sort, setSort] = useState<CreatorSort>('first_seen');
   const [page, setPage] = useState(1);
   const [busyUid, setBusyUid] = useState<string | null>(null);
 
@@ -31,10 +33,11 @@ export function CreatorsPage({ onOpen }: { onOpen: (id: number) => void }) {
       q: debouncedQ || undefined,
       category: catFilter || undefined,
       scope: catFilter ? scope : undefined,
+      sort,
       page,
       size: PAGE_SIZE,
     }),
-    [debouncedQ, catFilter, scope, page],
+    [debouncedQ, catFilter, scope, sort, page],
   );
   const items = listResult?.items ?? [];
   const total = listResult?.total ?? 0;
@@ -104,6 +107,19 @@ export function CreatorsPage({ onOpen }: { onOpen: (id: number) => void }) {
             ))}
           </SelectContent>
         </Select>
+        <Select
+          value={sort}
+          onValueChange={(v) => { setSort(v as CreatorSort); setPage(1); }}
+        >
+          <SelectTrigger className="w-32">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="first_seen">首见时间</SelectItem>
+            <SelectItem value="fans">粉丝数</SelectItem>
+            <SelectItem value="video_count">视频数</SelectItem>
+          </SelectContent>
+        </Select>
       </div>
 
       <Table>
@@ -113,13 +129,14 @@ export function CreatorsPage({ onOpen }: { onOpen: (id: number) => void }) {
             <TableHead>mid</TableHead>
             <TableHead>Agent 分类</TableHead>
             <TableHead>人工分类</TableHead>
+            <TableHead className="text-right">粉丝</TableHead>
             <TableHead className="text-right">视频数</TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
           {error ? (
             <TableRow>
-              <TableCell colSpan={5} className="text-sm text-destructive">
+              <TableCell colSpan={6} className="text-sm text-destructive">
                 加载失败：{error}
                 <Button variant="link" size="sm" onClick={reload}>重试</Button>
               </TableCell>
@@ -131,12 +148,13 @@ export function CreatorsPage({ onOpen }: { onOpen: (id: number) => void }) {
                 <TableCell><Skeleton className="h-4 w-20" /></TableCell>
                 <TableCell><Skeleton className="h-8 w-32" /></TableCell>
                 <TableCell><Skeleton className="h-8 w-32" /></TableCell>
+                <TableCell className="text-right"><Skeleton className="ml-auto h-4 w-10" /></TableCell>
                 <TableCell className="text-right"><Skeleton className="ml-auto h-4 w-8" /></TableCell>
               </TableRow>
             ))
           ) : items.length === 0 ? (
             <TableRow>
-              <TableCell colSpan={5} className="text-center text-sm text-muted-foreground">暂无数据</TableCell>
+              <TableCell colSpan={6} className="text-center text-sm text-muted-foreground">暂无数据</TableCell>
             </TableRow>
           ) : (
             items.map((c) => (
@@ -176,7 +194,8 @@ export function CreatorsPage({ onOpen }: { onOpen: (id: number) => void }) {
                     </SelectContent>
                   </Select>
                 </TableCell>
-                <TableCell className="text-right">{c.video_count}</TableCell>
+                <TableCell className="text-right tabular-nums">{c.fans != null ? c.fans.toLocaleString() : '—'}</TableCell>
+                <TableCell className="text-right tabular-nums">{c.video_count}</TableCell>
               </TableRow>
             ))
           )}

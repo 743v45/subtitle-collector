@@ -23,6 +23,7 @@ export interface VideoListItem {
   duration: number | null; published_at?: number | null;
   track_count: number; first_seen_at: number;
   tid?: number | null; tname?: string | null; tags?: string[];
+  view?: number | null; pic?: string | null;
 }
 export interface VideoInfo {
   title: string; creator_name: string | null; duration: number | null;
@@ -62,6 +63,10 @@ export interface VideoFilter {
   until?: number;
   min_duration?: number; // 秒
   max_duration?: number;
+  min_view?: number;     // 播放量范围（绝对值）
+  max_view?: number;
+  creator_id?: number;   // UP 详情页按 creator 精确过滤
+  date_field?: 'first_seen' | 'published_at'; // since/until 比对列，默认 first_seen
   sort?: 'first_seen' | 'published_at' | 'title' | 'duration' | 'view';
   desc?: boolean;
   page?: number;

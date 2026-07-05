@@ -48,7 +48,11 @@ export default function App() {
           <CategoriesPage />
         ) : tab === 'creators' ? (
           creatorView != null
-            ? <CreatorDetailPage id={creatorView} onBack={() => setCreatorView(null)} />
+            ? <CreatorDetailPage
+                id={creatorView}
+                onBack={() => setCreatorView(null)}
+                onOpenVideo={(s, v) => { setVideoView({ source: s, sourceVid: v }); setTab('videos'); }}
+              />
             : <CreatorsPage onOpen={(id) => setCreatorView(id)} />
         ) : videoView ? (
           <VideoDetail source={videoView.source} sourceVid={videoView.sourceVid} onBack={() => setVideoView(null)} />
