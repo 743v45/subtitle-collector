@@ -17,10 +17,15 @@ window.addEventListener("message", (event) => {
     // player 无 CC 字幕：可能是只有 AI 字幕的视频（如充电专属）。直接点 AI 字幕按钮——
     // 让播放器内部解码加密 URL 并 XHR 明文 aisubtitle（inject 拦截 SUBTITLE_BODY 构造 ai-zh 轨入库）。
     // 不依赖读 subtitle/web/view（protobuf/octet-stream，responseType=arraybuffer 时 responseText 抛异常）。
-    if ((cur.meta.subs ?? []).length === 0 && !cur.aiTriggered) {
-      cur.aiTriggered = true;
-      cur.expectAi = true;
-      setTimeout(triggerAiSubtitle, 1500); // 等播放器 UI 就绪
+    if ((cur.meta.subs ?? []).length === 0) {
+      // 自动上报关时浏览不主动点 AI 字幕（不打扰用户；且上报关 INGEST 会被丢）；
+      // navigate 主动采集由 background 发 NAV_TRIGGER_AI 强制点（绕过此开关）。
+      chrome.storage.local.get(["reportingEnabled"], ({ reportingEnabled }) => {
+        if (reportingEnabled !== false && !cur.aiTriggered) {
+          cur.aiTriggered = true; cur.expectAi = true;
+          setTimeout(triggerAiSubtitle, 1500); // 等播放器 UI 就绪
+        }
+      });
     }
   } else if (type === "SUBTITLE_BODY") {
     for (const [bvid, cur] of collected.entries()) {
@@ -160,6 +165,19 @@ window.addEventListener("message", (event) => {
 });
 
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+  // navigate 主动采集：强制点 AI 字幕（绕过上报开关——主动行为需要采，与浏览时「上报关不点」解耦）
+  if (msg?.type === "NAV_TRIGGER_AI") {
+    const bvid = msg.bvid || location.pathname.match(/(BV[A-Za-z0-9]+)/)?.[1];
+    let cur = collected.get(bvid);
+    if (!cur) { cur = { meta: { bvid, subs: [] }, bodies: new Map() }; collected.set(bvid, cur); }
+    if (!cur.aiTriggered) {
+      cur.aiTriggered = true; cur.expectAi = true;
+      console.log(`[content] navigate 强制点 AI 字幕 bvid=${bvid}`);
+      triggerAiSubtitle();
+    }
+    sendResponse({ ok: true });
+    return true;
+  }
   // popup「已收集」改用本地数据源：直取 content.js 内存里 collected 的轨道/正文/extra。
   // 走 chrome.tabs.sendMessage（popup → 当前 tab 的 content script），不经 background。
   if (msg?.type === "GET_LOCAL_STATE") {

@@ -413,6 +413,13 @@ async function collectViaNavigate(bvid, timeoutMs = 20000) {
   try {
     const tab = await chrome.tabs.create({ url: `https://www.bilibili.com/video/${bvid}`, active: true }); // 前台：后台 tab 播放器不活跃，自动点触发不了 aisubtitle
     tabId = tab.id;
+    // 通知 content 强制点 AI 字幕（navigate 主动采集，绕过上报开关）。content 注入后接收，未就绪则重试。
+    const notify = (retries = 0) => {
+      chrome.tabs.sendMessage(tab.id, { type: "NAV_TRIGGER_AI", bvid }, () => {
+        if (chrome.runtime.lastError && retries < 30) setTimeout(() => notify(retries + 1), 500);
+      });
+    };
+    notify();
     // 等被动采集 INGEST 该 bvid（content 自动点 AI 字幕 → inject 拦明文 aisubtitle → INGEST）
     const ok = await new Promise((resolve) => {
       const t = setTimeout(() => { pendingNavCollect.delete(bvid); resolve(false); }, timeoutMs);
