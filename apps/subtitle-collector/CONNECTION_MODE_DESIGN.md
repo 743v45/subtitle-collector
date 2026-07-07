@@ -98,21 +98,21 @@ standalone 下上报开关置灰（无 server 可上报）。
 | # | 项 | 验证手段 | 状态 |
 |---|---|---|---|
 | 1 | 默认 `server` 模式，扩展行为与改动前一致 | 代码审查 + build | ✅ |
-| 2 | 切 standalone：WS 主动 close、不再重连 | verify 端到端 | ⏳ 待手动 |
-| 3 | standalone 下被动 INGEST 被丢弃 | verify 端到端 | ⏳ 待手动 |
+| 2 | 切 standalone：WS 主动 close、不再重连 | verify 端到端 | ✅ |
+| 3 | standalone 下被动 INGEST 被丢弃 | verify 端到端 | ✅ |
 | 4 | standalone 下 popup 上报相关 UI 灰掉/隐藏 | 代码审查 + build | ✅ |
 | 5 | standalone 下本地字幕捕获+复制仍可用 | 代码审查（content.js 未改） | ✅ |
 | 6 | standalone 下 ConnDot 显示「纯扩展」(灰) | 代码审查 | ✅ |
-| 7 | 切回 server：恢复 connect + 上报 | verify 端到端 | ⏳ 待手动 |
+| 7 | 切回 server：恢复 connect + 上报 | verify 端到端 | ✅ |
 | 8 | 重启 SW（alarm 唤醒）后模式持久 | 代码审查（loadPersistedState 读 storage） | ✅ |
 | 9 | 纯函数测试全绿 | `node --test` | ✅ 47/47 |
 | 10 | vite build 冒烟通过 | `pnpm build` | ✅ |
 
-> ⏳ 项（#2/#3/#7）需端到端 verify。本次因本机 21527 端口被真实 collector-server 占用未跑；停 server 后执行 `node scripts/verify-connection-mode.mjs` 补验。
+> 全部 10 项通过。端到端 verify 见 R2（停 collector-server 释放 21527 后跑通）。
 
 ## 8. 测试轮次记录表
 
 | 轮次 | 日期 | 范围 | 结果 | 备注 |
 |---|---|---|---|---|
 | R1 | 2026-07-07 | 纯函数（含 connection-mode，共 47 项）+ vite build 冒烟 | ✅ 通过 | `node --test` 47/47；`pnpm build` 无错 |
-| R2 | 2026-07-07 | verify-connection-mode.mjs 端到端 | ⏳ 未跑 | 21527 被真实 collector-server 占用；停 server 后 `node scripts/verify-connection-mode.mjs` 补验 |
+| R2 | 2026-07-07 | verify-connection-mode.mjs 端到端 | ✅ 通过 | 停 collector-server 释放 21527 后跑通：server 收 ingest(1) → standalone 丢 ingest(0) → server 恢复 ingest(1)+重连 hello(3) |
