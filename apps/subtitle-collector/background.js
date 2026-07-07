@@ -1,5 +1,6 @@
 import { SERVER_URL, PING_URL, TOKEN } from "./config.js";
 import { shouldReport, genClientId, CLIENT_ID_KEY, REPORTING_KEY } from "./reporting.mjs";
+import { resolveConnectionMode, isStandalone, CONNECTION_MODE_KEY, MODE_SERVER, MODE_STANDALONE } from "./connection-mode.mjs";
 import { extractKeysFromNav } from "./wbi.js";
 import { biliFetch, formatSearchResult, fetchSubtitleView } from "./bili-fetch.js";
 import { buildIngestPayload, normalizeUrl, normalizeTags } from "./ingest-payload.js";
@@ -9,6 +10,7 @@ let ws = null;
 let reconnectAttempts = 0;
 let reportingEnabled = true; // 内存态；启动从 storage 载入，默认 true（fail-open）
 let clientId = null;         // 内存态；启动载入或首次生成
+let connectionMode = MODE_SERVER; // 内存态；启动载入，默认 server（向后兼容）。standalone=纯扩展：不连不上报
 const RECONNECT_BASE_MS = 2000;
 const RECONNECT_MAX_MS = 10000;
 
@@ -64,12 +66,13 @@ async function ensureUpperVideos(mid) {
 // MV3 SW 保活兜底：周期 alarm 唤醒 SW，若 ws 未 OPEN 则触发重连（C1）
 chrome.alarms.create("keepalive", { periodInMinutes: 0.4 });
 chrome.alarms.onAlarm.addListener((a) => {
-  if (a.name === "keepalive" && ws?.readyState !== WebSocket.OPEN) connect();
+  // 纯扩展模式：不自发重连（用户主动断开，alarm 唤醒也不连）
+  if (a.name === "keepalive" && ws?.readyState !== WebSocket.OPEN && !isStandalone(connectionMode)) connect();
 });
 
-// 启动载入持久态：clientId（无则生成并回写）、reportingEnabled（默认 true）
+// 启动载入持久态：clientId（无则生成并回写）、reportingEnabled（默认 true）、connectionMode（默认 server）
 async function loadPersistedState() {
-  const items = await chrome.storage.local.get([CLIENT_ID_KEY, REPORTING_KEY]);
+  const items = await chrome.storage.local.get([CLIENT_ID_KEY, REPORTING_KEY, CONNECTION_MODE_KEY]);
   if (items[CLIENT_ID_KEY]) {
     clientId = items[CLIENT_ID_KEY];
   } else {
@@ -77,6 +80,7 @@ async function loadPersistedState() {
     await chrome.storage.local.set({ [CLIENT_ID_KEY]: clientId });
   }
   reportingEnabled = shouldReport(items[REPORTING_KEY]); // undefined → true
+  connectionMode = resolveConnectionMode(items[CONNECTION_MODE_KEY]); // undefined → server
 }
 
 // 统一更新开关：内存 + storage
@@ -84,6 +88,13 @@ async function applyReporting(enabled) {
   reportingEnabled = enabled === true;
   await chrome.storage.local.set({ [REPORTING_KEY]: reportingEnabled });
   return reportingEnabled;
+}
+
+// 统一更新连接模式：内存 + storage（归一后落盘，防脏值）。不在此处切连/断连——由 SET_CONNECTION_MODE 调用方按返回值决定。
+async function applyConnectionMode(mode) {
+  connectionMode = resolveConnectionMode(mode);
+  await chrome.storage.local.set({ [CONNECTION_MODE_KEY]: connectionMode });
+  return connectionMode;
 }
 
 async function probeServer() {
@@ -94,12 +105,15 @@ async function probeServer() {
 }
 
 function scheduleReconnect() {
+  // 纯扩展模式：用户主动断开，不重连（覆盖 onclose→scheduleReconnect 路径）
+  if (isStandalone(connectionMode)) return;
   reconnectAttempts++;
   const delay = Math.min(RECONNECT_BASE_MS * Math.pow(2, reconnectAttempts - 1), RECONNECT_MAX_MS);
   setTimeout(connect, delay);
 }
 
 async function connect() {
+  if (isStandalone(connectionMode)) return; // 纯扩展模式：不连 server
   if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) return;
   if (!(await probeServer())) { scheduleReconnect(); return; }
   try {
@@ -335,6 +349,12 @@ function payloadSummary(payload) {
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (msg?.type === "INGEST" && msg.payload) {
     const payload = msg.payload;
+    // 纯扩展模式：丢弃所有被动上报（含 force 手动上报——无 server 可收）；content.js 本地捕获不受影响
+    if (isStandalone(connectionMode)) {
+      console.log(`[background] ingest 丢弃（纯扩展模式）source_vid=${payload.video?.source_vid}`);
+      sendResponse({ ok: true, dropped: true });
+      return true;
+    }
     // navigate 采集：被动 INGEST 到达，唤醒等待中的 collectViaNavigate
     const navBvid = payload?.video?.source_vid;
     const pending = pendingNavCollect.get(navBvid);
@@ -358,7 +378,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     }
     sendResponse({ ok: true });
   } else if (msg?.type === "WS_STATUS") {
-    sendResponse({ ok: true, connected: ws?.readyState === WebSocket.OPEN });
+    sendResponse({ ok: true, connected: ws?.readyState === WebSocket.OPEN, mode: connectionMode });
   } else if (msg?.type === "FETCH_SUBTITLE" && msg.url) {
     // content script 请求 background 抓字幕体（background 有 host_permissions，免 CORS）
     // B 站新版播放器改用同源 protobuf endpoint，inject 拦不到旧 aisubtitle 请求，故由 background 主动抓
@@ -388,6 +408,22 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         ws.send(JSON.stringify({ type: "reporting-state", enabled }));
       }
       sendResponse({ ok: true, reporting_enabled: enabled });
+    });
+    return true;
+  } else if (msg?.type === "SET_CONNECTION_MODE") {
+    const newMode = resolveConnectionMode(msg.mode);
+    applyConnectionMode(newMode).then(async (mode) => {
+      if (mode === MODE_STANDALONE) {
+        // 切纯扩展：断 WS + 清 pending（onclose→scheduleReconnect 已被 isStandalone 守卫拦，不会重连）
+        try { ws?.close(); } catch {}
+        ws = null;
+        await chrome.storage.local.set({ pendingIngests: [] });
+      } else {
+        // 切回 server：重置退避计数并触发连接
+        reconnectAttempts = 0;
+        connect();
+      }
+      sendResponse({ ok: true, mode });
     });
     return true;
   }
@@ -438,7 +474,9 @@ async function collectViaNavigate(bvid, timeoutMs = 20000) {
 
 // 统一 ingest 上报：WS OPEN 直发；断线时落 pendingIngests storage，重连后 flushPendingIngests 补发。
 // fetch-subtitle（主动）与 content→background INGEST（被动）共用，保证 WS 断时不丢。
+// 纯扩展模式下短路（不连不存 pending）——由调用前的 INGEST 短路与本函数守卫双重覆盖。
 function sendIngest(payload) {
+  if (isStandalone(connectionMode)) return; // 纯扩展：不上报、不存 pending（永不补发）
   if (ws?.readyState === WebSocket.OPEN) {
     ws.send(JSON.stringify({ type: "ingest", payload }));
   } else {
@@ -458,4 +496,7 @@ async function flushPendingIngests() {
   await chrome.storage.local.set({ pendingIngests: [] });
 }
 
-loadPersistedState().then(() => loadNavGapConfig()).then(connect);
+loadPersistedState().then(() => loadNavGapConfig()).then(() => {
+  // 纯扩展模式：启动不连 server（模式由 storage 持久，SW 回收重启后仍生效）
+  if (!isStandalone(connectionMode)) connect();
+});

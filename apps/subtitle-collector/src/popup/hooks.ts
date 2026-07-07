@@ -13,22 +13,41 @@ import type {
   SubtitleBody,
 } from './types';
 
-// —— 连接状态：每 2s 向 background 查 WS_STATUS ——
-export type ConnState = 'loading' | 'connected' | 'disconnected';
+// —— 连接状态 + 模式：每 2s 向 background 查 WS_STATUS（含 mode）——
+// mode=server 时 connected 反映 WS 客观连通性；mode=standalone（纯扩展）时 connected 恒 false。
+export type ConnectionMode = 'server' | 'standalone';
+export interface ConnectionStatus {
+  loading: boolean; // 首帧未拿到 WS_STATUS 时 true，避免闪烁
+  connected: boolean;
+  mode: ConnectionMode;
+}
 
-export function useConnectionStatus(): ConnState {
-  const [state, setState] = useState<ConnState>('loading');
+export function useConnectionStatus(): ConnectionStatus & { setMode: (m: ConnectionMode) => void } {
+  const [status, setStatus] = useState<ConnectionStatus>({
+    loading: true,
+    connected: false,
+    mode: 'server',
+  });
   useEffect(() => {
     const check = () => {
       chrome.runtime.sendMessage({ type: 'WS_STATUS' }, (resp) => {
-        setState(resp?.connected ? 'connected' : 'disconnected');
+        setStatus({
+          loading: false,
+          connected: !!resp?.connected,
+          mode: resp?.mode === 'standalone' ? 'standalone' : 'server',
+        });
       });
     };
     check();
     const t = setInterval(check, 2000);
     return () => clearInterval(t);
   }, []);
-  return state;
+  // 乐观更新：切 standalone 立即置灰（connected=false）；切 server 保持原 connected，等轮询修正（WS 异步重连）
+  const setMode = useCallback((m: ConnectionMode) => {
+    setStatus((s) => ({ loading: false, mode: m, connected: m === 'standalone' ? false : s.connected }));
+    chrome.runtime.sendMessage({ type: 'SET_CONNECTION_MODE', mode: m });
+  }, []);
+  return { ...status, setMode };
 }
 
 // —— B 站登录态：每 30s 直连官方 nav 接口 ——

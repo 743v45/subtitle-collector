@@ -10,7 +10,8 @@ import {
   useUpperVideos,
   diffConsistency,
   type CollectedState,
-  type ConnState,
+  type ConnectionStatus,
+  type ConnectionMode,
   type CreatorState,
   type LocalCollectedState,
   type LoginState,
@@ -31,6 +32,9 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from '@/components/ui/collapsible';
+
+// useConnectionStatus 返回类型别名（含 setMode），供 PlatformHead / ConnDot 共用
+type ConnInfo = ConnectionStatus & { setMode: (m: ConnectionMode) => void };
 
 const SUBTITLE_FORMAT_KEY = 'subtitleFormat';
 const FORMAT_LABEL: Record<SubtitleFormat, string> = {
@@ -92,6 +96,7 @@ function useSubtitleFormat(): [SubtitleFormat, (f: SubtitleFormat) => void] {
 
 export function Popup() {
   const conn = useConnectionStatus();
+  const standalone = conn.mode === 'standalone';
   const login = useBiliLogin();
   const reporting = useReporting();
   const { collected: serverCollected, currentBvid } = useCollected();
@@ -163,8 +168,9 @@ export function Popup() {
             server={serverCollected}
             consistency={consistency}
           />
-          <CreatorCard creator={creatorState} />
-          <UpperVideosList state={upperVideos} />
+          {/* CreatorCard / UpperVideosList 依赖 server API / 被动缓存：纯扩展下隐藏 */}
+          {!standalone && <CreatorCard creator={creatorState} />}
+          {!standalone && <UpperVideosList state={upperVideos} />}
         </>
       )}
       <FooterActions
@@ -173,8 +179,9 @@ export function Popup() {
         isVideoPage={isVideoPage}
         reportStatus={reportStatus}
         hasSubtitle={hasSubtitle}
+        standalone={standalone}
       />
-      <ClientIdFoot />
+      {!standalone && <ClientIdFoot />}
     </div>
   );
 }
@@ -248,7 +255,7 @@ function PlatformHead({
   login,
 }: {
   platform: Platform;
-  conn: ConnState;
+  conn: ConnInfo;
   login: LoginState;
 }) {
   return (
@@ -272,14 +279,26 @@ function PlatformHead({
   );
 }
 
-function ConnDot({ conn }: { conn: ConnState }) {
-  if (conn === 'loading') return <StatusPlaceholder className="h-3.5 w-14" />;
-  const ok = conn === 'connected';
+// 连接状态点（可点击切换连接模式）：
+//   server + connected → 🟢 已连接    点击 → 切纯扩展
+//   server + 断       → 🔴 未连接    点击 → 切纯扩展
+//   standalone        → ⚪ 纯扩展    点击 → 切回 server
+function ConnDot({ conn }: { conn: ConnInfo }) {
+  if (conn.loading) return <StatusPlaceholder className="h-3.5 w-14" />;
+  const standalone = conn.mode === 'standalone';
+  const dot = standalone ? 'bg-slate-400' : conn.connected ? 'bg-emerald-500' : 'bg-red-500';
+  const text = standalone ? '纯扩展' : conn.connected ? '已连接' : '未连接';
+  const color = standalone ? 'text-slate-500' : conn.connected ? 'text-emerald-600' : 'text-red-600';
   return (
-    <span className="flex items-center gap-1 text-xs">
-      <span className={cn('h-1.5 w-1.5 rounded-full', ok ? 'bg-emerald-500' : 'bg-red-500')} />
-      <span className={ok ? 'text-emerald-600' : 'text-red-600'}>{ok ? '已连接' : '未连接'}</span>
-    </span>
+    <button
+      type="button"
+      onClick={() => conn.setMode(standalone ? 'server' : 'standalone')}
+      title={standalone ? '点击连接 server' : '点击切换为纯扩展（不连接、不上报）'}
+      className="flex items-center gap-1 text-xs transition-opacity hover:opacity-70"
+    >
+      <span className={cn('h-1.5 w-1.5 rounded-full', dot)} />
+      <span className={color}>{text}</span>
+    </button>
   );
 }
 
@@ -318,15 +337,17 @@ function FooterActions({
   isVideoPage,
   reportStatus,
   hasSubtitle,
+  standalone,
 }: {
   reporting: { enabled: boolean | null; setEnabled: (v: boolean) => void };
   onReport: () => void;
   isVideoPage: boolean;
   reportStatus: 'idle' | 'reporting' | 'success' | 'failed';
   hasSubtitle: boolean;
+  standalone: boolean;
 }) {
   return (
-    <div className="flex items-center gap-2">
+    <div className={cn('flex items-center gap-2', standalone && 'opacity-50')}>
       {reporting.enabled === null ? (
         <StatusPlaceholder className="h-6 w-14" />
       ) : (
@@ -335,6 +356,7 @@ function FooterActions({
           onCheckedChange={reporting.setEnabled}
           checkedLabel="自动"
           uncheckedLabel="手动"
+          disabled={standalone}
           className="data-[state=checked]:bg-brand"
         />
       )}
@@ -342,8 +364,8 @@ function FooterActions({
         <Button
           size="sm"
           onClick={onReport}
-          disabled={!hasSubtitle || reportStatus === 'reporting'}
-          title={!hasSubtitle ? '当前视频无字幕，无法上报' : undefined}
+          disabled={standalone || !hasSubtitle || reportStatus === 'reporting'}
+          title={standalone ? '纯扩展模式：不连接 server，无法上报' : !hasSubtitle ? '当前视频无字幕，无法上报' : undefined}
           className={cn(
             'ml-auto h-7 px-3 text-xs',
             reportStatus === 'success'
