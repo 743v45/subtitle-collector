@@ -1,0 +1,12 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <title>VoiceCatch offscreen</title>
+  </head>
+  <body>
+    <!-- offscreen document:无 UI,仅承载 transformers.js Whisper 推理(SW 跑不了 WASM/Worker)。
+         由 background.js 通过 chrome.offscreen.createDocument 按需创建。 -->
+    <script type="module" src="./offscreen.js"></script>
+  </body>
+</html>

@@ -29,3 +29,6 @@ apps/collector-server/.collector-server.log
 
 # Superpowers brainstorm mockups（visual companion 产物，临时）
 .superpowers/
+
+# subtitle-extractor:ort wasm 是 copy-ort.mjs 从 @huggingface/transformers 拷贝的构建产物,不入库
+apps/subtitle-extractor/public/ort/

@@ -1,0 +1,38 @@
+{
+  "manifest_version": 3,
+  "name": "VoiceCatch — 语音转字幕",
+  "short_name": "VoiceCatch",
+  "version": "0.1.0",
+  "description": "浏览器本地 Whisper 转写:提取视频音轨 / 音频文件 → 生成字幕,数据不出本机",
+  "permissions": ["activeTab", "storage", "offscreen"],
+  "host_permissions": [
+    "*://*.bilibili.com/*",
+    "*://*.hf.co/*",
+    "*://huggingface.co/*",
+    "*://*.huggingface.co/*",
+    "*://*.xethub.hf.co/*",
+    "*://cdn.jsdelivr.net/*",
+    "*://*.jsdelivr.net/*",
+    "*://*.unpkg.com/*"
+  ],
+  "content_security_policy": {
+    "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'"
+  },
+  "icons": {
+    "16": "icons/icon-16.png",
+    "32": "icons/icon-32.png",
+    "48": "icons/icon-48.png",
+    "128": "icons/icon-128.png"
+  },
+  "background": { "service_worker": "background.js", "type": "module" },
+  "action": {
+    "default_popup": "popup.html",
+    "default_icon": {
+      "16": "icons/icon-16.png",
+      "32": "icons/icon-32.png",
+      "48": "icons/icon-48.png",
+      "128": "icons/icon-128.png"
+    },
+    "default_title": "VoiceCatch — 语音转字幕"
+  }
+}
