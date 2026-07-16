@@ -106,7 +106,7 @@
 
 **零新拦截技术**(已确认):音轨 URL 就在 inject.js 已拦的同一个 player API 响应里。
 
-- inject.js 在 [buildPlayerMeta](../../subtitle-collector/inject.js#L68) 旁加 `buildAudioTracks(d)`,读 `d.video_info.dash.audio[].baseUrl` / `backupUrl[]`(m4s / fragmented MP4,CDN 带 auth_key),`postMessage("AUDIO_TRACKS", ...)` 给 content.js。
+- inject.js(MAIN)读 `window.__playinfo__`(B站视频页 SSR 写入的 playurl 结果)的 `data.dash.audio[0].baseUrl` / `backupUrl`。**关键修正:dash 不在 `/x/player/wbi/v2`(那只是字幕/元信息端点,响应无 `video_info`/`dash`),而在 playurl 响应,SSR 写进 `__playinfo__`**(播放器自己也用它)。inject `document_start` 注入,轮询 `__playinfo__`(SSR 写入时机不定),取到后 `postMessage("AUDIO_TRACKS", ...)` 给 content.js。
 - 抓 m4s 二进制:复用 [background.js:382 `FETCH_SUBTITLE`](../../subtitle-collector/background.js#L382) 免 CORS 直 fetch 范式,改 `FETCH_AUDIO` 返回 arraybuffer(`fetch(url, {headers:{Referer:'https://www.bilibili.com/'}})`)。
 - **付费/充电视频加密墙兜底**:类比 AI 字幕 `%00` 加密([bili-fetch.js:61](../../subtitle-collector/bili-fetch.js#L61)),可能要复用"点播放器按钮让播放器内部解码"手法([content.js:139 triggerAiSubtitle](../../subtitle-collector/content.js#L139))——Phase 2 遇到再定。
 
@@ -174,6 +174,7 @@ SRT 格式化 + 下载/复制;可选回灌 server。
 | T1 | 2026-07-16 | Phase 0 端到端(beer.mp3 → 文本) | ✅ 通过 | R1-R6 全打穿。两个关键修复:① ort wasm 本地化(copy-ort.mjs,MV3 CSP 拒 CDN)② 音频改 base64 data URL 传输(ArrayBuffer 跨 messaging 损坏致 decode 失败)。tiny+zh 出中文"我要一平平的"(质量待 base 档提升) |
 | T2 | 2026-07-16 | Phase 1 配置链路 + base 质量 | ✅ 通过 | 配置四段链路生效(SET_WHISPER_CONFIG→bg→offscreen 用 base,见"下载模型 base");base+zh 出"我要一瓶啤酒"(准确,vs tiny"我要一平平的")。两个修复:① verify click 用 data-testid(Radix Switch 渲染成 button 误占首位,`click('button')` 点成开关)② offscreen PROGRESS 节流 150ms(core onProgress 每 timestep 触发,实测 9s 涌 1944+ 条致消息洪泛) |
 | T3 | 2026-07-16 | Phase 3 SRT/VTT 导出 | ✅ 通过 | core toSRT/toVTT 纯函数复用(offscreen RESULT 一次性格式化,无需适配器);popup 格式 Select(SRT/VTT/TXT)+ 下载(Blob)+ 复制。tiny 实测出 `1\n00:00:00,000 --> 00:00:04,000\n我要一平平的`。verify 断言 SRT 含 `-->` 时间戳 |
+| T4 | 2026-07-16 | Phase 2 B站音轨提取 + m4s decode | ✅ 通过 | inject 读 `window.__playinfo__`(playurl SSR,dash.audio[0].baseUrl);bg 免 CORS fetch m4s+Referer→base64 dataUrl→offscreen。**两个关键点**:① dash 来源是 `__playinfo__` 不是 player/wbi/v2(它无 dash,首版实测 code=0 但 hasVideoInfo=false)② **m4s(fMP4)能被 decodeAudioData 解码**(最大风险消除)。verify-phase2 BV1ufKM64Ew3 端到端:base+zh 识别出中文。412 风控不影响主链路 |
 
 ---
 

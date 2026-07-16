@@ -92,6 +92,60 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       sendResponse({ ok: true, whisperConfig: state.whisperConfig });
       return;
     }
+    // Phase 2:content 从 B站 player API 拿到音轨 URL,background 免 CORS fetch m4s → offscreen 转写
+    if (msg?.type === 'FETCH_AUDIO') {
+      try {
+        const dataUrl = await fetchAudioToDataUrl(
+          msg.audioUrl,
+          msg.backupUrls ?? [],
+        );
+        await ensureOffscreen();
+        await chrome.runtime.sendMessage({
+          type: 'TRANSCRIBE',
+          id: Date.now(),
+          filename: `${msg.title || msg.bvid || 'audio'}.m4s`,
+          mime: 'audio/mp4',
+          dataUrl,
+          config: state.whisperConfig,
+        });
+        sendResponse({ ok: true });
+      } catch (err) {
+        sendResponse({ ok: false, error: String(err?.message || err) });
+      }
+      return;
+    }
   })();
   return true; // async sendResponse
 });
+
+/**
+ * 抓 B站音轨 m4s:host_permissions 免 CORS,Referer 绕防盗链;失败试 backupUrl。
+ * arrayBuffer → base64 data URL(offscreen 用 base64 传输,ArrayBuffer 跨 messaging 损坏)。
+ */
+async function fetchAudioToDataUrl(primaryUrl, backupUrls) {
+  const headers = { Referer: 'https://www.bilibili.com/' };
+  const urls = [primaryUrl, ...backupUrls].filter(Boolean);
+  let lastErr;
+  for (const u of urls) {
+    try {
+      const resp = await fetch(u, { headers });
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      const ab = await resp.arrayBuffer();
+      return arrayBufferToBase64DataUrl(ab, 'audio/mp4');
+    } catch (e) {
+      lastErr = e;
+    }
+  }
+  throw lastErr || new Error('无可用音轨 URL');
+}
+
+/** arrayBuffer → base64 data URL(分块避免 btoa 栈溢出)。 */
+function arrayBufferToBase64DataUrl(ab, mime) {
+  const bytes = new Uint8Array(ab);
+  let binary = '';
+  const chunk = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunk) {
+    binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk));
+  }
+  return `data:${mime};base64,${btoa(binary)}`;
+}
