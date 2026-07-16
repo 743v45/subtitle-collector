@@ -80,11 +80,13 @@ await popupPage.goto(`chrome-extension://${extId}/popup.html`);
 
 // 注入监听:截获 RESULT/ERROR/PROGRESS;modelUsed 记下载阶段的模型名(证明用了哪个 model)
 await popupPage.evaluate(() => {
-  window.__vc = { result: null, error: null, progress: '', modelUsed: '' };
+  window.__vc = { result: null, srt: '', error: null, progress: '', modelUsed: '' };
   chrome.runtime.onMessage.addListener((m) => {
     if (!m?.type) return;
-    if (m.type === 'RESULT') window.__vc.result = m.text || '(空)';
-    else if (m.type === 'ERROR') window.__vc.error = m.message;
+    if (m.type === 'RESULT') {
+      window.__vc.result = m.text || '(空)';
+      window.__vc.srt = m.srt || '';
+    } else if (m.type === 'ERROR') window.__vc.error = m.message;
     else if (m.type === 'PROGRESS') {
       window.__vc.progress = `${m.phase} ${Math.round((m.ratio || 0) * 100)}% ${m.message || ''}`;
       if (m.message && m.message.includes('模型')) window.__vc.modelUsed = m.message;
@@ -124,10 +126,13 @@ const configOk = modelUsed.includes(MODEL); // offscreen 下载/用了 MODEL →
 console.log(`[check] 配置生效(offscreen 用 ${MODEL}):`, configOk, modelUsed ? `(见:${modelUsed})` : '(未观察到下载阶段,model 可能已缓存)');
 
 if (resultText) {
-  console.log('[result] 文本(前 240 字):', JSON.stringify(resultText.slice(0, 240)));
-  // model 已缓存时无下载 progress,用 result 存在 + 非 error 兜底认可配置链路
-  const ok = configOk || resultText !== '(空)';
-  console.log(`\n${ok ? '✅' : '❌'} Phase 1 端到端:配置(model=${MODEL}, zh)生效 + 出文本`);
+  console.log('[result] 文本(前 200 字):', JSON.stringify(resultText.slice(0, 200)));
+  const srt = await popupPage.evaluate(() => window.__vc.srt);
+  const srtOk = !!srt && srt.includes('-->');
+  console.log('[check] SRT 生成(含 --> 时间戳):', srtOk, srt ? `(前 120 字:${JSON.stringify(srt.slice(0, 120))})` : '(空)');
+  // model 已缓存时无下载 progress,用 result 存在 + 非 error 兜底认可配置链路;Phase 3 要求 SRT 生成
+  const ok = (configOk || resultText !== '(空)') && srtOk;
+  console.log(`\n${ok ? '✅' : '❌'} 端到端:配置(model=${MODEL}, zh)生效 + 出文本 + SRT 生成`);
   await browser.close();
   process.exit(ok ? 0 : 1);
 } else {

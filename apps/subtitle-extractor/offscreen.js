@@ -9,7 +9,7 @@ import { env } from '@huggingface/transformers';
 env.backends.onnx.wasm.wasmPaths = chrome.runtime.getURL('ort/');
 env.backends.onnx.wasm.numThreads = 1;
 
-import { getModelStatus, downloadModel, createEngine } from '@voicetxt/core';
+import { getModelStatus, downloadModel, createEngine, toSRT, toVTT } from '@voicetxt/core';
 
 let lastProgressAt = 0;
 function post(msg) {
@@ -87,10 +87,13 @@ async function run(id, mime, dataUrl, config) {
   });
   try {
     const result = await engine.transcribe(blob, { language, wordTimestamps });
+    // Phase 3:用 core formats 纯函数一次性格式化,popup 按 format 切换/下载
     post({
       type: 'RESULT',
       id,
       text: result.text || '(未识别到内容)',
+      srt: toSRT(result),
+      vtt: toVTT(result),
       language: result.language,
     });
   } finally {

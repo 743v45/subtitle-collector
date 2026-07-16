@@ -173,6 +173,7 @@ SRT 格式化 + 下载/复制;可选回灌 server。
 |---|---|---|---|---|
 | T1 | 2026-07-16 | Phase 0 端到端(beer.mp3 → 文本) | ✅ 通过 | R1-R6 全打穿。两个关键修复:① ort wasm 本地化(copy-ort.mjs,MV3 CSP 拒 CDN)② 音频改 base64 data URL 传输(ArrayBuffer 跨 messaging 损坏致 decode 失败)。tiny+zh 出中文"我要一平平的"(质量待 base 档提升) |
 | T2 | 2026-07-16 | Phase 1 配置链路 + base 质量 | ✅ 通过 | 配置四段链路生效(SET_WHISPER_CONFIG→bg→offscreen 用 base,见"下载模型 base");base+zh 出"我要一瓶啤酒"(准确,vs tiny"我要一平平的")。两个修复:① verify click 用 data-testid(Radix Switch 渲染成 button 误占首位,`click('button')` 点成开关)② offscreen PROGRESS 节流 150ms(core onProgress 每 timestep 触发,实测 9s 涌 1944+ 条致消息洪泛) |
+| T3 | 2026-07-16 | Phase 3 SRT/VTT 导出 | ✅ 通过 | core toSRT/toVTT 纯函数复用(offscreen RESULT 一次性格式化,无需适配器);popup 格式 Select(SRT/VTT/TXT)+ 下载(Blob)+ 复制。tiny 实测出 `1\n00:00:00,000 --> 00:00:04,000\n我要一平平的`。verify 断言 SRT 含 `-->` 时间戳 |
 
 ---
 

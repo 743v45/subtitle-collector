@@ -29,6 +29,14 @@ const LANGS = [
 ];
 
 type Phase = 'idle' | 'download' | 'transcribe' | 'done' | 'error';
+type Format = 'srt' | 'vtt' | 'txt';
+
+interface ResultPack {
+  text: string;
+  srt: string;
+  vtt: string;
+  language: string;
+}
 
 export function Popup() {
   const { enabled, toggle } = useExtract();
@@ -37,7 +45,8 @@ export function Popup() {
   const [phase, setPhase] = useState<Phase>('idle');
   const [ratio, setRatio] = useState(0);
   const [message, setMessage] = useState('');
-  const [text, setText] = useState('');
+  const [result, setResult] = useState<ResultPack | null>(null);
+  const [format, setFormat] = useState<Format>('srt');
   const [error, setError] = useState('');
   const idRef = useRef(0);
 
@@ -50,7 +59,12 @@ export function Popup() {
         setMessage(msg.message ?? '');
       } else if (msg.type === 'RESULT') {
         setPhase('done');
-        setText(msg.text);
+        setResult({
+          text: msg.text || '',
+          srt: msg.srt || '',
+          vtt: msg.vtt || '',
+          language: msg.language || '',
+        });
       } else if (msg.type === 'ERROR') {
         setPhase('error');
         setError(msg.message);
@@ -64,7 +78,7 @@ export function Popup() {
     if (!file) return;
     setPhase('download');
     setRatio(0);
-    setText('');
+    setResult(null);
     setError('');
     setMessage('准备…');
     const id = ++idRef.current;
@@ -93,6 +107,23 @@ export function Popup() {
     };
     reader.readAsDataURL(file);
   }, [file]);
+
+  // Phase 3:按 format 取展示内容(core formats 已在 offscreen 生成 srt/vtt,txt 用纯文本)
+  const display =
+    result ? (format === 'srt' ? result.srt : format === 'vtt' ? result.vtt : result.text) : '';
+
+  const onDownload = useCallback(() => {
+    if (!result || !display) return;
+    const mime =
+      format === 'srt' ? 'application/x-subrip' : format === 'vtt' ? 'text/vtt' : 'text/plain';
+    const blob = new Blob([display], { type: mime });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `subtitle.${format}`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }, [result, display, format]);
 
   const pct = Math.round(ratio * 100);
   const busy = phase === 'download' || phase === 'transcribe';
@@ -174,20 +205,35 @@ export function Popup() {
         <div className="rounded-md bg-destructive/10 p-2 text-xs text-destructive">{error}</div>
       )}
 
-      {text && (
+      {result && (
         <div className="flex flex-col gap-1">
+          <div className="flex items-center gap-2">
+            <Select value={format} onValueChange={(v) => setFormat(v as Format)}>
+              <SelectTrigger className="h-8 w-20 text-xs">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="srt" className="text-xs">SRT</SelectItem>
+                <SelectItem value="vtt" className="text-xs">VTT</SelectItem>
+                <SelectItem value="txt" className="text-xs">TXT</SelectItem>
+              </SelectContent>
+            </Select>
+            <Button data-testid="download" variant="outline" size="sm" onClick={onDownload}>
+              下载
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => navigator.clipboard?.writeText(display)}
+            >
+              复制
+            </Button>
+          </div>
           <textarea
             className="h-40 w-full rounded-md border border-input bg-background p-2 text-xs"
-            value={text}
+            value={display}
             readOnly
           />
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => navigator.clipboard?.writeText(text)}
-          >
-            复制
-          </Button>
         </div>
       )}
     </div>
