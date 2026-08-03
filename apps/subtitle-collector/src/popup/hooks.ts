@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { CLIENT_ID_KEY, REPORTING_KEY } from '../../reporting.mjs';
 import { API_BASE } from '../../config.js';
+import { detectPlatform, extractVid, type Platform } from './platforms';
 import type {
   BiliNavResponse,
   CollectedExtra,
@@ -57,9 +58,10 @@ export type LoginState =
   | { state: 'guest' }
   | { state: 'error' };
 
-export function useBiliLogin(): LoginState {
+export function useBiliLogin(enabled: boolean = true): LoginState {
   const [login, setLogin] = useState<LoginState>({ state: 'loading' });
   useEffect(() => {
+    if (!enabled) return; // 非 B 站平台（YouTube/无关页）不查 B 站 nav，保持 loading 占位（PlatformHead 也仅 bili 显示 LoginBadge）
     const check = () => {
       fetch('https://api.bilibili.com/x/web-interface/nav', { credentials: 'include' })
         .then((r) => r.json())
@@ -75,7 +77,7 @@ export function useBiliLogin(): LoginState {
     check();
     const t = setInterval(check, 30000);
     return () => clearInterval(t);
-  }, []);
+  }, [enabled]);
   return login;
 }
 
@@ -112,57 +114,72 @@ interface IngestResultMessage {
 
 export function useCollected(): {
   collected: CollectedState;
-  currentBvid: string | null;
+  currentVid: string | null;
+  currentPlatform: Platform | null;
   refresh: () => void;
 } {
   const [refreshKey, setRefreshKey] = useState(0);
   const [collected, setCollected] = useState<CollectedState>({ state: 'loading' });
-  const [currentBvid, setCurrentBvid] = useState<string | null>(null);
+  const [currentVid, setCurrentVid] = useState<string | null>(null);
+  const [currentPlatform, setCurrentPlatform] = useState<Platform | null>(null);
 
   useEffect(() => {
     chrome.tabs.query({ active: true, currentWindow: true }, ([tab]) => {
-      const m = tab?.url?.match(/bilibili\.com\/video\/(BV[0-9A-Za-z]+)/);
-      if (!m) {
-        setCurrentBvid(null);
+      const url = tab?.url;
+      const platform = detectPlatform(url); // 域名判断（任意页面：首页/搜索/视频页都识别）
+      const vid = platform ? extractVid(url, platform) : null; // 仅视频页提取 vid
+      setCurrentPlatform(platform);
+      setCurrentVid(vid);
+      if (!platform) {
+        // 无关站：空状态，popup 只渲染 BrandHeader + FooterActions
         setCollected({ state: 'non-video' });
         return;
       }
-      const bvid = m[1];
-      setCurrentBvid(bvid);
-      // 不清 loading：保留上次数据，避免刷新（手动补采 / INGEST_RESULT）时"数据→查询中→数据"闪烁
-      fetch(`${API_BASE}/api/videos/bilibili/${bvid}`)
-        .then((r) => r.json())
-        .then((d: CollectedResponse) => {
-          if (!d.ok) {
-            console.log('[popup] collected query: not collected', { bvid, ok: false });
-            setCollected({ state: 'not-collected' });
-            return;
-          }
-          const video = d.video ?? {};
-          const extra = parseExtra(video.extra);
-          const trackCount = d.tracks?.length ?? 0;
-          console.log('[popup] collected query: ok', { bvid, ok: true, tracks: trackCount });
-          setCollected({
-            state: 'ok',
-            bvid,
-            video,
-            extra,
-            tracks: trackCount,
+      if (!vid) {
+        // 平台页但非视频页（如 B 站首页/搜索页）：显示平台头 + 登录态，但不查 server、不显示视频卡
+        setCollected({ state: 'non-video' });
+        return;
+      }
+      if (platform.id === 'bilibili') {
+        // B 站：fetch server（原逻辑，零回归）
+        // 不清 loading：保留上次数据，避免刷新（手动补采 / INGEST_RESULT）时"数据→查询中→数据"闪烁
+        fetch(`${API_BASE}/api/videos/bilibili/${vid}`)
+          .then((r) => r.json())
+          .then((d: CollectedResponse) => {
+            if (!d.ok) {
+              console.log('[popup] collected query: not collected', { bvid: vid, ok: false });
+              setCollected({ state: 'not-collected' });
+              return;
+            }
+            const video = d.video ?? {};
+            const extra = parseExtra(video.extra);
+            const trackCount = d.tracks?.length ?? 0;
+            console.log('[popup] collected query: ok', { bvid: vid, ok: true, tracks: trackCount });
+            setCollected({
+              state: 'ok',
+              bvid: vid,
+              video,
+              extra,
+              tracks: trackCount,
+            });
+          })
+          .catch((err) => {
+            console.log('[popup] collected query: error', { bvid: vid, err: String(err) });
+            setCollected({ state: 'server-down' });
           });
-        })
-        .catch((err) => {
-          console.log('[popup] collected query: error', { bvid, err: String(err) });
-          setCollected({ state: 'server-down' });
-        });
+      } else {
+        // YouTube / 其它：第一版不查 server，本地展示为主（server 同步留后续）
+        setCollected({ state: 'not-collected' });
+      }
     });
   }, [refreshKey]);
 
-  // background 上报成功后广播 INGEST_RESULT：source_vid 命中当前 bvid 时触发重查
+  // background 上报成功后广播 INGEST_RESULT：source_vid 命中当前 vid 时触发重查
   useEffect(() => {
     const handler = (msg: unknown) => {
       const m = msg as IngestResultMessage | undefined;
       if (!m || m.type !== 'INGEST_RESULT') return;
-      if (currentBvid && m.source_vid === currentBvid) {
+      if (currentVid && m.source_vid === currentVid) {
         console.log('[popup] INGEST_RESULT received', {
           source_vid: m.source_vid,
           inserted: m.inserted,
@@ -173,10 +190,10 @@ export function useCollected(): {
     };
     chrome.runtime.onMessage.addListener(handler);
     return () => chrome.runtime.onMessage.removeListener(handler);
-  }, [currentBvid]);
+  }, [currentVid]);
 
   const refresh = useCallback(() => setRefreshKey((k) => k + 1), []);
-  return { collected, currentBvid, refresh };
+  return { collected, currentVid, currentPlatform, refresh };
 }
 
 // —— UP 主详情：从 useCollected 的 serverCollected.video.creator_id 查 /api/creators/:id ——
@@ -284,25 +301,25 @@ export type LocalCollectedState =
       bodies: Record<string, SubtitleBody>;
     };
 
-export function useLocalCollected(currentBvid: string | null): {
+export function useLocalCollected(currentVid: string | null): {
   local: LocalCollectedState;
   refreshLocal: () => void;
 } {
   const [refreshKey, setRefreshKey] = useState(0);
   const [local, setLocal] = useState<LocalCollectedState>({ state: 'loading' });
-  // 记上次 bvid：仅切视频时清 loading，refreshKey 变（刷新）保留旧数据避免闪烁
-  const lastBvidRef = useRef<string | null | undefined>(undefined);
+  // 记上次 vid：仅切视频时清 loading，refreshKey 变（刷新）保留旧数据避免闪烁
+  const lastVidRef = useRef<string | null | undefined>(undefined);
 
   useEffect(() => {
-    if (!currentBvid) {
-      // currentBvid 未就绪（useCollected 的 tabs.query 尚未回调）—— 保持 loading，
+    if (!currentVid) {
+      // currentVid 未就绪（useCollected 的 tabs.query 尚未回调）—— 保持 loading，
       // 不判 non-video；非视频页由 server 状态在 CollectedBlock 决定，避免 loading→空→loading 闪烁。
       setLocal({ state: 'loading' });
       return;
     }
-    const isNewBvid = currentBvid !== lastBvidRef.current;
-    lastBvidRef.current = currentBvid;
-    if (isNewBvid) setLocal({ state: 'loading' });
+    const isNewVid = currentVid !== lastVidRef.current;
+    lastVidRef.current = currentVid;
+    if (isNewVid) setLocal({ state: 'loading' });
     chrome.tabs.query({ active: true, currentWindow: true }, ([tab]) => {
       if (!tab?.id) {
         setLocal({ state: 'not-loaded' });
@@ -310,7 +327,8 @@ export function useLocalCollected(currentBvid: string | null): {
       }
       chrome.tabs.sendMessage(
         tab.id,
-        { type: 'GET_LOCAL_STATE', bvid: currentBvid },
+        // vid 通用：content.js / content-yt.js 均兼容 msg.vid ?? msg.bvid
+        { type: 'GET_LOCAL_STATE', vid: currentVid },
         (resp: LocalStateResponse | undefined) => {
           if (chrome.runtime.lastError || !resp?.ok) {
             setLocal({ state: 'not-loaded' });
@@ -326,7 +344,8 @@ export function useLocalCollected(currentBvid: string | null): {
           }
           setLocal({
             state: 'has-subtitle',
-            bvid: currentBvid,
+            // LocalCollectedState 字段名沿用 bvid（语义为 vid，兼容类型不改）
+            bvid: currentVid,
             extra: resp.extra ?? {},
             subs: resp.subs ?? [],
             bodies: resp.bodies ?? {},
@@ -334,25 +353,25 @@ export function useLocalCollected(currentBvid: string | null): {
         }
       );
     });
-  }, [currentBvid, refreshKey]);
+  }, [currentVid, refreshKey]);
 
-  // background 上报成功后 content.js 的 collected 已更新，命中当前 bvid 时刷新本地
+  // background 上报成功后 content.js 的 collected 已更新，命中当前 vid 时刷新本地
   useEffect(() => {
-    if (!currentBvid) return;
+    if (!currentVid) return;
     const handler = (msg: unknown) => {
       const m = msg as IngestResultMessage | undefined;
-      if (m?.type === 'INGEST_RESULT' && m.source_vid === currentBvid) {
+      if (m?.type === 'INGEST_RESULT' && m.source_vid === currentVid) {
         setRefreshKey((k) => k + 1);
       }
     };
     chrome.runtime.onMessage.addListener(handler);
     return () => chrome.runtime.onMessage.removeListener(handler);
-  }, [currentBvid]);
+  }, [currentVid]);
 
   // 当前 tab 刷新（扩展更新后页面重注入 content.js）时自动重查，省去手动重开弹窗。
   // B 站播放器 / player API 在 onload 后约 1-2s 才就绪，延迟 2s 兜底再查一次。
   useEffect(() => {
-    if (!currentBvid) return;
+    if (!currentVid) return;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const handler = (
       _tabId: number,
@@ -367,7 +386,7 @@ export function useLocalCollected(currentBvid: string | null): {
       chrome.tabs.onUpdated.removeListener(handler);
       if (timer) clearTimeout(timer);
     };
-  }, [currentBvid]);
+  }, [currentVid]);
 
   const refreshLocal = useCallback(() => setRefreshKey((k) => k + 1), []);
   return { local, refreshLocal };

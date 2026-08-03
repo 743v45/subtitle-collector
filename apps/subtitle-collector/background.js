@@ -346,12 +346,29 @@ function payloadSummary(payload) {
   return `source_vid=${v.source_vid} title=${v.title} UP=${v.creator?.name} 轨数=${tracks.length} 各轨body_size=${bodySizes}`;
 }
 
+// FETCH_SUBTITLE 的请求头：按 url 域名决定是否带 Referer。
+// YouTube / googlevideo 域不带 Referer（不需要、且可能有害）；B 站等保留现有 Referer。
+function subtitleFetchHeaders(url) {
+  try {
+    const host = new URL(url).hostname;
+    const isYt = host === "youtube.com" || host.endsWith(".youtube.com") ||
+                 host === "googlevideo.com" || host.endsWith(".googlevideo.com");
+    return isYt ? {} : { "Referer": "https://www.bilibili.com/" };
+  } catch {
+    return { "Referer": "https://www.bilibili.com/" };
+  }
+}
+
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (msg?.type === "INGEST" && msg.payload) {
     const payload = msg.payload;
     // 纯扩展模式：丢弃所有被动上报（含 force 手动上报——无 server 可收）；content.js 本地捕获不受影响
     if (isStandalone(connectionMode)) {
       console.log(`[background] ingest 丢弃（纯扩展模式）source_vid=${payload.video?.source_vid}`);
+      // standalone 不上报 server，但仍广播 INGEST_RESULT 让 popup 刷新本地数据
+      // （content 已采到字幕；用户开 popup 后才采到的字幕需刷新才能看到。popup 未开时 lastError 忽略）
+      const vid = payload.video?.source_vid;
+      if (vid) chrome.runtime.sendMessage({ type: "INGEST_RESULT", ok: true, source_vid: vid, inserted: 0, skipped: 0 }, () => void chrome.runtime.lastError);
       sendResponse({ ok: true, dropped: true });
       return true;
     }
@@ -372,7 +389,8 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     sendIngest(payload);
     // P4：顺带被动采 UP 资料（7天）+ 最新视频（1h），异步、失败静默（不影响字幕主链路）
     const mid = payload.video?.creator?.source_uid;
-    if (mid) {
+    // 仅 B 站采 UP 资料：YouTube 的 channelId 非 B 站 mid，调 ensureUpperInfo/Videos 会误请求 B 站 API（静默失败但不该触发）
+    if (mid && payload.source === "bilibili") {
       ensureUpperInfo(mid).catch((e) => console.warn('[background] passive upper-info failed', String(e?.message ?? e)));
       ensureUpperVideos(mid).catch((e) => console.warn('[background] passive upper-videos failed', String(e?.message ?? e)));
     }
@@ -382,7 +400,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   } else if (msg?.type === "FETCH_SUBTITLE" && msg.url) {
     // content script 请求 background 抓字幕体（background 有 host_permissions，免 CORS）
     // B 站新版播放器改用同源 protobuf endpoint，inject 拦不到旧 aisubtitle 请求，故由 background 主动抓
-    fetch(msg.url, { headers: { "Referer": "https://www.bilibili.com/" } })
+    fetch(msg.url, { headers: subtitleFetchHeaders(msg.url) })
       .then(async (r) => {
         if (!r.ok) { sendResponse({ ok: false, error: "HTTP " + r.status }); return; }
         const body = await r.json().catch(() => null);

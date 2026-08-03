@@ -181,7 +181,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   // popup「已收集」改用本地数据源：直取 content.js 内存里 collected 的轨道/正文/extra。
   // 走 chrome.tabs.sendMessage（popup → 当前 tab 的 content script），不经 background。
   if (msg?.type === "GET_LOCAL_STATE") {
-    const bvid = msg.bvid;
+    const bvid = msg.vid ?? msg.bvid;
     const cur = bvid ? collected.get(bvid) : null;
     if (!cur?.meta) {
       sendResponse({ ok: true, state: "not-loaded" });

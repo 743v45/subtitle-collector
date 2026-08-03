@@ -9,6 +9,7 @@
     "dev:ext": "pnpm -C apps/subtitle-collector dev",
     "test": "turbo run test",
     "test:ext": "turbo run build --filter=@bilibili-ext/subtitle-collector && node scripts/verify-collector.mjs",
+    "test:youtube": "turbo run build --filter=@bilibili-ext/subtitle-collector && node scripts/verify-youtube-collector.mjs",
     "cli": "pnpm -C apps/collector-server exec tsx src/cli/main.ts",
     "collect-uppers": "pnpm -C apps/collector-server exec tsx ../../scripts/collect-uppers.mts"
   },

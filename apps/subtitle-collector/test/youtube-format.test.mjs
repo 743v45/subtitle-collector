@@ -1,0 +1,250 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import {
+  parseYoutubeJson3,
+  parseYoutubeXml,
+  normalizeYoutubeTimedtext,
+} from '../youtube-format.mjs';
+
+// ---------------- parseYoutubeJson3 ----------------
+
+test('parseYoutubeJson3：标准多 event → 正确 cue 数组（from/to/content）', () => {
+  const json3 = {
+    events: [
+      { tStartMs: 0, dDurationMs: 5000, segs: [{ utf8: 'Hello' }, { utf8: 'world' }] },
+      { tStartMs: 5000, dDurationMs: 3000, segs: [{ utf8: '!' }] },
+    ],
+  };
+  assert.deepEqual(parseYoutubeJson3(json3), {
+    body: [
+      { from: 0, to: 5, content: 'Hello world' },
+      { from: 5, to: 8, content: '!' },
+    ],
+  });
+});
+
+test('parseYoutubeJson3：JSON 字符串入参与对象等价', () => {
+  const str = JSON.stringify({
+    events: [{ tStartMs: 1000, dDurationMs: 2000, segs: [{ utf8: 'hi' }] }],
+  });
+  assert.deepEqual(parseYoutubeJson3(str), {
+    body: [{ from: 1, to: 3, content: 'hi' }],
+  });
+});
+
+test('parseYoutubeJson3：空 events 数组 → {body:[]}', () => {
+  assert.deepEqual(parseYoutubeJson3({ events: [] }), { body: [] });
+});
+
+test('parseYoutubeJson3：缺 events 字段 → {body:[]}', () => {
+  assert.deepEqual(parseYoutubeJson3({}), { body: [] });
+});
+
+test('parseYoutubeJson3：单个 event 多 segs 拼接（join 单空格 + trim）', () => {
+  const json3 = {
+    events: [
+      {
+        tStartMs: 0,
+        dDurationMs: 5000,
+        segs: [{ utf8: 'Hello' }, { utf8: 'world' }, { utf8: '!' }],
+      },
+    ],
+  };
+  assert.equal(parseYoutubeJson3(json3).body[0].content, 'Hello world !');
+});
+
+test('parseYoutubeJson3：含 tOffsetMs 词级偏移被忽略（cue 级聚合）', () => {
+  const json3 = {
+    events: [
+      {
+        tStartMs: 1000,
+        dDurationMs: 4000,
+        segs: [
+          { utf8: 'Hello', tOffsetMs: 0 },
+          { utf8: 'world', tOffsetMs: 500 },
+        ],
+      },
+    ],
+  };
+  const cue = parseYoutubeJson3(json3).body[0];
+  assert.equal(cue.from, 1);
+  assert.equal(cue.to, 5);
+  assert.equal(cue.content, 'Hello world');
+});
+
+test('parseYoutubeJson3：缺失 dDurationMs → to=from', () => {
+  const json3 = { events: [{ tStartMs: 2000, segs: [{ utf8: 'x' }] }] };
+  const cue = parseYoutubeJson3(json3).body[0];
+  assert.equal(cue.from, 2);
+  assert.equal(cue.to, 2);
+});
+
+test('parseYoutubeJson3：event 无 segs 被跳过', () => {
+  const json3 = {
+    events: [
+      { tStartMs: 0, dDurationMs: 1000 },
+      { tStartMs: 1000, dDurationMs: 1000, segs: [{ utf8: 'ok' }] },
+    ],
+  };
+  const body = parseYoutubeJson3(json3).body;
+  assert.equal(body.length, 1);
+  assert.equal(body[0].content, 'ok');
+});
+
+test('parseYoutubeJson3：segs 中无 utf8 的片段被过滤', () => {
+  const json3 = {
+    events: [
+      {
+        tStartMs: 0,
+        dDurationMs: 1000,
+        segs: [{ utf8: 'keep' }, { tOffsetMs: 100 }, { utf8: 'this' }],
+      },
+    ],
+  };
+  assert.equal(parseYoutubeJson3(json3).body[0].content, 'keep this');
+});
+
+test('parseYoutubeJson3：null/undefined/空串 → {body:[]}', () => {
+  for (const empty of [null, undefined, '']) {
+    assert.deepEqual(parseYoutubeJson3(empty), { body: [] });
+  }
+});
+
+test('parseYoutubeJson3：非法 JSON 字符串 → {body:[]}（pot 受限/截断兜底）', () => {
+  assert.deepEqual(parseYoutubeJson3('{not json'), { body: [] });
+  assert.deepEqual(parseYoutubeJson3('   '), { body: [] });
+});
+
+// ---------------- parseYoutubeXml ----------------
+
+test('parseYoutubeXml：标准 transcript → 正确 cue（start/dur 秒制）', () => {
+  const xml =
+    '<transcript><text start="0.0" dur="5.0">Hello world</text><text start="5.0" dur="3.0">!</text></transcript>';
+  assert.deepEqual(parseYoutubeXml(xml), {
+    body: [
+      { from: 0, to: 5, content: 'Hello world' },
+      { from: 5, to: 8, content: '!' },
+    ],
+  });
+});
+
+test('parseYoutubeXml：HTML 实体解码（&amp; &#39; &lt; &gt; &quot; &apos;）', () => {
+  const xml =
+    '<transcript><text start="0" dur="1">A &amp; B &#39;C&#39; &lt;tag&gt; &quot;q&quot; &apos;s</text></transcript>';
+  assert.equal(parseYoutubeXml(xml).body[0].content, 'A & B \'C\' <tag> "q" \'s');
+});
+
+test('parseYoutubeXml：十六进制数字实体 &#x27; → 单引号', () => {
+  const xml = '<transcript><text start="0" dur="1">it&#x27;s</text></transcript>';
+  assert.equal(parseYoutubeXml(xml).body[0].content, "it's");
+});
+
+test('parseYoutubeXml：缺 dur → to=from', () => {
+  const xml = '<transcript><text start="3.5">no dur</text></transcript>';
+  const cue = parseYoutubeXml(xml).body[0];
+  assert.equal(cue.from, 3.5);
+  assert.equal(cue.to, 3.5);
+});
+
+test('parseYoutubeXml：换行文本保留（仅 trim 首尾空白）', () => {
+  const xml = '<transcript><text start="0" dur="1">  line1\nline2  </text></transcript>';
+  assert.equal(parseYoutubeXml(xml).body[0].content, 'line1\nline2');
+});
+
+test('parseYoutubeXml：带 XML 声明/多 text 节点正常解析', () => {
+  const xml =
+    '<?xml version="1.0" encoding="utf-8" ?><transcript><text start="0" dur="1">a</text><text start="1" dur="1">b</text></transcript>';
+  const body = parseYoutubeXml(xml).body;
+  assert.equal(body.length, 2);
+  assert.deepEqual(body[0], { from: 0, to: 1, content: 'a' });
+  assert.deepEqual(body[1], { from: 1, to: 2, content: 'b' });
+});
+
+test('parseYoutubeXml：无 text 节点 → {body:[]}', () => {
+  assert.deepEqual(parseYoutubeXml('<transcript></transcript>'), { body: [] });
+});
+
+test('parseYoutubeXml：null/undefined/空串/纯空白 → {body:[]}', () => {
+  for (const empty of [null, undefined, '', '   ']) {
+    assert.deepEqual(parseYoutubeXml(empty), { body: [] });
+  }
+});
+
+// ---------------- normalizeYoutubeTimedtext ----------------
+
+test('normalizeYoutubeTimedtext：fmt=json3 走 json3 解析', () => {
+  const raw = JSON.stringify({
+    events: [{ tStartMs: 0, dDurationMs: 1000, segs: [{ utf8: 'hi' }] }],
+  });
+  assert.deepEqual(normalizeYoutubeTimedtext(raw, 'json3'), {
+    body: [{ from: 0, to: 1, content: 'hi' }],
+  });
+});
+
+test('normalizeYoutubeTimedtext：fmt=xml 走 xml 解析', () => {
+  const raw = '<transcript><text start="0" dur="1">hi</text></transcript>';
+  assert.deepEqual(normalizeYoutubeTimedtext(raw, 'xml'), {
+    body: [{ from: 0, to: 1, content: 'hi' }],
+  });
+});
+
+test('normalizeYoutubeTimedtext：fmt=null 嗅探 { → json3', () => {
+  const raw = JSON.stringify({
+    events: [{ tStartMs: 0, dDurationMs: 1000, segs: [{ utf8: 'x' }] }],
+  });
+  assert.equal(normalizeYoutubeTimedtext(raw, null).body[0].content, 'x');
+});
+
+test('normalizeYoutubeTimedtext：fmt=null 嗅探 < → xml', () => {
+  const raw = '<transcript><text start="0" dur="1">y</text></transcript>';
+  assert.equal(normalizeYoutubeTimedtext(raw, null).body[0].content, 'y');
+});
+
+test('normalizeYoutubeTimedtext：fmt=null 对象入参按 json3 处理', () => {
+  const obj = { events: [{ tStartMs: 0, dDurationMs: 1000, segs: [{ utf8: 'obj' }] }] };
+  assert.equal(normalizeYoutubeTimedtext(obj, null).body[0].content, 'obj');
+});
+
+test('normalizeYoutubeTimedtext：fmt=null 带前导空白仍能嗅探', () => {
+  const raw = '   \n  {"events":[{"tStartMs":0,"dDurationMs":1000,"segs":[{"utf8":"p"}]}]}';
+  assert.equal(normalizeYoutubeTimedtext(raw, null).body[0].content, 'p');
+});
+
+test('normalizeYoutubeTimedtext：null/空入参（任意 fmt）→ {body:[]}', () => {
+  for (const empty of [null, undefined, '']) {
+    assert.deepEqual(normalizeYoutubeTimedtext(empty, 'json3'), { body: [] });
+    assert.deepEqual(normalizeYoutubeTimedtext(empty, 'xml'), { body: [] });
+    assert.deepEqual(normalizeYoutubeTimedtext(empty, null), { body: [] });
+  }
+});
+
+test('normalizeYoutubeTimedtext：fmt=null 无法嗅探的内容 → {body:[]}', () => {
+  assert.deepEqual(normalizeYoutubeTimedtext('plain text no structure', null), { body: [] });
+});
+
+// ---------------- 产物与 subtitleFormat 串联（契约 Y1：可直接喂下游） ----------------
+
+test('产物可直接喂 subtitleFormat：json3 → extractCues/subtitleToSRT 正确', async () => {
+  const { extractCues, subtitleToSRT, subtitleToPlainText } = await import('../subtitleFormat.mjs');
+  const normalized = parseYoutubeJson3({
+    events: [
+      { tStartMs: 0, dDurationMs: 2000, segs: [{ utf8: 'Hello' }] },
+      { tStartMs: 2000, dDurationMs: 1500, segs: [{ utf8: 'world' }] },
+    ],
+  });
+  assert.deepEqual(extractCues(normalized), normalized.body);
+  const srt = subtitleToSRT(normalized);
+  assert.ok(srt.includes('00:00:00,000 --> 00:00:02,000'), srt);
+  assert.ok(srt.includes('00:00:02,000 --> 00:00:03,500'), srt);
+  assert.ok(srt.includes('Hello') && srt.includes('world'), srt);
+  assert.equal(subtitleToPlainText(normalized), 'Hello\nworld');
+});
+
+test('产物可直接喂 subtitleFormat：xml → SRT 含解码后的实体', async () => {
+  const { subtitleToSRT } = await import('../subtitleFormat.mjs');
+  const normalized = parseYoutubeXml(
+    '<transcript><text start="0" dur="1">A &amp; B</text></transcript>',
+  );
+  const srt = subtitleToSRT(normalized);
+  assert.ok(srt.includes('A & B'), srt);
+});

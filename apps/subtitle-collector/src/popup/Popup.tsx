@@ -17,7 +17,7 @@ import {
   type LoginState,
   type UpperVideosState,
 } from './hooks';
-import { bili, LOGOS, type Platform, type StatIconName } from './platforms';
+import { LOGOS, type Platform, type StatIconName } from './platforms';
 import { fmtNum } from './format';
 import { cn } from '@/lib/utils';
 import type { ConsistencyIssue, LocalSub, SubtitleBody } from './types';
@@ -97,16 +97,17 @@ function useSubtitleFormat(): [SubtitleFormat, (f: SubtitleFormat) => void] {
 export function Popup() {
   const conn = useConnectionStatus();
   const standalone = conn.mode === 'standalone';
-  const login = useBiliLogin();
   const reporting = useReporting();
-  const { collected: serverCollected, currentBvid } = useCollected();
-  const { local } = useLocalCollected(currentBvid);
+  // useCollected 先于 useBiliLogin：login 仅在 B 站页查（YouTube/无关页不发 nav 请求）
+  const { collected: serverCollected, currentVid, currentPlatform } = useCollected();
+  const login = useBiliLogin(currentPlatform?.id === 'bilibili');
+  const { local } = useLocalCollected(currentVid);
   const consistency = diffConsistency(local, serverCollected);
-  // 非视频页精简：只显示平台头 + 底部上报开关；视频信息卡 / 手动补采是视频页专属。
-  // currentBvid 在 tabs.query 回调后才就绪（视频页=bvid / 非视频页=null），首帧 null 即隐藏，
+  // 非视频页精简：只显示品牌头 + 底部上报开关；平台头/视频信息卡 / 手动补采是视频页专属。
+  // currentVid 在 tabs.query 回调后才就绪（视频页=vid / 非视频页=null），首帧 null 即隐藏，
   // 回调后视频页才出现——既精简非视频页，也避免"非视频页 → BVxxx"的初始值闪烁。
-  // 多平台时这里改用 detectPlatform(tabUrl)，平台头/统计自动按当前平台渲染。
-  const isVideoPage = currentBvid !== null;
+  // detectPlatform(tabUrl) 决定 currentPlatform，平台头/统计按当前平台渲染；无关页 currentPlatform=null 不渲染平台头。
+  const isVideoPage = currentVid !== null;
   // 上报是上报字幕：没字幕（no-subtitle）→ 上报按钮置灰
   const hasSubtitle = local.state === 'has-subtitle';
   // server ok 时从 video.creator_id 查 UP 主详情；其它态（loading/server-down/not-collected）
@@ -139,12 +140,12 @@ export function Popup() {
     }, 8000);
   };
 
-  // 收到当前 bvid 的 INGEST_RESULT → 按 ok 显示上报成功/失败
+  // 收到当前 vid 的 INGEST_RESULT → 按 ok 显示上报成功/失败
   useEffect(() => {
-    if (!currentBvid) return;
+    if (!currentVid) return;
     const handler = (msg: unknown) => {
       const m = msg as { type?: string; ok?: boolean; source_vid?: string };
-      if (m?.type === 'INGEST_RESULT' && m.source_vid === currentBvid && reportRef.current) {
+      if (m?.type === 'INGEST_RESULT' && m.source_vid === currentVid && reportRef.current) {
         reportRef.current = false;
         const ok = m.ok !== false;
         setReportStatus(ok ? 'success' : 'failed');
@@ -153,22 +154,24 @@ export function Popup() {
     };
     chrome.runtime.onMessage.addListener(handler);
     return () => chrome.runtime.onMessage.removeListener(handler);
-  }, [currentBvid]);
+  }, [currentVid]);
 
   return (
     <div className="space-y-3 p-3">
       <BrandHeader />
-      <PlatformHead platform={bili} conn={conn} login={login} />
-      {currentBvid && (
+      {/* 无关页 currentPlatform=null：不渲染平台头，自然只剩 BrandHeader + FooterActions（空状态） */}
+      {currentPlatform && <PlatformHead platform={currentPlatform} conn={conn} login={login} />}
+      {currentVid && currentPlatform && (
         <>
           <CollectedBlock
-            platform={bili}
-            bvid={currentBvid}
+            platform={currentPlatform}
+            bvid={currentVid}
             local={local}
             server={serverCollected}
             consistency={consistency}
           />
-          {/* CreatorCard / UpperVideosList 依赖 server API / 被动缓存：纯扩展下隐藏 */}
+          {/* CreatorCard / UpperVideosList 依赖 server API / 被动缓存：纯扩展下隐藏；
+              YouTube server 态为 not-collected（无 creator_id）→ CreatorCard 自然返回 null，不展示 */}
           {!standalone && <CreatorCard creator={creatorState} />}
           {!standalone && <UpperVideosList state={upperVideos} />}
         </>
@@ -199,10 +202,10 @@ function BrandHeader() {
         </div>
       </div>
       <div className="flex items-center gap-1.5">
-        <PlatformLogoBadge color="bg-[#FB7299]" path={LOGOS.bilibili} title="哔哩哔哩" />
-        <PlatformLogoBadge color="bg-black" path={LOGOS.tiktok} title="抖音" />
-        <PlatformLogoBadge color="bg-[#FF2442]" path={LOGOS.xiaohongshu} title="小红书" />
-        <PlatformLogoBadge color="bg-[#FF0000]" path={LOGOS.youtube} title="YouTube" />
+        <PlatformLogoBadge color="bg-[#FB7299]" path={LOGOS.bilibili} title="哔哩哔哩" href="https://www.bilibili.com" />
+        <PlatformLogoBadge color="bg-black" path={LOGOS.tiktok} title="抖音" href="https://www.tiktok.com" />
+        <PlatformLogoBadge color="bg-[#FF2442]" path={LOGOS.xiaohongshu} title="小红书" href="https://www.xiaohongshu.com" />
+        <PlatformLogoBadge color="bg-[#FF0000]" path={LOGOS.youtube} title="YouTube" href="https://www.youtube.com" />
       </div>
     </div>
   );
@@ -213,20 +216,29 @@ function PlatformLogoBadge({
   color,
   path,
   title,
+  href,
 }: {
   color: string;
   path: string;
   title: string;
+  href?: string;
 }) {
+  const logo = (
+    <svg viewBox="0 0 24 24" fill="currentColor" className="h-[14px] w-[14px]" aria-hidden="true">
+      <path d={path} />
+    </svg>
+  );
+  // 有 href 渲染为链接（点击打开平台网站），否则不可点击 span
+  const className = cn(
+    'flex h-6 w-6 items-center justify-center rounded-md text-white',
+    href && 'transition-opacity hover:opacity-70',
+    color
+  );
+  if (!href) return <span title={title} className={className}>{logo}</span>;
   return (
-    <span
-      title={title}
-      className={cn('flex h-6 w-6 items-center justify-center rounded-md text-white', color)}
-    >
-      <svg viewBox="0 0 24 24" fill="currentColor" className="h-[14px] w-[14px]" aria-hidden="true">
-        <path d={path} />
-      </svg>
-    </span>
+    <a href={href} target="_blank" rel="noreferrer" title={title} className={className}>
+      {logo}
+    </a>
   );
 }
 
@@ -249,6 +261,7 @@ function SubCatchLogo({ className }: { className?: string }) {
 
 // 平台头：平台 logo + 名称 + 全局连接状态点 + 该平台登录态。
 // 连接是采集服务端（全局），登录是平台特定；多平台时都按当前平台显示。
+// LoginBadge 仅 B 站显示（YouTube 无 B 站 nav 登录态概念，useBiliLogin 在非 bili 时不查）。
 function PlatformHead({
   platform,
   conn,
@@ -271,7 +284,7 @@ function PlatformHead({
         </svg>
       </span>
       <span className="text-sm font-semibold">{platform.name}</span>
-      <LoginBadge login={login} />
+      {platform.id === 'bilibili' && <LoginBadge login={login} />}
       <div className="ml-auto flex items-center gap-2">
         <ConnDot conn={conn} />
       </div>
@@ -486,7 +499,7 @@ function CollectedBlock({
   consistency: ConsistencyIssue[];
 }) {
   // 非视频页判定走 server（useCollected 的 tabs.query 本地解析 URL）：
-  // useLocalCollected 在 currentBvid 未就绪时保持 loading，不再判 non-video，避免 loading→空→loading 闪烁。
+  // useLocalCollected 在 currentVid 未就绪时保持 loading，不再判 non-video，避免 loading→空→loading 闪烁。
   if (server.state === 'non-video') return null;
 
   if (local.state === 'loading') {
@@ -826,22 +839,31 @@ function SubtitleCopySection({
             const label = subtitleTrackLabel(s);
             const justCopied = !!url && copiedUrl === url;
             const justFailed = !!url && failedUrl === url;
+            // 字幕规模预览：有效字数（去空白字符，避免 YouTube asr 词间空格导致虚高）
+            const ytCues = url ? (bodies[url]?.body ?? []) : [];
+            const totalChars = ytCues.reduce((n, c) => n + (c?.content?.replace(/\s/g, '').length ?? 0), 0);
+            const previewText = ytCues.length > 0 ? `${fmtNum(totalChars)} 字` : '';
             return (
               <div
                 key={url ?? i}
                 className="flex items-center justify-between rounded border border-input px-2 py-1 text-xs"
               >
-                <span className="flex min-w-0 items-center gap-2">
-                  <span className="font-medium">{label}</span>
-                  {s.lan && s.lan_doc && (
-                    <span className="text-muted-foreground">{s.lan}</span>
+                <div className="flex min-w-0 flex-col gap-0.5">
+                  <span className="flex min-w-0 items-center gap-2">
+                    <span className="font-medium">{label}</span>
+                    {s.lan && s.lan_doc && (
+                      <span className="text-muted-foreground">{s.lan}</span>
+                    )}
+                    {isAi && (
+                      <Badge variant="secondary" className="shrink-0 px-1.5 py-0 text-[10px] leading-tight font-normal">
+                        AI
+                      </Badge>
+                    )}
+                  </span>
+                  {selectable && previewText && (
+                    <span className="text-[10px] text-muted-foreground/70">{previewText}</span>
                   )}
-                  {isAi && (
-                    <Badge variant="secondary" className="shrink-0 px-1.5 py-0 text-[10px] leading-tight font-normal">
-                      AI
-                    </Badge>
-                  )}
-                </span>
+                </div>
                 <button
                   type="button"
                   disabled={!selectable}
