@@ -1,0 +1,17 @@
+# 减小 build context：排除依赖、构建产物、数据库、git
+**/node_modules
+**/dist
+.git
+**/*.db
+**/*.db-shm
+**/*.db-wal
+# server 的 public/ 是 collector-web 产物，镜像里重新 build，别带宿主的旧产物进 context
+apps/collector-server/public
+apps/collector-server/data
+data
+.env
+**/.DS_Store
+# Dockerfile 自身无需排除，但这些构建相关文件不必进 context
+Dockerfile
+docker-compose.yml
+.dockerignore
