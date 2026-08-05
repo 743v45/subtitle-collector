@@ -100,6 +100,8 @@ export function Popup() {
   const standalone = conn.mode === 'standalone';
   const reporting = useReporting();
   const serverCfg = useServerConfig();
+  // 当前激活 server 名（ConnDot hover 用：已连接时看连的哪个 server）
+  const activeServerName = serverCfg.servers.find((s) => s.id === serverCfg.activeServerId)?.name ?? null;
   // useCollected 先于 useBiliLogin：login 仅在 B 站页查（YouTube/无关页不发 nav 请求）
   // httpBase 来自激活 server：热切换 server 后 useCollected/useCreator 自动重查新地址
   const { collected: serverCollected, currentVid, currentPlatform } = useCollected(serverCfg.httpBase);
@@ -163,7 +165,7 @@ export function Popup() {
     <div className="space-y-3 p-3">
       <BrandHeader />
       {/* 无关页 currentPlatform=null：不渲染平台头，自然只剩 BrandHeader + FooterActions（空状态） */}
-      {currentPlatform && <PlatformHead platform={currentPlatform} conn={conn} login={login} />}
+      {currentPlatform && <PlatformHead platform={currentPlatform} conn={conn} login={login} serverName={activeServerName} />}
       {currentVid && currentPlatform && (
         <>
           <CollectedBlock
@@ -277,10 +279,12 @@ function PlatformHead({
   platform,
   conn,
   login,
+  serverName,
 }: {
   platform: Platform;
   conn: ConnInfo;
   login: LoginState;
+  serverName?: string | null;
 }) {
   return (
     <div className="flex items-center gap-2 rounded-lg border bg-muted/30 px-2.5 py-2">
@@ -297,7 +301,7 @@ function PlatformHead({
       <span className="text-sm font-semibold">{platform.name}</span>
       {platform.id === 'bilibili' && <LoginBadge login={login} />}
       <div className="ml-auto flex items-center gap-2">
-        <ConnDot conn={conn} />
+        <ConnDot conn={conn} serverName={serverName} />
       </div>
     </div>
   );
@@ -307,17 +311,22 @@ function PlatformHead({
 //   server + connected → 🟢 已连接    点击 → 切纯扩展
 //   server + 断       → 🔴 未连接    点击 → 切纯扩展
 //   standalone        → ⚪ 纯扩展    点击 → 切回 server
-function ConnDot({ conn }: { conn: ConnInfo }) {
+function ConnDot({ conn, serverName }: { conn: ConnInfo; serverName?: string | null }) {
   if (conn.loading) return <StatusPlaceholder className="h-3.5 w-14" />;
   const standalone = conn.mode === 'standalone';
   const dot = standalone ? 'bg-slate-400' : conn.connected ? 'bg-emerald-500' : 'bg-red-500';
   const text = standalone ? '纯扩展' : conn.connected ? '已连接' : '未连接';
   const color = standalone ? 'text-slate-500' : conn.connected ? 'text-emerald-600' : 'text-red-600';
+  const title = standalone
+    ? '点击连接 server'
+    : conn.connected
+      ? `已连接${serverName ? `：${serverName}` : ''}（点击切换纯扩展）`
+      : '点击切换为纯扩展（不连接、不上报）';
   return (
     <button
       type="button"
       onClick={() => conn.setMode(standalone ? 'server' : 'standalone')}
-      title={standalone ? '点击连接 server' : '点击切换为纯扩展（不连接、不上报）'}
+      title={title}
       className="flex items-center gap-1 text-xs transition-opacity hover:opacity-70"
     >
       <span className={cn('h-1.5 w-1.5 rounded-full', dot)} />
