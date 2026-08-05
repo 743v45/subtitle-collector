@@ -5,6 +5,7 @@ import { Switch } from '@/components/ui/switch';
 import { Button } from '@/components/ui/button';
 import { useServerConfig, useReporting, useConnectionStatus, useClientId } from '../popup/hooks';
 import { parseServerUrl } from '../../servers.mjs';
+import { resolveConnDisplay } from '../../connection-mode.mjs';
 
 // 配置页：左右结构。左 nav 分类，右对应面板。
 // popup 右上角齿轮按钮 → chrome.runtime.openOptionsPage() 打开本页（open_in_tab:true）。
@@ -71,7 +72,7 @@ async function testServerUrl(url: string): Promise<{ ok: boolean; ms?: number; e
 function ServerPanel() {
   const config = useServerConfig();
   const conn = useConnectionStatus();
-  const standalone = conn.mode === 'standalone';
+  const disp = resolveConnDisplay(conn); // loading 优先 → 首帧中性占位，防翻转闪烁
   const [newName, setNewName] = useState('');
   const [newUrl, setNewUrl] = useState('');
   const [err, setErr] = useState<string | null>(null);
@@ -97,25 +98,33 @@ function ServerPanel() {
     }
   };
 
-  const dot = standalone ? 'bg-slate-400' : conn.connected ? 'bg-emerald-500' : 'bg-red-500';
-  const statusText = standalone ? '纯扩展（不连接）' : conn.connected ? '已连接' : '未连接';
+  // 仅在非 loading 分支使用（此时 disp.phase 为 standalone/server）
+  const dot = disp.phase === 'standalone' ? 'bg-slate-400' : disp.connected ? 'bg-emerald-500' : 'bg-red-500';
+  const statusText = disp.phase === 'standalone' ? '纯扩展（不连接）' : disp.connected ? '已连接' : '未连接';
 
   return (
     <div className="max-w-2xl space-y-4">
-      {/* 连接模式 toggle + 实时状态点（useConnectionStatus 每 2s 轮询） */}
+      {/* 连接模式 toggle + 实时状态点（useConnectionStatus 每 2s 轮询）。
+          conn.loading 时渲染中性占位，避免首帧用默认值（server/未连接）渲染、真实值到达后翻转闪烁。 */}
       <div className="flex items-center gap-3 rounded-md border p-3">
-        <Switch
-          checked={!standalone}
-          onCheckedChange={(v) => conn.setMode(v ? 'server' : 'standalone')}
-          checkedLabel="server"
-          uncheckedLabel="纯扩展"
-          className="data-[state=checked]:bg-brand"
-        />
-        <span className={cn('h-2 w-2 rounded-full', dot)} />
-        <span className="text-sm">{statusText}</span>
-        <span className="ml-auto text-xs text-muted-foreground">
-          {standalone ? '不连 server、不上报' : '连 server，可上报'}
-        </span>
+        {disp.phase === 'loading' ? (
+          <span className="text-sm text-muted-foreground">读取中…</span>
+        ) : (
+          <>
+            <Switch
+              checked={disp.phase === 'server'}
+              onCheckedChange={(v) => conn.setMode(v ? 'server' : 'standalone')}
+              checkedLabel="server"
+              uncheckedLabel="纯扩展"
+              className="data-[state=checked]:bg-brand"
+            />
+            <span className={cn('h-2 w-2 rounded-full', dot)} />
+            <span className="text-sm">{statusText}</span>
+            <span className="ml-auto text-xs text-muted-foreground">
+              {disp.phase === 'standalone' ? '不连 server、不上报' : '连 server，可上报'}
+            </span>
+          </>
+        )}
       </div>
 
       <p className="text-sm text-muted-foreground">

@@ -6,6 +6,7 @@ import {
   MODE_STANDALONE,
   resolveConnectionMode,
   isStandalone,
+  resolveConnDisplay,
 } from '../connection-mode.mjs';
 
 test('resolveConnectionMode：standalone→standalone，其余→server（fail-回 server）', () => {
@@ -30,4 +31,19 @@ test('storage key / 模式常量稳定（对齐协议）', () => {
   assert.equal(MODE_SERVER, 'server');
   assert.equal(MODE_STANDALONE, 'standalone');
   assert.notEqual(MODE_SERVER, MODE_STANDALONE);
+});
+
+test('resolveConnDisplay：loading 优先，屏蔽 mode/connected（防首帧翻转闪烁）', () => {
+  // loading=true 时无论 mode/connected 真假，一律返回 loading 占位 —— UI 不暴露结论态
+  assert.deepEqual(resolveConnDisplay({ loading: true, mode: MODE_SERVER, connected: true }), { phase: 'loading' });
+  assert.deepEqual(resolveConnDisplay({ loading: true, mode: MODE_STANDALONE, connected: false }), { phase: 'loading' });
+  assert.deepEqual(resolveConnDisplay({ loading: true, mode: undefined, connected: false }), { phase: 'loading' });
+});
+
+test('resolveConnDisplay：非 loading 按 mode/connected 决策', () => {
+  assert.deepEqual(resolveConnDisplay({ loading: false, mode: MODE_STANDALONE, connected: false }), { phase: 'standalone' });
+  assert.deepEqual(resolveConnDisplay({ loading: false, mode: MODE_SERVER, connected: true }), { phase: 'server', connected: true });
+  assert.deepEqual(resolveConnDisplay({ loading: false, mode: MODE_SERVER, connected: false }), { phase: 'server', connected: false });
+  // mode 脏读（undefined）归一为 server
+  assert.deepEqual(resolveConnDisplay({ loading: false, mode: undefined, connected: true }), { phase: 'server', connected: true });
 });
