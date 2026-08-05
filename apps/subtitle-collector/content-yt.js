@@ -36,82 +36,80 @@ function findMenuItem(re) {
   return null;
 }
 
-// 自动点 YouTube 播放器的"翻译菜单"选目标语言，让播放器被动请求翻译 timedtext（带 pot）。
-// 背景：background FETCH tlang url pot 受限拿空（与原轨同病），靠播放器被动请求（带 pot）才能拿到翻译体。
-// inject-yt 已 hook /api/timedtext（不挑 tlang），content-yt 收 TIMEDTEXT_BODY 归一化入库（tlang 兜底见 TIMEDTEXT_BODY 处理）。
-// 菜单多级：齿轮 → 字幕项 → 自动翻译 → 选语言。每步等 ~600ms 让 UI 渲染，失败 console.warn 不崩溃。
-// YouTube UI 脆弱：选择器随改版可能变，用 textContent 多语言正则兜底（中英文），真机未验证见返回说明。
-function triggerYtTranslation(targetLang) {
-  // 目标语言 → 菜单项 textContent 正则（YouTube 自动翻译语言列表的中英文标签）
+// 轮询等待选择器命中（菜单/按钮渲染延迟、其它扩展抢占的容错），返回 el 或 null（超时）
+function waitForSelector(selector, timeoutMs = 5000, intervalMs = 200) {
+  return new Promise((resolve) => {
+    const t0 = Date.now();
+    const check = () => {
+      const el = document.querySelector(selector);
+      if (el) return resolve(el);
+      if (Date.now() - t0 >= timeoutMs) return resolve(null);
+      setTimeout(check, intervalMs);
+    };
+    check();
+  });
+}
+
+// 轮询等待菜单项：matcher 为 RegExp（测 textContent）或函数（text=>bool）。返回 item 或 null（超时）
+function waitForMenuItem(matcher, timeoutMs = 3000, intervalMs = 200) {
+  const test = typeof matcher === 'function' ? matcher : (text) => matcher.test(text);
+  return new Promise((resolve) => {
+    const t0 = Date.now();
+    const check = () => {
+      for (const it of document.querySelectorAll('.ytp-menuitem')) {
+        if (test(it.textContent || '')) return resolve(it);
+      }
+      if (Date.now() - t0 >= timeoutMs) return resolve(null);
+      setTimeout(check, intervalMs);
+    };
+    check();
+  });
+}
+
+// 打开字幕子菜单（齿轮 → 字幕项），返回是否就绪。用 waitFor 容错菜单渲染（替代固定 setTimeout）
+async function openSubtitleMenu() {
+  const gear = await waitForSelector('.ytp-settings-button');
+  if (!gear) { console.warn('[content-yt] 菜单 齿轮未找到'); return false; }
+  try { gear.click(); } catch (e) { console.warn('[content-yt] 点齿轮失败', e?.message); return false; }
+  const sub = await waitForMenuItem(/^(字幕|subtitles?|caption|CC)/i);
+  if (!sub) { console.warn('[content-yt] 菜单 字幕项未找到'); return false; }
+  try { sub.click(); } catch { return false; }
+  return true;
+}
+
+// 选原轨（切到原轨，触发原轨 timedtext 请求 → inject 拦 → 原轨 body，如英文）
+// 原轨项：字幕菜单里不含「关闭/自动翻译/>>/选项」的语言项；优先含 langName（如"英语"），否则第一个语言项
+async function selectOriginalTrack(langName) {
+  if (!(await openSubtitleMenu())) return false;
+  const isLang = (t) => !!t && !/关闭|自动翻译|>>|选项/.test(t) && (!langName || t.includes(langName));
+  let item = langName ? await waitForMenuItem(isLang) : null;
+  if (!item) item = await waitForMenuItem((t) => !!t && !/关闭|自动翻译|>>|选项/.test(t));
+  if (!item) { console.warn('[content-yt] 原轨项未找到'); return false; }
+  try { item.click(); console.log(`[content-yt] 选原轨: ${item.textContent.trim()}`); } catch { return false; }
+  return true;
+}
+
+// 点翻译菜单选目标语言，触发播放器被动请求翻译 timedtext（带 pot，绕开 background FETCH pot 受限）
+// async + waitFor：菜单渲染延迟/其它扩展（如沉浸式翻译）抢占时轮询等待，不再固定 600ms
+async function triggerYtTranslation(targetLang) {
   let langRe;
   if (targetLang.startsWith("zh")) {
-    langRe = /简体|simplified/i; // 精确简体（不匹配繁体）
+    langRe = /简体|simplified|中文/i;
   } else if (targetLang === "en") {
     langRe = /^english|英语|英文/i;
   } else {
     console.warn(`[content-yt] 翻译菜单不支持的目标语言 targetLang=${targetLang}`);
     return;
   }
-
-  // step 4：选目标语言项（展开语言列表后）
-  const step4PickLang = () => {
-    const item = findMenuItem(langRe);
-    if (!item) {
-      console.warn(`[content-yt] 翻译菜单 目标语言项未找到 targetLang=${targetLang}`);
-      return;
-    }
-    try {
-      item.click();
-      console.log(`[content-yt] 翻译菜单 已选目标语言 targetLang=${targetLang}`);
-    } catch (e) {
-      console.warn(`[content-yt] 翻译菜单 选目标语言失败 targetLang=${targetLang}`, e?.message);
-    }
-  };
-
-  // step 3：找"自动翻译"项点击 → 展开语言列表
-  const step3AutoTranslate = () => {
-    const item = findMenuItem(/auto.?translate|自动翻译|auto-trans|translate/i);
-    if (!item) {
-      console.warn('[content-yt] 翻译菜单 自动翻译项未找到');
-      return;
-    }
-    try { item.click(); } catch (e) {
-      console.warn('[content-yt] 翻译菜单 点自动翻译项失败', e?.message);
-      return;
-    }
-    setTimeout(step4PickLang, 600);
-  };
-
-  // step 2：找字幕项点击 → 进字幕子菜单
-  const step2Subtitles = () => {
-    const item = findMenuItem(/subtitle|caption|字幕|CC/i);
-    if (!item) {
-      console.warn('[content-yt] 翻译菜单 字幕项未找到');
-      return;
-    }
-    try { item.click(); } catch (e) {
-      console.warn('[content-yt] 翻译菜单 点字幕项失败', e?.message);
-      return;
-    }
-    setTimeout(step3AutoTranslate, 600);
-  };
-
-  // step 1：点齿轮开设置菜单（播放器 UI 未就绪则轮询重试 ~10s）
-  const step1Gear = (round) => {
-    const gear = document.querySelector('.ytp-settings-button');
-    if (!gear) {
-      if (round < 20) setTimeout(() => step1Gear(round + 1), 500);
-      else console.warn('[content-yt] 翻译菜单 齿轮按钮长时间未找到');
-      return;
-    }
-    try { gear.click(); } catch (e) {
-      console.warn('[content-yt] 翻译菜单 点齿轮失败', e?.message);
-      return;
-    }
-    setTimeout(step2Subtitles, 600);
-  };
-
-  step1Gear(0);
+  if (!(await openSubtitleMenu())) return;
+  const auto = await waitForMenuItem(/auto.?translate|自动翻译|auto-trans|translate/i);
+  if (!auto) { console.warn('[content-yt] 翻译菜单 自动翻译项未找到'); return; }
+  try { auto.click(); } catch (e) { console.warn('[content-yt] 翻译菜单 点自动翻译项失败', e?.message); return; }
+  const lang = await waitForMenuItem(langRe);
+  if (!lang) { console.warn(`[content-yt] 翻译菜单 目标语言项未找到 targetLang=${targetLang}`); return; }
+  try { lang.click(); console.log(`[content-yt] 翻译菜单 已选目标语言 targetLang=${targetLang}`); } catch (e) {
+    console.warn(`[content-yt] 翻译菜单 选目标语言失败 targetLang=${targetLang}`, e?.message);
+  }
 }
 
 // YouTube 已从 ytInitialPlayerResponse.videoDetails 移除 likeCount（实测 keys 无此字段）；
@@ -167,19 +165,17 @@ window.addEventListener("message", (event) => {
     if (tracks.length === 0) return; // captionTracks 空（纯音乐/直播/真无字幕；或 YT 偶发读不到 captionTracks 但播放器仍请求 timedtext）：meta 已定居 collected，不 FETCH/flush——若播放器后续请求 timedtext，下方 TIMEDTEXT_BODY 兜底会构造轨入库；popup 经 GET_LOCAL_STATE 见 no-subtitle
     // 路径 B（兜底，覆盖 ~96% 不需 pot 视频）：对每轨发 FETCH_SUBTITLE 让 background 免 CORS 抓 baseUrl+&fmt=json3。
     fetchSubtitleBodiesViaBg(vid, tracks);
-    // 自动点 CC 按钮触发播放器请求 timedtext（YouTube 默认不请求；被动 hook 拦到后归一化入库）。
-    // guard：每视频点一次，等播放器 UI 就绪后点。standalone/server 都点（用户要本地看字幕或上报）。
-    if (!cur.ccTriggered) {
-      cur.ccTriggered = true;
-      setTimeout(triggerYtSubtitle, 1500);
-    }
-    // 自动点翻译菜单选中文/英文，让播放器被动请求翻译 timedtext（带 pot，绕开 background FETCH pot 受限）。
-    // guard：每视频触发一次；串行（中文先、英文后 ~5s）避免同时操作播放器菜单冲突。
-    // 时序：CC(1.5s) → 翻译中文(3s，菜单四级各 ~600ms) → 翻译英文(8s，留足中文菜单导航 + timedtext 拦截)。
-    if (!cur.translationTriggered) {
-      cur.translationTriggered = true;
-      // 优先中文翻译（每视频仅 1 次翻译请求，避免频繁触发 YouTube 429 限流）
-      setTimeout(() => triggerYtTranslation("zh-Hans"), 6000); // CC(1.5s) 后等 ~4.5s 字幕稳定再切翻译菜单（不急，原轨已采）
+    // 触发播放器请求各轨 timedtext（原轨 + 中文翻译），inject 拦截 → 双语 body。
+    // guard：每视频一次；串行（CC 开字幕 → 选原轨英文 → 选翻译中文），中间留 800ms 让播放器发请求 + inject 拦截。
+    if (!cur.menuTriggered) {
+      cur.menuTriggered = true;
+      setTimeout(async () => {
+        triggerYtSubtitle(); // 点 CC 开字幕（兜底；selectOriginalTrack 也会开）
+        await new Promise((r) => setTimeout(r, 800));
+        await selectOriginalTrack(); // 选原轨（如英语）→ 原轨 body
+        await new Promise((r) => setTimeout(r, 800));
+        await triggerYtTranslation("zh-Hans"); // 选翻译 → 中文 body
+      }, 2000);
     }
     flushIfReady(vid);
   } else if (type === "TIMEDTEXT_BODY") {
