@@ -4,14 +4,14 @@ import { Badge } from '@/components/ui/badge';
 import { Switch } from '@/components/ui/switch';
 import { Button } from '@/components/ui/button';
 import { useServerConfig, useReporting, useConnectionStatus, useClientId } from '../popup/hooks';
+import { parseServerUrl } from '../../servers.mjs';
 
-// 配置页：左右结构。左 nav 分类（server/上报/连接/字幕格式/关于），右对应面板。
+// 配置页：左右结构。左 nav 分类，右对应面板。
 // popup 右上角齿轮按钮 → chrome.runtime.openOptionsPage() 打开本页（open_in_tab:true）。
-type SectionId = 'server' | 'reporting' | 'connection' | 'subtitle' | 'about';
+type SectionId = 'server' | 'reporting' | 'subtitle' | 'about';
 const NAV: { id: SectionId; label: string }[] = [
-  { id: 'server', label: '采集 Server' },
+  { id: 'server', label: '采集连接' },
   { id: 'reporting', label: '上报设置' },
-  { id: 'connection', label: '连接模式' },
   { id: 'subtitle', label: '字幕格式' },
   { id: 'about', label: '关于' },
 ];
@@ -44,7 +44,6 @@ export function Options() {
         <div className="mt-6">
           {section === 'server' && <ServerPanel />}
           {section === 'reporting' && <ReportingPanel />}
-          {section === 'connection' && <ConnectionPanel />}
           {section === 'subtitle' && <SubtitlePanel />}
           {section === 'about' && <AboutPanel />}
         </div>
@@ -53,33 +52,85 @@ export function Options() {
   );
 }
 
-// —— Server 配置：列表（点选激活/删除）+ 新增表单。配置写 storage，background 热切换 WS。 ——
+// 测试 server 可达性：fetch pingUrl（3s 超时）。返回 {ok, ms, err}。
+// 仅测 HTTP /ping（server 探活端点），不验 WS/token——能 ping 通即 server 在线。
+async function testServerUrl(url: string): Promise<{ ok: boolean; ms?: number; err?: string }> {
+  const parsed = parseServerUrl(url);
+  if (!parsed) return { ok: false, err: 'URL 非法（需 ws:// 或 wss://）' };
+  const t0 = Date.now();
+  try {
+    const res = await fetch(parsed.pingUrl, { signal: AbortSignal.timeout(3000) });
+    return { ok: res.ok, ms: Date.now() - t0 };
+  } catch (e) {
+    return { ok: false, err: String((e as Error)?.message ?? e).slice(0, 80) };
+  }
+}
+
+// —— 采集连接（连接模式 + server 列表，合并面板）——
+// 顶部连接模式 toggle（server / 纯扩展）+ 状态点；下方 server 列表（激活/删除/测试）+ 新增表单（测试）。
 function ServerPanel() {
   const config = useServerConfig();
+  const conn = useConnectionStatus();
+  const standalone = conn.mode === 'standalone';
   const [newName, setNewName] = useState('');
   const [newUrl, setNewUrl] = useState('');
   const [err, setErr] = useState<string | null>(null);
+  const [results, setResults] = useState<Record<string, { ok: boolean; ms?: number; err?: string }>>({});
+  const [testingId, setTestingId] = useState<string | null>(null);
+  const [newResult, setNewResult] = useState<{ ok: boolean; ms?: number; err?: string } | null>(null);
+  const [testingNew, setTestingNew] = useState(false);
+
+  const test = async (id: string, url: string) => {
+    setTestingId(id);
+    const r = await testServerUrl(url);
+    setResults((prev) => ({ ...prev, [id]: r }));
+    setTestingId(null);
+  };
   const onAdd = () => {
     if (config.addServer(newName, newUrl)) {
       setNewName('');
       setNewUrl('');
       setErr(null);
+      setNewResult(null);
     } else {
       setErr('URL 非法（需 ws:// 或 wss:// 开头）');
     }
   };
+
+  const dot = standalone ? 'bg-slate-400' : conn.connected ? 'bg-emerald-500' : 'bg-red-500';
+  const statusText = standalone ? '纯扩展（不连接）' : conn.connected ? '已连接' : '未连接';
+
   return (
     <div className="max-w-2xl space-y-4">
+      {/* 连接模式 toggle + 实时状态点（useConnectionStatus 每 2s 轮询） */}
+      <div className="flex items-center gap-3 rounded-md border p-3">
+        <Switch
+          checked={!standalone}
+          onCheckedChange={(v) => conn.setMode(v ? 'server' : 'standalone')}
+          checkedLabel="server"
+          uncheckedLabel="纯扩展"
+          className="data-[state=checked]:bg-brand"
+        />
+        <span className={cn('h-2 w-2 rounded-full', dot)} />
+        <span className="text-sm">{statusText}</span>
+        <span className="ml-auto text-xs text-muted-foreground">
+          {standalone ? '不连 server、不上报' : '连 server，可上报'}
+        </span>
+      </div>
+
       <p className="text-sm text-muted-foreground">
-        collector server 地址，支持多个、热切换（点选立即用新地址重连）。token 由 server 端生成、嵌在 URL 的 <code>?token=</code>；server 也可不要 token。
+        collector server 地址，支持多个、热切换（点选立即用新地址重连）。token 由 server 端生成、嵌在 URL 的 <code>?token=</code>；server 也可不要 token。点「测试」ping /ping 确认可达。
       </p>
+
+      {/* server 列表 */}
       <div className="space-y-2">
         {config.servers.map((s) => {
           const active = s.id === config.activeServerId;
+          const r = results[s.id];
           return (
             <div
               key={s.id}
-              className={cn('flex items-center gap-3 rounded-md border p-3', active ? 'border-brand bg-brand/5' : 'border-input')}
+              className={cn('flex flex-wrap items-center gap-2 rounded-md border p-3', active ? 'border-brand bg-brand/5' : 'border-input')}
             >
               <button type="button" onClick={() => config.setActive(s.id)} className="min-w-0 flex-1 text-left" title={s.url}>
                 <div className="flex items-center gap-2">
@@ -89,6 +140,14 @@ function ServerPanel() {
                 </div>
                 <div className="truncate text-xs text-muted-foreground">{s.url}</div>
               </button>
+              {r && (
+                <span className={cn('shrink-0 text-xs', r.ok ? 'text-emerald-600' : 'text-destructive')} title={r.err}>
+                  {r.ok ? `在线 ${r.ms}ms` : '离线'}
+                </span>
+              )}
+              <Button variant="outline" size="sm" disabled={testingId === s.id} onClick={() => test(s.id, s.url)}>
+                {testingId === s.id ? '测试中…' : '测试'}
+              </Button>
               {config.servers.length > 1 && (
                 <Button variant="outline" size="sm" onClick={() => config.removeServer(s.id)}>删除</Button>
               )}
@@ -99,6 +158,8 @@ function ServerPanel() {
           <div className="text-sm text-muted-foreground">尚未配置 server。</div>
         )}
       </div>
+
+      {/* 新增表单：先测试确认可达，再加 */}
       <div className="space-y-2 rounded-md border p-3">
         <div className="text-sm font-medium">添加 server</div>
         <input
@@ -114,7 +175,22 @@ function ServerPanel() {
           className="w-full rounded border border-input bg-background px-3 py-1.5 text-sm outline-none focus:border-brand"
         />
         {err && <div className="text-xs text-destructive">{err}</div>}
-        <Button size="sm" onClick={onAdd}>+ 添加</Button>
+        <div className="flex items-center gap-2">
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={testingNew || !newUrl}
+            onClick={async () => { setTestingNew(true); setNewResult(await testServerUrl(newUrl)); setTestingNew(false); }}
+          >
+            {testingNew ? '测试中…' : '测试'}
+          </Button>
+          <Button size="sm" onClick={onAdd}>+ 添加</Button>
+          {newResult && (
+            <span className={cn('text-xs', newResult.ok ? 'text-emerald-600' : 'text-destructive')} title={newResult.err}>
+              {newResult.ok ? `在线 ${newResult.ms}ms` : '离线'}
+            </span>
+          )}
+        </div>
       </div>
     </div>
   );
@@ -146,29 +222,6 @@ function ReportingPanel() {
   );
 }
 
-// —— 连接模式：server（连+上报）/ 纯扩展（不连不报，只本地捕获）——
-function ConnectionPanel() {
-  const conn = useConnectionStatus();
-  const standalone = conn.mode === 'standalone';
-  const dot = standalone ? 'bg-slate-400' : conn.connected ? 'bg-emerald-500' : 'bg-red-500';
-  const text = standalone ? '纯扩展（不连接）' : conn.connected ? '已连接' : '未连接';
-  return (
-    <div className="max-w-2xl space-y-3">
-      <p className="text-sm text-muted-foreground">
-        <b>server</b>：连 collector-server，可上报。<br />
-        <b>纯扩展</b>：不连 server、不上报，只本地捕获 / 复制字幕。
-      </p>
-      <div className="flex items-center gap-2">
-        <span className={cn('h-2 w-2 rounded-full', dot)} />
-        <span className="text-sm">{text}</span>
-      </div>
-      <Button size="sm" variant={standalone ? 'default' : 'outline'} onClick={() => conn.setMode(standalone ? 'server' : 'standalone')}>
-        {standalone ? '切回 server' : '切纯扩展'}
-      </Button>
-    </div>
-  );
-}
-
 // —— 字幕复制默认格式（popup 复制按钮用）。内联读写 storage，与 popup useSubtitleFormat 同 key。 ——
 const FMT_OPTS = [
   { value: 'text', label: '纯文本' },
@@ -177,11 +230,12 @@ const FMT_OPTS = [
 ] as const;
 type FmtVal = (typeof FMT_OPTS)[number]['value'];
 function SubtitlePanel() {
-  const [fmt, setFmt] = useState<FmtVal>('text');
+  // null=未读到 storage：避免首帧默认 'text' 高亮 → 读到真实值（如 'srt'）后的翻转闪烁。
+  const [fmt, setFmt] = useState<FmtVal | null>(null);
   useEffect(() => {
     chrome.storage.local.get(['subtitleFormat'], (items) => {
       const v = items.subtitleFormat;
-      if (v === 'text' || v === 'timestamp' || v === 'srt') setFmt(v);
+      setFmt(v === 'text' || v === 'timestamp' || v === 'srt' ? v : 'text');
     });
   }, []);
   const choose = (f: FmtVal) => {
