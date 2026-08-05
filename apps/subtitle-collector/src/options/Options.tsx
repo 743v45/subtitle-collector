@@ -125,6 +125,10 @@ function ServerPanel() {
   const [newResult, setNewResult] = useState<{ ok: boolean; ms?: number; err?: string } | null>(null);
   const [testingNew, setTestingNew] = useState(false);
   const [revealed, setRevealed] = useState<Set<string>>(new Set()); // 本地 server 点开看 token 明文的 id 集合（远程始终 mask）
+  const [editId, setEditId] = useState<string | null>(null); // 正在编辑的 server id（内联展开编辑表单）
+  const [editName, setEditName] = useState('');
+  const [editUrl, setEditUrl] = useState('');
+  const [editErr, setEditErr] = useState<string | null>(null);
 
   const test = async (id: string, url: string) => {
     setTestingId(id);
@@ -191,44 +195,76 @@ function ServerPanel() {
         {config.servers.map((s) => {
           const active = s.id === config.activeServerId;
           const r = results[s.id];
+          const editing = editId === s.id;
+          const shownUrl = revealed.has(s.id) ? s.url : maskServerUrl(s.url); // title 与显示一致，防 hover tooltip 泄露 token
+          const startEdit = () => { setEditId(s.id); setEditName(s.name); setEditUrl(s.url); setEditErr(null); };
+          const saveEdit = () => {
+            if (config.updateServer(s.id, editName, editUrl)) { setEditId(null); setEditErr(null); }
+            else setEditErr('URL 非法（需 ws:// 或 wss://）');
+          };
           return (
             <div
               key={s.id}
               className={cn('flex flex-wrap items-center gap-2 rounded-md border p-3', active ? 'border-brand bg-brand/5' : 'border-input')}
             >
-              <button type="button" onClick={() => config.setActive(s.id)} className="min-w-0 flex-1 text-left" title={s.url}>
-                <div className="flex items-center gap-2">
-                  <span className={cn('h-2 w-2 rounded-full', active ? 'bg-brand' : 'bg-muted-foreground/30')} />
-                  <span className="font-medium">{s.name}</span>
-                  {active && <Badge variant="secondary" className="text-[10px]">当前</Badge>}
+              {editing ? (
+                <div className="min-w-0 flex-1 space-y-2">
+                  <input
+                    value={editName}
+                    onChange={(e) => setEditName(e.target.value)}
+                    placeholder="名称（可选，空则用 URL）"
+                    className="w-full rounded border border-input bg-background px-3 py-1.5 text-sm outline-none focus:border-brand"
+                  />
+                  <input
+                    value={editUrl}
+                    onChange={(e) => setEditUrl(e.target.value)}
+                    placeholder="ws://host:port/ext[?token=]"
+                    className="w-full rounded border border-input bg-background px-3 py-1.5 text-sm outline-none focus:border-brand"
+                  />
+                  {editErr && <div className="text-xs text-destructive">{editErr}</div>}
+                  <div className="flex items-center gap-2">
+                    <Button size="sm" onClick={saveEdit}>保存</Button>
+                    <Button size="sm" variant="outline" onClick={() => setEditId(null)}>取消</Button>
+                  </div>
                 </div>
-                <div className="flex items-center gap-1">
-                  <span className="truncate text-xs text-muted-foreground">{revealed.has(s.id) ? s.url : maskServerUrl(s.url)}</span>
-                  {isLocalServer(s.url) && (
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.stopPropagation(); // 避免触发外层 setActive
-                        setRevealed((prev) => { const n = new Set(prev); n.has(s.id) ? n.delete(s.id) : n.add(s.id); return n; });
-                      }}
-                      className="shrink-0 text-muted-foreground hover:text-foreground"
-                      title={revealed.has(s.id) ? '隐藏 token' : '显示 token'}
-                    >
-                      <Eye className="h-3.5 w-3.5" />
-                    </button>
+              ) : (
+                <>
+                  <button type="button" onClick={() => config.setActive(s.id)} className="min-w-0 flex-1 text-left" title={shownUrl}>
+                    <div className="flex items-center gap-2">
+                      <span className={cn('h-2 w-2 rounded-full', active ? 'bg-brand' : 'bg-muted-foreground/30')} />
+                      <span className="font-medium">{s.name}</span>
+                      {active && <Badge variant="secondary" className="text-[10px]">当前</Badge>}
+                    </div>
+                    <div className="flex items-center gap-1">
+                      <span className="truncate text-xs text-muted-foreground">{shownUrl}</span>
+                      {isLocalServer(s.url) && (
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation(); // 避免触发外层 setActive
+                            setRevealed((prev) => { const n = new Set(prev); n.has(s.id) ? n.delete(s.id) : n.add(s.id); return n; });
+                          }}
+                          className="shrink-0 text-muted-foreground hover:text-foreground"
+                          title={revealed.has(s.id) ? '隐藏 token' : '显示 token'}
+                        >
+                          <Eye className="h-3.5 w-3.5" />
+                        </button>
+                      )}
+                    </div>
+                  </button>
+                  {r && (
+                    <span className={cn('shrink-0 text-xs', r.ok ? 'text-emerald-600' : 'text-destructive')} title={r.err}>
+                      {r.ok ? `在线 ${r.ms}ms` : r.err || '离线'}
+                    </span>
                   )}
-                </div>
-              </button>
-              {r && (
-                <span className={cn('shrink-0 text-xs', r.ok ? 'text-emerald-600' : 'text-destructive')} title={r.err}>
-                  {r.ok ? `在线 ${r.ms}ms` : r.err || '离线'}
-                </span>
-              )}
-              <Button variant="outline" size="sm" disabled={testingId === s.id} onClick={() => test(s.id, s.url)}>
-                {testingId === s.id ? '测试中…' : '测试'}
-              </Button>
-              {config.servers.length > 1 && (
-                <Button variant="outline" size="sm" onClick={() => config.removeServer(s.id)}>删除</Button>
+                  <Button variant="outline" size="sm" disabled={testingId === s.id} onClick={() => test(s.id, s.url)}>
+                    {testingId === s.id ? '测试中…' : '测试'}
+                  </Button>
+                  <Button variant="outline" size="sm" onClick={startEdit}>编辑</Button>
+                  {config.servers.length > 1 && (
+                    <Button variant="outline" size="sm" onClick={() => config.removeServer(s.id)}>删除</Button>
+                  )}
+                </>
               )}
             </div>
           );

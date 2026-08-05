@@ -76,6 +76,7 @@ export interface ServerConfig {
   loading: boolean;
   setActive: (id: string) => void;
   addServer: (name: string, url: string) => string | null; // url 非法（非 ws/wss）返回 null
+  updateServer: (id: string, name: string, url: string) => boolean; // url 非法返回 false；改激活项触发 background 重连
   removeServer: (id: string) => void;
 }
 
@@ -138,7 +139,20 @@ export function useServerConfig(): ServerConfig {
     });
   }, []);
 
-  return { servers, activeServerId, httpBase, loading, setActive, addServer, removeServer };
+  // 改 server 的 name/url：落盘 + 若是激活项,发 SET_ACTIVE_SERVER 触发 background 重新解析 url + 重连（id 不变）
+  const updateServer = useCallback((id: string, name: string, url: string): boolean => {
+    if (!parseServerUrl(url)) return false; // url 非法（非 ws/wss）
+    const trimmedName = name.trim() || url.trim();
+    const trimmedUrl = url.trim();
+    chrome.storage.local.get([SERVERS_KEY, ACTIVE_SERVER_KEY], (items) => {
+      const servers = normalizeServers(items[SERVERS_KEY]).map((x) => x.id === id ? { ...x, name: trimmedName, url: trimmedUrl } : x);
+      chrome.storage.local.set({ [SERVERS_KEY]: servers });
+      if ((items[ACTIVE_SERVER_KEY] as string | undefined) === id) chrome.runtime.sendMessage({ type: 'SET_ACTIVE_SERVER', id });
+    });
+    return true;
+  }, []);
+
+  return { servers, activeServerId, httpBase, loading, setActive, addServer, updateServer, removeServer };
 }
 
 // —— B 站登录态：每 30s 直连官方 nav 接口 ——
@@ -233,7 +247,7 @@ export function useCollected(httpBase: string): {
       if (platform.id === 'bilibili') {
         // B 站：fetch server（原逻辑，零回归）
         // 不清 loading：保留上次数据，避免刷新（手动补采 / INGEST_RESULT）时"数据→查询中→数据"闪烁
-        fetch(`${httpBase}/api/videos/bilibili/${vid}`)
+        fetch(`${httpBase}/api/videos/bilibili/${vid}`, { cache: 'no-cache' })
           .then((r) => r.json())
           .then((d: CollectedResponse) => {
             if (!d.ok) {
@@ -302,7 +316,7 @@ export function useCreator(creatorId: number | null | undefined, httpBase: strin
       return;
     }
     setCreator({ state: 'loading' });
-    fetch(`${httpBase}/api/creators/${creatorId}`)
+    fetch(`${httpBase}/api/creators/${creatorId}`, { cache: 'no-cache' })
       .then((r) => r.json())
       .then((d: { ok: boolean; creator?: CreatorDetail }) => {
         if (d?.ok && d.creator) setCreator({ state: 'ok', creator: d.creator });
