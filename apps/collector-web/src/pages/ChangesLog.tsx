@@ -54,7 +54,7 @@ export function ChangesLog() {
           <SelectContent>
             <SelectItem value="__all">全部</SelectItem>
             <SelectItem value="video">视频</SelectItem>
-            <SelectItem value="creator">UP 主</SelectItem>
+            <SelectItem value="creator">创作者</SelectItem>
           </SelectContent>
         </Select>
         <Button variant="outline" size="sm" onClick={reload}>刷新</Button>
@@ -125,7 +125,7 @@ export function ChangesLog() {
       {items.length > 0 && (
         <Card>
           <CardContent className="p-3 text-xs text-muted-foreground">
-            说明：记录视频/UP 主字段的结构性变更（标题、分区、标签、资料等）；播放量等统计波动不记（采集时即时快照，存 videos.extra）。
+            说明：记录视频/创作者字段的结构性变更（标题、分区、标签、资料等）；播放量等统计波动不记（采集时即时快照，存 videos.extra）。
           </CardContent>
         </Card>
       )}

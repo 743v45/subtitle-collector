@@ -14,7 +14,7 @@ type Tab = 'videos' | 'stats' | 'clients' | 'categories' | 'creators' | 'changes
 const TABS: { key: Tab; label: string }[] = [
   { key: 'videos', label: '视频' },
   { key: 'stats', label: '看板' },
-  { key: 'creators', label: 'UP 主' },
+  { key: 'creators', label: '创作者' },
   { key: 'categories', label: '分类' },
   { key: 'clients', label: '客户端' },
   { key: 'changes', label: '日志' },

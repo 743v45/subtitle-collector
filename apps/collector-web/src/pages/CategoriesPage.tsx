@@ -72,7 +72,7 @@ export function CategoriesPage() {
   }
 
   async function onDelete(c: Category) {
-    if (!window.confirm(`删除「${c.name}」？关联 UP 主该分类将置空`)) return;
+    if (!window.confirm(`删除「${c.name}」？关联 创作者该分类将置空`)) return;
     setDeletingId(c.id);
     try {
       await deleteCategory(c.id);

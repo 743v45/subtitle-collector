@@ -71,13 +71,13 @@ export function CreatorsPage({ onOpen }: { onOpen: (id: number) => void }) {
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
-        <h2 className="text-lg font-semibold">UP 主管理</h2>
+        <h2 className="text-lg font-semibold">创作者管理</h2>
         <span className="text-sm text-muted-foreground">共 {total} 条</span>
       </div>
 
       <div className="flex flex-wrap items-center gap-2">
         <Input
-          placeholder="搜索 UP 主名/mid"
+          placeholder="搜索 创作者名/mid"
           value={q}
           onChange={(e) => { setQ(e.target.value); setPage(1); }}
           className="max-w-xs"
