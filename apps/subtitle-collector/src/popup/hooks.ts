@@ -244,10 +244,10 @@ export function useCollected(httpBase: string): {
         setCollected({ state: 'non-video' });
         return;
       }
-      if (platform.id === 'bilibili') {
-        // B 站：fetch server（原逻辑，零回归）
+      if (platform.id === 'bilibili' || platform.id === 'youtube') {
+        // B 站 / YouTube：fetch server（server /api/videos/:source/:vid 通用，source = platform.id）
         // 不清 loading：保留上次数据，避免刷新（手动补采 / INGEST_RESULT）时"数据→查询中→数据"闪烁
-        fetch(`${httpBase}/api/videos/bilibili/${vid}`, { cache: 'no-cache' })
+        fetch(`${httpBase}/api/videos/${platform.id}/${vid}`, { cache: 'no-cache' })
           .then((r) => r.json())
           .then((d: CollectedResponse) => {
             if (!d.ok) {
@@ -272,7 +272,7 @@ export function useCollected(httpBase: string): {
             setCollected({ state: 'server-down' });
           });
       } else {
-        // YouTube / 其它：第一版不查 server，本地展示为主（server 同步留后续）
+        // 其它平台（抖音/小红书等未接入）：暂不查 server
         setCollected({ state: 'not-collected' });
       }
     });
