@@ -3,6 +3,9 @@
   "private": true,
   "scripts": {
     "build": "turbo build",
+    "build:server": "pnpm -C apps/collector-server build",
+    "build:web": "pnpm -C apps/collector-web build",
+    "build:ext": "pnpm -C apps/subtitle-collector build",
     "dev": "turbo dev",
     "dev:server": "pnpm -C apps/collector-server dev",
     "dev:web": "pnpm -C apps/collector-web dev",
