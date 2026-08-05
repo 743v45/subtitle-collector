@@ -4,7 +4,41 @@ import {
   parseYoutubeJson3,
   parseYoutubeXml,
   normalizeYoutubeTimedtext,
+  parseStatCount,
 } from '../youtube-format.mjs';
+
+// ---------------- parseStatCount ----------------
+// YouTube 已从 videoDetails 移除 likeCount，点赞数仅 like 按钮 DOM 可见（textContent/aria-label）。
+// parseStatCount 把这些显示串解析成整数：千分位 / 中文万·亿·萬 / 英文 K·M·B。
+
+test('parseStatCount：纯数字 + 千分位逗号', () => {
+  assert.equal(parseStatCount('6137'), 6137);
+  assert.equal(parseStatCount('6,137'), 6137);
+  assert.equal(parseStatCount('1,234,567'), 1234567);
+});
+
+test('parseStatCount：中文万/亿/萬', () => {
+  assert.equal(parseStatCount('1.2万'), 12000);
+  assert.equal(parseStatCount('1.2萬'), 12000);
+  assert.equal(parseStatCount('3亿'), 300000000);
+});
+
+test('parseStatCount：英文 K/M/B', () => {
+  assert.equal(parseStatCount('6.1K'), 6100);
+  assert.equal(parseStatCount('1.2M'), 1200000);
+  assert.equal(parseStatCount('2B'), 2000000000);
+});
+
+test('parseStatCount：aria-label 多语言长串（提取首个数字段）', () => {
+  assert.equal(parseStatCount('与另外 6,137 人一起顶此视频'), 6137);
+  assert.equal(parseStatCount('Liked by 1,234 people'), 1234);
+});
+
+test('parseStatCount：null/空/无数字 → null', () => {
+  assert.equal(parseStatCount(null), null);
+  assert.equal(parseStatCount(''), null);
+  assert.equal(parseStatCount('顶此视频'), null);
+});
 
 // ---------------- parseYoutubeJson3 ----------------
 

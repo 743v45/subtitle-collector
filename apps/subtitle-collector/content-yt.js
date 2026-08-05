@@ -5,7 +5,7 @@
 //
 // crxjs 把本文件作 Rollup 入口打包（vite.config.ts），故可直接 import youtube-format.mjs / youtube-payload.js。
 
-import { normalizeYoutubeTimedtext } from "./youtube-format.mjs";
+import { normalizeYoutubeTimedtext, parseStatCount } from "./youtube-format.mjs";
 import { buildYoutubePayload, kindToTrackType } from "./youtube-payload.js";
 
 // vid -> { meta: CAPTION_TRACKS.data, bodies: Map<baseUrl, {body:[...]}>, fetched: Set<baseUrl>, ccTriggered: boolean }
@@ -114,6 +114,40 @@ function triggerYtTranslation(targetLang) {
   step1Gear(0);
 }
 
+// YouTube 已从 ytInitialPlayerResponse.videoDetails 移除 likeCount（实测 keys 无此字段）；
+// 点赞数仅在 like 按钮 DOM 可见（like-button-view-model textContent "6137" / button aria-label）。
+// CAPTION_TRACKS 到达后异步读 like 按钮，用 parseStatCount 解析（千分位/万/亿/K/M/B）补 meta.likeCount。
+function readLikeCountFromDom() {
+  // 优先 like-button-view-model textContent（语言无关；当前版本为纯数字或格式化值如 "1.2万"/"1.2M"）。
+  const vm = document.querySelector('like-button-view-model');
+  if (vm) {
+    const n = parseStatCount(vm.textContent);
+    if (n != null) return n;
+  }
+  // 兜底：segmented like 容器内带 aria-label 的 button（aria-label 含精确数字 + 千分位，如「与另外 6,137 人一起顶此视频」）。
+  const btn = document.querySelector('segmented-like-dislike-button-view-model button[aria-label]');
+  if (btn) {
+    const n = parseStatCount(btn.getAttribute('aria-label'));
+    if (n != null) return n;
+  }
+  return null;
+}
+
+// 轮询读 like 按钮补 likeCount（按钮渲染晚于 CAPTION_TRACKS）。读到即定居 meta + 触发 flush（若 INGEST 尚未发则带上）。
+function fillLikeCount(vid, round = 0) {
+  const cur = collected.get(vid);
+  if (!cur?.meta) return;
+  if (cur.meta.likeCount != null) return; // inject 读到或已补
+  const like = readLikeCountFromDom();
+  if (like != null) {
+    cur.meta.likeCount = String(like);
+    console.log(`[content-yt] likeCount 补全 vid=${vid} like=${like}（videoDetails 已无此字段，从 like 按钮读）`);
+    flushIfReady(vid);
+    return;
+  }
+  if (round < 12) setTimeout(() => fillLikeCount(vid, round + 1), 500); // 轮询 ~6s 等按钮渲染
+}
+
 window.addEventListener("message", (event) => {
   if (event.source !== window) return;
   const msg = event.data;
@@ -126,6 +160,8 @@ window.addEventListener("message", (event) => {
     const cur = collected.get(vid) ?? { meta: null, bodies: new Map(), fetched: new Set() };
     cur.meta = data;
     collected.set(vid, cur);
+    // YouTube 已从 videoDetails 移除 likeCount（实测 keys 无此字段），仅 like 按钮 DOM 可见 → 异步补全（见 fillLikeCount）。
+    if (cur.meta.likeCount == null) setTimeout(() => fillLikeCount(vid), 1500);
     const tracks = data.captionTracks ?? [];
     console.log(`[content-yt] CAPTION_TRACKS vid=${vid} tracks=${tracks.length} title=${data.title}`);
     if (tracks.length === 0) return; // captionTracks 空（纯音乐/直播/真无字幕；或 YT 偶发读不到 captionTracks 但播放器仍请求 timedtext）：meta 已定居 collected，不 FETCH/flush——若播放器后续请求 timedtext，下方 TIMEDTEXT_BODY 兜底会构造轨入库；popup 经 GET_LOCAL_STATE 见 no-subtitle

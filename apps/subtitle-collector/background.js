@@ -1,4 +1,4 @@
-import { SERVER_URL, PING_URL, TOKEN } from "./config.js";
+import { parseServerUrl, resolveActiveServer, normalizeServers, genServerId, SERVERS_KEY, ACTIVE_SERVER_KEY, DEFAULT_SERVER_URL, DEFAULT_SERVER_NAME } from "./servers.mjs";
 import { shouldReport, genClientId, CLIENT_ID_KEY, REPORTING_KEY } from "./reporting.mjs";
 import { resolveConnectionMode, isStandalone, CONNECTION_MODE_KEY, MODE_SERVER, MODE_STANDALONE } from "./connection-mode.mjs";
 import { extractKeysFromNav } from "./wbi.js";
@@ -11,6 +11,8 @@ let reconnectAttempts = 0;
 let reportingEnabled = true; // 内存态；启动从 storage 载入，默认 true（fail-open）
 let clientId = null;         // 内存态；启动载入或首次生成
 let connectionMode = MODE_SERVER; // 内存态；启动载入，默认 server（向后兼容）。standalone=纯扩展：不连不上报
+let activeServer = null;          // 内存态；当前激活 server 的解析结果（{wsUrl,httpBase,pingUrl,token}）。启动载入 / SET_ACTIVE_SERVER 切换
+let activeServerId = null;        // 内存态；当前激活 server entry.id（WS_STATUS 回执、popup 乐观更新用）
 const RECONNECT_BASE_MS = 2000;
 const RECONNECT_MAX_MS = 10000;
 
@@ -72,7 +74,7 @@ chrome.alarms.onAlarm.addListener((a) => {
 
 // 启动载入持久态：clientId（无则生成并回写）、reportingEnabled（默认 true）、connectionMode（默认 server）
 async function loadPersistedState() {
-  const items = await chrome.storage.local.get([CLIENT_ID_KEY, REPORTING_KEY, CONNECTION_MODE_KEY]);
+  const items = await chrome.storage.local.get([CLIENT_ID_KEY, REPORTING_KEY, CONNECTION_MODE_KEY, SERVERS_KEY, ACTIVE_SERVER_KEY]);
   if (items[CLIENT_ID_KEY]) {
     clientId = items[CLIENT_ID_KEY];
   } else {
@@ -81,6 +83,18 @@ async function loadPersistedState() {
   }
   reportingEnabled = shouldReport(items[REPORTING_KEY]); // undefined → true
   connectionMode = resolveConnectionMode(items[CONNECTION_MODE_KEY]); // undefined → server
+  // servers：旧版/首装无 → 初始化内置「本地 collector」（DEFAULT_SERVER_URL，行为同旧版连 127.0.0.1:21527）
+  let servers = normalizeServers(items[SERVERS_KEY]);
+  let activeId = typeof items[ACTIVE_SERVER_KEY] === 'string' ? items[ACTIVE_SERVER_KEY] : null;
+  if (servers.length === 0) {
+    const def = { id: genServerId(), name: DEFAULT_SERVER_NAME, url: DEFAULT_SERVER_URL };
+    servers = [def];
+    activeId = def.id;
+    await chrome.storage.local.set({ [SERVERS_KEY]: servers, [ACTIVE_SERVER_KEY]: activeId });
+  }
+  const entry = resolveActiveServer(servers, activeId);
+  activeServerId = entry?.id ?? null;
+  activeServer = entry ? parseServerUrl(entry.url) : null;
 }
 
 // 统一更新开关：内存 + storage
@@ -98,8 +112,10 @@ async function applyConnectionMode(mode) {
 }
 
 async function probeServer() {
+  const pingUrl = activeServer?.pingUrl;
+  if (!pingUrl) return false; // 无 server 配置（connect 已守卫 activeServer.wsUrl），双保险
   try {
-    const res = await fetch(PING_URL, { signal: AbortSignal.timeout(800) });
+    const res = await fetch(pingUrl, { signal: AbortSignal.timeout(800) });
     return res.ok;
   } catch { return false; }
 }
@@ -114,14 +130,19 @@ function scheduleReconnect() {
 
 async function connect() {
   if (isStandalone(connectionMode)) return; // 纯扩展模式：不连 server
+  if (!activeServer?.wsUrl) return;          // 无 server 配置：不连（SET_ACTIVE_SERVER 切到空列表时停连）
   if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) return;
   if (!(await probeServer())) { scheduleReconnect(); return; }
   try {
-    ws = new WebSocket(SERVER_URL);
+    ws = new WebSocket(activeServer.wsUrl);
   } catch { scheduleReconnect(); return; }
   ws.onopen = () => {
     reconnectAttempts = 0;
-    ws.send(JSON.stringify({ type: "hello", ext_version: EXT_VERSION, token: TOKEN, client_id: clientId, reporting_enabled: reportingEnabled }));
+    // token 可选（server 端可不要 token）：有则放 hello（兼容 server 从 hello body 取 token）；
+    // wsUrl 原样含 ?token= query，兼容 server 从握手 URL 取 token——双兼容。
+    const hello = { type: "hello", ext_version: EXT_VERSION, client_id: clientId, reporting_enabled: reportingEnabled };
+    if (activeServer.token) hello.token = activeServer.token;
+    ws.send(JSON.stringify(hello));
     flushPendingIngests();
   };
   ws.onmessage = async (event) => {
@@ -396,7 +417,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     }
     sendResponse({ ok: true });
   } else if (msg?.type === "WS_STATUS") {
-    sendResponse({ ok: true, connected: ws?.readyState === WebSocket.OPEN, mode: connectionMode });
+    sendResponse({ ok: true, connected: ws?.readyState === WebSocket.OPEN, mode: connectionMode, activeServerId });
   } else if (msg?.type === "FETCH_SUBTITLE" && msg.url) {
     // content script 请求 background 抓字幕体（background 有 host_permissions，免 CORS）
     // B 站新版播放器改用同源 protobuf endpoint，inject 拦不到旧 aisubtitle 请求，故由 background 主动抓
@@ -443,6 +464,25 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       }
       sendResponse({ ok: true, mode });
     });
+    return true;
+  } else if (msg?.type === "SET_ACTIVE_SERVER") {
+    // 切激活 server：落盘 activeServerId + 重载 activeServer 内存 + 热切换（关旧 ws → 新地址 connect）。
+    // 清 pendingIngests：离线 payload 是对旧 server 缓存的，补发到新 server 会错位（对齐切 standalone 的清空策略）。
+    (async () => {
+      const items = await chrome.storage.local.get(SERVERS_KEY);
+      const servers = normalizeServers(items[SERVERS_KEY]);
+      const entry = resolveActiveServer(servers, typeof msg.id === 'string' ? msg.id : null);
+      const newId = entry?.id ?? null;
+      await chrome.storage.local.set({ [ACTIVE_SERVER_KEY]: newId });
+      activeServerId = newId;
+      activeServer = entry ? parseServerUrl(entry.url) : null;
+      reconnectAttempts = 0;
+      try { ws?.close(); } catch {}
+      ws = null;
+      await chrome.storage.local.set({ pendingIngests: [] });
+      if (!isStandalone(connectionMode) && activeServer) connect();
+      sendResponse({ ok: true, activeServerId: newId, hasServer: !!activeServer });
+    })();
     return true;
   }
   return true;

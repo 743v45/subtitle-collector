@@ -4,7 +4,7 @@ import animate from 'tailwindcss-animate';
 const config: Config = {
   darkMode: ['class'],
   // popup.html 是扩展弹窗入口（根目录），src/**/* 是 React 组件
-  content: ['./popup.html', './src/**/*.{ts,tsx}'],
+  content: ['./popup.html', './options.html', './src/**/*.{ts,tsx}'],
   theme: {
     container: {
       center: true,

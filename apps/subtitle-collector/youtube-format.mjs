@@ -174,3 +174,29 @@ export function normalizeYoutubeTimedtext(rawBody, fmt) {
   }
   return { body: [] };
 }
+
+/**
+ * 解析 YouTube/B站 公开统计数字串为整数。
+ * 覆盖：千分位逗号（"6,137"→6137）、中文万/亿/萬（"1.2万"→12000）、英文 K/M/B（"1.2M"→1200000）。
+ * 用途：YouTube 已从 ytInitialPlayerResponse.videoDetails 移除 likeCount（实测 keys 无此字段），
+ *   点赞数仅 like 按钮 DOM 可见（like-button-view-model textContent / button aria-label）→ content-yt 读 DOM 后用本函数解析。
+ * null/空/无数字 → null（由调用方决定兜底）。
+ * @param {string | null | undefined} text
+ * @returns {number | null}
+ */
+export function parseStatCount(text) {
+  if (text == null) return null;
+  const t = String(text);
+  // 数字段（可含千分位逗号 + 小数）+ 紧跟的可选单位（中/英文）。
+  const m = t.match(/(\d[\d,]*(?:\.\d+)?)\s*(亿|万|萬|[kmb])?/i);
+  if (!m) return null;
+  let num = parseFloat(m[1].replace(/,/g, ''));
+  if (!Number.isFinite(num)) return null;
+  const unit = (m[2] || '').toLowerCase();
+  if (unit === '亿') num *= 1e8;
+  else if (unit === '万' || unit === '萬') num *= 1e4;
+  else if (unit === 'k') num *= 1e3;
+  else if (unit === 'm') num *= 1e6;
+  else if (unit === 'b') num *= 1e9;
+  return Math.round(num);
+}

@@ -1,6 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { CLIENT_ID_KEY, REPORTING_KEY } from '../../reporting.mjs';
 import { API_BASE } from '../../config.js';
+import {
+  SERVERS_KEY,
+  ACTIVE_SERVER_KEY,
+  parseServerUrl,
+  resolveActiveServer,
+  normalizeServers,
+  genServerId,
+} from '../../servers.mjs';
 import { detectPlatform, extractVid, type Platform } from './platforms';
 import type {
   BiliNavResponse,
@@ -49,6 +57,85 @@ export function useConnectionStatus(): ConnectionStatus & { setMode: (m: Connect
     chrome.runtime.sendMessage({ type: 'SET_CONNECTION_MODE', mode: m });
   }, []);
   return { ...status, setMode };
+}
+
+// —— 多 server 配置：popup 读 storage(servers + activeServerId)，切换/增删回写 + 发 SET_ACTIVE_SERVER ——
+// httpBase 供 useCollected/useCreator 直连激活 server 的 HTTP API（替代旧静态 API_BASE，支持热切换）。
+export interface ServerEntry {
+  id: string;
+  name: string;
+  url: string;
+}
+export interface ServerConfig {
+  servers: ServerEntry[];
+  activeServerId: string | null;
+  httpBase: string; // 激活 server 的 httpBase；loading/无 server 时回退 API_BASE
+  loading: boolean;
+  setActive: (id: string) => void;
+  addServer: (name: string, url: string) => string | null; // url 非法（非 ws/wss）返回 null
+  removeServer: (id: string) => void;
+}
+
+export function useServerConfig(): ServerConfig {
+  const [servers, setServers] = useState<ServerEntry[]>([]);
+  const [activeServerId, setActiveId] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  const load = useCallback(() => {
+    chrome.storage.local.get([SERVERS_KEY, ACTIVE_SERVER_KEY], (items) => {
+      const s = normalizeServers(items[SERVERS_KEY]) as ServerEntry[];
+      const storedActive = (items[ACTIVE_SERVER_KEY] as string | undefined) ?? null;
+      const activeEntry = resolveActiveServer(s, storedActive);
+      setServers(s);
+      setActiveId(activeEntry?.id ?? null);
+      setLoading(false);
+    });
+  }, []);
+
+  useEffect(() => {
+    load();
+    // storage 变化（background 首启初始化默认 server / 其他 popup 改动）→ 重读同步
+    const handler = (changes: Record<string, chrome.storage.StorageChange>, area: string) => {
+      if (area !== 'local') return;
+      if (SERVERS_KEY in changes || ACTIVE_SERVER_KEY in changes) load();
+    };
+    chrome.storage.onChanged.addListener(handler);
+    return () => chrome.storage.onChanged.removeListener(handler);
+  }, [load]);
+
+  const activeEntry = resolveActiveServer(servers, activeServerId);
+  const httpBase = activeEntry ? (parseServerUrl(activeEntry.url)?.httpBase ?? API_BASE) : API_BASE;
+
+  const setActive = useCallback((id: string) => {
+    setActiveId(id); // 乐观更新；background SET_ACTIVE_SERVER 回执后 storage.onChanged 兜底修正
+    chrome.runtime.sendMessage({ type: 'SET_ACTIVE_SERVER', id });
+  }, []);
+
+  const addServer = useCallback((name: string, url: string): string | null => {
+    if (!parseServerUrl(url)) return null; // url 非法（非 ws/wss / 解析失败）
+    const entry: ServerEntry = { id: genServerId(), name: name.trim() || url.trim(), url: url.trim() };
+    chrome.storage.local.get([SERVERS_KEY], (items) => {
+      const s = normalizeServers(items[SERVERS_KEY]);
+      chrome.storage.local.set({ [SERVERS_KEY]: [...s, entry] }); // storage.onChanged → load 重读
+    });
+    return entry.id;
+  }, []);
+
+  const removeServer = useCallback((id: string) => {
+    chrome.storage.local.get([SERVERS_KEY, ACTIVE_SERVER_KEY], (items) => {
+      const s = normalizeServers(items[SERVERS_KEY]).filter((x) => x.id !== id);
+      const storedActive = (items[ACTIVE_SERVER_KEY] as string | undefined) ?? null;
+      const wasActive = storedActive === id;
+      const newActive = wasActive ? (resolveActiveServer(s, null)?.id ?? '') : storedActive;
+      const patch: Record<string, unknown> = { [SERVERS_KEY]: s };
+      if (wasActive) patch[ACTIVE_SERVER_KEY] = newActive || null;
+      chrome.storage.local.set(patch);
+      // 删的是激活项 → 触发 background 热切换到新激活（列表空 → newActive='' → activeServer null → 不连）
+      if (wasActive) chrome.runtime.sendMessage({ type: 'SET_ACTIVE_SERVER', id: newActive });
+    });
+  }, []);
+
+  return { servers, activeServerId, httpBase, loading, setActive, addServer, removeServer };
 }
 
 // —— B 站登录态：每 30s 直连官方 nav 接口 ——
@@ -112,7 +199,7 @@ interface IngestResultMessage {
   skipped?: number;
 }
 
-export function useCollected(): {
+export function useCollected(httpBase: string): {
   collected: CollectedState;
   currentVid: string | null;
   currentPlatform: Platform | null;
@@ -143,7 +230,7 @@ export function useCollected(): {
       if (platform.id === 'bilibili') {
         // B 站：fetch server（原逻辑，零回归）
         // 不清 loading：保留上次数据，避免刷新（手动补采 / INGEST_RESULT）时"数据→查询中→数据"闪烁
-        fetch(`${API_BASE}/api/videos/bilibili/${vid}`)
+        fetch(`${httpBase}/api/videos/bilibili/${vid}`)
           .then((r) => r.json())
           .then((d: CollectedResponse) => {
             if (!d.ok) {
@@ -172,7 +259,7 @@ export function useCollected(): {
         setCollected({ state: 'not-collected' });
       }
     });
-  }, [refreshKey]);
+  }, [refreshKey, httpBase]);
 
   // background 上报成功后广播 INGEST_RESULT：source_vid 命中当前 vid 时触发重查
   useEffect(() => {
@@ -204,7 +291,7 @@ export type CreatorState =
   | { state: 'none' }
   | { state: 'ok'; creator: CreatorDetail };
 
-export function useCreator(creatorId: number | null | undefined): CreatorState {
+export function useCreator(creatorId: number | null | undefined, httpBase: string): CreatorState {
   const [creator, setCreator] = useState<CreatorState>({ state: 'loading' });
   useEffect(() => {
     if (creatorId == null) {
@@ -212,14 +299,14 @@ export function useCreator(creatorId: number | null | undefined): CreatorState {
       return;
     }
     setCreator({ state: 'loading' });
-    fetch(`${API_BASE}/api/creators/${creatorId}`)
+    fetch(`${httpBase}/api/creators/${creatorId}`)
       .then((r) => r.json())
       .then((d: { ok: boolean; creator?: CreatorDetail }) => {
         if (d?.ok && d.creator) setCreator({ state: 'ok', creator: d.creator });
         else setCreator({ state: 'none' });
       })
       .catch(() => setCreator({ state: 'none' }));
-  }, [creatorId]);
+  }, [creatorId, httpBase]);
   return creator;
 }
 

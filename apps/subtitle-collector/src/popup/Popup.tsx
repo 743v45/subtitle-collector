@@ -8,6 +8,7 @@ import {
   useClientId,
   useReporting,
   useUpperVideos,
+  useServerConfig,
   diffConsistency,
   type CollectedState,
   type ConnectionStatus,
@@ -98,8 +99,10 @@ export function Popup() {
   const conn = useConnectionStatus();
   const standalone = conn.mode === 'standalone';
   const reporting = useReporting();
+  const serverCfg = useServerConfig();
   // useCollected 先于 useBiliLogin：login 仅在 B 站页查（YouTube/无关页不发 nav 请求）
-  const { collected: serverCollected, currentVid, currentPlatform } = useCollected();
+  // httpBase 来自激活 server：热切换 server 后 useCollected/useCreator 自动重查新地址
+  const { collected: serverCollected, currentVid, currentPlatform } = useCollected(serverCfg.httpBase);
   const login = useBiliLogin(currentPlatform?.id === 'bilibili');
   const { local } = useLocalCollected(currentVid);
   const consistency = diffConsistency(local, serverCollected);
@@ -116,7 +119,7 @@ export function Popup() {
     serverCollected.state === 'ok' ? serverCollected.video.creator_id : undefined;
   // 在 Popup 顶层取 creator（而非 CreatorCard 内部）：source_uid 还要喂给 useUpperVideos
   // 读 background passive 缓存，避免在 CreatorCard 里再调一次 useCreator 双发请求。
-  const creatorState = useCreator(creatorId);
+  const creatorState = useCreator(creatorId, serverCfg.httpBase);
   const upMid = creatorState.state === 'ok' ? creatorState.creator.source_uid : null;
   const upperVideos = useUpperVideos(upMid);
 
@@ -206,6 +209,14 @@ function BrandHeader() {
         <PlatformLogoBadge color="bg-black" path={LOGOS.tiktok} title="抖音" href="https://www.tiktok.com" />
         <PlatformLogoBadge color="bg-[#FF2442]" path={LOGOS.xiaohongshu} title="小红书" href="https://www.xiaohongshu.com" />
         <PlatformLogoBadge color="bg-[#FF0000]" path={LOGOS.youtube} title="YouTube" href="https://www.youtube.com" />
+        <button
+          type="button"
+          onClick={() => chrome.runtime.openOptionsPage()}
+          title="配置"
+          className="flex h-6 w-6 items-center justify-center rounded-md text-slate-500 transition-opacity hover:opacity-70"
+        >
+          <GearIcon className="h-[14px] w-[14px]" />
+        </button>
       </div>
     </div>
   );
@@ -995,6 +1006,16 @@ function ChevronIcon({ className }: { className?: string }) {
   return (
     <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className} aria-hidden="true">
       <path d="m9 18 6-6-6-6" />
+    </svg>
+  );
+}
+
+// 配置齿轮图标（BrandHeader 右上角，点击打开独立配置页 options.html）。
+function GearIcon({ className }: { className?: string }) {
+  return (
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className} aria-hidden="true">
+      <circle cx="12" cy="12" r="3" />
+      <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z" />
     </svg>
   );
 }
