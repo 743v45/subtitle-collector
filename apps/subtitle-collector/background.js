@@ -456,7 +456,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       .catch((e) => sendResponse({ ok: false, error: e.message }));
   } else if (msg?.type === "MANUAL_CAPTURE") {
     // 只找 B 站视频页（避免对 chrome:// 等无 content script 的 tab sendMessage 抛 "Receiving end does not exist"）
-    chrome.tabs.query({ active: true, currentWindow: true, url: "*://www.bilibili.com/video/*" }, ([tab]) => {
+    chrome.tabs.query({ active: true, currentWindow: true, url: ["*://www.bilibili.com/video/*", "*://www.youtube.com/watch*"] }, ([tab]) => {
       if (tab?.id) {
         // force:true 绕过上报开关：用户在「手动」模式下点「上报」就是明确要上报，不该被自动开关拦截
         chrome.tabs.sendMessage(tab.id, { type: "RE_AGG", force: true }, () => {

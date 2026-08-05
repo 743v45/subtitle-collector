@@ -366,6 +366,19 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   // popup「已收集」直取 content-yt 内存（chrome.tabs.sendMessage → 当前 tab，不经 background）。
   // 回复结构对齐 content.js:191-205（bvid/extra/subs/bodies），popup useLocalCollected（hooks.ts:327-333）无需改解析。
   // track_type 用 kindToTrackType 映射成 1(asr)/2(人工)，与 INGEST 路径及 B 站 popup 展示一致。
+  if (msg?.type === "RE_AGG") {
+    // popup「手动上报」（MANUAL_CAPTURE → background RE_AGG）：force 重发当前页已采集的 YouTube 字幕。
+    // 对齐 content.js RE_AGG 语义。vid 从 URL 取（watch?v=）；collected 已有该 vid 才 flush（否则不上报，让 popup 兜底超时）。
+    const vid = new URL(location.href).searchParams.get('v');
+    if (vid && collected.has(vid)) {
+      flushIfReady(vid, true);
+      sendResponse({ ok: true });
+    } else {
+      console.warn('[content-yt] RE_AGG 但当前页 vid 未采集', vid);
+      sendResponse({ ok: false, err: '未采集到字幕' });
+    }
+    return false;
+  }
   if (msg?.type === "GET_LOCAL_STATE") {
     // popup 发 {type:'GET_LOCAL_STATE', bvid}（hooks.ts:313）；兼容 vid，对齐 content.js:184。
     const vid = msg.vid ?? msg.bvid;
