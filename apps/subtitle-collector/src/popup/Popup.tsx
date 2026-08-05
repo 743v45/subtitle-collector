@@ -789,6 +789,7 @@ function SubtitleCopySection({
   const [fmtOpen, setFmtOpen] = useState(false);
   const [copiedUrl, setCopiedUrl] = useState<string | null>(null);
   const [failedUrl, setFailedUrl] = useState<string | null>(null);
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null); // 展开预览字幕内容的轨 url（点「预览」toggle）
 
   const copyableSubs = subs.filter((s) => s.has_body);
 
@@ -864,48 +865,63 @@ function SubtitleCopySection({
             const totalChars = ytCues.reduce((n, c) => n + (c?.content?.replace(/\s/g, '').length ?? 0), 0);
             const previewText = ytCues.length > 0 ? `${fmtNum(totalChars)} 字` : '';
             return (
-              <div
-                key={url ?? i}
-                className="flex items-center justify-between rounded border border-input px-2 py-1 text-xs"
-              >
-                <div className="flex min-w-0 flex-col gap-0.5">
-                  <span className="flex min-w-0 items-center gap-2">
-                    <span className="font-medium">{label}</span>
-                    {s.lan && s.lan_doc && (
-                      <span className="text-muted-foreground">{s.lan}</span>
+              <div key={url ?? i} className="space-y-1">
+                <div className="flex items-center justify-between rounded border border-input px-2 py-1 text-xs">
+                  <div className="flex min-w-0 flex-col gap-0.5">
+                    <span className="flex min-w-0 items-center gap-2">
+                      <span className="font-medium">{label}</span>
+                      {s.lan && s.lan_doc && (
+                        <span className="text-muted-foreground">{s.lan}</span>
+                      )}
+                      {isAi && (
+                        <Badge variant="secondary" className="shrink-0 px-1.5 py-0 text-[10px] leading-tight font-normal">
+                          AI
+                        </Badge>
+                      )}
+                    </span>
+                    {selectable && previewText && (
+                      <span className="text-[10px] text-muted-foreground/70">{previewText}</span>
                     )}
-                    {isAi && (
-                      <Badge variant="secondary" className="shrink-0 px-1.5 py-0 text-[10px] leading-tight font-normal">
-                        AI
-                      </Badge>
+                  </div>
+                  <div className="flex shrink-0 items-center gap-1">
+                    {selectable && (
+                      <button
+                        type="button"
+                        onClick={() => setPreviewUrl((p) => (p === url ? null : url))}
+                        className="shrink-0 rounded bg-secondary px-2 py-0.5 text-xs text-secondary-foreground transition-colors hover:bg-secondary/80"
+                      >
+                        {previewUrl === url ? '收起' : '预览'}
+                      </button>
                     )}
-                  </span>
-                  {selectable && previewText && (
-                    <span className="text-[10px] text-muted-foreground/70">{previewText}</span>
-                  )}
+                    <button
+                      type="button"
+                      disabled={!selectable}
+                      onClick={() => url && onCopy(url)}
+                      className={cn(
+                        'shrink-0 rounded px-2 py-0.5 text-xs transition-colors',
+                        justFailed
+                          ? 'bg-destructive text-destructive-foreground'
+                          : justCopied
+                            ? 'bg-secondary text-secondary-foreground'
+                            : 'bg-brand text-brand-foreground hover:bg-brand/90',
+                        !selectable && 'cursor-not-allowed opacity-50'
+                      )}
+                    >
+                      {!selectable
+                        ? '未获取'
+                        : justCopied
+                          ? '已复制'
+                          : justFailed
+                            ? '失败'
+                            : '复制'}
+                    </button>
+                  </div>
                 </div>
-                <button
-                  type="button"
-                  disabled={!selectable}
-                  onClick={() => url && onCopy(url)}
-                  className={cn(
-                    'shrink-0 rounded px-2 py-0.5 text-xs transition-colors',
-                    justFailed
-                      ? 'bg-destructive text-destructive-foreground'
-                      : justCopied
-                        ? 'bg-secondary text-secondary-foreground'
-                        : 'bg-brand text-brand-foreground hover:bg-brand/90',
-                    !selectable && 'cursor-not-allowed opacity-50'
-                  )}
-                >
-                  {!selectable
-                    ? '未获取'
-                    : justCopied
-                      ? '已复制'
-                      : justFailed
-                        ? '失败'
-                        : '复制'}
-                </button>
+                {previewUrl === url && selectable && bodies[url] && (
+                  <pre className="max-h-48 overflow-auto rounded border border-input bg-muted/40 p-2 font-mono text-[10px] leading-relaxed whitespace-pre-wrap break-words">
+                    {formatSubtitle(bodies[url], format)}
+                  </pre>
+                )}
               </div>
             );
           })}
