@@ -52,7 +52,8 @@ export function VideoList({ onOpen }: { onOpen: (source: string, sourceVid: stri
   const [q, setQ] = useState('');
   const [subtitleQInput, setSubtitleQInput] = useState('');
   const [subtitleQ, setSubtitleQ] = useState('');
-  // 分区（下拉，选项从 aggregate 拉）
+  // 平台（B 站/YouTube）+ 分区（下拉，选项从 aggregate 拉）
+  const [source, setSource] = useState('');
   const [tname, setTname] = useState('');
   // 次要筛选（折叠区）
   const [tag, setTag] = useState('');
@@ -98,6 +99,7 @@ export function VideoList({ onOpen }: { onOpen: (source: string, sourceVid: stri
     () =>
       listVideos({
         q: q || undefined,
+        source: source || undefined,
         subtitle_q: subtitleQ || undefined,
         tname: tname || undefined,
         tag: tag || undefined,
@@ -115,7 +117,7 @@ export function VideoList({ onOpen }: { onOpen: (source: string, sourceVid: stri
         page,
         size: PAGE_SIZE,
       }),
-    [q, subtitleQ, tname, tag, lang, hasSubtitle, dateField, since, until, min_duration, max_duration, min_view, max_view, sort, desc, page],
+    [source, q, subtitleQ, tname, tag, lang, hasSubtitle, dateField, since, until, min_duration, max_duration, min_view, max_view, sort, desc, page],
   );
 
   const items = data?.items ?? [];
@@ -131,6 +133,7 @@ export function VideoList({ onOpen }: { onOpen: (source: string, sourceVid: stri
   function resetAll() {
     setQInput('');
     setQ('');
+    setSource('');
     setSubtitleQInput('');
     setSubtitleQ('');
     setTname('');
@@ -163,10 +166,23 @@ export function VideoList({ onOpen }: { onOpen: (source: string, sourceVid: stri
       <div className="flex flex-wrap items-center gap-2">
         <Input
           className="min-w-[180px] flex-1"
-          placeholder="搜索标题 / UP主"
+          placeholder="搜索标题 / 创作者"
           value={qInput}
           onChange={(e) => setQInput(e.target.value)}
         />
+        <Select
+          value={source || '__all'}
+          onValueChange={(v) => onFilterChange(setSource)(v === '__all' ? '' : v)}
+        >
+          <SelectTrigger className="w-[120px]">
+            <SelectValue placeholder="平台" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="__all">全部平台</SelectItem>
+            <SelectItem value="bilibili">哔哩哔哩</SelectItem>
+            <SelectItem value="youtube">YouTube</SelectItem>
+          </SelectContent>
+        </Select>
         <Input
           className="min-w-[160px] flex-1"
           placeholder="搜字幕内容"
@@ -372,11 +388,24 @@ export function VideoList({ onOpen }: { onOpen: (source: string, sourceVid: stri
   );
 }
 
+// 平台图标：bilibili(粉 #FB7299) / youtube(红) 内联 SVG（lucide 无 B 站 logo），按 video.source 区分
+function PlatformIcon({ source, className }: { source: string; className?: string }) {
+  const path = source === 'youtube'
+    ? 'M23.5 6.2a3 3 0 0 0-2.1-2.1C19.5 3.5 12 3.5 12 3.5s-7.5 0-9.4.6A3 3 0 0 0 .5 6.2 31 31 0 0 0 0 12a31 31 0 0 0 .5 5.8 3 3 0 0 0 2.1 2.1c1.9.6 9.4.6 9.4.6s7.5 0 9.4-.6a3 3 0 0 0 2.1-2.1A31 31 0 0 0 24 12a31 31 0 0 0-.5-5.8zM9.6 15.6V8.4l6.2 3.6z'
+    : 'M17.8 4.4 20 2.2 18.4.6l-2.6 2.6H8.2L5.6.6 4 2.2l2.2 2.2C3.4 7.2 2 10.6 2 14v4a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-4c0-3.4-1.4-6.8-4.2-9.6zM9 16a1.2 1.2 0 1 1 0-2.4 1.2 1.2 0 0 1 0 2.4zm6 0a1.2 1.2 0 1 1 0-2.4 1.2 1.2 0 0 1 0 2.4z';
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+      <path d={path} />
+    </svg>
+  );
+}
+
 function VideoRow({ v, onOpen }: { v: VideoListItem; onOpen: (source: string, sourceVid: string) => void }) {
   const tags = v.tags ?? [];
   const shownTags = tags.slice(0, 3);
   const extraTags = Math.max(0, tags.length - shownTags.length);
   const dur = formatDuration(v.duration);
+  const iconColor = v.source === 'youtube' ? 'text-red-500' : 'text-[#FB7299]';
 
   return (
     <Card
@@ -384,7 +413,10 @@ function VideoRow({ v, onOpen }: { v: VideoListItem; onOpen: (source: string, so
       className="cursor-pointer transition-colors hover:bg-accent"
     >
       <CardHeader className="space-y-1 p-4">
-        <CardTitle className="text-base font-medium">{v.title}</CardTitle>
+        <CardTitle className="flex items-center gap-1.5 text-base font-medium">
+          <PlatformIcon source={v.source} className={cn('h-3.5 w-3.5 shrink-0', iconColor)} />
+          <span className="truncate">{v.title}</span>
+        </CardTitle>
         <CardDescription className="text-xs flex flex-wrap items-center gap-x-2">
           <span>{v.creator_name ?? '—'}</span>
           {v.view != null && <span>· 播放 {formatView(v.view)}</span>}

@@ -65,6 +65,7 @@ export interface ClientInfo {
 // ── 视频多维筛选（对应 server advanced.ts VideoFilter + ListFilter）──
 export interface VideoFilter {
   q?: string;
+  source?: string; // 平台过滤（bilibili/youtube）
   tid?: number;
   tname?: string;
   tag?: string;

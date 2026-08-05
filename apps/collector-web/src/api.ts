@@ -40,6 +40,7 @@ async function ensureOk<T>(r: Response, parse: (json: any) => T): Promise<T> {
 export async function listVideos(filter: VideoFilter = {}): Promise<{ total: number; items: VideoListItem[] }> {
   const u = new URLSearchParams();
   if (filter.q) u.set('q', filter.q);
+  if (filter.source) u.set('source', filter.source);
   if (filter.tid != null) u.set('tid', String(filter.tid));
   if (filter.tname) u.set('tname', filter.tname);
   if (filter.tag) u.set('tag', filter.tag);
