@@ -70,3 +70,24 @@ export function genServerId() {
   for (let i = 0; i < 8; i++) id += CHARS[Math.floor(Math.random() * CHARS.length)];
   return id;
 }
+
+/**
+ * 把 url 里的 ?token=xxx 替换为 ?token=***（UI 展示用，防远程凭据明文泄露）。
+ * 无 token / 非法 / 非字符串 → 原样返回（不抛错，UI 容错）。
+ */
+export function maskServerUrl(rawUrl) {
+  if (typeof rawUrl !== 'string') return rawUrl;
+  return rawUrl.replace(/([?&])token=[^&]*/g, '$1token=***');
+}
+
+/**
+ * 判断 url 是否本地 server（host ∈ {127.0.0.1, localhost, ::1}）。
+ * 本地 URL 的 token 可在 UI 点开看明文；远程始终 mask。非法 / 空 → false。
+ */
+export function isLocalServer(rawUrl) {
+  if (typeof rawUrl !== 'string' || !rawUrl.trim()) return false;
+  try {
+    const h = new URL(rawUrl.trim()).hostname;
+    return h === '127.0.0.1' || h === 'localhost' || h === '::1';
+  } catch { return false; }
+}

@@ -11,7 +11,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-function setup(heartbeatMs?: number) {
+function setup(heartbeatMs?: number, token: string = 'test-token') {
   const dir = mkdtempSync(join(tmpdir(), 'collector-ws-'));
   const db = openDb(join(dir, 'test.db'));
   migrate(db);
@@ -19,7 +19,7 @@ function setup(heartbeatMs?: number) {
   return new Promise<{ port: number; db: any; dir: string; cleanup: () => void }>((resolve) => {
     httpServer.listen(0, '127.0.0.1', () => {
       const port = (httpServer.address() as AddressInfo).port;
-      attachWsServer(httpServer, db, 'test-token', heartbeatMs); // 预置 token；下方 hello 须带同一 token；heartbeatMs 可注入（测心跳清理用）
+      attachWsServer(httpServer, db, token, heartbeatMs); // token 默认 'test-token'；传 '' = 无 token 模式（不校验）
       resolve({ port, db, dir, cleanup: () => { httpServer.close(); rmSync(dir, { recursive: true, force: true }); } });
     });
   });
@@ -110,6 +110,20 @@ test('hello 握手 token 不匹配：服务端关闭连接', async () => {
     });
     ws.send(JSON.stringify({ type: 'hello', ext_version: '0.1.0', token: 'WRONG-TOKEN' }));
     assert.equal(await closed, true, 'bad token 应被关闭');
+  } finally { ctx.cleanup(); }
+});
+
+test('hello 无 token 模式：EXPECTED_TOKEN 空 → 不校验，hello 不带 token 也 ack', async () => {
+  const ctx = await setup(undefined, ''); // 空 token = 无 token 模式（开放，适合内网）
+  try {
+    const ws = await connect(ctx.port);
+    const msg: any = await new Promise((resolve) => {
+      ws.once('message', (data) => resolve(JSON.parse(data.toString())));
+      ws.send(JSON.stringify({ type: 'hello', ext_version: '0.1.0' })); // 不带 token
+    });
+    assert.equal(msg.type, 'hello-ack');
+    assert.equal(msg.ok, true);
+    ws.close();
   } finally { ctx.cleanup(); }
 });
 

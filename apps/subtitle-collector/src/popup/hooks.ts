@@ -29,6 +29,7 @@ export interface ConnectionStatus {
   loading: boolean; // 首帧未拿到 WS_STATUS 时 true，避免闪烁
   connected: boolean;
   mode: ConnectionMode;
+  error: string | null; // 未连接时的原因（hello-nack error / 不可达 / 连接错误）；已连接或纯扩展时 null
 }
 
 export function useConnectionStatus(): ConnectionStatus & { setMode: (m: ConnectionMode) => void } {
@@ -36,6 +37,7 @@ export function useConnectionStatus(): ConnectionStatus & { setMode: (m: Connect
     loading: true,
     connected: false,
     mode: 'server',
+    error: null,
   });
   useEffect(() => {
     const check = () => {
@@ -44,6 +46,7 @@ export function useConnectionStatus(): ConnectionStatus & { setMode: (m: Connect
           loading: false,
           connected: !!resp?.connected,
           mode: resp?.mode === 'standalone' ? 'standalone' : 'server',
+          error: resp?.error ?? null,
         });
       });
     };
@@ -53,7 +56,7 @@ export function useConnectionStatus(): ConnectionStatus & { setMode: (m: Connect
   }, []);
   // 乐观更新：切 standalone 立即置灰（connected=false）；切 server 保持原 connected，等轮询修正（WS 异步重连）
   const setMode = useCallback((m: ConnectionMode) => {
-    setStatus((s) => ({ loading: false, mode: m, connected: m === 'standalone' ? false : s.connected }));
+    setStatus((s) => ({ loading: false, mode: m, connected: m === 'standalone' ? false : s.connected, error: m === 'standalone' ? null : s.error }));
     chrome.runtime.sendMessage({ type: 'SET_CONNECTION_MODE', mode: m });
   }, []);
   return { ...status, setMode };

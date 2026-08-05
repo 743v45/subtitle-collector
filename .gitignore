@@ -18,6 +18,9 @@ apps/collector-server/*.db
 apps/collector-server/*.db-wal
 apps/collector-server/*.db-shm
 
+# docker compose 挂载的数据库目录（./data:/data，含真实采集数据，勿入库）
+data/
+
 # collector-cli server 运维产物（pid 文件 + 后台日志，本地运行时生成）
 apps/collector-server/.collector-server.pid
 apps/collector-server/.collector-server.log

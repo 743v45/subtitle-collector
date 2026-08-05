@@ -17,7 +17,7 @@ interface PendingEntry { resolve: (v: any) => void; timer: NodeJS.Timeout; }
 const pending = new Map<string, PendingEntry>();
 
 export function attachWsServer(httpServer: Server, _db: Database.Database, expectedToken?: string, heartbeatMs = 30000): void {
-  const EXPECTED_TOKEN = expectedToken ?? process.env.COLLECTOR_TOKEN ?? ''; // 空 token 视为未配置，全部拒绝
+  const EXPECTED_TOKEN = expectedToken ?? process.env.COLLECTOR_TOKEN ?? ''; // 空 token = 未配置 → 不校验（无 token 模式，开放，适合内网）；非空 = 必须匹配
   const wss = new WebSocketServer({
     server: httpServer,
     path: '/ext',
@@ -45,8 +45,9 @@ export function attachWsServer(httpServer: Server, _db: Database.Database, expec
 
       if (msg.type === 'hello') {
         conn.extVersion = typeof msg.ext_version === 'string' ? msg.ext_version : null;
-        // WS 握手 token 校验：比对预置 token，不匹配关闭连接（防 WS CSRF，学 opencli）
-        if (!EXPECTED_TOKEN || msg.token !== EXPECTED_TOKEN) {
+        // WS 握手 token 校验：非空 token 必须匹配，不匹配 nack+close（防 WS CSRF，学 opencli）。
+        // 空 EXPECTED_TOKEN = 无 token 模式 → 跳过校验，任何 hello 都 ack（COLLECTOR_TOKEN= 显式开放，适合内网）。
+        if (EXPECTED_TOKEN && msg.token !== EXPECTED_TOKEN) {
           ws.send(JSON.stringify({ type: 'hello-nack', ok: false, error: 'bad token' }));
           ws.close(4001, 'bad token');
           console.warn(`[ws] hello 握手失败：token 不匹配（ext_version=${conn.extVersion ?? 'unknown'}）`);

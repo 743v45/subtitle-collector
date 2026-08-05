@@ -4,8 +4,28 @@ import { Badge } from '@/components/ui/badge';
 import { Switch } from '@/components/ui/switch';
 import { Button } from '@/components/ui/button';
 import { useServerConfig, useReporting, useConnectionStatus, useClientId } from '../popup/hooks';
-import { parseServerUrl } from '../../servers.mjs';
+import { parseServerUrl, maskServerUrl, isLocalServer } from '../../servers.mjs';
 import { resolveConnDisplay } from '../../connection-mode.mjs';
+
+// 叹号圆圈图标（无 lucide-react 依赖，内联 SVG；lucide AlertCircle path）
+function AlertCircle({ className }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <circle cx="12" cy="12" r="10" />
+      <line x1="12" y1="8" x2="12" y2="12" />
+      <line x1="12" y1="16" x2="12.01" y2="16" />
+    </svg>
+  );
+}
+// 眼睛图标（lucide Eye path）：本地 server 行点开看 token 明文
+function Eye({ className }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7z" />
+      <circle cx="12" cy="12" r="3" />
+    </svg>
+  );
+}
 
 // 配置页：左右结构。左 nav 分类，右对应面板。
 // popup 右上角齿轮按钮 → chrome.runtime.openOptionsPage() 打开本页（open_in_tab:true）。
@@ -53,18 +73,42 @@ export function Options() {
   );
 }
 
-// 测试 server 可达性：fetch pingUrl（3s 超时）。返回 {ok, ms, err}。
-// 仅测 HTTP /ping（server 探活端点），不验 WS/token——能 ping 通即 server 在线。
+// 测试 server 可达性 + token：连 wsUrl 发 hello{token}，hello-ack=通过、hello-nack=显示 error。
+// 比 ping 更严格——验了 token 握手，bad token 会显式失败而非"在线"。
 async function testServerUrl(url: string): Promise<{ ok: boolean; ms?: number; err?: string }> {
   const parsed = parseServerUrl(url);
   if (!parsed) return { ok: false, err: 'URL 非法（需 ws:// 或 wss://）' };
   const t0 = Date.now();
+  let ws: WebSocket;
   try {
-    const res = await fetch(parsed.pingUrl, { signal: AbortSignal.timeout(3000) });
-    return { ok: res.ok, ms: Date.now() - t0 };
+    ws = new WebSocket(parsed.wsUrl);
   } catch (e) {
     return { ok: false, err: String((e as Error)?.message ?? e).slice(0, 80) };
   }
+  return new Promise((resolve) => {
+    let done = false;
+    const timer = setTimeout(() => finish({ ok: false, err: '超时（3s 无响应）' }), 3000);
+    const finish = (r: { ok: boolean; ms?: number; err?: string }) => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      try { ws.close(); } catch {}
+      resolve(r);
+    };
+    ws.onopen = () => {
+      const hello: Record<string, unknown> = { type: 'hello' };
+      if (parsed.token) hello.token = parsed.token;
+      ws.send(JSON.stringify(hello));
+    };
+    ws.onmessage = (e) => {
+      let msg: { type?: string; error?: string };
+      try { msg = JSON.parse(String(e.data)); } catch { return; }
+      if (msg.type === 'hello-ack') finish({ ok: true, ms: Date.now() - t0 });
+      else if (msg.type === 'hello-nack') finish({ ok: false, err: msg.error || '握手被拒' });
+    };
+    ws.onerror = () => finish({ ok: false, err: '连接失败（server 不可达或非 WS 端点）' });
+    ws.onclose = () => finish({ ok: false, err: '连接关闭（未完成握手）' });
+  });
 }
 
 // —— 采集连接（连接模式 + server 列表，合并面板）——
@@ -80,6 +124,7 @@ function ServerPanel() {
   const [testingId, setTestingId] = useState<string | null>(null);
   const [newResult, setNewResult] = useState<{ ok: boolean; ms?: number; err?: string } | null>(null);
   const [testingNew, setTestingNew] = useState(false);
+  const [revealed, setRevealed] = useState<Set<string>>(new Set()); // 本地 server 点开看 token 明文的 id 集合（远程始终 mask）
 
   const test = async (id: string, url: string) => {
     setTestingId(id);
@@ -118,11 +163,21 @@ function ServerPanel() {
               uncheckedLabel="纯扩展"
               className="data-[state=checked]:bg-brand"
             />
-            <span className={cn('h-2 w-2 rounded-full', dot)} />
+            {disp.phase === 'server' && !disp.connected && disp.error ? (
+              <AlertCircle className="h-4 w-4 shrink-0 text-amber-500" />
+            ) : (
+              <span className={cn('h-2 w-2 shrink-0 rounded-full', dot)} />
+            )}
             <span className="text-sm">{statusText}</span>
+            {disp.phase === 'server' && !disp.connected && disp.error && (
+              <span className="truncate text-xs text-amber-600" title={disp.error}>{disp.error}</span>
+            )}
             <span className="ml-auto text-xs text-muted-foreground">
               {disp.phase === 'standalone' ? '不连 server、不上报' : '连 server，可上报'}
             </span>
+            {disp.phase === 'server' && !disp.connected && (
+              <Button size="sm" variant="outline" onClick={() => chrome.runtime.sendMessage({ type: 'RECONNECT' })}>重连</Button>
+            )}
           </>
         )}
       </div>
@@ -147,11 +202,26 @@ function ServerPanel() {
                   <span className="font-medium">{s.name}</span>
                   {active && <Badge variant="secondary" className="text-[10px]">当前</Badge>}
                 </div>
-                <div className="truncate text-xs text-muted-foreground">{s.url}</div>
+                <div className="flex items-center gap-1">
+                  <span className="truncate text-xs text-muted-foreground">{revealed.has(s.id) ? s.url : maskServerUrl(s.url)}</span>
+                  {isLocalServer(s.url) && (
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation(); // 避免触发外层 setActive
+                        setRevealed((prev) => { const n = new Set(prev); n.has(s.id) ? n.delete(s.id) : n.add(s.id); return n; });
+                      }}
+                      className="shrink-0 text-muted-foreground hover:text-foreground"
+                      title={revealed.has(s.id) ? '隐藏 token' : '显示 token'}
+                    >
+                      <Eye className="h-3.5 w-3.5" />
+                    </button>
+                  )}
+                </div>
               </button>
               {r && (
                 <span className={cn('shrink-0 text-xs', r.ok ? 'text-emerald-600' : 'text-destructive')} title={r.err}>
-                  {r.ok ? `在线 ${r.ms}ms` : '离线'}
+                  {r.ok ? `在线 ${r.ms}ms` : r.err || '离线'}
                 </span>
               )}
               <Button variant="outline" size="sm" disabled={testingId === s.id} onClick={() => test(s.id, s.url)}>
@@ -196,11 +266,49 @@ function ServerPanel() {
           <Button size="sm" onClick={onAdd}>+ 添加</Button>
           {newResult && (
             <span className={cn('text-xs', newResult.ok ? 'text-emerald-600' : 'text-destructive')} title={newResult.err}>
-              {newResult.ok ? `在线 ${newResult.ms}ms` : '离线'}
+              {newResult.ok ? `在线 ${newResult.ms}ms` : newResult.err || '离线'}
             </span>
           )}
         </div>
       </div>
+
+      <ReconnectSettings />
+    </div>
+  );
+}
+
+// —— 重连设置：间隔 + 自动重连开关（存 storage，background storage.onChanged 自动重载）——
+function ReconnectSettings() {
+  const [base, setBase] = useState(2000);
+  const [max, setMax] = useState(10000);
+  const [auto, setAuto] = useState(true);
+  useEffect(() => {
+    chrome.storage.local.get(['reconnect_base_ms', 'reconnect_max_ms', 'auto_reconnect'], (items) => {
+      if (typeof items.reconnect_base_ms === 'number') setBase(items.reconnect_base_ms);
+      if (typeof items.reconnect_max_ms === 'number') setMax(items.reconnect_max_ms);
+      if (typeof items.auto_reconnect === 'boolean') setAuto(items.auto_reconnect);
+    });
+  }, []);
+  return (
+    <div className="space-y-2 rounded-md border p-3">
+      <div className="text-sm font-medium">重连设置</div>
+      <div className="flex flex-wrap items-center gap-3 text-sm">
+        <label className="flex items-center gap-1">
+          间隔起步
+          <input type="number" min={0} value={base} onChange={(e) => { const v = Number(e.target.value); setBase(v); chrome.storage.local.set({ reconnect_base_ms: v }); }} className="w-24 rounded border border-input bg-background px-2 py-1 text-sm outline-none focus:border-brand" />
+          ms
+        </label>
+        <label className="flex items-center gap-1">
+          上限
+          <input type="number" min={0} value={max} onChange={(e) => { const v = Number(e.target.value); setMax(v); chrome.storage.local.set({ reconnect_max_ms: v }); }} className="w-24 rounded border border-input bg-background px-2 py-1 text-sm outline-none focus:border-brand" />
+          ms
+        </label>
+        <label className="flex items-center gap-1">
+          <Switch checked={auto} onCheckedChange={(v) => { setAuto(v); chrome.storage.local.set({ auto_reconnect: v }); }} checkedLabel="自动" uncheckedLabel="手动" className="data-[state=checked]:bg-brand" />
+          自动重连
+        </label>
+      </div>
+      <p className="text-xs text-muted-foreground">断线后退避重连（指数：起步→上限）。关自动重连后需手动点「重连」。改完即时生效（background 监听 storage）。</p>
     </div>
   );
 }

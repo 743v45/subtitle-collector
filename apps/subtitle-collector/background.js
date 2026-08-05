@@ -13,8 +13,13 @@ let clientId = null;         // 内存态；启动载入或首次生成
 let connectionMode = MODE_SERVER; // 内存态；启动载入，默认 server（向后兼容）。standalone=纯扩展：不连不上报
 let activeServer = null;          // 内存态；当前激活 server 的解析结果（{wsUrl,httpBase,pingUrl,token}）。启动载入 / SET_ACTIVE_SERVER 切换
 let activeServerId = null;        // 内存态；当前激活 server entry.id（WS_STATUS 回执、popup 乐观更新用）
-const RECONNECT_BASE_MS = 2000;
-const RECONNECT_MAX_MS = 10000;
+let lastError = null;             // 内存态；最近连接失败原因（hello-nack error / 不可达 / 连接错误），WS_STATUS 透传给 UI
+let authenticated = false;        // 内存态；hello-ack 后 true（鉴权通过才算"已连接"，防 WS OPEN 但未握手时误显已连接 → 跳变）
+let authFailed = false;           // 内存态；hello-nack 后 true（永久错误，onclose 不自动重连，等手动重连/切 server）
+// 重连间隔/开关：loadReconnectConfig 从 storage 覆盖（reconnect_base_ms/reconnect_max_ms/auto_reconnect）
+let reconnectBaseMs = 2000;
+let reconnectMaxMs = 10000;
+let autoReconnect = true;
 
 // Wbi img_key/sub_key 缓存（全站每日更替，进程内缓存，按需 refresh）
 let wbiKeys = null;
@@ -123,8 +128,9 @@ async function probeServer() {
 function scheduleReconnect() {
   // 纯扩展模式：用户主动断开，不重连（覆盖 onclose→scheduleReconnect 路径）
   if (isStandalone(connectionMode)) return;
+  if (!autoReconnect) { console.log('[background] 自动重连已关（auto_reconnect=false），等手动重连'); return; }
   reconnectAttempts++;
-  const delay = Math.min(RECONNECT_BASE_MS * Math.pow(2, reconnectAttempts - 1), RECONNECT_MAX_MS);
+  const delay = Math.min(reconnectBaseMs * Math.pow(2, reconnectAttempts - 1), reconnectMaxMs);
   setTimeout(connect, delay);
 }
 
@@ -132,7 +138,9 @@ async function connect() {
   if (isStandalone(connectionMode)) return; // 纯扩展模式：不连 server
   if (!activeServer?.wsUrl) return;          // 无 server 配置：不连（SET_ACTIVE_SERVER 切到空列表时停连）
   if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) return;
-  if (!(await probeServer())) { scheduleReconnect(); return; }
+  if (!(await probeServer())) { lastError = "server 不可达（ping 失败）"; scheduleReconnect(); return; }
+  authenticated = false; // 新连接：未握手
+  authFailed = false;
   try {
     ws = new WebSocket(activeServer.wsUrl);
   } catch { scheduleReconnect(); return; }
@@ -143,7 +151,7 @@ async function connect() {
     const hello = { type: "hello", ext_version: EXT_VERSION, client_id: clientId, reporting_enabled: reportingEnabled };
     if (activeServer.token) hello.token = activeServer.token;
     ws.send(JSON.stringify(hello));
-    flushPendingIngests();
+    // flushPendingIngests 移到 hello-ack：鉴权通过后才补发（未握手发 ingest 会被 server 丢，server.ts:44 守卫）
   };
   ws.onmessage = async (event) => {
     let msg; try { msg = JSON.parse(event.data); } catch { return; }
@@ -157,8 +165,19 @@ async function connect() {
       chrome.runtime.sendMessage({ type: "INGEST_RESULT", ok: msg.ok !== false, source_vid: msg.source_vid, inserted: msg.inserted_tracks, skipped: msg.skipped_tracks });
       return;
     }
-    if (msg.type === "hello-ack" || msg.type === "hello-nack") {
-      console.log(`[background] 握手结果 type=${msg.type}`);
+    if (msg.type === "hello-ack") {
+      authenticated = true; // 鉴权通过，才算"已连接"
+      authFailed = false;
+      lastError = null; // 握手成功，清错误
+      console.log(`[background] 握手结果 type=hello-ack`);
+      flushPendingIngests(); // 鉴权通过后才补发离线期间的 ingest
+      return;
+    }
+    if (msg.type === "hello-nack") {
+      authFailed = true; // 永久错误（bad token 等），onclose 不自动重连，等用户改 token 手动重连
+      authenticated = false;
+      lastError = msg.error || "握手被拒"; // 透传 server 拒绝原因（如 bad token）给 UI
+      console.log(`[background] 握手结果 type=hello-nack error=${lastError}`);
       return;
     }
     if (!msg.id) return;
@@ -355,8 +374,14 @@ async function connect() {
       ws.send(JSON.stringify({ type: "result", id: msg.id, ok: false, error: String(err.message || err) }));
     }
   };
-  ws.onclose = () => { ws = null; scheduleReconnect(); };
-  ws.onerror = () => { try { ws.close(); } catch {} };
+  ws.onclose = () => {
+    ws = null;
+    authenticated = false;
+    // authFailed（hello-nack 永久错误）不自动重连——重试只会再 nack，等用户改 token 手动重连
+    if (authFailed) { console.log('[background] 连接关闭（鉴权失败），不自动重连'); return; }
+    scheduleReconnect();
+  };
+  ws.onerror = () => { lastError = "连接错误（WS error）"; try { ws.close(); } catch {} };
 }
 
 // 生成 ingest payload 摘要字符串，供各分支日志复用
@@ -417,7 +442,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     }
     sendResponse({ ok: true });
   } else if (msg?.type === "WS_STATUS") {
-    sendResponse({ ok: true, connected: ws?.readyState === WebSocket.OPEN, mode: connectionMode, activeServerId });
+    sendResponse({ ok: true, connected: authenticated, mode: connectionMode, activeServerId, error: lastError });
   } else if (msg?.type === "FETCH_SUBTITLE" && msg.url) {
     // content script 请求 background 抓字幕体（background 有 host_permissions，免 CORS）
     // B 站新版播放器改用同源 protobuf endpoint，inject 拦不到旧 aisubtitle 请求，故由 background 主动抓
@@ -456,6 +481,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         // 切纯扩展：断 WS + 清 pending（onclose→scheduleReconnect 已被 isStandalone 守卫拦，不会重连）
         try { ws?.close(); } catch {}
         ws = null;
+        lastError = null; // 纯扩展不连，无连接错误
         await chrome.storage.local.set({ pendingIngests: [] });
       } else {
         // 切回 server：重置退避计数并触发连接
@@ -477,6 +503,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       activeServerId = newId;
       activeServer = entry ? parseServerUrl(entry.url) : null;
       reconnectAttempts = 0;
+      lastError = null; // 切到新 server，清旧错误（重新评估可达性/握手）
       try { ws?.close(); } catch {}
       ws = null;
       await chrome.storage.local.set({ pendingIngests: [] });
@@ -484,6 +511,15 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       sendResponse({ ok: true, activeServerId: newId, hasServer: !!activeServer });
     })();
     return true;
+  } else if (msg?.type === "RECONNECT") {
+    // 手动重连：重置鉴权失败态 + 触发连接（用户改 token / 开自动重连后点「重连」）
+    authFailed = false;
+    lastError = null;
+    reconnectAttempts = 0;
+    try { ws?.close(); } catch {}
+    ws = null;
+    if (!isStandalone(connectionMode) && activeServer) connect();
+    sendResponse({ ok: true });
   }
   return true;
 });
@@ -500,6 +536,17 @@ async function loadNavGapConfig() {
   if (typeof cfg.nav_gap_base_ms === 'number' && cfg.nav_gap_base_ms >= 0) navGapBaseMs = cfg.nav_gap_base_ms;
   if (typeof cfg.nav_gap_random_ms === 'number' && cfg.nav_gap_random_ms >= 0) navGapRandomMs = cfg.nav_gap_random_ms;
 }
+async function loadReconnectConfig() {
+  const cfg = await chrome.storage.local.get(['reconnect_base_ms', 'reconnect_max_ms', 'auto_reconnect']);
+  if (typeof cfg.reconnect_base_ms === 'number' && cfg.reconnect_base_ms >= 0) reconnectBaseMs = cfg.reconnect_base_ms;
+  if (typeof cfg.reconnect_max_ms === 'number' && cfg.reconnect_max_ms >= 0) reconnectMaxMs = cfg.reconnect_max_ms;
+  if (typeof cfg.auto_reconnect === 'boolean') autoReconnect = cfg.auto_reconnect;
+}
+// 配置改了即时重载（options UI 改 → background 自动用新值，无需消息往返）
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area !== 'local') return;
+  if ('reconnect_base_ms' in changes || 'reconnect_max_ms' in changes || 'auto_reconnect' in changes) loadReconnectConfig();
+});
 async function collectViaNavigate(bvid, timeoutMs = 20000) {
   while (navCollectBusy) await new Promise((r) => setTimeout(r, 500)); // 等锁（同时只 1 个 navigate）
   navCollectBusy = true;
@@ -535,7 +582,7 @@ async function collectViaNavigate(bvid, timeoutMs = 20000) {
 // 纯扩展模式下短路（不连不存 pending）——由调用前的 INGEST 短路与本函数守卫双重覆盖。
 function sendIngest(payload) {
   if (isStandalone(connectionMode)) return; // 纯扩展：不上报、不存 pending（永不补发）
-  if (ws?.readyState === WebSocket.OPEN) {
+  if (authenticated) { // 鉴权通过才直发（未握手/已断线 → 存 pending，hello-ack 后 flush）
     ws.send(JSON.stringify({ type: "ingest", payload }));
   } else {
     chrome.storage.local.get(["pendingIngests"], ({ pendingIngests = [] }) => {
@@ -554,7 +601,7 @@ async function flushPendingIngests() {
   await chrome.storage.local.set({ pendingIngests: [] });
 }
 
-loadPersistedState().then(() => loadNavGapConfig()).then(() => {
+loadPersistedState().then(() => loadNavGapConfig()).then(() => loadReconnectConfig()).then(() => {
   // 纯扩展模式：启动不连 server（模式由 storage 持久，SW 回收重启后仍生效）
   if (!isStandalone(connectionMode)) connect();
 });

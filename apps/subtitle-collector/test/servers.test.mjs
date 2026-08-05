@@ -5,6 +5,8 @@ import {
   resolveActiveServer,
   normalizeServers,
   genServerId,
+  maskServerUrl,
+  isLocalServer,
   DEFAULT_SERVER_URL,
 } from '../servers.mjs';
 
@@ -95,4 +97,28 @@ test('DEFAULT_SERVER_URL 可被 parseServerUrl 解析（内置默认合法）', 
   assert.equal(r?.httpBase, 'http://127.0.0.1:21527');
   assert.equal(r?.pingUrl, 'http://127.0.0.1:21527/ping');
   assert.equal(r?.token, null); // 默认无 token（本地 server 可不要）
+});
+
+// ---------------- maskServerUrl ----------------
+
+test('maskServerUrl：token 值替换为 ***（path/其他 query 不动）', () => {
+  assert.equal(maskServerUrl('ws://10.1.0.75:21527/ext?token=secret'), 'ws://10.1.0.75:21527/ext?token=***');
+  assert.equal(maskServerUrl('ws://127.0.0.1:21527/ext?token=abc'), 'ws://127.0.0.1:21527/ext?token=***');
+});
+
+test('maskServerUrl：无 token / 非法 / 空 → 原样', () => {
+  assert.equal(maskServerUrl('ws://10.1.0.75:21527/ext'), 'ws://10.1.0.75:21527/ext');
+  assert.equal(maskServerUrl('not a url'), 'not a url');
+  assert.equal(maskServerUrl(''), '');
+});
+
+// ---------------- isLocalServer ----------------
+
+test('isLocalServer：127.0.0.1 / localhost / ::1 → true，其余 false', () => {
+  assert.equal(isLocalServer('ws://127.0.0.1:21527/ext?token=x'), true);
+  assert.equal(isLocalServer('ws://localhost:21527/ext'), true);
+  assert.equal(isLocalServer('ws://10.1.0.75:21527/ext'), false);
+  assert.equal(isLocalServer('ws://example.com/ext'), false);
+  assert.equal(isLocalServer('not a url'), false);
+  assert.equal(isLocalServer(''), false);
 });
