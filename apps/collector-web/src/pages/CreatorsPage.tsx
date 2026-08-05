@@ -77,7 +77,7 @@ export function CreatorsPage({ onOpen }: { onOpen: (id: number) => void }) {
 
       <div className="flex flex-wrap items-center gap-2">
         <Input
-          placeholder="搜索 创作者名/mid"
+          placeholder="搜索 创作者名/ID"
           value={q}
           onChange={(e) => { setQ(e.target.value); setPage(1); }}
           className="max-w-xs"
@@ -126,7 +126,7 @@ export function CreatorsPage({ onOpen }: { onOpen: (id: number) => void }) {
         <TableHeader>
           <TableRow>
             <TableHead>名称</TableHead>
-            <TableHead>mid</TableHead>
+            <TableHead>ID</TableHead>
             <TableHead>Agent 分类</TableHead>
             <TableHead>人工分类</TableHead>
             <TableHead className="text-right">粉丝</TableHead>

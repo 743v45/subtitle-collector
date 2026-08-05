@@ -141,7 +141,7 @@ export function CreatorDetailPage({
               <div className="min-w-0 space-y-1">
                 <div className="text-xl font-semibold">{creator.name ?? '(未知)'}</div>
                 <div className="text-sm text-muted-foreground">
-                  mid: <span className="font-mono">{creator.source_uid}</span>
+                  ID: <span className="font-mono">{creator.source_uid}</span>
                 </div>
                 <div className="flex flex-wrap gap-1.5 pt-1">
                   {creator.category_agent_name && <Badge>Agent: {creator.category_agent_name}</Badge>}
@@ -157,9 +157,9 @@ export function CreatorDetailPage({
               <CardHeader><CardTitle className="text-base">资料</CardTitle></CardHeader>
               <CardContent className="space-y-2">
                 <Field label="签名" value={creator.sign} />
-                <Field label="等级" value={creator.level != null ? String(creator.level) : null} />
-                <Field label="性别" value={creator.sex} />
-                <Field label="认证" value={creator.official_title} />
+                {creator.source === 'bilibili' && <Field label="等级" value={creator.level != null ? String(creator.level) : null} />}
+                {creator.source === 'bilibili' && <Field label="性别" value={creator.sex} />}
+                {creator.source === 'bilibili' && <Field label="认证" value={creator.official_title} />}
                 <Field label="粉丝" value={creator.fans != null ? creator.fans.toLocaleString() : null} />
                 <Field label="关注" value={creator.following != null ? creator.following.toLocaleString() : null} />
                 <Field label="首见时间" value={fmtTime(creator.first_seen_at)} />

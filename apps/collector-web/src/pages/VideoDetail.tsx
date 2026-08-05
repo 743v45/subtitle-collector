@@ -97,9 +97,9 @@ export function VideoDetail({ source, sourceVid, onBack }: { source: string; sou
           <Field label="时长" value={duration ?? '-'} />
           <Field label="来源ID" value={sourceVid} mono />
           <Field label="发布时间" value={published ?? '-'} />
-          <Field label="分区" value={e?.tname ?? '-'} />
-          <Field label="版权" value={copyrightLabel(e?.copyright) ?? '-'} />
-          <Field label="P 数" value={e?.pages?.length != null ? String(e.pages.length) : '-'} />
+          {source === 'bilibili' && <Field label="分区" value={e?.tname ?? '-'} />}
+          {source === 'bilibili' && <Field label="版权" value={copyrightLabel(e?.copyright) ?? '-'} />}
+          {source === 'bilibili' && <Field label="P 数" value={e?.pages?.length != null ? String(e.pages.length) : '-'} />}
           <Field label="状态" value={v.status ?? '-'} />
         </CardContent>
       </Card>
@@ -119,11 +119,11 @@ export function VideoDetail({ source, sourceVid, onBack }: { source: string; sou
           <CardContent className="grid grid-cols-3 gap-2 p-4 text-sm sm:grid-cols-4 md:grid-cols-7">
             <Stat label="播放" value={fmtNum(stat.view)} />
             <Stat label="点赞" value={fmtNum(stat.like)} />
-            <Stat label="投币" value={fmtNum(stat.coin)} />
-            <Stat label="收藏" value={fmtNum(stat.favorite)} />
-            <Stat label="转发" value={fmtNum(stat.share)} />
-            <Stat label="弹幕" value={fmtNum(stat.danmaku)} />
-            <Stat label="回复" value={fmtNum(stat.reply)} />
+            {source === 'bilibili' && <Stat label="投币" value={fmtNum(stat.coin)} />}
+            {source === 'bilibili' && <Stat label="收藏" value={fmtNum(stat.favorite)} />}
+            {source === 'bilibili' && <Stat label="转发" value={fmtNum(stat.share)} />}
+            {source === 'bilibili' && <Stat label="弹幕" value={fmtNum(stat.danmaku)} />}
+            {source === 'bilibili' && <Stat label="回复" value={fmtNum(stat.reply)} />}
           </CardContent>
         </Card>
       )}
