@@ -279,36 +279,44 @@ function ServerPanel() {
 
 // —— 重连设置：间隔 + 自动重连开关（存 storage，background storage.onChanged 自动重载）——
 function ReconnectSettings() {
-  const [base, setBase] = useState(2000);
-  const [max, setMax] = useState(10000);
-  const [auto, setAuto] = useState(true);
+  // null=未读到 storage：首帧占位「读取中…」，避免默认 2000/10000/true 渲染后读到真实值（如关了自动重连）翻转闪烁
+  const [base, setBase] = useState<number | null>(null);
+  const [max, setMax] = useState<number | null>(null);
+  const [auto, setAuto] = useState<boolean | null>(null);
   useEffect(() => {
     chrome.storage.local.get(['reconnect_base_ms', 'reconnect_max_ms', 'auto_reconnect'], (items) => {
-      if (typeof items.reconnect_base_ms === 'number') setBase(items.reconnect_base_ms);
-      if (typeof items.reconnect_max_ms === 'number') setMax(items.reconnect_max_ms);
-      if (typeof items.auto_reconnect === 'boolean') setAuto(items.auto_reconnect);
+      setBase(typeof items.reconnect_base_ms === 'number' ? items.reconnect_base_ms : 2000);
+      setMax(typeof items.reconnect_max_ms === 'number' ? items.reconnect_max_ms : 10000);
+      setAuto(typeof items.auto_reconnect === 'boolean' ? items.auto_reconnect : true);
     });
   }, []);
+  const ready = base !== null && max !== null && auto !== null;
   return (
     <div className="space-y-2 rounded-md border p-3">
       <div className="text-sm font-medium">重连设置</div>
-      <div className="flex flex-wrap items-center gap-3 text-sm">
-        <label className="flex items-center gap-1">
-          间隔起步
-          <input type="number" min={0} value={base} onChange={(e) => { const v = Number(e.target.value); setBase(v); chrome.storage.local.set({ reconnect_base_ms: v }); }} className="w-24 rounded border border-input bg-background px-2 py-1 text-sm outline-none focus:border-brand" />
-          ms
-        </label>
-        <label className="flex items-center gap-1">
-          上限
-          <input type="number" min={0} value={max} onChange={(e) => { const v = Number(e.target.value); setMax(v); chrome.storage.local.set({ reconnect_max_ms: v }); }} className="w-24 rounded border border-input bg-background px-2 py-1 text-sm outline-none focus:border-brand" />
-          ms
-        </label>
-        <label className="flex items-center gap-1">
-          <Switch checked={auto} onCheckedChange={(v) => { setAuto(v); chrome.storage.local.set({ auto_reconnect: v }); }} checkedLabel="自动" uncheckedLabel="手动" className="data-[state=checked]:bg-brand" />
-          自动重连
-        </label>
-      </div>
-      <p className="text-xs text-muted-foreground">断线后退避重连（指数：起步→上限）。关自动重连后需手动点「重连」。改完即时生效（background 监听 storage）。</p>
+      {!ready ? (
+        <div className="text-sm text-muted-foreground">读取中…</div>
+      ) : (
+        <>
+          <div className="flex flex-wrap items-center gap-3 text-sm">
+            <label className="flex items-center gap-1">
+              间隔起步
+              <input type="number" min={0} value={base!} onChange={(e) => { const v = Number(e.target.value); setBase(v); chrome.storage.local.set({ reconnect_base_ms: v }); }} className="w-24 rounded border border-input bg-background px-2 py-1 text-sm outline-none focus:border-brand" />
+              ms
+            </label>
+            <label className="flex items-center gap-1">
+              上限
+              <input type="number" min={0} value={max!} onChange={(e) => { const v = Number(e.target.value); setMax(v); chrome.storage.local.set({ reconnect_max_ms: v }); }} className="w-24 rounded border border-input bg-background px-2 py-1 text-sm outline-none focus:border-brand" />
+              ms
+            </label>
+            <label className="flex items-center gap-1">
+              <Switch checked={auto!} onCheckedChange={(v) => { setAuto(v); chrome.storage.local.set({ auto_reconnect: v }); }} checkedLabel="自动" uncheckedLabel="手动" className="data-[state=checked]:bg-brand" />
+              自动重连
+            </label>
+          </div>
+          <p className="text-xs text-muted-foreground">断线后退避重连（指数：起步→上限）。关自动重连后需手动点「重连」。改完即时生效（background 监听 storage）。</p>
+        </>
+      )}
     </div>
   );
 }
