@@ -350,7 +350,12 @@ function flushIfReady(vid, force = false) {
     title: cur.meta.title,
     channelId: cur.meta.channelId,
     channelName: cur.meta.channelName,
+    avatar: cur.meta.avatar,
     duration: cur.meta.duration,
+    publishedAt: cur.meta.publishedAt,
+    viewCount: cur.meta.viewCount,
+    likeCount: cur.meta.likeCount,
+    shortDescription: cur.meta.shortDescription,
     captionTracks: tracksWithBody,
     bodies: Object.fromEntries(cur.bodies),
   });

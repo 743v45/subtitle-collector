@@ -38,6 +38,9 @@ export function kindToTrackType(kind) {
  * @param {string|null} [args.avatar] 频道头像 URL
  * @param {number|null} [args.duration] 视频时长（秒）
  * @param {number|null} [args.publishedAt] 发布时间（ms 纪元）
+ * @param {string|number|null} [args.viewCount] 播放数（落 extra.stat.view）
+ * @param {string|number|null} [args.likeCount] 点赞数（落 extra.stat.like）
+ * @param {string|null} [args.shortDescription] 视频简介（落 extra.desc）
  * @param {Array<{baseUrl:string, languageCode:string, kind:string|null, name:string}>} [args.captionTracks]
  *        inject-yt 抽取的字幕轨元数据（spec §5.1）
  * @param {Record<string, {body:Array<{from:number,to:number,content:string}>}>} [args.bodies]
@@ -53,6 +56,9 @@ export function buildYoutubePayload({
   avatar,
   duration,
   publishedAt,
+  viewCount,
+  likeCount,
+  shortDescription,
   captionTracks,
   bodies,
 }) {
@@ -66,7 +72,14 @@ export function buildYoutubePayload({
         avatar: avatar ?? null,
       },
       title,
-      extra: {}, // YouTube 专属 extra 预留（duration 已在 video.duration；后续扩 viewCount/likeCount）
+      extra: {
+        // 对齐 B 站 extra 结构（stat.view/like + desc），让 collector-web 列表/筛选/CLI 对 YouTube 一视同仁
+        stat: {
+          view: viewCount != null ? Number(viewCount) : null,
+          like: likeCount != null ? Number(likeCount) : null,
+        },
+        desc: shortDescription ?? null,
+      },
       duration: duration ?? null,
       published_at: publishedAt ?? null,
     },

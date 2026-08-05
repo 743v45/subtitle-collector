@@ -48,7 +48,7 @@ test('buildYoutubePayload 单轨人工字幕：形状与 buildIngestPayload 同�
       avatar: 'https://yt.ggpht/avatar.jpg',
     },
     title: 'Never Gonna Give You Up',
-    extra: {},
+    extra: { stat: { view: null, like: null }, desc: null },
     duration: 213,
     published_at: 1211987833000,
   });
@@ -136,4 +136,22 @@ test('buildYoutubePayload publishedAt / duration 缺失：落 null', () => {
   });
   assert.equal(payload.video.duration, null);
   assert.equal(payload.video.published_at, null);
+});
+
+test('buildYoutubePayload extra 填充：viewCount/likeCount/shortDescription → stat/desc', () => {
+  // 字符串数字（inject-yt 从 videoDetails 读到的原样）也要 Number 化，对齐 B 站 stat 入库类型
+  const payload = buildYoutubePayload({
+    videoId: 'VID00000006',
+    title: 't',
+    channelId: 'UC_x',
+    viewCount: '12345',
+    likeCount: 678,
+    shortDescription: 'a video description',
+    captionTracks: [],
+    bodies: {},
+  });
+  assert.deepEqual(payload.video.extra, {
+    stat: { view: 12345, like: 678 },
+    desc: 'a video description',
+  });
 });
