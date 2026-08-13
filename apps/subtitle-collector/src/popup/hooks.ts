@@ -296,6 +296,26 @@ export function useCollected(httpBase: string): {
     return () => chrome.runtime.onMessage.removeListener(handler);
   }, [currentVid]);
 
+  // SPA 切视频时（B 站列表播放页 /list/*?bvid= 切下一集、video 页切相关视频，pushState 改 URL
+  // 不触发 status:'complete'）刷新：changeInfo.url 变化 → 重查 tabs.query 提新 vid。
+  // vid 更新后 useLocalCollected（依赖 currentVid）自动跟着重发 GET_LOCAL_STATE。
+  // 用 ref 去重：onUpdated 对一次导航可能发多次 changeInfo（url/title/status 各一次）。
+  useEffect(() => {
+    let lastUrl = '';
+    const handler = (
+      _tabId: number,
+      changeInfo: chrome.tabs.TabChangeInfo,
+      tab: chrome.tabs.Tab
+    ) => {
+      if (!tab?.active || !changeInfo.url) return;
+      if (changeInfo.url === lastUrl) return;
+      lastUrl = changeInfo.url;
+      setRefreshKey((k) => k + 1);
+    };
+    chrome.tabs.onUpdated.addListener(handler);
+    return () => chrome.tabs.onUpdated.removeListener(handler);
+  }, []);
+
   const refresh = useCallback(() => setRefreshKey((k) => k + 1), []);
   return { collected, currentVid, currentPlatform, refresh };
 }

@@ -23,8 +23,15 @@
     return typeof url === "string" && url.includes("/x/v2/subtitle/web/view");
   }
   function currentPageBvid() {
+    // 旧 /video/BVxxx 页：BV 在 pathname。列表型播放页（/list/watchlater?bvid=...、收藏夹 /list/ml{id}?bvid=...）：
+    // pathname 无 BV，bvid 在 query。两类页都覆盖，pathname 命中则不查 query（零行为变更）。
     const m = location.pathname.match(/(BV[a-zA-Z0-9]+)/);
-    return m ? m[1] : "";
+    if (m) return m[1];
+    try {
+      const bvid = new URLSearchParams(location.search).get('bvid');
+      if (bvid && /^BV[0-9A-Za-z]+$/.test(bvid)) return bvid;
+    } catch {}
+    return "";
   }
 
   // 从页面 __INITIAL_STATE__.videoData 补充结构性 + 统计字段（player API 不含这些）。

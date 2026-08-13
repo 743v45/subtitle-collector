@@ -187,7 +187,7 @@ async function connect() {
         ws.send(JSON.stringify({ type: "result", id: msg.id, ok: true, data: { opened: true } }));
       } else if (msg.action === "operate") {
         // 只找 B 站视频页（manifest content_scripts matches 决定哪些 tab 注入了 content.js）
-        const [tab] = await chrome.tabs.query({ active: true, currentWindow: true, url: "*://www.bilibili.com/video/*" });
+        const [tab] = await chrome.tabs.query({ active: true, currentWindow: true, url: ["*://www.bilibili.com/video/*", "*://www.bilibili.com/list/*"] });
         if (!tab?.id) {
           ws.send(JSON.stringify({ type: "result", id: msg.id, ok: false, error: "当前活跃 tab 非 B 站视频页，无法执行 operate" }));
           return;
@@ -455,8 +455,8 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       })
       .catch((e) => sendResponse({ ok: false, error: e.message }));
   } else if (msg?.type === "MANUAL_CAPTURE") {
-    // 只找 B 站视频页（避免对 chrome:// 等无 content script 的 tab sendMessage 抛 "Receiving end does not exist"）
-    chrome.tabs.query({ active: true, currentWindow: true, url: ["*://www.bilibili.com/video/*", "*://www.youtube.com/watch*"] }, ([tab]) => {
+    // 只找 B 站视频页/列表播放页（避免对 chrome:// 等无 content script 的 tab sendMessage 抛 "Receiving end does not exist"）
+    chrome.tabs.query({ active: true, currentWindow: true, url: ["*://www.bilibili.com/video/*", "*://www.bilibili.com/list/*", "*://www.youtube.com/watch*"] }, ([tab]) => {
       if (tab?.id) {
         // force:true 绕过上报开关：用户在「手动」模式下点「上报」就是明确要上报，不该被自动开关拦截
         chrome.tabs.sendMessage(tab.id, { type: "RE_AGG", force: true }, () => {
