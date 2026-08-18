@@ -20,6 +20,7 @@
 手机(浏览器,collector-web「采集」页)
    │  POST /api/collect-tasks { text }          ← 粘贴分享文本
    │  GET  /api/collect-tasks[/:id]             ← 2s 轮询
+   │  DELETE /api/collect-tasks/:id             ← 任务卡片删除按钮
    ▼
 collector-server(单进程)
    ├─ collect_tasks 表(SQLite,新增)
@@ -67,6 +68,7 @@ CREATE TABLE IF NOT EXISTS collect_tasks (
 | POST | `/api/collect-tasks` | body `{text}` → 提取/展开/解析 → 建 pending 任务 + kick 调度器。解析失败 400(中文可读错误) |
 | GET | `/api/collect-tasks?limit=` | 最近任务列表(id 倒序,limit 夹 1..100) |
 | GET | `/api/collect-tasks/:id` | 单任务(手机轮询) |
+| DELETE | `/api/collect-tasks/:id` | 删除任务,任意状态可删(采集页删除按钮)。不存在 404 |
 
 鉴权沿用现有 `/api/*` 的 Host + Origin 校验([main.ts httpOriginAllowed](../../../apps/collector-server/src/main.ts))。
 
@@ -78,6 +80,10 @@ CREATE TABLE IF NOT EXISTS collect_tasks (
   - bilibili → `fetch-subtitle` `{bvid}`(既有 action)
   - youtube → `fetch-youtube-subtitle` `{videoId}`(新 action)
 - **回执处理**:result.ok → succeeded + result JSON;result.err / timeout / offline → failed + 中文 error。派完一个立即链式派下一个。
+- **删除契约**(DELETE 任意状态可删的前提,约束未来所有写路径):
+  - 任务行可在**飞行中消失**——删除 dispatched 任务后,扩展回执的 `UPDATE … WHERE id = ?` 不命中行 → no-op,行不复活。新增任何对 collect_tasks 的写路径都必须容忍行缺失(不得 upsert/INSERT OR REPLACE);
+  - `id` 依赖 AUTOINCREMENT **不复用**,保证迟到回执永不误伤新任务行。去掉 AUTOINCREMENT 属于破坏此契约的改动;
+  - 已知取舍:删除 dispatched 任务后扩展仍会跑完本次采集并落 INGEST(videos/subtitle 表不受任务删除影响),仅任务记账消失。见 §8。
 - 不做:重试、优先级、多扩展路由(YAGNI,单台起步)。
 
 ## 4. 扩展侧(subtitle-collector)
@@ -111,11 +117,12 @@ INGEST 入库走 content-yt 既有链路(归一化 youtube-format.mjs → buildY
 
 - 大输入框(手机粘贴分享文本)+ 大提交按钮(h-12),Enter 提交;
 - 任务卡片列表:状态徽章(排队中/采集中/已完成/失败)+ 平台/vid + 时间 + 结果摘要(「采到 N 轨字幕」/「视频无字幕轨」/error 原因);
+- 卡片删除按钮(ghost icon,任意状态可删):本地立即移除(乐观),失败时 refresh 回滚;
 - 2s 轮询刷新(listCollectTasks(30)),有进行中任务时显示提示。
 
 ### 5.2 API(api.ts + types.ts)
 
-`createCollectTask(text)` / `listCollectTasks(limit)` / `getCollectTask(id)` + `CollectTask` 类型。
+`createCollectTask(text)` / `listCollectTasks(limit)` / `getCollectTask(id)` / `deleteCollectTask(id)` + `CollectTask` 类型。
 
 ### 5.3 移动端基础适配
 
@@ -134,9 +141,9 @@ COLLECTOR_ALLOWED_HOSTS=<电脑局域网 IP,如 192.168.1.5>
 
 ## 7. 测试
 
-- **server**(`node --test --import tsx`,248 通过):
+- **server**(`node --test --import tsx`,264 通过):
   - [tasks.test.ts](../../../apps/collector-server/src/tasks/tasks.test.ts):extractVideoUrl(分享文案/裸 URL/非视频站)、expandShortLink(重定向/非短链/失败回退)、parseVideoUrl(BV/bvid/watch/shorts/youtu.be/music/不可识别)、CRUD、resetDispatched;
-  - [http/tasks.test.ts](../../../apps/collector-server/src/http/tasks.test.ts):POST 建任务→扩展回执→succeeded 全链路(模拟 WS 扩展)、YouTube action 派发、无扩展停留 pending、400、列表/单查、failed error 透传;
+  - [http/tasks.test.ts](../../../apps/collector-server/src/http/tasks.test.ts):POST 建任务→扩展回执→succeeded 全链路(模拟 WS 扩展)、YouTube action 派发、无扩展停留 pending、400、列表/单查、DELETE(含 dispatched 飞行中删除→回执 no-op 行不复活)、failed error 透传;
   - 冒烟:真实启动 dist,POST 分享文本 → pending → 400 非法输入。
 - **扩展**:vite build + 既有 104 测试通过(background/content-yt 改动不破坏既有行为)。
 - **web**:vite build 通过(产物已落 collector-server/public)。
@@ -151,11 +158,14 @@ COLLECTOR_ALLOWED_HOSTS=<电脑局域网 IP,如 192.168.1.5>
 | 4 | `pnpm build`(web vite) | 通过 | |
 | 5 | `pnpm build` + `pnpm test`(subtitle-collector) | 104/104 + 构建通过 | |
 | 6 | dist 冒烟(任务 API) | 符合预期 | pending/列表/400 |
+| 7 | DELETE 端点补测 + simplify 整理后 `pnpm test`(collector-server) | 250/250 | 「pending 不复活」同义反复测试改造为 dispatched 飞行中删除(回执 no-op) |
+| 8 | pull --rebase 合并 tags 系统后 `pnpm test`(turbo 全量) | 264/264 + 3 包全绿 | 前端产物重建(index.html 冲突以重建解决) |
 
 ## 8. 边界与已知取舍
 
 - av 号、YouTube 直播/首播链接不支持(第一阶段只支持 BV + videoId);
 - YouTube 采到 0 轨(pot 受限)是**任务成功**(reason: pot_limited),与「失败」语义分开;
 - 任务无重试:失败(超时/风控)重新提交即可,server 不自动重试;
+- 删除 dispatched 任务 = 只删记账:扩展会把本次采集跑完(占 inFlight 槽至多 60s、INGEST 照常落库),不做调度器级取消。单用户 LAN 工具下可接受;若未来任务量上来,可改状态守卫删除(409)或显式取消路径;
 - 短链展开用 server 侧 fetch(b23.tv/youtu.be 对无 cookie 的重定向友好);
 - 多扩展路由、批量任务、PWA、鉴权加强(token)均为后续可选。

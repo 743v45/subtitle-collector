@@ -140,6 +140,12 @@ export async function getCollectTask(id: number): Promise<CollectTask> {
   return ensureOk(r, (j) => j.task);
 }
 
+// 删除采集任务（任意状态可删;dispatched 删除后扩展回执为 no-op）
+export async function deleteCollectTask(id: number): Promise<void> {
+  const r = await fetch(`${BASE}/api/collect-tasks/${id}`, { method: 'DELETE' });
+  await ensureOk(r, () => undefined);
+}
+
 export async function setReporting(clientId: string, enabled: boolean): Promise<boolean> {
   const r = await fetch(`${BASE}/api/clients/${encodeURIComponent(clientId)}/reporting`, {
     method: 'POST',

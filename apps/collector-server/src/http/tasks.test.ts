@@ -137,6 +137,61 @@ test('GET /api/collect-tasks 与 /api/collect-tasks/:id：列表 + 单查', asyn
   } finally { ctx.cleanup(); }
 });
 
+test('DELETE /api/collect-tasks/:id：删除任务 → 列表空、行不存在', async () => {
+  const ctx = await setup();
+  try {
+    const r = await httpReq(ctx.port, 'POST', '/api/collect-tasks', { text: 'https://www.bilibili.com/video/BV1xx411c7mD' });
+    const id = r.json.task.id;
+
+    const del = await httpReq(ctx.port, 'DELETE', `/api/collect-tasks/${id}`);
+    assert.equal(del.status, 200);
+    assert.equal(del.json.ok, true);
+
+    const list = await httpReq(ctx.port, 'GET', '/api/collect-tasks?limit=10');
+    assert.equal(list.json.total, 0); // GET :id 404 与行删除同路径,下方 HTTP 断言已覆盖
+
+    const gone = await httpReq(ctx.port, 'GET', `/api/collect-tasks/${id}`);
+    assert.equal(gone.status, 404);
+
+    const none = await httpReq(ctx.port, 'DELETE', '/api/collect-tasks/99999');
+    assert.equal(none.status, 404);
+  } finally { ctx.cleanup(); }
+});
+
+test('删除 dispatched 任务：飞行中删除后扩展回执为 no-op（行不复活,server 健康）', async () => {
+  const ctx = await setup();
+  let ws: WebSocket | null = null;
+  try {
+    // 模拟扩展:收到派发后扣住回执,由测试在 DELETE 之后再放行（卡进 dispatched 飞行窗口）
+    ws = new WebSocket(`ws://127.0.0.1:${ctx.port}/ext`);
+    await new Promise((r) => { ws!.once('open', r); });
+    ws!.send(JSON.stringify({ type: 'hello', ext_version: '0.1.0', token: 'test-token', client_id: 'ext-C', reporting_enabled: true }));
+    const gotCommand = new Promise<any>((resolve) => {
+      ws!.on('message', (d) => {
+        const m = JSON.parse(d.toString());
+        if (m.action === 'fetch-subtitle') resolve(m);
+      });
+    });
+    await wait(100);
+
+    const r = await httpReq(ctx.port, 'POST', '/api/collect-tasks', { text: 'https://www.bilibili.com/video/BV1xx411c7mD' });
+    const id = r.json.task.id;
+    const cmd = await gotCommand; // 派发已到扩展 → UPDATE dispatched 先于 requestCommand,状态必为 dispatched
+    assert.equal(getTask(ctx.db, id)!.status, 'dispatched');
+
+    // 中飞行删除 → 扩展这才回 result → server 回执 UPDATE 不命中行 → no-op
+    const del = await httpReq(ctx.port, 'DELETE', `/api/collect-tasks/${id}`);
+    assert.equal(del.status, 200);
+    ws!.send(JSON.stringify({ type: 'result', id: cmd.id, ok: true, data: { bvid: cmd.bvid, tracks: 2, ingested: true } }));
+    await wait(300); // WS 往返 + 回执处理链
+
+    assert.equal(getTask(ctx.db, id), null); // 行不复活
+    const list = await httpReq(ctx.port, 'GET', '/api/collect-tasks?limit=10');
+    assert.equal(list.status, 200); // server 仍健康
+    assert.equal(list.json.total, 0);
+  } finally { ws?.close(); ctx.cleanup(); }
+});
+
 test('扩展回执失败：任务 → failed,error 存原因', async () => {
   const ctx = await setup();
   let ws: WebSocket | null = null;

@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
-import { createCollectTask, listCollectTasks } from '../api';
+import { createCollectTask, deleteCollectTask, listCollectTasks } from '../api';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { cn } from '@/lib/utils';
-import { Loader2, Send } from 'lucide-react';
+import { Loader2, Send, Trash2 } from 'lucide-react';
 import type { CollectTask, CollectTaskStatus } from '../types';
 
 const REFRESH_MS = 2000;
@@ -38,7 +38,7 @@ function resultSummary(task: CollectTask): string {
   return '';
 }
 
-function TaskRow({ task }: { task: CollectTask }) {
+function TaskRow({ task, onDelete }: { task: CollectTask; onDelete: (id: number) => void }) {
   const meta = STATUS_META[task.status] ?? STATUS_META.pending;
   return (
     <Card>
@@ -47,6 +47,15 @@ function TaskRow({ task }: { task: CollectTask }) {
           <span className={cn('rounded px-1.5 py-0.5 text-xs font-medium', meta.className)}>{meta.label}</span>
           <span className="text-xs text-muted-foreground">{PLATFORM_LABEL[task.source] ?? task.source} · {task.source_vid}</span>
           <span className="ml-auto text-xs text-muted-foreground">{formatTs(task.created_at)}</span>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="size-7 text-muted-foreground hover:text-destructive"
+            aria-label="删除任务"
+            onClick={() => onDelete(task.id)}
+          >
+            <Trash2 className="size-4" />
+          </Button>
         </div>
         <div className={cn('text-sm', task.status === 'failed' ? 'text-destructive' : 'text-muted-foreground')}>
           {resultSummary(task)}
@@ -91,6 +100,16 @@ export function CollectPage() {
     }
   };
 
+  // 删除任务：成功后本地立即移除（不等 2s 轮询）;失败静默（行还在,轮询自然恢复）
+  const remove = async (id: number) => {
+    setTasks((prev) => prev.filter((t) => t.id !== id));
+    try {
+      await deleteCollectTask(id);
+    } catch {
+      refresh();
+    }
+  };
+
   const hasActive = tasks.some((t) => t.status === 'pending' || t.status === 'dispatched');
 
   return (
@@ -125,7 +144,7 @@ export function CollectPage() {
             有任务进行中,每 {REFRESH_MS / 1000}s 自动刷新…
           </div>
         )}
-        {tasks.map((t) => <TaskRow key={t.id} task={t} />)}
+        {tasks.map((t) => <TaskRow key={t.id} task={t} onDelete={(id) => { void remove(id); }} />)}
         {tasks.length === 0 && (
           <Card>
             <CardContent className="p-6 text-center text-sm text-muted-foreground">

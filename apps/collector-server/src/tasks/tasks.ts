@@ -115,6 +115,11 @@ export function getTask(db: Database.Database, id: number): CollectTask | null {
   return row ?? null;
 }
 
+// 删除任务（采集页删除按钮）。任意状态可删：dispatched 删除后扩展回执的 UPDATE 不命中行,no-op 无副作用。
+export function deleteTask(db: Database.Database, id: number): boolean {
+  return db.prepare('DELETE FROM collect_tasks WHERE id = ?').run(id).changes > 0;
+}
+
 export function listTasks(db: Database.Database, limit = 20): { total: number; items: CollectTask[] } {
   const total = (db.prepare('SELECT COUNT(*) AS n FROM collect_tasks').get() as { n: number }).n;
   const items = db.prepare('SELECT * FROM collect_tasks ORDER BY id DESC LIMIT ?').all(limit) as CollectTask[];
