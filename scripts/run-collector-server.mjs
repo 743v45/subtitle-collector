@@ -1,14 +1,14 @@
 #!/usr/bin/env node
-// 用 node22 启动 collector-server（避免 better-sqlite3 native 版本不匹配）
+// 启动 collector-server（node24：better-sqlite3 已按 node24 ABI 重编译（原 node22 路径已失效））
 import { spawn } from "node:child_process";
 import { chdir } from "node:process";
 
 const SERVER_DIR = "/Users/taevas/code/mymy/bilibili-extensions/apps/collector-server";
-const NODE22 = "/Users/taevas/.nvm/versions/node/v22.21.1/bin";
+const NODE = "/Users/taevas/.nvm/versions/node/v24.13.0/bin";
 
 chdir(SERVER_DIR);
-const child = spawn(`${NODE22}/npx`, ["tsx", "src/main.ts"], {
+const child = spawn(`${NODE}/npx`, ["tsx", "src/main.ts"], {
   stdio: "inherit",
-  env: { ...process.env, PATH: `${NODE22}:${process.env.PATH}` },
+  env: { ...process.env, PATH: `${NODE}:${process.env.PATH}` },
 });
 child.on("exit", (c) => process.exit(c ?? 0));

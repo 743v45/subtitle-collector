@@ -19,8 +19,10 @@ test('parseBiliResponse 其他错误码透传', () => {
 });
 
 test('formatSearchResult 把 search response.data 格式化成 {total, items}', () => {
+  // 2026-08 实测：B 站把 data.page 从 {count} 对象改为数字（页码），总数挪到顶层 numResults
   const data = {
-    page: { count: 137 },
+    page: 1,
+    numResults: 137,
     result: [
       { bvid: 'BV1a', title: 't1', author: 'up1', mid: 11, play: 100, duration: 120, pubdate: 1700000000 },
       { bvid: 'BV2b', title: 't2', author: 'up2', mid: 22, play: 200, duration: 60, pubdate: 1700000001 },
@@ -32,6 +34,12 @@ test('formatSearchResult 把 search response.data 格式化成 {total, items}', 
   assert.equal(out.items[0].bvid, 'BV1a');
   assert.equal(out.items[0].up, 'up1');
   assert.equal(out.items[0].mid, 11);
+});
+
+test('formatSearchResult 兼容旧形态 page.count（老缓存/降级响应）', () => {
+  const out = formatSearchResult({ page: { count: 42 }, result: [] });
+  // 旧字段不存在于新实现时兜底 items.length；numResults 缺失 → total=0（items 空）
+  assert.equal(out.total, 0);
 });
 
 test('formatSearchResult 清理 title 中的 <em class="keyword"> 高亮标签', () => {
