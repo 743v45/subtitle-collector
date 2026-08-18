@@ -8,6 +8,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Skeleton } from '@/components/ui/skeleton';
 import { cn } from '@/lib/utils';
 import { useAsync } from '@/lib/useAsync';
+import { TAG_SOURCE_CLASS, type TagSource } from '@/lib/tagSources';
 import { ArrowDown, ArrowUp, ChevronDown, RotateCcw } from 'lucide-react';
 import type { VideoFilter, VideoListItem } from '../types';
 
@@ -55,8 +56,9 @@ export function VideoList({ onOpen }: { onOpen: (source: string, sourceVid: stri
   // 平台（B 站/YouTube）+ 分区（下拉，选项从 aggregate 拉）
   const [source, setSource] = useState('');
   const [tname, setTname] = useState('');
-  // 次要筛选（折叠区）
-  const [tag, setTag] = useState('');
+  // 次要筛选（折叠区）：标签（下拉，精确）+ 标签档位（下拉）
+  const [tagName, setTagName] = useState('');
+  const [tagSourceSel, setTagSourceSel] = useState('');
   const [lang, setLang] = useState('');
   const [hasSubtitle, setHasSubtitle] = useState(false);
   // 时间区间（YYYY-MM-DD）+ 时长区间（分钟）+ 播放量区间（万）
@@ -87,6 +89,10 @@ export function VideoList({ onOpen }: { onOpen: (source: string, sourceVid: stri
   const { data: partitionsData } = useAsync(() => getStatsAggregate('tname', {}, 200), []);
   const partitions = (partitionsData ?? []).filter((p) => p.key && p.key !== '(unknown)');
 
+  // 标签下拉选项：从 aggregate groupBy=tag 拉（四档并聚 DISTINCT），与分区下拉同思路
+  const { data: tagAggData } = useAsync(() => getStatsAggregate('tag', {}, 200), []);
+  const tagOptions = (tagAggData ?? []).filter((t) => t.key);
+
   // 日期 → 毫秒时间戳（since 当天 00:00，until 当天 23:59:59.999）；分钟 → 秒；万 → 绝对值
   const since = sinceDate ? new Date(sinceDate + 'T00:00:00').getTime() : undefined;
   const until = untilDate ? new Date(untilDate + 'T23:59:59.999').getTime() : undefined;
@@ -102,7 +108,8 @@ export function VideoList({ onOpen }: { onOpen: (source: string, sourceVid: stri
         source: source || undefined,
         subtitle_q: subtitleQ || undefined,
         tname: tname || undefined,
-        tag: tag || undefined,
+        tags: tagName ? [tagName] : undefined,
+        tag_source: tagSourceSel ? [tagSourceSel] : undefined,
         lang: lang || undefined,
         has_subtitle: hasSubtitle || undefined,
         date_field: dateField,
@@ -117,7 +124,7 @@ export function VideoList({ onOpen }: { onOpen: (source: string, sourceVid: stri
         page,
         size: PAGE_SIZE,
       }),
-    [source, q, subtitleQ, tname, tag, lang, hasSubtitle, dateField, since, until, min_duration, max_duration, min_view, max_view, sort, desc, page],
+    [source, q, subtitleQ, tname, tagName, tagSourceSel, lang, hasSubtitle, dateField, since, until, min_duration, max_duration, min_view, max_view, sort, desc, page],
   );
 
   const items = data?.items ?? [];
@@ -137,7 +144,8 @@ export function VideoList({ onOpen }: { onOpen: (source: string, sourceVid: stri
     setSubtitleQInput('');
     setSubtitleQ('');
     setTname('');
-    setTag('');
+    setTagName('');
+    setTagSourceSel('');
     setLang('');
     setHasSubtitle(false);
     setDateField('first_seen');
@@ -153,7 +161,7 @@ export function VideoList({ onOpen }: { onOpen: (source: string, sourceVid: stri
   }
 
   // 任一次要筛选已激活时，"更多筛选"按钮给个视觉提示
-  const secondaryActive = !!(tag || lang || hasSubtitle || sinceDate || untilDate || minDur || maxDur || minView || maxView);
+  const secondaryActive = !!(tagName || tagSourceSel || lang || hasSubtitle || sinceDate || untilDate || minDur || maxDur || minView || maxView);
 
   return (
     <div className="space-y-4">
@@ -247,12 +255,37 @@ export function VideoList({ onOpen }: { onOpen: (source: string, sourceVid: stri
       {/* 次要筛选折叠区 */}
       {showMore && (
         <div className="flex flex-wrap items-center gap-3 rounded-md border bg-muted/30 p-3">
-          <Input
-            className="max-w-[180px]"
-            placeholder="标签（模糊）"
-            value={tag}
-            onChange={(e) => onFilterChange(setTag)(e.target.value)}
-          />
+          <Select
+            value={tagName || '__all'}
+            onValueChange={(v) => onFilterChange(setTagName)(v === '__all' ? '' : v)}
+          >
+            <SelectTrigger className="w-[160px]">
+              <SelectValue placeholder="标签" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="__all">全部标签</SelectItem>
+              {tagOptions.map((t) => (
+                <SelectItem key={t.key} value={t.key}>
+                  {t.key} ({t.count})
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <Select
+            value={tagSourceSel || '__all'}
+            onValueChange={(v) => onFilterChange(setTagSourceSel)(v === '__all' ? '' : v)}
+          >
+            <SelectTrigger className="w-[120px]">
+              <SelectValue placeholder="标签档位" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="__all">全部档位</SelectItem>
+              <SelectItem value="manual">手动</SelectItem>
+              <SelectItem value="batch">批量</SelectItem>
+              <SelectItem value="ai">AI</SelectItem>
+              <SelectItem value="bili">B站</SelectItem>
+            </SelectContent>
+          </Select>
           <Input
             className="max-w-[140px]"
             placeholder="语言，如 zh/en"
@@ -401,9 +434,11 @@ function PlatformIcon({ source, className }: { source: string; className?: strin
 }
 
 function VideoRow({ v, onOpen }: { v: VideoListItem; onOpen: (source: string, sourceVid: string) => void }) {
-  const tags = v.tags ?? [];
-  const shownTags = tags.slice(0, 3);
-  const extraTags = Math.max(0, tags.length - shownTags.length);
+  // tag_details（四档带色）优先；旧接口只回 tags 时退化为无色 outline Badge
+  const tagDetails: { name: string; source?: TagSource }[] =
+    v.tag_details ?? (v.tags ?? []).map((name) => ({ name }));
+  const shownTags = tagDetails.slice(0, 3);
+  const extraTags = Math.max(0, tagDetails.length - shownTags.length);
   const dur = formatDuration(v.duration);
   const iconColor = v.source === 'youtube' ? 'text-red-500' : 'text-[#FB7299]';
 
@@ -424,12 +459,16 @@ function VideoRow({ v, onOpen }: { v: VideoListItem; onOpen: (source: string, so
           <span>· {v.track_count} 轨</span>
           {v.published_at ? <span>· 发布 {formatTs(v.published_at)}</span> : null}
         </CardDescription>
-        {(v.tname || tags.length > 0) && (
+        {(v.tname || tagDetails.length > 0) && (
           <div className="flex flex-wrap gap-1 pt-0.5">
             {v.tname && <Badge variant="secondary">{v.tname}</Badge>}
-            {shownTags.map((t) => (
-              <Badge key={t} variant="outline">
-                {t}
+            {shownTags.map((t, i) => (
+              <Badge
+                key={`${t.name}-${t.source ?? i}`}
+                variant="outline"
+                className={t.source ? TAG_SOURCE_CLASS[t.source] : undefined}
+              >
+                {t.name}
               </Badge>
             ))}
             {extraTags > 0 && <Badge variant="outline">+{extraTags}</Badge>}

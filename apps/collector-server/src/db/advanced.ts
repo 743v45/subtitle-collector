@@ -12,7 +12,9 @@ export interface VideoFilter {
   source?: string;           // videos.source 精确
   tid?: number;              // extra.tid 精确
   tname?: string;            // extra.tname 模糊
-  tag?: string;              // extra.tags[].tag_name 模糊
+  tag?: string;              // 标签名模糊（四档并查：bili extra + manual/batch/ai 关系表）
+  tags?: string[];           // 标签名精确（AND 语义，四档并查）
+  tag_source?: string[];     // 档位过滤（manual/batch/ai/bili 子集；省略=四档全查）
   subtitle_q?: string;       // 字幕正文关键词模糊（命中 subtitle_versions.payload）
   lang?: string;             // subtitle_tracks.lan 模糊（zh 命中 zh-Hans）
   track_type?: number;       // subtitle_tracks.track_type 精确（1=AI 2=CC）
@@ -67,7 +69,7 @@ export interface ChangeFilter {
   until?: number;
 }
 
-export type StatsGroupBy = 'creator' | 'tname' | 'lang' | 'track-type';
+export type StatsGroupBy = 'creator' | 'tname' | 'lang' | 'track-type' | 'tag';
 
 export interface KeyValue {
   key: string;
@@ -83,6 +85,35 @@ export interface Overview {
   categories: number;
   first_seen_min: number | null;
   first_seen_max: number | null;
+}
+
+// 标签匹配 EXISTS 片段：一个标签名（精确 = 或模糊 LIKE）× 档位（tag_source 过滤）。
+// bili 档查 extra json_each；manual/batch/ai 档查 video_tags 关系表。OR 连接。
+// tag_source 省略/含全部四档 → 两路都拼；只含 bili → 只 extra 路；只含关系档 → 只关系路。
+function tagMatchCond(name: string, mode: 'exact' | 'like', tagSource?: string[]): { cond: string; params: unknown[] } {
+  const allSources = ['manual', 'batch', 'ai', 'bili'];
+  const sources = tagSource?.length ? tagSource.filter((s) => allSources.includes(s)) : allSources;
+  if (sources.length === 0) sources.push(...allSources);
+  const op = mode === 'exact' ? '=' : 'LIKE';
+  const val = mode === 'exact' ? name : `%${name}%`;
+  const branches: string[] = [];
+  const params: unknown[] = [];
+  const relSources = sources.filter((s) => s !== 'bili');
+  if (relSources.length > 0) {
+    const placeholders = relSources.map(() => '?').join(',');
+    branches.push(
+      `EXISTS (SELECT 1 FROM video_tags vt JOIN tags t ON t.id = vt.tag_id WHERE vt.video_id = v.id AND t.name ${op} ? AND vt.source IN (${placeholders}))`,
+    );
+    params.push(val, ...relSources);
+  }
+  if (sources.includes('bili')) {
+    branches.push(
+      `EXISTS (SELECT 1 FROM json_each(v.extra, '$.tags') WHERE json_extract(json_each.value, '$.tag_name') ${op} ?)`,
+    );
+    params.push(val);
+  }
+  if (branches.length === 0) return { cond: '0', params: [] }; // 无合法档 → 恒 false
+  return { cond: `(${branches.join(' OR ')})`, params };
 }
 
 // 构建 video 级 WHERE（含 extra/tracks 上的 EXISTS 子查询）。调用方需 LEFT JOIN creators c。
@@ -114,9 +145,18 @@ function buildVideoWhere(f: VideoFilter): { where: string; params: unknown[] } {
     params.push(`%${f.tname}%`);
   }
   if (f.tag) {
-    // extra.tags 是数组：json_each 遍历后对 tag_name 做 LIKE
-    conds.push("EXISTS (SELECT 1 FROM json_each(v.extra, '$.tags') WHERE json_extract(json_each.value, '$.tag_name') LIKE ?)");
-    params.push(`%${f.tag}%`);
+    // 标签模糊：四档并查（原只查 bili extra，扩展为超集兼容）
+    const { cond, params: p } = tagMatchCond(f.tag, 'like', f.tag_source);
+    conds.push(cond);
+    params.push(...p);
+  }
+  if (f.tags && f.tags.length > 0) {
+    // 标签精确 AND：每个名字一个条件组
+    for (const name of f.tags) {
+      const { cond, params: p } = tagMatchCond(name, 'exact', f.tag_source);
+      conds.push(cond);
+      params.push(...p);
+    }
   }
   if (f.subtitle_q) {
     // 字幕正文：subtitle_versions.payload 是 JSON，LIKE 命中 body[].content
@@ -321,6 +361,43 @@ export function aggregateStats(
              LEFT JOIN creators c ON c.id = v.creator_id ${where}
              GROUP BY t.track_type ORDER BY count DESC, key ASC LIMIT ?`;
       break;
+    case 'tag': {
+      // 四档并聚：关系表三档 UNION ALL bili extra json_each，外层 COUNT(DISTINCT video_id)
+      // （同名多档并存时按 1 计——聚合语义是「有几个视频带此标签」）。
+      // tag_source 过滤：只含 bili → 只第二分支；只含关系档 → 第一分支带 IN；省略 → 全查。
+      const allSources = ['manual', 'batch', 'ai', 'bili'];
+      const sources = filter.tag_source?.length
+        ? filter.tag_source.filter((s) => allSources.includes(s))
+        : allSources;
+      const relSources = sources.filter((s) => s !== 'bili');
+      const parts: string[] = [];
+      const params2: unknown[] = [];
+      if (relSources.length > 0) {
+        const placeholders = relSources.map(() => '?').join(',');
+        const relWhere = where ? `${where} AND vt.source IN (${placeholders})` : `WHERE vt.source IN (${placeholders})`;
+        parts.push(
+          `SELECT vt.video_id as vid, t.name as name FROM video_tags vt
+             JOIN tags t ON t.id = vt.tag_id
+             JOIN videos v ON v.id = vt.video_id
+             LEFT JOIN creators c ON c.id = v.creator_id ${relWhere}`,
+        );
+        params2.push(...params, ...relSources);
+      }
+      if (sources.includes('bili')) {
+        parts.push(
+          `SELECT v.id as vid, json_extract(je.value, '$.tag_name') as name
+             FROM videos v LEFT JOIN creators c ON c.id = v.creator_id, json_each(v.extra, '$.tags') je
+             ${where}`,
+        );
+        params2.push(...params);
+      }
+      if (parts.length === 0) return [];
+      sql = `SELECT name as key, COUNT(DISTINCT vid) as count FROM (${parts.join(' UNION ALL ')})
+             WHERE name IS NOT NULL GROUP BY name ORDER BY count DESC, key ASC LIMIT ?`;
+      // 注意：两个分支各自绑定 params + 自身的 IN 占位；SQL 的 ? 顺序 = 分支顺序，params2 已按此排列。
+      const rows = db.prepare(sql).all(...params2, topN) as Array<{ key: string | null; count: number }>;
+      return rows.map((r) => ({ key: r.key == null ? '(unknown)' : String(r.key), count: r.count }));
+    }
   }
   const rows = db.prepare(sql).all(...params, topN) as Array<{ key: string | number | null; count: number }>;
   return rows.map((r) => ({ key: r.key == null ? '(unknown)' : String(r.key), count: r.count }));

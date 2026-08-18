@@ -95,3 +95,32 @@ CREATE TABLE IF NOT EXISTS change_log (
   changed_at  INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_changelog_entity ON change_log(entity, entity_id);
+
+-- 视频标签（四档来源）：manual=server 侧手动 / batch=采集批量 / ai=看字幕二次标记，
+-- 第四档 bili（B 站视频自带）不落表——实时读 videos.extra 的 tags JSON（重采整体替换 extra，
+-- 手工标签塞 extra 会被冲掉，故三档独立表；bili 档只读）。
+-- tags.name 全局 UNIQUE：标签是跨档复用的实体，档位是「关系」属性（video_tags.source）非标签属性。
+CREATE TABLE IF NOT EXISTS tags (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  name        TEXT NOT NULL,
+  created_at  INTEGER NOT NULL,
+  UNIQUE(name)
+);
+
+-- 同一视频同标签名可多档并存（展示按 settings.tag_priority 取优先档）。
+CREATE TABLE IF NOT EXISTS video_tags (
+  video_id    INTEGER NOT NULL REFERENCES videos(id),
+  tag_id      INTEGER NOT NULL REFERENCES tags(id),
+  source      TEXT NOT NULL CHECK(source IN ('manual','batch','ai')),
+  created_at  INTEGER NOT NULL,
+  UNIQUE(video_id, tag_id, source)
+);
+CREATE INDEX IF NOT EXISTS idx_video_tags_video ON video_tags(video_id);
+CREATE INDEX IF NOT EXISTS idx_video_tags_tag ON video_tags(tag_id, source);
+
+-- server 侧 KV 设置（当前只存标签展示优先级 tag_priority；为将来通用设置留口）。
+-- DB 而非 JSON 文件：远端部署重新发布不丢配置。
+CREATE TABLE IF NOT EXISTS settings (
+  key         TEXT PRIMARY KEY,
+  value       TEXT NOT NULL          -- JSON 字符串
+);

@@ -36,6 +36,17 @@ export function parseVideoFilter(p: URLSearchParams): VideoFilter {
   if (tname) f.tname = tname;
   const tag = p.get('tag');
   if (tag) f.tag = tag;
+  // tags：逗号分隔精确名（AND 语义）；tag_source：逗号分隔档位（manual/batch/ai/bili 子集）
+  const tagsRaw = p.get('tags');
+  if (tagsRaw) {
+    const names = tagsRaw.split(',').map((s) => s.trim()).filter(Boolean);
+    if (names.length > 0) f.tags = names;
+  }
+  const tagSourceRaw = p.get('tag_source');
+  if (tagSourceRaw) {
+    const sources = tagSourceRaw.split(',').map((s) => s.trim()).filter((s) => ['manual', 'batch', 'ai', 'bili'].includes(s));
+    if (sources.length > 0) f.tag_source = sources;
+  }
   const subtitle_q = p.get('subtitle_q');
   if (subtitle_q) f.subtitle_q = subtitle_q;
   const lang = p.get('lang');

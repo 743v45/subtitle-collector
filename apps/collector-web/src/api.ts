@@ -1,6 +1,7 @@
 import type {
   VideoListItem, VideoDetail, VideoFilter, ClientInfo,
   StatsOverview, KeyValue, StatsGroupBy, CreatorDetail, ChangeRow,
+  TagSource,
 } from './types';
 import type { SubtitleLine } from '@/components/SubtitleView';
 
@@ -44,6 +45,8 @@ export async function listVideos(filter: VideoFilter = {}): Promise<{ total: num
   if (filter.tid != null) u.set('tid', String(filter.tid));
   if (filter.tname) u.set('tname', filter.tname);
   if (filter.tag) u.set('tag', filter.tag);
+  if (filter.tags?.length) u.set('tags', filter.tags.join(','));
+  if (filter.tag_source?.length) u.set('tag_source', filter.tag_source.join(','));
   if (filter.subtitle_q) u.set('subtitle_q', filter.subtitle_q);
   if (filter.lang) u.set('lang', filter.lang);
   if (filter.has_subtitle) u.set('has_subtitle', 'true');
@@ -72,7 +75,7 @@ export async function getVideo(source: string, sourceVid: string): Promise<Video
     if (video && typeof video.extra === 'string') {
       try { video.extra = JSON.parse(video.extra); } catch { video.extra = {}; }
     }
-    return { video, tracks: j.tracks } as VideoDetail;
+    return { video, tracks: j.tracks, tag_details: j.tag_details } as VideoDetail;
   });
 }
 
@@ -153,6 +156,97 @@ export async function updateCategory(id: number, patch: { name?: string; sort_or
 export async function deleteCategory(id: number): Promise<void> {
   const r = await fetch(`${BASE}/api/categories/${id}`, { method: 'DELETE' });
   ensureOk(r, () => undefined);
+}
+
+// ── 标签 ──
+// 标签库条目（bili 档来自视频自带、无独立实体，counts 只含三档）
+export interface TagItem {
+  id: number;
+  name: string;
+  created_at: number;
+  counts: { manual: number; batch: number; ai: number; total: number };
+}
+// 打标目标视频（source=平台，source_vid=平台内视频 ID）
+export interface TagTarget { source: string; source_vid: string; }
+// 可写入档位（bili 不可手动打标，服务端 400）
+export type TagWriteSource = 'manual' | 'batch' | 'ai';
+
+export async function listTags(params: { source?: TagWriteSource; q?: string; topN?: number } = {}): Promise<TagItem[]> {
+  const u = new URLSearchParams();
+  if (params.source) u.set('source', params.source);
+  if (params.q) u.set('q', params.q);
+  u.set('topN', String(params.topN ?? 500));
+  const r = await fetch(`${BASE}/api/tags?${u}`);
+  return ensureOk(r, (j) => j.items ?? []);
+}
+
+// 批量给一组视频打标；names 中不存在的标签会先落库（返回 inserted/missing 供提示）
+export async function applyTags(body: { items: TagTarget[]; names: string[]; source: TagWriteSource }): Promise<{ inserted: number; missing: number }> {
+  const r = await fetch(`${BASE}/api/tags/apply`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  return ensureOk(r, (j) => ({ inserted: j.inserted, missing: j.missing }));
+}
+
+// 批量解除标签关联；source 省略时删全档
+export async function removeTags(body: { items: TagTarget[]; names: string[]; source?: TagSource }): Promise<{ removed: number; missing: number }> {
+  const r = await fetch(`${BASE}/api/tags/remove`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  return ensureOk(r, (j) => ({ removed: j.removed, missing: j.missing }));
+}
+
+// 改名（撞已有名服务端 409）
+export async function renameTag(id: number, name: string): Promise<TagItem> {
+  const r = await fetch(`${BASE}/api/tags/${id}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name }),
+  });
+  return ensureOk(r, (j) => j.tag);
+}
+
+// 删除标签及其全部视频关联
+export async function deleteTag(id: number): Promise<void> {
+  const r = await fetch(`${BASE}/api/tags/${id}`, { method: 'DELETE' });
+  ensureOk(r, () => undefined);
+}
+
+// 标签展示优先级（四档精确排列，服务端校验非法 400）
+export async function getTagPriority(): Promise<TagSource[]> {
+  const r = await fetch(`${BASE}/api/settings/tag-priority`);
+  return ensureOk(r, (j) => j.priority);
+}
+
+export async function putTagPriority(priority: TagSource[]): Promise<void> {
+  const r = await fetch(`${BASE}/api/settings/tag-priority`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ priority }),
+  });
+  ensureOk(r, () => undefined);
+}
+
+// 单视频打标（bili 档 400）
+export async function videoApplyTags(source: string, sourceVid: string, names: string[], tagSource: TagWriteSource): Promise<{ inserted: number }> {
+  const r = await fetch(`${BASE}/api/videos/${source}/${encodeURIComponent(sourceVid)}/tags`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ names, source: tagSource }),
+  });
+  return ensureOk(r, (j) => ({ inserted: j.inserted }));
+}
+
+// 单视频解标；source 省略删全档
+export async function videoRemoveTags(source: string, sourceVid: string, name: string, tagSource?: TagSource): Promise<{ removed: number }> {
+  const u = new URLSearchParams({ name });
+  if (tagSource) u.set('source', tagSource);
+  const r = await fetch(`${BASE}/api/videos/${source}/${encodeURIComponent(sourceVid)}/tags?${u}`, { method: 'DELETE' });
+  return ensureOk(r, (j) => ({ removed: j.removed }));
 }
 
 // ── UP 主 ──

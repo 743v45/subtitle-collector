@@ -1,4 +1,9 @@
+import type { TagSource } from './lib/tagSources';
+
 // ── 视频元数据（extra 是服务端 JSON 字符串，由 api.ts 在入口处 JSON.parse 成对象）──
+export type { TagSource };
+// 标签明细：name + 四档来源（列表按优先级 winner 去重；详情全档不去重）
+export interface TagDetail { name: string; source: TagSource; }
 export interface VideoTag { tag_id?: number; tag_name: string; }
 export interface VideoStat {
   view?: number; danmaku?: number; reply?: number; favorite?: number;
@@ -23,6 +28,7 @@ export interface VideoListItem {
   duration: number | null; published_at?: number | null;
   track_count: number; first_seen_at: number;
   tid?: number | null; tname?: string | null; tags?: string[];
+  tag_details?: TagDetail[];
   view?: number | null;
 }
 export interface VideoInfo {
@@ -42,7 +48,7 @@ export interface TrackInfo {
   id: number; lan: string | null; lan_doc: string | null; track_type: number | null;
   is_default?: boolean; versions: VersionInfo[];
 }
-export interface VideoDetail { video: VideoInfo; tracks: TrackInfo[]; }
+export interface VideoDetail { video: VideoInfo; tracks: TrackInfo[]; tag_details?: TagDetail[]; }
 
 // change_log（最近采集/变更流水，对应 server getChanges）
 export interface ChangeRow {
@@ -69,6 +75,8 @@ export interface VideoFilter {
   tid?: number;
   tname?: string;
   tag?: string;
+  tags?: string[];       // 精确标签过滤（AND，逗号 join 传 server）
+  tag_source?: string[]; // 标签档位过滤（manual/batch/bili/ai，逗号 join 传 server）
   subtitle_q?: string; // 字幕正文关键词
   lang?: string;
   has_subtitle?: boolean;
@@ -93,7 +101,7 @@ export interface StatsOverview {
   first_seen_min: number | null; first_seen_max: number | null;
 }
 export interface KeyValue { key: string; count: number; }
-export type StatsGroupBy = 'creator' | 'tname' | 'lang' | 'track-type';
+export type StatsGroupBy = 'creator' | 'tname' | 'lang' | 'track-type' | 'tag';
 
 // ── UP 主详情（对应 server getCreator / getCreatorBySourceUid）──
 export interface CreatorDetail {

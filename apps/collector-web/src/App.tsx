@@ -4,18 +4,20 @@ import { VideoDetail } from './pages/VideoDetail';
 import { StatsPage } from './pages/StatsPage';
 import { ClientsPage } from './pages/ClientsPage';
 import { CategoriesPage } from './pages/CategoriesPage';
+import { TagsPage } from './pages/TagsPage';
 import { CreatorsPage } from './pages/CreatorsPage';
 import { CreatorDetailPage } from './pages/CreatorDetailPage';
 import { ChangesLog } from './pages/ChangesLog';
 import { Button } from '@/components/ui/button';
 
-type Tab = 'videos' | 'stats' | 'clients' | 'categories' | 'creators' | 'changes';
+type Tab = 'videos' | 'stats' | 'clients' | 'categories' | 'tags' | 'creators' | 'changes';
 
 const TABS: { key: Tab; label: string }[] = [
   { key: 'videos', label: '视频' },
   { key: 'stats', label: '看板' },
   { key: 'creators', label: '创作者' },
   { key: 'categories', label: '分类' },
+  { key: 'tags', label: '标签' },
   { key: 'clients', label: '客户端' },
   { key: 'changes', label: '日志' },
 ];
@@ -48,6 +50,8 @@ export default function App() {
           <ClientsPage />
         ) : tab === 'categories' ? (
           <CategoriesPage />
+        ) : tab === 'tags' ? (
+          <TagsPage />
         ) : tab === 'changes' ? (
           <ChangesLog />
         ) : tab === 'creators' ? (

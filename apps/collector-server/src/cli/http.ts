@@ -11,7 +11,7 @@ export class ServerUnreachableError extends Error {
 }
 
 interface RequestOptions {
-  method: 'GET' | 'POST';
+  method: 'GET' | 'POST' | 'PATCH' | 'DELETE';
   body?: Record<string, unknown>;
 }
 
@@ -71,9 +71,36 @@ export class ServerClient {
     return this.requestJson('POST', `/api/clients/${encodeURIComponent(clientId)}/command`, body);
   }
 
+  // 批量打标：POST /api/tags/apply（bvid 是 bilibili 的 source_vid，CLI 命令只支持 B 站对齐 collect 现状）。
+  async applyTags(
+    bvids: string[],
+    names: string[],
+    source: 'manual' | 'batch' | 'ai',
+  ): Promise<unknown> {
+    return this.requestJson('POST', '/api/tags/apply', {
+      items: bvids.map((bv) => ({ source: 'bilibili', source_vid: bv })),
+      names,
+      source,
+    });
+  }
+
+  // 批量移除：POST /api/tags/remove（source 省略 = 删该名字全部三档）。
+  async removeTags(
+    bvids: string[],
+    names: string[],
+    source?: 'manual' | 'batch' | 'ai',
+  ): Promise<unknown> {
+    const body: Record<string, unknown> = {
+      items: bvids.map((bv) => ({ source: 'bilibili', source_vid: bv })),
+      names,
+    };
+    if (source !== undefined) body.source = source;
+    return this.requestJson('POST', '/api/tags/remove', body);
+  }
+
   // 统一请求：fetch + JSON 解析 + 错误归一化。
   // 连不上 → ServerUnreachableError；非 2xx → ServerResponseError；2xx → 解析后的 JSON（无 body 时返回 null）。
-  private async requestJson(method: 'GET' | 'POST', path: string, body?: Record<string, unknown>): Promise<unknown> {
+  private async requestJson(method: 'GET' | 'POST' | 'PATCH' | 'DELETE', path: string, body?: Record<string, unknown>): Promise<unknown> {
     const res = await this.raw(method, path, body);
     const text = await res.text();
     if (!res.ok) {
@@ -88,7 +115,7 @@ export class ServerClient {
   }
 
   // 裸 fetch 包装：构造 URL（用 new URL 拼 path，自动处理 base 斜杠）+ Authorization header。
-  private async raw(method: 'GET' | 'POST', path: string, body?: Record<string, unknown>): Promise<Response> {
+  private async raw(method: 'GET' | 'POST' | 'PATCH' | 'DELETE', path: string, body?: Record<string, unknown>): Promise<Response> {
     const url = new URL(path, this.baseUrl).toString();
     const init: RequestInit = {
       method,

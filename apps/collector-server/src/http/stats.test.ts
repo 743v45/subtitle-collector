@@ -89,11 +89,11 @@ test('GET /api/videos：tag 过滤返回正确子集，items 含 tags/tname/tid 
     assert.equal(r.status, 200);
     assert.equal(r.json.ok, true);
     assert.deepEqual(titles(r.json.items).sort(), ['标题A', '标题C']);
-    // 富字段：V1 的 tags 降维成 tag_name 数组、tname/tid 取自 extra
+    // 富字段：V1 的 tags 降维成 tag_name 数组（tag_details 语义后按名字序）、tname/tid 取自 extra
     const v1 = r.json.items.find((i: any) => i.title === '标题A');
     assert.equal(v1.tid, 17);
     assert.equal(v1.tname, '单机游戏');
-    assert.deepEqual(v1.tags, ['游戏', '实况']);
+    assert.deepEqual([...v1.tags].sort(), ['实况', '游戏'].sort());
     // 全部列都在：creator_name/creator_source_uid/duration/published_at/first_seen_at/track_count
     assert.equal(v1.creator_name, 'Alpha UP');
     assert.equal(v1.creator_source_uid, '1');
@@ -198,7 +198,7 @@ test('GET /api/stats：非法 type / 缺 groupBy / 非法 groupBy → 400', asyn
     assert.equal(r2.json.ok, false);
     const r3 = await httpGet(ctx.port, '/api/stats?type=aggregate&groupBy=bogus');
     assert.equal(r3.status, 400);
-    assert.equal(r3.json.error, 'groupBy must be one of creator|tname|lang|track-type');
+    assert.equal(r3.json.error, 'groupBy must be one of creator|tname|lang|track-type|tag');
   } finally { ctx.cleanup(); }
 });
 

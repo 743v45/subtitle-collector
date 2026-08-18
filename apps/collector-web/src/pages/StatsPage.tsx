@@ -12,6 +12,7 @@ const GROUP_LABEL: Record<StatsGroupBy, string> = {
   creator: '创作者',
   lang: '语言',
   'track-type': '轨类型',
+  tag: '标签',
 };
 const TRACK_TYPE_LABEL: Record<string, string> = { '1': 'AI 字幕', '2': 'CC 字幕' };
 
