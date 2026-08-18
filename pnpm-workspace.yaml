@@ -1,2 +1,3 @@
 packages:
   - "apps/*"
+  - "!apps/subtitle-extractor" # 临时排除:其依赖的 voicetxt 仓库缺失,导致整 workspace 装依赖失败。勿提交,用完 git restore 撤销

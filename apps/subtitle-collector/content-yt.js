@@ -393,6 +393,9 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       ok: true,
       state: tracks.length === 0 ? "no-subtitle" : "has-subtitle",
       bvid: vid,
+      // settled：所有轨已定居（有 body 或 FETCH 已尝试）——与 flushIfReady 的判定同条件。
+      // 供 fetch-youtube-subtitle 主动采集轮询判定「采集完成」（has-subtitle 只代表有轨,body 可能还在抓）。
+      settled: tracks.every((t) => cur.bodies.has(t.baseUrl) || cur.fetched.has(t.baseUrl)),
       extra: {
         // YouTube 简介 + 统计：popup CollectedBlock 数据驱动渲染
         desc: cur.meta.shortDescription ?? null,

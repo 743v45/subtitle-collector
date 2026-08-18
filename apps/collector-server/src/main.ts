@@ -10,6 +10,8 @@ import { handleCreatorsHttp } from './http/creators.js';
 import { handleStatsHttp } from './http/stats.js';
 import { handleTagsHttp } from './http/tags.js';
 import { handleSettingsHttp } from './http/settings.js';
+import { handleTasksHttp } from './http/tasks.js';
+import { attachTaskScheduler } from './tasks/tasks.js';
 
 const DB_PATH = process.env.COLLECTOR_DB_PATH ?? './bilibili-collector.db';
 const PORT = Number(process.env.COLLECTOR_PORT ?? 21527);
@@ -70,6 +72,7 @@ const httpServer = createServer((req, res) => {
   if (req.url === '/ping') { res.writeHead(200, { 'Content-Type': 'application/json' }); res.end('{"ok":true}'); return; }
   if (!httpOriginAllowed(req)) { res.writeHead(403, { 'Content-Type': 'application/json' }); res.end('{"ok":false,"error":"forbidden"}'); return; } // C2
   if (req.url?.startsWith('/api/clients')) { handleClientsHttp(req, res); return; }
+  if (req.url?.startsWith('/api/collect-tasks')) { void handleTasksHttp(req, res, db); return; }
   if (req.url?.startsWith('/api/categories')) { handleCategoriesHttp(req, res, db); return; }
   if (req.url?.startsWith('/api/creators')) { handleCreatorsHttp(req, res, db); return; }
   if (req.url?.startsWith('/api/stats')) { handleStatsHttp(req, res, db); return; }
@@ -82,6 +85,7 @@ const httpServer = createServer((req, res) => {
 });
 
 attachWsServer(httpServer, db, TOKEN);
+attachTaskScheduler(db); // 采集任务调度器（pending → 扩展派发 → 回执落 status）
 
 httpServer.listen(PORT, HOST, () => {
   if (HOST === '0.0.0.0') {

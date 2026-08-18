@@ -308,6 +308,16 @@ async function connect() {
         } catch (err) {
           ws.send(JSON.stringify({ type: "result", id: msg.id, ok: false, error: String(err.message || err) }));
         }
+      } else if (msg.action === "fetch-youtube-subtitle") {
+        // YouTube 主动采集（手机/网页任务驱动）：导航到视频页,复用 content-yt 被动采集链路
+        // （inject-yt 读 captionTracks + 拦 timedtext → content-yt 归一化 → INGEST 入库）,
+        // 编排层只负责「导航 + 等就绪 + 等采集完成 + 汇总回执」。
+        try {
+          const data = await collectYoutubeViaNavigate(msg.videoId);
+          ws.send(JSON.stringify({ type: "result", id: msg.id, ok: true, data }));
+        } catch (err) {
+          ws.send(JSON.stringify({ type: "result", id: msg.id, ok: false, error: String(err.message || err) }));
+        }
       } else if (msg.action === "get-upper-info") {
         try {
           await ensureWbiKeys();
@@ -423,8 +433,10 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     const pending = pendingNavCollect.get(navBvid);
     const fromNavigate = !!pending; // navigate 采集的被动 INGEST，绕过上报开关（主动采集触发）
     if (pending) { pendingNavCollect.delete(navBvid); pending.resolve(true); }
+    // YouTube 主动采集同理：正在 fetch-youtube-subtitle 的视频,其 content-yt 被动 INGEST 视为主动采集（绕过开关）
+    const fromYtCollect = payload?.source === "youtube" && activeYtCollects.has(navBvid);
     const summary = payloadSummary(payload);
-    const force = msg.force === true || fromNavigate;
+    const force = msg.force === true || fromNavigate || fromYtCollect;
     if (force) {
       console.log(`[background] ingest 强制上报（手动上报，绕过开关）source_vid=${payload.video?.source_vid}`);
     } else if (!shouldReport(reportingEnabled)) {
@@ -528,7 +540,9 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
 // 频率控制：同时只 1 个 navigate（navCollectBusy 锁）；tab 关闭后间隔 = navGapBaseMs + 随机 navGapRandomMs（防风控）。
 let navCollectBusy = false;
 const pendingNavCollect = new Map(); // bvid -> { resolve }
-// 间隔配置（chrome.storage.local 可覆盖：nav_gap_base_ms / nav_gap_random_ms，单位 ms）。默认 1s + 随机 0-2s。
+const activeYtCollects = new Set(); // 正在 fetch-youtube-subtitle 的 videoId 集合（其被动 INGEST 视为主动采集,绕过上报开关）
+// settled 后宽限期：菜单触发翻译轨（CC→原轨→翻译,~2s 起步 + 每步 800ms）迟到 body 的等待窗口
+const YT_SETTLE_GRACE_MS = 8000;// 间隔配置（chrome.storage.local 可覆盖：nav_gap_base_ms / nav_gap_random_ms，单位 ms）。默认 1s + 随机 0-2s。
 let navGapBaseMs = 1000;
 let navGapRandomMs = 2000;
 async function loadNavGapConfig() {
@@ -574,6 +588,80 @@ async function collectViaNavigate(bvid, timeoutMs = 20000) {
     if (tabId != null) { try { await chrome.tabs.remove(tabId); } catch {} }
     navCollectBusy = false;
     await new Promise((r) => setTimeout(r, navGapBaseMs + Math.random() * navGapRandomMs)); // 关闭间隔（base+随机，防风控）
+  }
+}
+
+// YouTube 主动采集（fetch-youtube-subtitle action）：后台开 tab 到 watch?v=<id>,
+// 等 content-yt 就绪并采集（CAPTION_TRACKS + FETCH_SUBTITLE 兜底/菜单触发）,
+// 通过 GET_LOCAL_STATE 轮询判定采集完成（has-subtitle + 所有轨定居,或 no-subtitle）,
+// INGEST 由 content-yt 自行走被动链路上报（复用现有链路,编排层不重复上报）。
+// 与 B 站 collectViaNavigate 的差异:YouTube 字幕 URL 带签名不能后台拼,必须靠页面运行时;
+// 且 content-yt 不需要 NAV_TRIGGER 通知——页面加载即自动采集。
+async function collectYoutubeViaNavigate(videoId, timeoutMs = 45000) {
+  while (navCollectBusy) await new Promise((r) => setTimeout(r, 500)); // 等锁（同时只 1 个 navigate）
+  navCollectBusy = true;
+  let reused = false;
+  let tabId = null;
+  const watchUrl = `https://www.youtube.com/watch?v=${videoId}`;
+  try {
+    activeYtCollects.add(videoId); // 登记进行中的 YouTube 主动采集（INGEST 处理器据此放行 force）
+    // 复用已打开的同视频 tab（reload 刷新页面状态）;无则后台新建（active:false 不抢焦点）
+    const [existing] = await chrome.tabs.query({ url: `${watchUrl}*` });
+    if (existing?.id) {
+      tabId = existing.id;
+      reused = true;
+      await chrome.tabs.reload(tabId);
+    } else {
+      const tab = await chrome.tabs.create({ url: watchUrl, active: false });
+      tabId = tab.id;
+    }
+    // 轮询 GET_LOCAL_STATE 直到终态。判定依据（content-yt GET_LOCAL_STATE 响应）：
+    //   state=no-subtitle           captionTracks 已读且为空 → 成功 0 轨
+    //   state=has-subtitle+settled  所有轨定居（body 到齐或已尝试）→ 等 INGEST 宽限后汇总
+    //   state=has-subtitle 未定居    body 还在抓（FETCH_SUBTITLE / 菜单触发翻译轨）→ 继续等
+    //   not-loaded / null           页面未就绪 → 继续等
+    const t0 = Date.now();
+    let firstSettledAt = 0; // 首次 settled 的时刻（宽限期起算点）
+    for (;;) {
+      if (Date.now() - t0 > timeoutMs) throw new Error(`YouTube 采集超时（${Math.round(timeoutMs / 1000)}s）`);
+      const state = await new Promise((resolve) => {
+        chrome.tabs.sendMessage(tabId, { type: "GET_LOCAL_STATE", vid: videoId }, (resp) => {
+          if (chrome.runtime.lastError) resolve(null); // content-yt 未注入/未就绪
+          else resolve(resp);
+        });
+      });
+      if (state?.ok && state.state === "no-subtitle") {
+        // captionTracks 已读且为空（纯音乐/直播/真无字幕）——任务成功但 0 轨
+        return { videoId, captured: 0, tracks: 0, reason: "no_subtitle", navigated: true, reused };
+      }
+      if (state?.ok && state.state === "has-subtitle" && state.settled) {
+        // settled 后的 INGEST：flushIfReady 已发（或菜单触发的翻译轨 TIMEDTEXT_BODY 还在路上——
+        // 宽限 SETTLE_GRACE_MS 等迟到的翻译 body 再 flush,翻译轨是主动采集中文的关键产出）。
+        if (!firstSettledAt) firstSettledAt = Date.now();
+        if (Date.now() - firstSettledAt < YT_SETTLE_GRACE_MS) {
+          await new Promise((r) => setTimeout(r, 500));
+          continue;
+        }
+        // 宽限期过完再取一次最新状态（宽限期间迟到的翻译轨已构造进 captionTracks）
+        const final = await new Promise((resolve) => {
+          chrome.tabs.sendMessage(tabId, { type: "GET_LOCAL_STATE", vid: videoId }, (resp) => resolve(resp));
+        });
+        await new Promise((r) => setTimeout(r, 1500)); // 等 INGEST 经 WS 落库
+        const subs = final?.subs ?? state.subs ?? [];
+        const captured = subs.filter((s) => s.has_body).length;
+        return {
+          videoId, captured, tracks: subs.length, navigated: true, reused,
+          ...(captured === 0 ? { reason: "pot_limited" } : {}),
+        };
+      }
+      // 未就绪/未定居：500ms 后重试
+      await new Promise((r) => setTimeout(r, 500));
+    }
+  } finally {
+    activeYtCollects.delete(videoId);
+    if (tabId != null && !reused) { try { await chrome.tabs.remove(tabId); } catch {} } // 复用的 tab 不关
+    navCollectBusy = false;
+    await new Promise((r) => setTimeout(r, navGapBaseMs + Math.random() * navGapRandomMs)); // 关闭间隔（防风控,对齐 B 站）
   }
 }
 

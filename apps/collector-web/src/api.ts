@@ -1,7 +1,7 @@
 import type {
   VideoListItem, VideoDetail, VideoFilter, ClientInfo,
   StatsOverview, KeyValue, StatsGroupBy, CreatorDetail, ChangeRow,
-  TagSource,
+  TagSource, CollectTask,
 } from './types';
 import type { SubtitleLine } from '@/components/SubtitleView';
 
@@ -117,6 +117,27 @@ export async function getStatsAggregate(groupBy: StatsGroupBy, filter: VideoFilt
 export async function listClients(): Promise<ClientInfo[]> {
   const r = await fetch(`${BASE}/api/clients`);
   return ensureOk(r, (j) => j.clients ?? []);
+}
+
+// ── 采集任务 ──
+// 提交采集（text 为手机粘贴的分享文本/链接,server 侧提取并解析 URL）
+export async function createCollectTask(text: string): Promise<CollectTask> {
+  const r = await fetch(`${BASE}/api/collect-tasks`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ text }),
+  });
+  return ensureOk(r, (j) => j.task);
+}
+
+export async function listCollectTasks(limit = 20): Promise<{ total: number; items: CollectTask[] }> {
+  const r = await fetch(`${BASE}/api/collect-tasks?limit=${limit}`);
+  return ensureOk(r, (j) => ({ total: j.total ?? 0, items: j.items ?? [] }));
+}
+
+export async function getCollectTask(id: number): Promise<CollectTask> {
+  const r = await fetch(`${BASE}/api/collect-tasks/${id}`);
+  return ensureOk(r, (j) => j.task);
 }
 
 export async function setReporting(clientId: string, enabled: boolean): Promise<boolean> {

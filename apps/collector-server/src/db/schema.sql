@@ -124,3 +124,24 @@ CREATE TABLE IF NOT EXISTS settings (
   key         TEXT PRIMARY KEY,
   value       TEXT NOT NULL          -- JSON 字符串
 );
+
+-- 采集任务（手机/网页提交 → server 派发给桌面扩展执行）。
+-- status 状态机：pending → dispatched → succeeded | failed
+--   pending     已入库待派发（无扩展在线时停留在此态，扩展上线后由调度器派发）
+--   dispatched  已 WS 下发 requestCommand，等扩展 result 回执
+--   succeeded   扩展回执 ok（captured=0 表示视频无字幕轨，仍是任务成功）
+--   failed      扩展回执 err / 超时 / 扩展掉线（error 字段存可读原因）
+-- server 重启恢复：启动时把 dispatched 重置回 pending（没等到回执就不确认，重新派发）。
+CREATE TABLE IF NOT EXISTS collect_tasks (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  source      TEXT NOT NULL CHECK(source IN ('bilibili','youtube')),
+  source_vid  TEXT NOT NULL,
+  url         TEXT NOT NULL,
+  status      TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','dispatched','succeeded','failed')),
+  client_id   TEXT,
+  error       TEXT,
+  result      TEXT,
+  created_at  INTEGER NOT NULL,
+  finished_at INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_tasks_status ON collect_tasks(status, created_at);

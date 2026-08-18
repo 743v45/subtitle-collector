@@ -3,6 +3,7 @@ import { WebSocketServer, WebSocket, type RawData } from 'ws';
 import type { IncomingMessage, Server } from 'node:http';
 import type Database from 'better-sqlite3';
 import { ingestVideo, ingestUpper, type IngestRequest, type IngestUpperRequest } from '../db/ingest.js';
+import { notifyClientOnline } from '../tasks/tasks.js';
 
 interface ExtConn {
   ws: WebSocket;
@@ -61,6 +62,7 @@ export function attachWsServer(httpServer: Server, _db: Database.Database, expec
           const prev = connections.get(conn.clientId);
           if (prev && prev.ws !== ws && prev.ws.readyState === WebSocket.OPEN) prev.ws.close(4000, 'replaced');
           connections.set(conn.clientId, conn);
+          notifyClientOnline(); // 扩展上线：kick 采集任务调度器（pending 任务可派发了）
         }
         return;
       }

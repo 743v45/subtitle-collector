@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { CollectPage } from './pages/CollectPage';
 import { VideoList } from './pages/VideoList';
 import { VideoDetail } from './pages/VideoDetail';
 import { StatsPage } from './pages/StatsPage';
@@ -10,9 +11,10 @@ import { CreatorDetailPage } from './pages/CreatorDetailPage';
 import { ChangesLog } from './pages/ChangesLog';
 import { Button } from '@/components/ui/button';
 
-type Tab = 'videos' | 'stats' | 'clients' | 'categories' | 'tags' | 'creators' | 'changes';
+type Tab = 'collect' | 'videos' | 'stats' | 'clients' | 'categories' | 'tags' | 'creators' | 'changes';
 
 const TABS: { key: Tab; label: string }[] = [
+  { key: 'collect', label: '采集' },
   { key: 'videos', label: '视频' },
   { key: 'stats', label: '看板' },
   { key: 'creators', label: '创作者' },
@@ -23,7 +25,7 @@ const TABS: { key: Tab; label: string }[] = [
 ];
 
 export default function App() {
-  const [tab, setTab] = useState<Tab>('videos');
+  const [tab, setTab] = useState<Tab>('collect');
   const [videoView, setVideoView] = useState<{ source: string; sourceVid: string } | null>(null);
   const [creatorView, setCreatorView] = useState<number | null>(null);
 
@@ -44,7 +46,9 @@ export default function App() {
         </div>
       </header>
       <main className="mx-auto max-w-5xl p-4 md:p-6">
-        {tab === 'stats' ? (
+        {tab === 'collect' ? (
+          <CollectPage />
+        ) : tab === 'stats' ? (
           <StatsPage />
         ) : tab === 'clients' ? (
           <ClientsPage />
