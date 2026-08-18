@@ -62,6 +62,21 @@ export interface ClientInfo {
   connected: true;
 }
 
+// ── 采集任务（手机/网页提交 → server 派发扩展执行）──
+export type CollectTaskStatus = 'pending' | 'dispatched' | 'succeeded' | 'failed';
+export interface CollectTask {
+  id: number;
+  source: 'bilibili' | 'youtube';
+  source_vid: string;
+  url: string;
+  status: CollectTaskStatus;
+  client_id: string | null;
+  error: string | null;
+  result: string | null; // JSON 字符串（扩展回执 data：captured/tracks/reason…）
+  created_at: number;
+  finished_at: number | null;
+}
+
 // ── 视频多维筛选（对应 server advanced.ts VideoFilter + ListFilter）──
 export interface VideoFilter {
   q?: string;
