@@ -18,8 +18,8 @@ export function parseBool(raw: string | null): boolean | undefined {
   return undefined;
 }
 
-// 从 query string 解析 VideoFilter（q/creator/source/tid/tname/tag/lang/track_type/has_subtitle/
-// since/until/min_duration/max_duration）。非法值忽略，绝不抛错。
+// 从 query string 解析 VideoFilter（q/creator/creator_id/creator_uid/source/tid/tname/tag/lang/track_type/
+// has_subtitle/since/until/min_duration/max_duration）。非法值忽略，绝不抛错。
 export function parseVideoFilter(p: URLSearchParams): VideoFilter {
   const f: VideoFilter = {};
   const q = p.get('q');
@@ -28,6 +28,8 @@ export function parseVideoFilter(p: URLSearchParams): VideoFilter {
   if (creator) f.creator = creator;
   const creator_id = toInt(p.get('creator_id'));
   if (creator_id !== undefined) f.creator_id = creator_id;
+  const creator_uid = p.get('creator_uid');
+  if (creator_uid) f.creator_uid = creator_uid;
   const source = p.get('source');
   if (source) f.source = source;
   const tid = toInt(p.get('tid'));
@@ -36,6 +38,17 @@ export function parseVideoFilter(p: URLSearchParams): VideoFilter {
   if (tname) f.tname = tname;
   const tag = p.get('tag');
   if (tag) f.tag = tag;
+  // tags：逗号分隔精确名（AND 语义）；tag_source：逗号分隔档位（manual/batch/ai/bili 子集）
+  const tagsRaw = p.get('tags');
+  if (tagsRaw) {
+    const names = tagsRaw.split(',').map((s) => s.trim()).filter(Boolean);
+    if (names.length > 0) f.tags = names;
+  }
+  const tagSourceRaw = p.get('tag_source');
+  if (tagSourceRaw) {
+    const sources = tagSourceRaw.split(',').map((s) => s.trim()).filter((s) => ['manual', 'batch', 'ai', 'bili'].includes(s));
+    if (sources.length > 0) f.tag_source = sources;
+  }
   const subtitle_q = p.get('subtitle_q');
   if (subtitle_q) f.subtitle_q = subtitle_q;
   const lang = p.get('lang');

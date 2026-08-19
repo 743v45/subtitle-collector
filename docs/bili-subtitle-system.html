@@ -1,0 +1,464 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>B 站字幕系统 · 平台设计思路</title>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 32px 24px 64px;
+    font: 15px/1.65 -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+    background: #0b0e14; color: #c9d1d9;
+  }
+  h1 { font-size: 22px; margin: 0 0 4px; color: #e6edf3; }
+  .sub { color: #7d8590; font-size: 13px; margin-bottom: 24px; }
+  h2 {
+    font-size: 16px; margin: 32px 0 12px; padding-bottom: 6px;
+    border-bottom: 1px solid #21262d; color: #e6edf3;
+  }
+  h3 { font-size: 14px; margin: 18px 0 8px; color: #79c0ff; }
+  .chart {
+    background: #0d1117; border: 1px solid #21262d; border-radius: 10px;
+    padding: 20px; overflow-x: auto;
+  }
+  .legend {
+    display: flex; flex-wrap: wrap; gap: 18px; margin: 14px 2px 0;
+    font-size: 12.5px; color: #8b949e;
+  }
+  .legend span { display: inline-flex; align-items: center; gap: 6px; }
+  .swatch { width: 26px; height: 0; border-top: 2px solid #58a6ff; }
+  .swatch.dashed { border-top: 2px dashed #8b949e; }
+  .swatch.thick { border-top: 3px solid #f0883e; }
+  table { border-collapse: collapse; width: 100%; font-size: 13.5px; margin-top: 8px; }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid #21262d; vertical-align: top; }
+  th { color: #8b949e; font-weight: 600; background: #0d1117; }
+  td a, .src a { color: #79c0ff; text-decoration: none; }
+  td a:hover, .src a:hover { text-decoration: underline; }
+  code { background: #161b22; padding: 1px 5px; border-radius: 4px; font-size: 12.5px; color: #f0883e; word-break: break-all; }
+  pre { background: #0d1117; border: 1px solid #21262d; border-radius: 8px; padding: 12px 14px; overflow-x: auto; font-size: 12.5px; line-height: 1.55; }
+  pre code { background: none; padding: 0; color: #c9d1d9; }
+  .tag {
+    display: inline-block; padding: 1px 7px; border-radius: 10px;
+    font-size: 11.5px; background: #1f6feb22; color: #79c0ff; border: 1px solid #1f6feb55;
+    white-space: nowrap;
+  }
+  .tag.aside { background: #6e768122; color: #8b949e; border-color: #6e768155; }
+  .tag.warn { background: #f8514922; color: #ff7b72; border-color: #f8514955; }
+  .tag.ok { background: #3fb95022; color: #56d364; border-color: #3fb95055; }
+  .note { color: #8b949e; font-size: 13px; }
+  .warn-box { background: #f8514911; border: 1px solid #f8514944; border-radius: 8px; padding: 12px 14px; margin: 12px 0; font-size: 13.5px; }
+  .warn-box b { color: #ff7b72; }
+  ul { margin: 6px 0; padding-left: 20px; }
+  li { margin: 3px 0; }
+  .src { font-size: 12px; color: #6e7681; margin-top: 10px; line-height: 1.7; }
+  .src b { color: #8b949e; }
+  .kv { color: #8b949e; font-size: 12.5px; }
+</style>
+</head>
+<body>
+
+<h1>B 站字幕系统 · 平台设计思路</h1>
+<div class="sub">
+  本文整理 <b>bilibili 网站本身</b>的字幕系统设计（不是某个扩展的代码实现）：<br />
+  字幕分类 / 三层 API / 字幕轨数据模型 / 付费访问控制 / AI 字幕加密墙 / 页面与播放器架构。<br />
+  基于实测诊断脚本 <code>apps/subtitle-collector/scripts/probe-bili-subtitle-system.mjs</code>（游客抓包）+
+  社区逆向资料交叉验证。每条结论标注权威等级。
+</div>
+
+<div class="warn-box">
+  <b>⚠ 权威来源现状</b>：社区 API 文档 <code>SocialSisterYi/bilibili-API-collect</code>
+  已于 2026-01 归档（B 站律师函）。本文引用改用 fork <a class="src" style="color:#79c0ff" href="https://github.com/pskdje/bilibili-API-collect">pskdje/bilibili-API-collect</a>（main 分支，内容完整）。
+  涉及逆向的细节（XOR 解密、protobuf 结构）来自两个独立代码库互相印证。<br />
+  <b>权威等级</b>：<span class="tag ok">T1 社区API文档</span>
+  <span class="tag">T2 社区逆向(双重印证)</span>
+  <span class="tag aside">T3 观察/勘察</span>
+</div>
+
+<h2>一、两类字幕来源（产品视角）</h2>
+<p>B 站字幕分两类，官方区分依据是「生成方式」，数据层靠 <code>lan</code> 前缀和 CDN 域名区分：
+<a class="src" href="https://www.bilibili.com/read/cv14325585">官方介绍 cv14325585</a> <span class="tag ok">T1</span></p>
+
+<div class="chart">
+<div class="mermaid">
+flowchart LR
+  subgraph Src["字幕来源"]
+    direction TB
+    CC["✍️ CC 字幕（人工）<br/>UP主 / 字幕组上传<br/>lan=zh-Hans/zh-Hant/en..."]
+    AI["🤖 AI 字幕（智能）<br/>ASR 语音识别自动生成<br/>lan=ai-zh/ai-en..."]
+  end
+
+  subgraph CDN["CDN 域名（区分关键）"]
+    direction TB
+    CC_CDN["i0.hdslb.com/bfs/subtitle/&lt;hash&gt;.json<br/>明文 JSON"]
+    AI_NEW["aisubtitle.hdslb.com/bfs/ai_subtitle/prod/&lt;id&gt;<br/>明文 JSON + auth_key 鉴权"]
+    AI_OLD["subtitle.bilibili.com/&lt;XOR密文&gt;<br/>含 %00 控制字符，旧域名"]
+  end
+
+  CC --> CC_CDN
+  AI -.->|"现代（明文）"| AI_NEW
+  AI -.->|"旧（XOR加密）"| AI_OLD
+</div>
+</div>
+<div class="legend">
+  <span><span class="swatch thick"></span>CC 字幕 CDN</span>
+  <span><span class="swatch"></span>AI 字幕现代明文 CDN</span>
+  <span><span class="swatch dashed"></span>AI 字幕旧加密 CDN</span>
+</div>
+
+<table>
+<thead><tr><th>维度</th><th>CC 字幕（人工）</th><th>AI 字幕（智能）</th></tr></thead>
+<tbody>
+<tr><td>生成方式</td><td>UP 主/字幕组手动上传</td><td>ASR 语音识别自动生成</td></tr>
+<tr><td>语言码 <code>lan</code></td><td><code>zh-Hans</code> / <code>zh-Hant</code> / <code>en</code> ...</td><td>带 <code>ai-</code> 前缀：<code>ai-zh</code> / <code>ai-en</code> / <code>ai-ja</code></td></tr>
+<tr><td>显示名 <code>lan_doc</code></td><td>简体中文 / English ...</td><td>中文（自动生成） / English（自动生成）</td></tr>
+<tr><td>CDN 域名</td><td><code>i0.hdslb.com/bfs/subtitle/</code></td><td><code>aisubtitle.hdslb.com/bfs/ai_subtitle/</code>（明文）或 <code>subtitle.bilibili.com/</code>（旧加密）</td></tr>
+<tr><td>正文格式</td><td>明文 JSON</td><td>明文 JSON（解密后）/ 需鉴权</td></tr>
+</tbody>
+</table>
+
+<div class="warn-box">
+  <b>⚠ 红线纠偏：勿用 type 字段判 AI</b><br />
+  网上流传的「<code>type=1</code>=AI、<code>type=2</code>=人工」「<code>ai_status</code> 0-4 枚举」对照表
+  <b>是错的</b>（搜索工具伪造了不存在的 GitHub Issue 内容）。<br />
+  bilibili-API-collect 里 <code>type</code>/<code>ai_status</code>/<code>ai_type</code> 的备注<b>全空</b>，
+  且文档自带两个示例就不一致（AI 轨时而 <code>type:0</code> 时而 <code>type:1</code>）。
+  <b>判 AI 字幕唯一可靠方式</b>：<code>lan</code> 以 <code>ai-</code> 开头 + <code>lan_doc</code> 含「（自动生成）」+ <code>subtitle_url</code> 指向 <code>aisubtitle</code> 域。
+  <span class="tag">T2</span>
+</div>
+
+<h2>二、三层 API 架构（技术视角）</h2>
+<p>字幕从「拿到视频 → 找字幕轨 → 下载正文」分三层，外加一个元信息接口：</p>
+
+<div class="chart">
+<div class="mermaid">
+flowchart TB
+  URL["用户访问视频<br/>bvid 或 ep_id"] --> VIEW
+
+  subgraph META["① 元信息层"]
+    VIEW["/x/web-interface/view?bvid=<br/>aid / cid / rights / 标题 / UP 主 / stat"]
+  end
+
+  VIEW -->|"aid+cid"| CATALOG
+
+  subgraph CATALOG["② 字幕轨目录层（二选一，平行）"]
+    direction LR
+    P2["/x/player/wbi/v2<br/>JSON · data.subtitle.subtitles[]<br/>含 CC + AI 轨<br/>需 Wbi 签名"]
+    SV["/x/v2/subtitle/web/view<br/>protobuf · octet-stream<br/>新版播放器主用<br/>需登录"]
+  end
+
+  CATALOG -->|"subtitle_url 列表"| BODY
+
+  subgraph BODY["③ 字幕正文层"]
+    direction TB
+    FETCH["直接 GET subtitle_url（CDN 文件）<br/>不走专门 API"]
+    FETCH --> JSON["application/json<br/>{body:[{from,to,content,...}], lang, type, version}"]
+  end
+
+  CATALOG -.->|"加密 URL（旧域名）"| DECODE["⚠ 播放器内部 XOR 解密<br/>第三方无法直接 fetch"]
+</div>
+</div>
+
+<h3>① 元信息：<code>/x/web-interface/view</code></h3>
+<p>拿 <code>aid</code>/<code>cid</code>（后续接口必需）+ <code>rights</code>（付费标志）+ 视频元数据。无需 Wbi 签名。
+实测充电视频响应（<span class="tag aside">T3 实测</span>）：</p>
+<pre><code>{
+  "code": 0, "data": {
+    "aid": 116677635212528, "cid": 38786433432,
+    "title": "...", "rights": { "pay": 0, "ugc_pay": 0, "arc_pay": 0, ... },
+    "ugc_season": null
+  }
+}</code></pre>
+<p class="note">注：<code>view</code> 的 <code>rights</code> 多为 0（普通字段不标付费），真正的充电标志在 player 接口（见第三节）。</p>
+
+<h3>② 字幕轨目录：两个平行接口</h3>
+<p>这是设计的核心——同一个字幕目录有两个入口，格式不同：</p>
+<table>
+<thead><tr><th>接口</th><th>格式</th><th>鉴权</th><th>现状</th></tr></thead>
+<tbody>
+<tr>
+  <td><code>/x/player/wbi/v2</code></td>
+  <td>JSON <code>data.subtitle.subtitles[]</code></td>
+  <td>需 Wbi 签名</td>
+  <td>仍可用，<b>同时含 CC + AI 轨</b>（<a class="src" href="https://github.com/the1812/Bilibili-Evolved/discussions/4795">Bilibili-Evolved #4795</a> 确认）<span class="tag">T2</span></td>
+</tr>
+<tr>
+  <td><code>/x/v2/subtitle/web/view</code></td>
+  <td><b>protobuf</b>（octet-stream）</td>
+  <td>需登录（不登录返回空）</td>
+  <td>新版播放器主用；<b>迁移 protobuf 后未登录拿不到字幕目录</b>（<a class="src" href="https://github.com/vruses/beefreely/issues/5">beefreely #5</a>）<span class="tag">T2</span></td>
+</tr>
+</tbody>
+</table>
+
+<p class="note">关键：早期认知「<code>player/wbi/v2</code> 只含 CC、AI 走 subtitle/web/view」<b>不准确</b>。两个接口都含 CC+AI 全量轨道，只是格式（JSON vs protobuf）和鉴权不同。新版播放器优先用 protobuf 接口。</p>
+
+<p><b>subtitle/web/view 的 protobuf 结构</b>（<a class="src" href="https://github.com/HGODLK/BiliOne/blob/main/app/src/main/java/dev/openbili/webdemo/api/BiliSubtitleApi.kt">BiliOne/BiliSubtitleApi.kt</a> 逆向）<span class="tag">T2</span>：</p>
+<pre><code>请求: oid=<cid>&pid=<aid>&context_ext={"video_type":1}&type=1&cur_production_type=0
+     Accept: application/octet-stream
+响应: protobuf 二进制
+  field 1 = VideoSubtitle (顶层)
+  field 3 = repeated track 列表
+    每个 track: f1=id, f2=id_str, f3=language(ai-zh), f4=label,
+                f5=source_url, f7=type, f9=ai_type, f10=ai_status</code></pre>
+
+<p class="note">两个目录接口「谁是主、谁喂谁」的数据流关系未被权威证实（SourceRelay 标 inconclusive）。扩展实践（KenEasy-BiliCC-Exporter）是同时 hook 三个接口从任一个提取字幕列表。<span class="tag">T2/T3</span></p>
+
+<h3>③ 字幕正文：直接 GET CDN</h3>
+<p>正文不走 API，直接 <code>GET subtitle_url</code> 指向的 CDN 文件。CC 明文 JSON；AI 现代明文 JSON（带 <code>auth_key</code>）。
+正文 JSON 结构（<a class="src" href="https://github.com/hc-tec/SourceRelay/blob/main/docs/reconnaissance/bilibili/video-subtitle-recon-v1.0.md">SourceRelay 实测</a>）<span class="tag aside">T3</span>：</p>
+<pre><code>{
+  "lang": "ai-zh", "type": 1, "version": "...",
+  "body": [
+    { "from": 0.0, "to": 2.5, "content": "大家好", "sid": 1, "location": 2, "music": 0.0 },
+    ...
+  ]
+}</code></pre>
+
+<h2>三、付费 / 访问控制（充电专属）</h2>
+<p>访问控制字段都在 <code>/x/player/wbi/v2</code> 响应（<a class="src" href="https://github.com/pskdje/bilibili-API-collect/blob/main/docs/video/player.md">player.md</a>）<span class="tag ok">T1</span>：</p>
+<table>
+<thead><tr><th>字段</th><th>含义</th><th>充电视频实测值</th></tr></thead>
+<tbody>
+<tr><td><code>is_upower_exclusive</code></td><td>是否充电专属视频</td><td><code>true</code></td></tr>
+<tr><td><code>is_ugc_pay_preview</code></td><td>UGC 付费预览</td><td><code>true</code></td></tr>
+<tr><td><code>elec_high_level</code></td><td>充电专属信息（档位/引导）</td><td>见下</td></tr>
+<tr><td><code>elec_high_level.privilege_type</code></td><td>解锁所需最低充电档位码</td><td><code>20</code>（= ¥30 档）</td></tr>
+<tr><td><code>need_login_subtitle</code></td><td>是否必须登录才能看字幕</td><td><code>true</code></td></tr>
+<tr><td><code>subtitle.subtitles</code></td><td>字幕轨列表</td><td><code>[]</code>（未付费/未登录为空）</td></tr>
+</tbody>
+</table>
+
+<pre><code>elec_high_level 实测（privilege_type=20 充电视频，游客视角）:
+{
+  "privilege_type": 20,
+  "title": "该视频为「高档充电」专属视频",
+  "sub_title": "试看中・开通「30元档包月充电」即可观看",
+  "button_text": "去开通",
+  "jump_url": "https://member.bilibili.com/mall/upower-pay?...&default_level=20&levels=20..."
+}</code></pre>
+
+<p><b>充电档位码 → 定价</b>（<a class="src" href="https://github.com/pskdje/bilibili-API-collect/blob/main/docs/electric/monthly.md">electric/monthly.md</a>）<span class="tag ok">T1</span>：
+10=¥6 · <b>20=¥30</b> · 30=¥50 · 40=¥88 · 50=¥128 · 60=¥288 · 70=¥588 · 80=¥998 · 100=¥18 · 110=¥238 · 130=¥68（非专属返回 0）。</p>
+
+<div class="warn-box">
+  <b>关键认知：空字幕 ≠ 无字幕</b><br />
+  <code>subtitle.subtitles</code> 文档备注明确「<b>不登录为 <code>[]</code></b>」。对充电专属视频，<b>服务端访问控制</b>让未付费/未登录用户拿到空字幕列表 + <code>preview_toast</code>（「为创作付费，购买观看完整视频」）。<br />
+  所以「字幕轨为空」是<b>权限不够</b>，不是「该视频没字幕」。已充电用户访问能拿到完整轨道。<br />
+  <b>「充电」≠ 大会员/BVIP</b>：充电是创作者打赏/包月支持体系，单独的付费层。
+</div>
+
+<h2>四、AI 字幕的「加密墙」（核心技术难点）</h2>
+<p>这是第三方采集 AI 字幕的最大障碍，也是最容易误解的地方。<b>两种情况并存</b>：</p>
+
+<h3>情况 A：现代明文 <code>aisubtitle.hdslb.com</code></h3>
+<p>URL 明文，正文明文 JSON，带 <code>auth_key</code> 鉴权参数。<b>第三方能直接 GET</b>（SourceRelay 实测 200 JSON）。
+障碍不在 URL 本身，而在「<b>拿不到 URL</b>」——目录已迁 protobuf（不便 JSON 解析）+ 需登录。<span class="tag aside">T3</span></p>
+
+<h3>情况 B：旧域名 <code>subtitle.bilibili.com</code> 的 XOR 加密 path（含 %00）</h3>
+<p>实测充电视频的 <code>subtitle/web/view</code> protobuf 里正则抠出的 URL <b>全是这种加密形态</b>（<span class="tag aside">T3 实测</span>）：</p>
+<pre><code>https://subtitle.bilibili.com/%01%1B%5C=_%04%12%12%049f%2F%07...?auth_key=1786636221-...
+
+（path 是 XOR 密文，percent-encode 后含 %00-%1f 控制字符）</code></pre>
+<p><b>XOR 解密算法</b>（两个独立逆向库完全一致复现，强佐证）<span class="tag">T2</span>：</p>
+<pre><code>// 来自 vruses/beefreely useCrypt.ts + BiliOne BiliSubtitleApi.kt
+fullKey = keySeed + 'bilibili'               // 硬编码密钥串
+plain   = xorDecrypt(decodeURIComponent(encryptedPath), fullKey)
+// 解密后得到干净的 path: /bfs/ai_subtitle/prod/<id>
+// 拼成明文: https://aisubtitle.hdslb.com<plainPath>?auth_key=...</code></pre>
+<p class="src">来源：<a href="https://github.com/vruses/beefreely/blob/master/src/bilibili/www/video/hooks/useCrypt.ts">beefreely/useCrypt.ts</a> · <a href="https://github.com/HGODLK/BiliOne/blob/main/app/src/main/java/dev/openbili/webdemo/api/BiliSubtitleApi.kt">BiliOne/BiliSubtitleApi.kt</a></p>
+
+<div class="warn-box">
+  <b>为什么第三方 fetch 加密 URL 失败？</b><br />
+  加密 path 含 percent-encoded 控制字节（%00→null 等），按 WHATWG URL 规范 URL 不能含未编码 C0 控制字符/null，
+  浏览器在 fetch 层<b>直接拒绝</b>（实测 Chrome 报 "Failed to fetch"）。<br />
+  <b>播放器能拿到</b>：因为它在 bpx-player JS 内部<b>先 XOR 解密</b>出干净的 <code>aisubtitle.hdslb.com</code> URL 再 fetch——纯客户端、无签名接口、key 是硬编码字符串。<br />
+  <b>采集策略</b>：第三方不自己重建解密，而是<b>拦截播放器已解密的明文请求</b>（hook fetch/XHR）——本项目 subtitle-collector 即用此法。
+</div>
+
+<h2>五、页面架构：统一播放器 + 多入口</h2>
+<p>所有页面类型<b>共用同一个 web 播放器</b>（<code>player.bilibili.com/player.html</code>，即 bpx-player），靠 query 参数区分内容类型，不是不同播放器二进制。
+（<a class="src" href="https://player.bilibili.com/">B 站官方嵌入文档</a>只提供一个 <code>player.html</code>）<span class="tag aside">T1官方</span></p>
+
+<div class="chart">
+<div class="mermaid">
+flowchart LR
+  PLAYER["🎬 bpx-player（统一播放器）<br/>player.bilibili.com/player.html"]
+
+  subgraph Pages["页面入口"]
+    direction TB
+    VIDEO["/video/BVxxx<br/>UGC 标准视频页<br/>BV 在 pathname"]
+    LIST["/list/watchlater · /list/ml{id}<br/>稍后再看 / 收藏夹<br/>聚合列表页，内嵌播放器<br/>bvid 在 ?bvid= query，SPA 切换"]
+    BANGUMI["/bangumi/play/ep{id}<br/>番剧页<br/>seasonId + episodeId"]
+  end
+
+  Pages --> PLAYER
+
+  PLAYER -->|"字幕目录"| P2["/x/player/wbi/v2（统一）"]
+  PLAYER -->|"视频流"| STREAM["UGC: /x/player/playurl<br/>番剧: /pgc/player/web/playurl +DRM"]
+</div>
+</div>
+
+<table>
+<thead><tr><th>页面类型</th><th>URL 结构</th><th>视频 ID 位置</th><th>字幕目录接口</th></tr></thead>
+<tbody>
+<tr><td>UGC 视频</td><td><code>/video/BVxxx</code></td><td>pathname</td><td><code>/x/player/wbi/v2</code></td></tr>
+<tr><td>稍后再看</td><td><code>/list/watchlater?bvid=...</code></td><td><code>?bvid=</code> query</td><td>同上（条目解析为普通视频）</td></tr>
+<tr><td>收藏夹</td><td><code>/list/ml{id}?bvid=...</code></td><td><code>?bvid=</code> query</td><td>同上</td></tr>
+<tr><td>番剧</td><td><code>/bangumi/play/ep{id}</code></td><td><code>ep_id</code></td><td>同上（带 season_id/ep_id）</td></tr>
+</tbody>
+</table>
+
+<div class="warn-box">
+  <b>⚠ 命名陷阱（对齐项目「字幕 vs 弹幕」红线）</b><br />
+  番剧接口里的 <code>subtitle</code> 字段 = <b>剧集副标题</b>（单集标题文字），<b>不是字幕轨</b>。别和字幕轨的 <code>data.subtitle.subtitles[]</code> 混用。<br />
+  番剧与 UGC 的字幕机制差异主要在<b>上游 ID 解析</b>（番剧要先 <code>pgc/view/web/season</code> 把 ep_id → aid/cid）和<b>视频流 DRM</b>，字幕 payload schema 相同。
+</div>
+
+<p><b>列表型页面的 SPA 特性</b>（本项目踩坑点）：<code>/list/watchlater</code>、<code>/list/ml{id}</code> 是<b>单页连续播放</b>——顶部内嵌 bpx-player + 右侧列表，页面内切上/下个视频时 <code>?bvid=</code> query 变化但页面不刷新（history.pushState）。<span class="tag aside">T3 实测</span></p>
+
+<h2>六、几个实测确认的字段（线上存在但无文档）</h2>
+<table>
+<thead><tr><th>字段</th><th>位置</th><th>状态</th><th>含义（推断）</th></tr></thead>
+<tbody>
+<tr>
+  <td><code>asr_language</code></td>
+  <td><code>player/wbi/v2</code> data 顶层</td>
+  <td><span class="tag warn">无文档</span> 仅线上响应实测（SourceRelay）</td>
+  <td>ASR=自动语音识别；推测为「源音频检测出的语言」，决定能生成哪种 AI 字幕</td>
+</tr>
+<tr>
+  <td><code>ocr_language</code></td>
+  <td>同上</td>
+  <td><span class="tag warn">无文档</span></td>
+  <td>OCR=光学字符识别；推测为识别画面硬字幕/屏幕文字的语言</td>
+</tr>
+<tr>
+  <td><code>data.bvid</code></td>
+  <td><code>player/wbi/v2</code> 响应体</td>
+  <td><span class="tag ok">T1+实测</span></td>
+  <td>响应自带 bvid——采集时 collected Map key 不依赖 URL 解析，SPA 切换时天然可靠</td>
+</tr>
+</tbody>
+</table>
+
+<h2>七、所有能拿字幕的形式 · 全景（互联网调研）</h2>
+<p>除前面已详述的 UGC/list/番剧/充电，B 站还有这些形式能（或不能）拿到字幕。
+基于 pskdje/bilibili-API-collect 全目录 + yt-dlp/BBDown 源码 + 第三方工具交叉验证。<span class="tag ok">T1 为主</span></p>
+
+<h3>全景总表</h3>
+<table>
+<thead><tr><th>形式/场景</th><th>字幕</th><th>接口</th><th>关键点</th><th>等级</th></tr></thead>
+<tbody>
+<tr><td>UGC 视频 / list / 番剧 / 充电</td><td><span class="tag ok">✅</span></td><td><code>/x/player/wbi/v2</code>（统一）</td><td>前六章已详述；番剧流走 <code>/pgc/player/web/playurl</code>，字幕仍走 player 接口</td><td>T1</td></tr>
+<tr><td><b>课程/课堂</b>（cheese/pugv）</td><td><span class="tag ok">✅</span></td><td>字幕同 UGC（<code>/x/player/wbi/v2</code>）；流专用 <code>/pugv/player/web/playurl</code></td><td>课程文档里的 <code>subtitle</code> 字段是「课程简介」文案，<b>非 CC 字幕轨</b></td><td>T1</td></tr>
+<tr><td><b>互动视频</b>（is_stein_gate）</td><td><span class="tag ok">✅</span></td><td><code>/x/stein/edgeinfo_v2</code> 取图结构（每节点独立 cid）+ player 接口按 cid</td><td>每个剧情节点 = 独立 cid，各自字幕轨</td><td>T1</td></tr>
+<tr><td><b>多 P 视频</b>（pages）</td><td><span class="tag ok">✅</span></td><td><code>/x/player/wbi/v2</code> 按 <code>pages[].cid</code> 查</td><td>每 P 独立字幕轨，可能「某 P 有某 P 无」</td><td>T1</td></tr>
+<tr><td>专栏（read/cv）嵌入视频</td><td><span class="tag ok">✅</span></td><td>嵌入视频取 cid 后走标准 player 接口</td><td>专栏本身无字幕概念（T2 推断）</td><td>T2</td></tr>
+<tr><td><b>国际版 bstar</b>（bilibili.tv）</td><td><span class="tag ok">✅</span> <b>独立系统</b></td><td><code>api.bilibili.tv/intl/gateway/web/v2/subtitle</code></td><td>多语言翻译字幕（ass/json/srt）；地区限制；与国内 CDN 不互通</td><td>T1</td></tr>
+<tr><td><b>AI 视频总结</b>（conclusion）</td><td><span class="tag warn">需登录</span> <b>第三来源</b></td><td><code>/x/web-interface/view/conclusion/get</code></td><td><b>实测游客返回 -101 需登录</b>；登录后 <code>model_result.subtitle[].part_subtitle[]</code> 带时间轴 AI 字幕（固定翻中文）</td><td>T1+实测</td></tr>
+<tr><td><b>字幕投稿接口（反读）</b></td><td><span class="tag warn">需登录</span></td><td><code>GET /x/v2/dm/subtitle/lan/search/cid</code></td><td><b>实测游客返回 -101 需登录</b>；登录后只能查「有哪些语言」（<code>data.lans[]</code>），拿不到内容/URL</td><td>T1+实测</td></tr>
+<tr><td>直播实时（live）</td><td><span class="tag warn">❌</span></td><td>—</td><td>无官方接口；「直播字幕插件」全是客户端浏览器 ASR（Web Speech API）</td><td>T1</td></tr>
+<tr><td>直播录像/回放</td><td><span class="tag warn">❌</span></td><td><code>ass_url</code> 是<b>弹幕 ASS</b>非字幕</td><td>切片发布成 UGC 后才有字幕</td><td>T1</td></tr>
+<tr><td>音频区（audio/au）</td><td><span class="tag warn">❌</span></td><td>—</td><td>无字幕系统（非播客转写）</td><td>T1</td></tr>
+<tr><td>搜索接口</td><td><span class="tag warn">❌</span></td><td>—</td><td>search 响应无任何字幕字段</td><td>T1</td></tr>
+<tr><td>APP grpc 协议</td><td><span class="tag aside">❓</span></td><td>—</td><td>proto 里的 <code>subtitle</code> 字段<b>全是 UI 文案</b>（副标题/简介），非 CC 字幕轨；未发现 app 独家 CC 字幕</td><td>T1</td></tr>
+</tbody>
+</table>
+
+<h3>① AI 视频总结接口 · 隐藏的第三字幕来源</h3>
+<p>这是本次调研最有价值的新发现。即使原视频 player 接口没字幕，AI 视频总结接口<b>可能</b>提供带时间轴的 AI 字幕，可作<b>兜底字幕源</b>：</p>
+<pre><code>GET https://api.bilibili.com/x/web-interface/view/conclusion/get
+    参数: aid/bvid, cid, up_mid, cloc（WBI 签名）
+响应: data.model_result.subtitle[] → 每条含 part_subtitle[]
+       part_subtitle: { content, start_timestamp, end_timestamp }  // 带时间轴的 AI 字幕
+       另有 outline（大纲）/ summary（纯文本总结）</code></pre>
+<div class="warn-box">
+  <b>⚠ 验收实测（游客态）</b>：此接口<b>返回 code=-101「账号未登录」</b>，必须有登录态 cookie 才能拿到。
+  <span class="tag aside">T3 实测</span> · 作为兜底字幕源可行，但前提是采集端已登录。
+</div>
+<p class="src"><a href="https://github.com/pskdje/bilibili-API-collect/blob/master/docs/video/summary.md">video/summary.md</a> <span class="tag ok">T1</span> · 注意：固定翻成中文，时间轴精度可能不如正字幕。</p>
+
+<h3>② 国际版 bstar · 完全独立的字幕系统</h3>
+<p>bilibili.tv（国际版）有自己的一套字幕 API，和国内完全不互通，主打<b>多语言翻译字幕</b>：</p>
+<pre><code>GET https://api.bilibili.tv/intl/gateway/web/v2/subtitle
+    参数: platform=web, s_locale=en_US, episode_id, aid
+返回: ass / json / srt 三种格式的多语言字幕
+鉴权: cookie；地区限制（受限地区返回 code 10004001）</code></pre>
+<p class="src"><a href="https://github.com/yt-dlp/yt-dlp/blob/master/yt_dlp/extractor/bilibili.py">yt-dlp bilibili.py</a> BiliBiliIE <span class="tag ok">T1</span> · grpc 侧对应 <code>tv/interfaces/dm/v1/dm.proto</code> 的 <code>SubtitleItem</code>（国内 grpc 无此结构）。</p>
+
+<h3>③ 字幕投稿接口族 · 反向只读端点</h3>
+<p>UP 主投稿字幕的接口族 <code>/x/v2/dm/subtitle/*</code>，其中有一个<b>只读</b>端点可查「某 cid 支持哪些字幕语言」（虽拿不到内容，但能<b>预判有无字幕</b>+补全语言码）：</p>
+<pre><code>GET /x/v2/dm/subtitle/lan/search/cid?type=1&oid=<cid>  → data.lans[]（语言列表，无内容/URL）
+POST /x/v2/dm/subtitle/draft/save                        → 投稿写入（需 UP 主 csrf，不可反读）
+POST /x/v2/dm/subtitle/del                               → 删除字幕
+静态: i0.hdslb.com/bfs/subtitle/subtitle_lan.json        → 全量字幕语言码表</code></pre>
+<div class="warn-box">
+  <b>⚠ 验收实测（游客态）</b>：此接口<b>返回 code=-101「账号未登录」</b>，需 member.bilibili.com cookie（登录态）。
+  实际采集价值有限——player/wbi/v2 登录后已能直接返回字幕轨列表，此端点仅作语言预判。
+  <span class="tag aside">T3 实测</span>
+</div>
+<p class="src"><a href="https://github.com/Mist-wu/y2b-rs/blob/main/src/bilibili_api.rs">Mist-wu/y2b-rs</a>（2026-08 实测）<span class="tag ok">T1</span></p>
+
+<h3>④ AI 字幕判定的 URL 路径特征</h3>
+<p>除第六章的 <code>lan</code> 前缀判断法，<code>subtitle_url</code> 的<b>路径</b>也能区分 CC vs AI（bili-sync 等工具用此法）：</p>
+<pre><code>含 /bfs/ai_subtitle/  → AI 字幕
+含 /bfs/subtitle/     → 人工 CC 字幕
+另: player/wbi/v2 的 subtitle_url_v2 字段 = subtitle.bilibili.com + %00 编码混淆（对应第四章 XOR 加密场景）</code></pre>
+<p class="src"><a href="https://github.com/amtoaer/bili-sync/blob/main/crates/bili_sync/src/bilibili/subtitle.rs">bili-sync/subtitle.rs</a> <span class="tag ok">T1</span></p>
+
+<h3>⑤ grpc 协议避坑：subtitle 字段大多是 UI 文案</h3>
+<div class="warn-box">
+  逆向 APP grpc proto 时，<b>别被 <code>subtitle</code> 字段名误导</b>：<br />
+  <code>playershared.proto</code> / <code>viewunite/ugcanymodel.proto</code> / <code>app/view/v1/view.proto</code> 里的 <code>subtitle</code> / <code>share_subtitle</code> / <code>play_way_subtitle</code> 等<b>全是 UI 显示文本</b>（副标题/简介/运营卡片文案），<b>不是 CC 字幕轨</b>。<br />
+  国内 CC 字幕轨<b>只</b>通过 REST <code>/x/player/wbi/v2</code> 提供。grpc 里真正的 SubtitleItem 只存在于 <code>tv/interfaces/dm/v1</code>（对应 bstar，非国内）。
+  <span class="tag ok">T1</span> · <a class="src" href="https://github.com/pskdje/bilibili-API-collect/blob/master/grpc_api/bilibili/playershared/playershared.proto">playershared.proto</a>
+</div>
+
+<h3>⑥ 第三方工具都用同一套接口</h3>
+<p>BBDown / yt-dlp / lux / Bilibili-Evolved <b>全部走 <code>/x/player/wbi/v2</code></b>，没有已知之外的新接口。
+值得注意的是 yt-dlp <b>不用</b> <code>/x/v2/subtitle/web/view</code>（直接拉 <code>subtitle_url</code>），且把弹幕也当一条「字幕轨」（<code>comment.bilibili.com/{cid}.xml</code>）。
+<span class="tag ok">T1</span> · <a class="src" href="https://github.com/yt-dlp/yt-dlp/blob/master/yt_dlp/extractor/bilibili.py">yt-dlp</a> · <a class="src" href="https://github.com/the1812/Bilibili-Evolved/discussions/4795">Bilibili-Evolved#4795</a></p>
+
+<h2>八、采集启示（第三方如何拿字幕）</h2>
+<p>基于以上 B 站设计，第三方采集字幕有几条路径，权衡如下：</p>
+<table>
+<thead><tr><th>路径</th><th>可行性</th><th>限制</th></tr></thead>
+<tbody>
+<tr>
+  <td><b>A. 服务端主动调 API</b>（view → player/wbi/v2 → fetch CDN）</td>
+  <td>CC 字幕可行；普通视频 AI 字幕可行（player/wbi/v2 含 AI 轨）</td>
+  <td>需登录态 cookie；充电视频 <code>need_login_subtitle</code> + 付费墙 → 空轨；旧加密 URL fetch 被拒</td>
+</tr>
+<tr>
+  <td><b>B. 客户端拦截播放器请求</b>（hook fetch/XHR）</td>
+  <td><b>最通用</b>：CC + AI（明文/加密解密后）都能拿到</td>
+  <td>必须打开页面让播放器跑；依赖 inject 注入未被覆盖</td>
+</tr>
+<tr>
+  <td><b>C. 自己 XOR 解密</b></td>
+  <td>理论可行（算法公开）</td>
+  <td>脆弱：B 站改 key/算法即失效；需逆向跟进。不推荐</td>
+</tr>
+</tbody>
+</table>
+<p class="note">本项目 subtitle-collector 采用 <b>A + B 混合</b>：普通视频走 A（background 主动抓）；只有 AI 字幕的充电视频走 B（被动拦截 + 自动点字幕按钮触发播放器解码）。详见 <a class="src" style="color:#79c0ff" href="../apps/subtitle-collector/bili-fetch.js">bili-fetch.js</a>（A 路径 + 加密 URL 过滤）和 <a class="src" style="color:#79c0ff" href="../apps/subtitle-collector/inject.js">inject.js</a>（B 路径拦截）。</p>
+
+<hr style="border:none;border-top:1px solid #21262d;margin:32px 0 16px" />
+<div class="src">
+  <b>主要来源（按权威等级）：</b><br />
+  <b>T1 社区 API 文档</b>（pskdje fork）：<a href="https://github.com/pskdje/bilibili-API-collect/blob/main/docs/video/player.md">player.md</a> · <a href="https://github.com/pskdje/bilibili-API-collect/blob/main/docs/video/info.md">info.md</a> · <a href="https://github.com/pskdje/bilibili-API-collect/blob/main/docs/video/summary.md">summary.md（AI 总结）</a> · <a href="https://github.com/pskdje/bilibili-API-collect/blob/main/docs/video/interact_video.md">interact_video.md</a> · <a href="https://github.com/pskdje/bilibili-API-collect/blob/main/docs/electric/monthly.md">electric/monthly.md</a> · <a href="https://github.com/pskdje/bilibili-API-collect/blob/main/docs/bangumi/info.md">bangumi/info.md</a> · <a href="https://github.com/pskdje/bilibili-API-collect/blob/main/docs/bangumi/videostream_url.md">bangumi/videostream_url.md</a> · <a href="https://github.com/pskdje/bilibili-API-collect/blob/main/docs/cheese/videostream_url.md">cheese（课程）</a> · <a href="https://github.com/pskdje/bilibili-API-collect/blob/main/docs/live/live_replay.md">live_replay（直播录像）</a> · <a href="https://github.com/pskdje/bilibili-API-collect/blob/main/docs/audio/info.md">audio（音频区）</a> · <a href="https://github.com/pskdje/bilibili-API-collect/blob/master/grpc_api/bilibili/playershared/playershared.proto">grpc playershared.proto</a><br />
+  <b>T1 第三方工具源码</b>：<a href="https://github.com/yt-dlp/yt-dlp/blob/master/yt_dlp/extractor/bilibili.py">yt-dlp bilibili.py</a>（UGC/番剧/bstar）· <a href="https://github.com/amtoaer/bili-sync/blob/main/crates/bili_sync/src/bilibili/subtitle.rs">bili-sync/subtitle.rs</a>（AI 判定）· <a href="https://github.com/Mist-wu/y2b-rs/blob/main/src/bilibili_api.rs">y2b-rs（投稿接口实测）</a><br />
+  <b>T2 社区逆向（双重印证）</b>：<a href="https://github.com/HGODLK/BiliOne/blob/main/app/src/main/java/dev/openbili/webdemo/api/BiliSubtitleApi.kt">BiliOne/BiliSubtitleApi.kt</a> · <a href="https://github.com/vruses/beefreely/blob/master/src/bilibili/www/video/hooks/useCrypt.ts">beefreely/useCrypt.ts</a> · <a href="https://github.com/vruses/beefreely/issues/5">beefreely #5</a> · <a href="https://github.com/ngiken/KenEasy-BiliCC-Exporter/blob/main/chrome-extension/content-main.js">KenEasy content-main.js</a><br />
+  <b>T3 观察/勘察</b>：<a href="https://github.com/hc-tec/SourceRelay/blob/main/docs/reconnaissance/bilibili/video-subtitle-recon-v1.0.md">SourceRelay video-subtitle-recon</a> · <a href="https://github.com/the1812/Bilibili-Evolved/discussions/4795">Bilibili-Evolved #4795</a> · <a href="https://www.bilibili.com/read/cv14325585">B站官方 cv14325585</a> · <a href="https://player.bilibili.com/">player.bilibili.com 嵌入文档</a><br />
+  <b>实测</b>：<code>apps/subtitle-collector/scripts/probe-bili-subtitle-system.mjs</code>（游客抓包充电视频 BV1FyVv6TE5o，2026-08-14）
+</div>
+
+<script>
+  mermaid.initialize({ startOnLoad: true, theme: 'dark', securityLevel: 'loose',
+    flowchart: { curve: 'basis', padding: 12 } });
+</script>
+</body>
+</html>

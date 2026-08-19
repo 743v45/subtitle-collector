@@ -3,20 +3,61 @@ import type Database from 'better-sqlite3';
 import { getVideo, getVersionPayload } from '../db/queries.js';
 import { listVideosFiltered, getChanges, type VideoSortKey, type VideoListItemAdvanced, type ChangeFilter } from '../db/advanced.js';
 import { parseVideoFilter, parseBool } from './filter.js';
+import { applyVideoTags, removeVideoTags, isTagSource, getVideoTagsByVideoIds, getVideoTagsForDetail, type TagSource } from '../db/tags.js';
+import { getTagPriority, type TagPrioritySource } from '../db/settings.js';
+
+// 合并 bili（extra.tags）与关系三档，同名按 tag_priority 取优先档（winner）。
+// 列表用（去重）；详情要全档时传 keepAll=true。
+function mergeTagDetails(
+  biliNames: string[],
+  relTags: Array<{ name: string; source: TagSource }>,
+  priority: TagPrioritySource[],
+  keepAll = false,
+): Array<{ name: string; source: TagPrioritySource }> {
+  const all: Array<{ name: string; source: TagPrioritySource }> = [
+    ...biliNames.map((name) => ({ name, source: 'bili' as const })),
+    ...relTags.map((t) => ({ name: t.name, source: t.source })),
+  ];
+  if (keepAll) {
+    return all.sort((a, b) => {
+      const pa = priority.indexOf(a.source); const pb = priority.indexOf(b.source);
+      return pa !== pb ? pa - pb : a.name.localeCompare(b.name);
+    });
+  }
+  const rank = new Map(priority.map((s, i) => [s, i]));
+  const winner = new Map<string, { name: string; source: TagPrioritySource }>();
+  for (const t of all) {
+    const cur = winner.get(t.name);
+    if (!cur || (rank.get(t.source) ?? 99) < (rank.get(cur.source) ?? 99)) winner.set(t.name, t);
+  }
+  return [...winner.values()].sort((a, b) => {
+    const pa = rank.get(a.source) ?? 99; const pb = rank.get(b.source) ?? 99;
+    return pa !== pb ? pa - pb : a.name.localeCompare(b.name);
+  });
+}
 
 function json(res: ServerResponse, status: number, body: unknown): void {
   res.writeHead(status, { 'Content-Type': 'application/json' });
   res.end(JSON.stringify(body));
 }
 
+function readJsonBody(req: IncomingMessage): Promise<unknown> {
+  return new Promise((resolve, reject) => {
+    let raw = '';
+    req.on('data', (c) => { raw += c; });
+    req.on('end', () => { try { resolve(raw ? JSON.parse(raw) : {}); } catch (e) { reject(e); } });
+    req.on('error', reject);
+  });
+}
+
 const SORT_KEYS: readonly VideoSortKey[] = ['first_seen', 'published_at', 'title', 'duration', 'view'];
 
-// 列表项富化：用 json_extract 从 extra 取 tid/tname/tags/view，前端列表直接展示分区/标签/播放量，避免逐条再请求。
-// tags 在 extra 是对象数组 [{tag_id,tag_name}]，这里降维成 tag_name 字符串数组；非合法 JSON → 空数组（不 500）。
+// 列表项富化：用 json_extract 从 extra 取 tid/tname/tags/view，并合并关系档标签按优先级 dedupe。
+// tags（兼容旧字段）= winner 标签名数组；tag_details = [{name, source}]（同名只保留优先级最高档）。
 function enrichItems(
   db: Database.Database,
   items: VideoListItemAdvanced[],
-): Array<VideoListItemAdvanced & { tid: number | null; tname: string | null; tags: string[]; view: number | null }> {
+): Array<VideoListItemAdvanced & { tid: number | null; tname: string | null; tags: string[]; view: number | null; tag_details: Array<{ name: string; source: TagPrioritySource }> }> {
   if (items.length === 0) return [];
   const ids = items.map((i) => i.id);
   const placeholders = ids.map(() => '?').join(',');
@@ -29,26 +70,29 @@ function enrichItems(
        FROM videos WHERE id IN (${placeholders})`,
   ).all(...ids) as Array<{ id: number; tid: number | null; tname: string | null; tags: string | null; view: number | null }>;
   const byId = new Map(rows.map((r) => [r.id, r]));
+  const relTags = getVideoTagsByVideoIds(db, ids);
+  const priority = getTagPriority(db);
   return items.map((it) => {
     const r = byId.get(it.id);
-    let tags: string[] = [];
+    let biliNames: string[] = [];
     if (r?.tags) {
       try {
         const arr = JSON.parse(r.tags) as unknown;
         if (Array.isArray(arr)) {
-          tags = (arr as Array<{ tag_name?: unknown }>)
+          biliNames = (arr as Array<{ tag_name?: unknown }>)
             .map((x) => (x && typeof x.tag_name === 'string' ? x.tag_name : null))
             .filter((t): t is string => t !== null);
         }
       } catch {
-        tags = []; // extra.tags 非合法 JSON → 空数组
+        biliNames = []; // extra.tags 非合法 JSON → 空数组
       }
     }
-    return { ...it, tid: r?.tid ?? null, tname: r?.tname ?? null, tags, view: r?.view ?? null };
+    const tag_details = mergeTagDetails(biliNames, relTags.get(it.id) ?? [], priority);
+    return { ...it, tid: r?.tid ?? null, tname: r?.tname ?? null, tags: tag_details.map((t) => t.name), view: r?.view ?? null, tag_details };
   });
 }
 
-export function handleQueryHttp(req: IncomingMessage, res: ServerResponse, db: Database.Database): void {
+export async function handleQueryHttp(req: IncomingMessage, res: ServerResponse, db: Database.Database): Promise<void> {
   const url = new URL(req.url ?? '/', 'http://localhost');
   const pathname = url.pathname;
 
@@ -86,13 +130,58 @@ export function handleQueryHttp(req: IncomingMessage, res: ServerResponse, db: D
     return;
   }
 
+  // 单视频打标/移除（web 详情页用）。批量打标走 /api/tags/apply。
+  const videoTagsMatch = pathname.match(/^\/api\/videos\/([^/]+)\/([^/]+)\/tags$/);
+  if (videoTagsMatch && (req.method === 'POST' || req.method === 'DELETE')) {
+    const source = videoTagsMatch[1];
+    const sourceVid = decodeURIComponent(videoTagsMatch[2]);
+    // 视频必须已存在（打标挂在已入库视频上）
+    const video = getVideo(db, source, sourceVid);
+    if (!video) { json(res, 404, { ok: false, error: 'video not found' }); return; }
+    if (req.method === 'POST') {
+      const b = await readJsonBody(req) as { names?: unknown; source?: unknown };
+      const names = Array.isArray(b.names) ? b.names.filter((n): n is string => typeof n === 'string' && n.trim().length > 0) : [];
+      if (names.length === 0) { json(res, 400, { ok: false, error: 'names:string[] required' }); return; }
+      if (b.source === 'bili') { json(res, 400, { ok: false, error: 'bili tags are read-only (from video extra)' }); return; }
+      if (!isTagSource(b.source)) { json(res, 400, { ok: false, error: 'source must be manual|batch|ai' }); return; }
+      const r = applyVideoTags(db, [{ source, source_vid: sourceVid }], names, b.source);
+      json(res, 200, { ok: true, inserted: r.inserted, missing: r.missing });
+      return;
+    }
+    // DELETE：name 必填，source 可选（省略删全档）——query 参数（规避 DELETE body 兼容坑）
+    {
+      const name = url.searchParams.get('name');
+      if (!name) { json(res, 400, { ok: false, error: 'name query param required' }); return; }
+      const sourceParam = url.searchParams.get('source');
+      if (sourceParam === 'bili') { json(res, 400, { ok: false, error: 'bili tags are read-only' }); return; }
+      if (sourceParam != null && !isTagSource(sourceParam)) { json(res, 400, { ok: false, error: 'source must be manual|batch|ai' }); return; }
+      const r = removeVideoTags(db, [{ source, source_vid: sourceVid }], [name], sourceParam ?? undefined);
+      json(res, 200, { ok: true, removed: r.removed, missing: r.missing });
+      return;
+    }
+  }
+
   const detailMatch = pathname.match(/^\/api\/videos\/([^/]+)\/([^/]+)$/);
   if (detailMatch) {
     const source = detailMatch[1];
     const sourceVid = decodeURIComponent(detailMatch[2]);
     const detail = getVideo(db, source, sourceVid);
     if (!detail) { json(res, 404, { ok: false, error: 'not found' }); return; }
-    json(res, 200, { ok: true, ...detail });
+    // 全档 tag_details（不去重，详情页四色全展示）：bili（extra.tags）+ 关系三档
+    // 注意 getVideo 返回的 extra 是 TEXT（JSON 字符串），需 parse 后再取 tags
+    let biliNames: string[] = [];
+    try {
+      const extraObj = typeof detail.video.extra === 'string' ? JSON.parse(detail.video.extra) : detail.video.extra;
+      const arr = (extraObj as { tags?: unknown } | null)?.tags;
+      if (Array.isArray(arr)) {
+        biliNames = (arr as Array<{ tag_name?: unknown }>)
+          .map((x) => (x && typeof x.tag_name === 'string' ? x.tag_name : null))
+          .filter((t): t is string => t !== null);
+      }
+    } catch { /* extra 非合法 JSON → 无 bili 标签 */ }
+    const relTags = getVideoTagsForDetail(db, detail.video.id as number);
+    const priority = getTagPriority(db);
+    json(res, 200, { ok: true, ...detail, tag_details: mergeTagDetails(biliNames, relTags, priority, true) });
     return;
   }
 

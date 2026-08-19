@@ -6,38 +6,47 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { useToast } from '@/components/ui/toast';
 import { useAsync } from '@/lib/useAsync';
+import { useQueryUpdater, useRoute } from '../router';
 import { listCategories, listCreators, setCreatorCategory, type Category, type CreatorListItem } from '@/api';
 
 const PAGE_SIZE = 20;
 type CreatorSort = 'first_seen' | 'fans' | 'video_count';
+const SORTS: readonly CreatorSort[] = ['first_seen', 'fans', 'video_count'];
 
 export function CreatorsPage({ onOpen }: { onOpen: (id: number) => void }) {
   const toast = useToast();
-  const [q, setQ] = useState('');
-  const [debouncedQ, setDebouncedQ] = useState('');
-  const [scope, setScope] = useState<'agent' | 'human'>('human');
-  const [catFilter, setCatFilter] = useState<string>('');
-  const [sort, setSort] = useState<CreatorSort>('first_seen');
-  const [page, setPage] = useState(1);
+  // 筛选/页码进 URL（#/creators?q=…&sort=fans&page=2），刷新/后退还原；q 输入本地防抖后写 URL
+  const route = useRoute();
+  const updateQuery = useQueryUpdater();
+  const setFilter = (patch: Record<string, string | null | undefined>) => updateQuery(patch, { resetPage: true });
+  const q = route.query.get('q') ?? '';
+  const catFilter = route.query.get('cat') ?? '';
+  const scope = (route.query.get('scope') === 'agent' ? 'agent' : 'human') as 'agent' | 'human';
+  const sortRaw = route.query.get('sort');
+  const sort: CreatorSort = (SORTS as readonly string[]).includes(sortRaw ?? '') ? (sortRaw as CreatorSort) : 'first_seen';
+  const pageRaw = Number(route.query.get('page'));
+  const page = Number.isInteger(pageRaw) && pageRaw > 1 ? pageRaw : 1;
   const [busyUid, setBusyUid] = useState<string | null>(null);
 
-  // 搜索防抖（300ms），避免每次按键都打后端。
+  // 搜索防抖（300ms）：本地回显,停止输入后写 URL
+  const [qInput, setQInput] = useState(q);
+  useEffect(() => { setQInput(q); }, [q]);
   useEffect(() => {
-    const t = setTimeout(() => setDebouncedQ(q), 300);
+    const t = setTimeout(() => { if (qInput !== q) setFilter({ q: qInput || null }); }, 300);
     return () => clearTimeout(t);
-  }, [q]);
+  }, [qInput]);
 
   // 列表：useAsync 驱动，error 显式落到 UI（不再 .catch 静默吞）。
   const { data: listResult, loading, error, reload } = useAsync(
     () => listCreators({
-      q: debouncedQ || undefined,
+      q: q || undefined,
       category: catFilter || undefined,
       scope: catFilter ? scope : undefined,
       sort,
       page,
       size: PAGE_SIZE,
     }),
-    [debouncedQ, catFilter, scope, sort, page],
+    [q, catFilter, scope, sort, page],
   );
   const items = listResult?.items ?? [];
   const total = listResult?.total ?? 0;
@@ -48,11 +57,10 @@ export function CreatorsPage({ onOpen }: { onOpen: (id: number) => void }) {
   const { data: agentCats } = useAsync<Category[]>(() => listCategories('agent'), []);
   const { data: humanCats } = useAsync<Category[]>(() => listCategories('human'), []);
 
+  // 切 scope：旧分类名对新 scope 无意义，一并清掉
   function switchScope(s: 'agent' | 'human') {
     if (s === scope) return;
-    setScope(s);
-    setCatFilter('');   // 切 scope 后旧分类名对新 scope 无意义，清空。
-    setPage(1);
+    updateQuery({ scope: s === 'human' ? null : s, cat: null }, { resetPage: true });
   }
 
   async function changeCategory(c: CreatorListItem, catScope: 'agent' | 'human', name: string) {
@@ -71,15 +79,15 @@ export function CreatorsPage({ onOpen }: { onOpen: (id: number) => void }) {
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
-        <h2 className="text-lg font-semibold">UP 主管理</h2>
+        <h2 className="text-lg font-semibold">创作者管理</h2>
         <span className="text-sm text-muted-foreground">共 {total} 条</span>
       </div>
 
       <div className="flex flex-wrap items-center gap-2">
         <Input
-          placeholder="搜索 UP 主名/mid"
-          value={q}
-          onChange={(e) => { setQ(e.target.value); setPage(1); }}
+          placeholder="搜索 创作者名/ID"
+          value={qInput}
+          onChange={(e) => setQInput(e.target.value)}
           className="max-w-xs"
         />
         <div className="flex gap-1">
@@ -96,7 +104,7 @@ export function CreatorsPage({ onOpen }: { onOpen: (id: number) => void }) {
         </div>
         <Select
           value={catFilter || undefined}
-          onValueChange={(v) => { setCatFilter(v); setPage(1); }}
+          onValueChange={(v) => setFilter({ cat: v || null })}
         >
           <SelectTrigger className="w-48">
             <SelectValue placeholder={`按${scope === 'agent' ? 'Agent' : '人工'}分类筛选`} />
@@ -109,7 +117,7 @@ export function CreatorsPage({ onOpen }: { onOpen: (id: number) => void }) {
         </Select>
         <Select
           value={sort}
-          onValueChange={(v) => { setSort(v as CreatorSort); setPage(1); }}
+          onValueChange={(v) => setFilter({ sort: v === 'first_seen' ? null : v })}
         >
           <SelectTrigger className="w-32">
             <SelectValue />
@@ -126,7 +134,7 @@ export function CreatorsPage({ onOpen }: { onOpen: (id: number) => void }) {
         <TableHeader>
           <TableRow>
             <TableHead>名称</TableHead>
-            <TableHead>mid</TableHead>
+            <TableHead>ID</TableHead>
             <TableHead>Agent 分类</TableHead>
             <TableHead>人工分类</TableHead>
             <TableHead className="text-right">粉丝</TableHead>
@@ -205,8 +213,8 @@ export function CreatorsPage({ onOpen }: { onOpen: (id: number) => void }) {
       <div className="flex items-center justify-between rounded-md border bg-muted/40 px-4 py-2 text-sm text-muted-foreground">
         <div>第 {page}/{totalPages} 页</div>
         <div className="flex gap-2">
-          <Button variant="outline" size="sm" disabled={page <= 1} onClick={() => setPage((p) => Math.max(1, p - 1))}>上一页</Button>
-          <Button variant="outline" size="sm" disabled={page >= totalPages || total === 0} onClick={() => setPage((p) => p + 1)}>下一页</Button>
+          <Button variant="outline" size="sm" disabled={page <= 1} onClick={() => updateQuery({ page: page - 1 > 1 ? String(page - 1) : null })}>上一页</Button>
+          <Button variant="outline" size="sm" disabled={page >= totalPages || total === 0} onClick={() => updateQuery({ page: String(page + 1) })}>下一页</Button>
         </div>
       </div>
     </div>

@@ -22,3 +22,18 @@ export function resolveConnectionMode(v) {
 export function isStandalone(mode) {
   return resolveConnectionMode(mode) === MODE_STANDALONE;
 }
+
+/**
+ * 把连接状态归约为 UI 展示决策。
+ * loading 优先返回 'loading'——避免首帧用默认值（mode='server'、connected=false）渲染
+ * toggle 与状态点、真实值异步到达后翻转闪烁（useConnectionStatus 首帧 loading=true）。
+ * @param {{loading?:boolean, mode?:string, connected?:boolean, error?:string|null}} conn
+ * @returns {{phase:'loading'} | {phase:'standalone'} | {phase:'server', connected:boolean, error:string|null}}
+ */
+export function resolveConnDisplay(conn) {
+  if (conn?.loading) return { phase: 'loading' };
+  if (isStandalone(conn?.mode)) return { phase: 'standalone' };
+  const connected = !!conn?.connected;
+  // server：已连接 → error 强制 null（连上了旧错误无意义）；未连接 → 透传 error（hello-nack bad token / 不可达等）
+  return { phase: MODE_SERVER, connected, error: connected ? null : (conn?.error ?? null) };
+}

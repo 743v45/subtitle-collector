@@ -1,4 +1,9 @@
+import type { TagSource } from './lib/tagSources';
+
 // ── 视频元数据（extra 是服务端 JSON 字符串，由 api.ts 在入口处 JSON.parse 成对象）──
+export type { TagSource };
+// 标签明细：name + 四档来源（列表按优先级 winner 去重；详情全档不去重）
+export interface TagDetail { name: string; source: TagSource; }
 export interface VideoTag { tag_id?: number; tag_name: string; }
 export interface VideoStat {
   view?: number; danmaku?: number; reply?: number; favorite?: number;
@@ -23,6 +28,7 @@ export interface VideoListItem {
   duration: number | null; published_at?: number | null;
   track_count: number; first_seen_at: number;
   tid?: number | null; tname?: string | null; tags?: string[];
+  tag_details?: TagDetail[];
   view?: number | null;
 }
 export interface VideoInfo {
@@ -42,7 +48,7 @@ export interface TrackInfo {
   id: number; lan: string | null; lan_doc: string | null; track_type: number | null;
   is_default?: boolean; versions: VersionInfo[];
 }
-export interface VideoDetail { video: VideoInfo; tracks: TrackInfo[]; }
+export interface VideoDetail { video: VideoInfo; tracks: TrackInfo[]; tag_details?: TagDetail[]; }
 
 // change_log（最近采集/变更流水，对应 server getChanges）
 export interface ChangeRow {
@@ -62,12 +68,42 @@ export interface ClientInfo {
   connected: true;
 }
 
+// ── 采集任务（手机/网页提交 → server 派发扩展执行）──
+export type CollectTaskStatus = 'pending' | 'dispatched' | 'succeeded' | 'failed';
+export interface CollectTask {
+  id: number;
+  source: 'bilibili' | 'youtube';
+  source_vid: string;
+  url: string;
+  status: CollectTaskStatus;
+  client_id: string | null;
+  error: string | null;
+  result: string | null; // JSON 字符串（扩展回执 data：captured/tracks/reason…）
+  title: string | null;  // 库内视频标题（server LEFT JOIN videos；任务卡直接展示,未入库 null）
+  created_at: number;
+  finished_at: number | null;
+}
+
+// ── UP 全部视频条目（/api/upper-videos/expand；arc/search 原样字段 + server 已采标注）──
+export interface UpperVideoItem {
+  bvid: string;
+  title: string;
+  created: number | null; // unix 秒
+  play: number | null;
+  length: string | null;  // "MM:SS" / "HH:MM:SS"
+  pic: string | null;     // 封面 URL（server 已归一 https:）
+  collected: boolean;
+}
+
 // ── 视频多维筛选（对应 server advanced.ts VideoFilter + ListFilter）──
 export interface VideoFilter {
   q?: string;
+  source?: string; // 平台过滤（bilibili/youtube）
   tid?: number;
   tname?: string;
   tag?: string;
+  tags?: string[];       // 精确标签过滤（AND，逗号 join 传 server）
+  tag_source?: string[]; // 标签档位过滤（manual/batch/bili/ai，逗号 join 传 server）
   subtitle_q?: string; // 字幕正文关键词
   lang?: string;
   has_subtitle?: boolean;
@@ -89,10 +125,11 @@ export interface VideoFilter {
 export interface StatsOverview {
   videos: number; tracks: number; versions: number; creators: number;
   languages: number; categories: number;
+  today_videos: number; // 当日本地 00:00 起入库视频数（采集页摘要行）
   first_seen_min: number | null; first_seen_max: number | null;
 }
 export interface KeyValue { key: string; count: number; }
-export type StatsGroupBy = 'creator' | 'tname' | 'lang' | 'track-type';
+export type StatsGroupBy = 'creator' | 'tname' | 'lang' | 'track-type' | 'tag';
 
 // ── UP 主详情（对应 server getCreator / getCreatorBySourceUid）──
 export interface CreatorDetail {

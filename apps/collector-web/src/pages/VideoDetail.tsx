@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { getVideo, getVersion } from '../api';
+import { getVideo, getVersion, videoApplyTags, videoRemoveTags } from '../api';
 import { useAsync } from '@/lib/useAsync';
 import { TrackSwitcher } from '@/components/TrackSwitcher';
 import { VersionSwitcher } from '@/components/VersionSwitcher';
@@ -7,8 +7,15 @@ import { SubtitleView, type SubtitleLine } from '@/components/SubtitleView';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
+import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
+import { useToast } from '@/components/ui/toast';
+import { TAG_SOURCE_CLASS, TAG_SOURCE_LABEL, type TagSource } from '@/lib/tagSources';
 import type { VideoStat } from '../types';
+
+function errMsg(e: unknown): string {
+  return e instanceof Error ? e.message : String(e);
+}
 
 function fmtDuration(sec: number | null | undefined): string | null {
   if (sec == null) return null;
@@ -31,6 +38,7 @@ function copyrightLabel(c: number | undefined): string | null {
 }
 
 export function VideoDetail({ source, sourceVid, onBack }: { source: string; sourceVid: string; onBack: () => void }) {
+  const toast = useToast();
   const detailQ = useAsync(() => getVideo(source, sourceVid), [source, sourceVid]);
   const [selectedTrack, setSelectedTrack] = useState<number | null>(null);
   const [selectedVersion, setSelectedVersion] = useState<number | null>(null);
@@ -40,9 +48,16 @@ export function VideoDetail({ source, sourceVid, onBack }: { source: string; sou
     [selectedVersion],
   );
 
-  // 详情就绪后选中默认轨 + 默认版本
+  // 打标表单：新标签名（逗号分隔多个）；removingTag 标记正在移除的 `source:name`
+  const [newTagNames, setNewTagNames] = useState('');
+  const [adding, setAdding] = useState(false);
+  const [removingTag, setRemovingTag] = useState<string | null>(null);
+
+  // 详情就绪后选中默认轨 + 默认版本；已有选择且仍有效时保持（打标后 reload 不重置用户选择）
   useEffect(() => {
     if (!detailQ.data) return;
+    const trackIds = detailQ.data.tracks.map((t) => t.id);
+    if (selectedTrack != null && trackIds.includes(selectedTrack)) return;
     const def = detailQ.data.tracks.find((t) => t.is_default) ?? detailQ.data.tracks[0];
     if (def) {
       setSelectedTrack(def.id);
@@ -50,6 +65,37 @@ export function VideoDetail({ source, sourceVid, onBack }: { source: string; sou
       setSelectedVersion(dv?.id ?? null);
     }
   }, [detailQ.data]);
+
+  // 添加标签（手动档，逗号分隔多个）
+  async function onAddTags() {
+    const names = newTagNames.split(/[,，]/).map((s) => s.trim()).filter(Boolean);
+    if (names.length === 0) return;
+    setAdding(true);
+    try {
+      await videoApplyTags(source, sourceVid, names, 'manual');
+      toast('已添加标签', 'success');
+      setNewTagNames('');
+      detailQ.reload();
+    } catch (e: unknown) {
+      toast(`添加标签失败：${errMsg(e)}`, 'error');
+    } finally {
+      setAdding(false);
+    }
+  }
+
+  // 移除单个标签（按对应档位；bili 档视频自带、不可移除）
+  async function onRemoveTag(name: string, tagSource: TagSource) {
+    setRemovingTag(`${tagSource}:${name}`);
+    try {
+      await videoRemoveTags(source, sourceVid, name, tagSource);
+      toast('已移除标签', 'success');
+      detailQ.reload();
+    } catch (e: unknown) {
+      toast(`移除标签失败：${errMsg(e)}`, 'error');
+    } finally {
+      setRemovingTag(null);
+    }
+  }
 
   if (detailQ.loading) {
     return (
@@ -82,7 +128,7 @@ export function VideoDetail({ source, sourceVid, onBack }: { source: string; sou
   const duration = fmtDuration(v.duration);
   const e = v.extra;
   const stat: VideoStat | undefined = e?.stat;
-  const tags = e?.tags ?? [];
+  const tagDetails = detailQ.data.tag_details ?? [];
   const published = fmtTime(v.published_at);
 
   return (
@@ -97,21 +143,60 @@ export function VideoDetail({ source, sourceVid, onBack }: { source: string; sou
           <Field label="时长" value={duration ?? '-'} />
           <Field label="来源ID" value={sourceVid} mono />
           <Field label="发布时间" value={published ?? '-'} />
-          <Field label="分区" value={e?.tname ?? '-'} />
-          <Field label="版权" value={copyrightLabel(e?.copyright) ?? '-'} />
-          <Field label="P 数" value={e?.pages?.length != null ? String(e.pages.length) : '-'} />
+          {source === 'bilibili' && <Field label="分区" value={e?.tname ?? '-'} />}
+          {source === 'bilibili' && <Field label="版权" value={copyrightLabel(e?.copyright) ?? '-'} />}
+          {source === 'bilibili' && <Field label="P 数" value={e?.pages?.length != null ? String(e.pages.length) : '-'} />}
           <Field label="状态" value={v.status ?? '-'} />
         </CardContent>
       </Card>
 
-      {/* 标签 */}
-      {tags.length > 0 && (
-        <Card>
-          <CardContent className="flex flex-wrap gap-1.5 p-4">
-            {tags.map((t, i) => <Badge key={i} variant="secondary">{t.tag_name}</Badge>)}
-          </CardContent>
-        </Card>
-      )}
+      {/* 标签（四档带色全展示不去重；manual/batch/ai 可增删，bili 为视频自带只读） */}
+      <Card>
+        <CardContent className="space-y-2 p-4">
+          <div className="flex flex-wrap items-center gap-1.5">
+            {tagDetails.length === 0 && (
+              <span className="text-sm text-muted-foreground">暂无标签</span>
+            )}
+            {tagDetails.map((t, i) => {
+              const busy = removingTag === `${t.source}:${t.name}`;
+              return (
+                <Badge
+                  key={`${t.source}:${t.name}:${i}`}
+                  variant="outline"
+                  title={`${TAG_SOURCE_LABEL[t.source]}标签`}
+                  className={TAG_SOURCE_CLASS[t.source]}
+                >
+                  {t.name}
+                  {t.source !== 'bili' && (
+                    <button
+                      type="button"
+                      aria-label={`移除标签 ${t.name}`}
+                      className="ml-1 leading-none opacity-60 hover:opacity-100"
+                      disabled={busy || adding}
+                      onClick={() => onRemoveTag(t.name, t.source)}
+                    >
+                      {busy ? '…' : '×'}
+                    </button>
+                  )}
+                </Badge>
+              );
+            })}
+          </div>
+          <div className="flex gap-2">
+            <Input
+              className="max-w-xs"
+              placeholder="新标签名，多个用逗号分隔（记为手动档）"
+              value={newTagNames}
+              onChange={(ev) => setNewTagNames(ev.target.value)}
+              onKeyDown={(ev) => { if (ev.key === 'Enter') onAddTags(); }}
+              disabled={adding}
+            />
+            <Button size="sm" onClick={onAddTags} disabled={adding || !newTagNames.trim()}>
+              {adding ? '添加中…' : '添加'}
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
 
       {/* 统计 */}
       {stat && (
@@ -119,11 +204,11 @@ export function VideoDetail({ source, sourceVid, onBack }: { source: string; sou
           <CardContent className="grid grid-cols-3 gap-2 p-4 text-sm sm:grid-cols-4 md:grid-cols-7">
             <Stat label="播放" value={fmtNum(stat.view)} />
             <Stat label="点赞" value={fmtNum(stat.like)} />
-            <Stat label="投币" value={fmtNum(stat.coin)} />
-            <Stat label="收藏" value={fmtNum(stat.favorite)} />
-            <Stat label="转发" value={fmtNum(stat.share)} />
-            <Stat label="弹幕" value={fmtNum(stat.danmaku)} />
-            <Stat label="回复" value={fmtNum(stat.reply)} />
+            {source === 'bilibili' && <Stat label="投币" value={fmtNum(stat.coin)} />}
+            {source === 'bilibili' && <Stat label="收藏" value={fmtNum(stat.favorite)} />}
+            {source === 'bilibili' && <Stat label="转发" value={fmtNum(stat.share)} />}
+            {source === 'bilibili' && <Stat label="弹幕" value={fmtNum(stat.danmaku)} />}
+            {source === 'bilibili' && <Stat label="回复" value={fmtNum(stat.reply)} />}
           </CardContent>
         </Card>
       )}

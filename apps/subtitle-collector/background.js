@@ -1,4 +1,4 @@
-import { SERVER_URL, PING_URL, TOKEN } from "./config.js";
+import { parseServerUrl, resolveActiveServer, normalizeServers, genServerId, SERVERS_KEY, ACTIVE_SERVER_KEY, DEFAULT_SERVER_URL, DEFAULT_SERVER_NAME } from "./servers.mjs";
 import { shouldReport, genClientId, CLIENT_ID_KEY, REPORTING_KEY } from "./reporting.mjs";
 import { resolveConnectionMode, isStandalone, CONNECTION_MODE_KEY, MODE_SERVER, MODE_STANDALONE } from "./connection-mode.mjs";
 import { extractKeysFromNav } from "./wbi.js";
@@ -11,8 +11,15 @@ let reconnectAttempts = 0;
 let reportingEnabled = true; // 内存态；启动从 storage 载入，默认 true（fail-open）
 let clientId = null;         // 内存态；启动载入或首次生成
 let connectionMode = MODE_SERVER; // 内存态；启动载入，默认 server（向后兼容）。standalone=纯扩展：不连不上报
-const RECONNECT_BASE_MS = 2000;
-const RECONNECT_MAX_MS = 10000;
+let activeServer = null;          // 内存态；当前激活 server 的解析结果（{wsUrl,httpBase,pingUrl,token}）。启动载入 / SET_ACTIVE_SERVER 切换
+let activeServerId = null;        // 内存态；当前激活 server entry.id（WS_STATUS 回执、popup 乐观更新用）
+let lastError = null;             // 内存态；最近连接失败原因（hello-nack error / 不可达 / 连接错误），WS_STATUS 透传给 UI
+let authenticated = false;        // 内存态；hello-ack 后 true（鉴权通过才算"已连接"，防 WS OPEN 但未握手时误显已连接 → 跳变）
+let authFailed = false;           // 内存态；hello-nack 后 true（永久错误，onclose 不自动重连，等手动重连/切 server）
+// 重连间隔/开关：loadReconnectConfig 从 storage 覆盖（reconnect_base_ms/reconnect_max_ms/auto_reconnect）
+let reconnectBaseMs = 2000;
+let reconnectMaxMs = 10000;
+let autoReconnect = true;
 
 // Wbi img_key/sub_key 缓存（全站每日更替，进程内缓存，按需 refresh）
 let wbiKeys = null;
@@ -63,6 +70,70 @@ async function ensureUpperVideos(mid) {
   await chrome.storage.local.set({ [`upperVideos:${mid}`]: { items, fetchedAt: Date.now() }, [key]: Date.now() });
 }
 
+// ── UP 全部视频：全量分页拉取（popup 空间页/视频页触发，2026-08-19）──
+// storage 是唯一数据真相：每页增量写 chrome.storage.local[`upperAllVideos:${mid}`]，popup 用
+// storage.onChanged 渲染进度；SW 意外回收不丢已拉页（重开 popup 重触发续拉——从头拉，B 站侧幂等）。
+// 风控中断保留已拉页 + error 标记（部分结果仍可勾选批量采集）。
+const upperAllInflight = new Set(); // 正在全量拉取的 mid（重复触发复用同一任务）
+const UPPER_ALL_TTL_MS = 3600 * 1000;
+const UPPER_ALL_PAGE_GAP_MS = 500; // 页间节流防风控（-412）
+const UPPER_ALL_PS = 30;           // arc/search 单页条数
+
+async function fetchAllUpperVideos(mid, refresh = false) {
+  const key = `upperAllVideos:${mid}`;
+  if (!refresh) {
+    const { [key]: cached } = await chrome.storage.local.get(key);
+    // 缓存命中：完成 + 无错 + 1h 内（refresh=true 强制重拉，供 popup ↻ 按钮清旧缓存）
+    if (cached?.fetchedAt && cached.done && !cached.error && Date.now() - cached.fetchedAt < UPPER_ALL_TTL_MS) {
+      return { status: 'cached' };
+    }
+  }
+  if (upperAllInflight.has(mid)) return { status: 'inflight' };
+  upperAllInflight.add(mid);
+  let items = [];
+  const seen = new Set(); // bvid 去重：页间新投稿使分页位移重叠时防重复（重复 key 会打乱 popup 列表渲染）
+  let total = 0;
+  let error = null;
+  let noNewStreak = 0; // 连续整页无新视频页数（≥3 判定分页停滞，终止保部分结果）
+  try {
+    for (let pn = 1; ; pn++) {
+      await ensureWbiKeys();
+      const parsed = await biliFetch('/x/space/wbi/arc/search', {
+        wbi: true, params: { mid, pn, ps: UPPER_ALL_PS, order: 'pubdate' }, wbiKeys,
+      });
+      if (!parsed.ok) {
+        error = 'arc/search ' + parsed.code + (items.length ? `（已拉 ${items.length}/${total}，中断）` : '');
+        break;
+      }
+      const vlist = parsed.data?.list?.vlist ?? [];
+      total = parsed.data?.page?.count ?? items.length + vlist.length;
+      let added = 0;
+      for (const v of vlist) {
+        if (!v?.bvid || seen.has(v.bvid)) continue;
+        seen.add(v.bvid);
+        added++;
+        items.push({
+          bvid: v.bvid, title: v.title, created: v.created ?? null,
+          play: v.play ?? null, length: v.length ?? null,
+          // 封面预览：pic 常为 "//i2.hdslb.com/..." 协议头相对形式，归一 https:
+          pic: typeof v.pic === 'string' ? (v.pic.startsWith('//') ? 'https:' + v.pic : v.pic) : null,
+        });
+      }
+      // 每页落盘：popup 实时进度 + SW 回收兜底
+      await chrome.storage.local.set({ [key]: { items, total, done: false, error: null, fetchedAt: Date.now() } });
+      if (vlist.length === 0 || items.length >= total) break;
+      noNewStreak = added > 0 ? 0 : noNewStreak + 1;
+      if (noNewStreak >= 3) break;
+      await new Promise((r) => setTimeout(r, UPPER_ALL_PAGE_GAP_MS));
+    }
+  } catch (e) {
+    error = String(e?.message ?? e);
+  }
+  await chrome.storage.local.set({ [key]: { items, total, done: true, error, fetchedAt: Date.now() } });
+  upperAllInflight.delete(mid);
+  return { status: 'done', error };
+}
+
 // MV3 SW 保活兜底：周期 alarm 唤醒 SW，若 ws 未 OPEN 则触发重连（C1）
 chrome.alarms.create("keepalive", { periodInMinutes: 0.4 });
 chrome.alarms.onAlarm.addListener((a) => {
@@ -72,7 +143,7 @@ chrome.alarms.onAlarm.addListener((a) => {
 
 // 启动载入持久态：clientId（无则生成并回写）、reportingEnabled（默认 true）、connectionMode（默认 server）
 async function loadPersistedState() {
-  const items = await chrome.storage.local.get([CLIENT_ID_KEY, REPORTING_KEY, CONNECTION_MODE_KEY]);
+  const items = await chrome.storage.local.get([CLIENT_ID_KEY, REPORTING_KEY, CONNECTION_MODE_KEY, SERVERS_KEY, ACTIVE_SERVER_KEY]);
   if (items[CLIENT_ID_KEY]) {
     clientId = items[CLIENT_ID_KEY];
   } else {
@@ -81,6 +152,18 @@ async function loadPersistedState() {
   }
   reportingEnabled = shouldReport(items[REPORTING_KEY]); // undefined → true
   connectionMode = resolveConnectionMode(items[CONNECTION_MODE_KEY]); // undefined → server
+  // servers：旧版/首装无 → 初始化内置「本地 collector」（DEFAULT_SERVER_URL，行为同旧版连 127.0.0.1:21527）
+  let servers = normalizeServers(items[SERVERS_KEY]);
+  let activeId = typeof items[ACTIVE_SERVER_KEY] === 'string' ? items[ACTIVE_SERVER_KEY] : null;
+  if (servers.length === 0) {
+    const def = { id: genServerId(), name: DEFAULT_SERVER_NAME, url: DEFAULT_SERVER_URL };
+    servers = [def];
+    activeId = def.id;
+    await chrome.storage.local.set({ [SERVERS_KEY]: servers, [ACTIVE_SERVER_KEY]: activeId });
+  }
+  const entry = resolveActiveServer(servers, activeId);
+  activeServerId = entry?.id ?? null;
+  activeServer = entry ? parseServerUrl(entry.url) : null;
 }
 
 // 统一更新开关：内存 + storage
@@ -98,8 +181,10 @@ async function applyConnectionMode(mode) {
 }
 
 async function probeServer() {
+  const pingUrl = activeServer?.pingUrl;
+  if (!pingUrl) return false; // 无 server 配置（connect 已守卫 activeServer.wsUrl），双保险
   try {
-    const res = await fetch(PING_URL, { signal: AbortSignal.timeout(800) });
+    const res = await fetch(pingUrl, { signal: AbortSignal.timeout(800) });
     return res.ok;
   } catch { return false; }
 }
@@ -107,22 +192,30 @@ async function probeServer() {
 function scheduleReconnect() {
   // 纯扩展模式：用户主动断开，不重连（覆盖 onclose→scheduleReconnect 路径）
   if (isStandalone(connectionMode)) return;
+  if (!autoReconnect) { console.log('[background] 自动重连已关（auto_reconnect=false），等手动重连'); return; }
   reconnectAttempts++;
-  const delay = Math.min(RECONNECT_BASE_MS * Math.pow(2, reconnectAttempts - 1), RECONNECT_MAX_MS);
+  const delay = Math.min(reconnectBaseMs * Math.pow(2, reconnectAttempts - 1), reconnectMaxMs);
   setTimeout(connect, delay);
 }
 
 async function connect() {
   if (isStandalone(connectionMode)) return; // 纯扩展模式：不连 server
+  if (!activeServer?.wsUrl) return;          // 无 server 配置：不连（SET_ACTIVE_SERVER 切到空列表时停连）
   if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) return;
-  if (!(await probeServer())) { scheduleReconnect(); return; }
+  if (!(await probeServer())) { lastError = "server 不可达（ping 失败）"; scheduleReconnect(); return; }
+  authenticated = false; // 新连接：未握手
+  authFailed = false;
   try {
-    ws = new WebSocket(SERVER_URL);
+    ws = new WebSocket(activeServer.wsUrl);
   } catch { scheduleReconnect(); return; }
   ws.onopen = () => {
     reconnectAttempts = 0;
-    ws.send(JSON.stringify({ type: "hello", ext_version: EXT_VERSION, token: TOKEN, client_id: clientId, reporting_enabled: reportingEnabled }));
-    flushPendingIngests();
+    // token 可选（server 端可不要 token）：有则放 hello（兼容 server 从 hello body 取 token）；
+    // wsUrl 原样含 ?token= query，兼容 server 从握手 URL 取 token——双兼容。
+    const hello = { type: "hello", ext_version: EXT_VERSION, client_id: clientId, reporting_enabled: reportingEnabled };
+    if (activeServer.token) hello.token = activeServer.token;
+    ws.send(JSON.stringify(hello));
+    // flushPendingIngests 移到 hello-ack：鉴权通过后才补发（未握手发 ingest 会被 server 丢，server.ts:44 守卫）
   };
   ws.onmessage = async (event) => {
     let msg; try { msg = JSON.parse(event.data); } catch { return; }
@@ -136,8 +229,19 @@ async function connect() {
       chrome.runtime.sendMessage({ type: "INGEST_RESULT", ok: msg.ok !== false, source_vid: msg.source_vid, inserted: msg.inserted_tracks, skipped: msg.skipped_tracks });
       return;
     }
-    if (msg.type === "hello-ack" || msg.type === "hello-nack") {
-      console.log(`[background] 握手结果 type=${msg.type}`);
+    if (msg.type === "hello-ack") {
+      authenticated = true; // 鉴权通过，才算"已连接"
+      authFailed = false;
+      lastError = null; // 握手成功，清错误
+      console.log(`[background] 握手结果 type=hello-ack`);
+      flushPendingIngests(); // 鉴权通过后才补发离线期间的 ingest
+      return;
+    }
+    if (msg.type === "hello-nack") {
+      authFailed = true; // 永久错误（bad token 等），onclose 不自动重连，等用户改 token 手动重连
+      authenticated = false;
+      lastError = msg.error || "握手被拒"; // 透传 server 拒绝原因（如 bad token）给 UI
+      console.log(`[background] 握手结果 type=hello-nack error=${lastError}`);
       return;
     }
     if (!msg.id) return;
@@ -147,7 +251,7 @@ async function connect() {
         ws.send(JSON.stringify({ type: "result", id: msg.id, ok: true, data: { opened: true } }));
       } else if (msg.action === "operate") {
         // 只找 B 站视频页（manifest content_scripts matches 决定哪些 tab 注入了 content.js）
-        const [tab] = await chrome.tabs.query({ active: true, currentWindow: true, url: "*://www.bilibili.com/video/*" });
+        const [tab] = await chrome.tabs.query({ active: true, currentWindow: true, url: ["*://www.bilibili.com/video/*", "*://www.bilibili.com/list/*"] });
         if (!tab?.id) {
           ws.send(JSON.stringify({ type: "result", id: msg.id, ok: false, error: "当前活跃 tab 非 B 站视频页，无法执行 operate" }));
           return;
@@ -268,6 +372,16 @@ async function connect() {
         } catch (err) {
           ws.send(JSON.stringify({ type: "result", id: msg.id, ok: false, error: String(err.message || err) }));
         }
+      } else if (msg.action === "fetch-youtube-subtitle") {
+        // YouTube 主动采集（手机/网页任务驱动）：导航到视频页,复用 content-yt 被动采集链路
+        // （inject-yt 读 captionTracks + 拦 timedtext → content-yt 归一化 → INGEST 入库）,
+        // 编排层只负责「导航 + 等就绪 + 等采集完成 + 汇总回执」。
+        try {
+          const data = await collectYoutubeViaNavigate(msg.videoId);
+          ws.send(JSON.stringify({ type: "result", id: msg.id, ok: true, data }));
+        } catch (err) {
+          ws.send(JSON.stringify({ type: "result", id: msg.id, ok: false, error: String(err.message || err) }));
+        }
       } else if (msg.action === "get-upper-info") {
         try {
           await ensureWbiKeys();
@@ -314,6 +428,8 @@ async function connect() {
             const items = vlist.map((v) => ({
               bvid: v.bvid, title: v.title, created: v.created ?? null,
               play: v.play ?? null, length: v.length ?? null,
+              // 封面预览透传（"//" 协议头相对形式归一 https:；server expand → web 端缩略图）
+              pic: typeof v.pic === 'string' ? (v.pic.startsWith('//') ? 'https:' + v.pic : v.pic) : null,
             }));
             ws.send(JSON.stringify({
               type: "result", id: msg.id, ok: true,
@@ -334,8 +450,14 @@ async function connect() {
       ws.send(JSON.stringify({ type: "result", id: msg.id, ok: false, error: String(err.message || err) }));
     }
   };
-  ws.onclose = () => { ws = null; scheduleReconnect(); };
-  ws.onerror = () => { try { ws.close(); } catch {} };
+  ws.onclose = () => {
+    ws = null;
+    authenticated = false;
+    // authFailed（hello-nack 永久错误）不自动重连——重试只会再 nack，等用户改 token 手动重连
+    if (authFailed) { console.log('[background] 连接关闭（鉴权失败），不自动重连'); return; }
+    scheduleReconnect();
+  };
+  ws.onerror = () => { lastError = "连接错误（WS error）"; try { ws.close(); } catch {} };
 }
 
 // 生成 ingest payload 摘要字符串，供各分支日志复用
@@ -346,12 +468,29 @@ function payloadSummary(payload) {
   return `source_vid=${v.source_vid} title=${v.title} UP=${v.creator?.name} 轨数=${tracks.length} 各轨body_size=${bodySizes}`;
 }
 
+// FETCH_SUBTITLE 的请求头：按 url 域名决定是否带 Referer。
+// YouTube / googlevideo 域不带 Referer（不需要、且可能有害）；B 站等保留现有 Referer。
+function subtitleFetchHeaders(url) {
+  try {
+    const host = new URL(url).hostname;
+    const isYt = host === "youtube.com" || host.endsWith(".youtube.com") ||
+                 host === "googlevideo.com" || host.endsWith(".googlevideo.com");
+    return isYt ? {} : { "Referer": "https://www.bilibili.com/" };
+  } catch {
+    return { "Referer": "https://www.bilibili.com/" };
+  }
+}
+
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (msg?.type === "INGEST" && msg.payload) {
     const payload = msg.payload;
     // 纯扩展模式：丢弃所有被动上报（含 force 手动上报——无 server 可收）；content.js 本地捕获不受影响
     if (isStandalone(connectionMode)) {
       console.log(`[background] ingest 丢弃（纯扩展模式）source_vid=${payload.video?.source_vid}`);
+      // standalone 不上报 server，但仍广播 INGEST_RESULT 让 popup 刷新本地数据
+      // （content 已采到字幕；用户开 popup 后才采到的字幕需刷新才能看到。popup 未开时 lastError 忽略）
+      const vid = payload.video?.source_vid;
+      if (vid) chrome.runtime.sendMessage({ type: "INGEST_RESULT", ok: true, source_vid: vid, inserted: 0, skipped: 0 }, () => void chrome.runtime.lastError);
       sendResponse({ ok: true, dropped: true });
       return true;
     }
@@ -360,8 +499,10 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     const pending = pendingNavCollect.get(navBvid);
     const fromNavigate = !!pending; // navigate 采集的被动 INGEST，绕过上报开关（主动采集触发）
     if (pending) { pendingNavCollect.delete(navBvid); pending.resolve(true); }
+    // YouTube 主动采集同理：正在 fetch-youtube-subtitle 的视频,其 content-yt 被动 INGEST 视为主动采集（绕过开关）
+    const fromYtCollect = payload?.source === "youtube" && activeYtCollects.has(navBvid);
     const summary = payloadSummary(payload);
-    const force = msg.force === true || fromNavigate;
+    const force = msg.force === true || fromNavigate || fromYtCollect;
     if (force) {
       console.log(`[background] ingest 强制上报（手动上报，绕过开关）source_vid=${payload.video?.source_vid}`);
     } else if (!shouldReport(reportingEnabled)) {
@@ -372,17 +513,26 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     sendIngest(payload);
     // P4：顺带被动采 UP 资料（7天）+ 最新视频（1h），异步、失败静默（不影响字幕主链路）
     const mid = payload.video?.creator?.source_uid;
-    if (mid) {
+    // 仅 B 站采 UP 资料：YouTube 的 channelId 非 B 站 mid，调 ensureUpperInfo/Videos 会误请求 B 站 API（静默失败但不该触发）
+    if (mid && payload.source === "bilibili") {
       ensureUpperInfo(mid).catch((e) => console.warn('[background] passive upper-info failed', String(e?.message ?? e)));
       ensureUpperVideos(mid).catch((e) => console.warn('[background] passive upper-videos failed', String(e?.message ?? e)));
     }
     sendResponse({ ok: true });
   } else if (msg?.type === "WS_STATUS") {
-    sendResponse({ ok: true, connected: ws?.readyState === WebSocket.OPEN, mode: connectionMode });
+    sendResponse({ ok: true, connected: authenticated, mode: connectionMode, activeServerId, error: lastError });
+  } else if (msg?.type === "FETCH_UPPER_ALL" && msg.mid) {
+    // UP 全部视频全量拉取：异步长任务（页间节流），立即回执状态；数据经 storage 增量流出。
+    // refresh=true 绕过缓存强制重拉（popup ↻ 按钮；inflight 进行中则忽略）。
+    fetchAllUpperVideos(String(msg.mid), msg.refresh === true).then(
+      (r) => sendResponse({ ok: true, ...r }),
+      (e) => sendResponse({ ok: false, error: String(e?.message ?? e) })
+    );
+    return true;
   } else if (msg?.type === "FETCH_SUBTITLE" && msg.url) {
     // content script 请求 background 抓字幕体（background 有 host_permissions，免 CORS）
     // B 站新版播放器改用同源 protobuf endpoint，inject 拦不到旧 aisubtitle 请求，故由 background 主动抓
-    fetch(msg.url, { headers: { "Referer": "https://www.bilibili.com/" } })
+    fetch(msg.url, { headers: subtitleFetchHeaders(msg.url) })
       .then(async (r) => {
         if (!r.ok) { sendResponse({ ok: false, error: "HTTP " + r.status }); return; }
         const body = await r.json().catch(() => null);
@@ -391,8 +541,8 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       })
       .catch((e) => sendResponse({ ok: false, error: e.message }));
   } else if (msg?.type === "MANUAL_CAPTURE") {
-    // 只找 B 站视频页（避免对 chrome:// 等无 content script 的 tab sendMessage 抛 "Receiving end does not exist"）
-    chrome.tabs.query({ active: true, currentWindow: true, url: "*://www.bilibili.com/video/*" }, ([tab]) => {
+    // 只找 B 站视频页/列表播放页（避免对 chrome:// 等无 content script 的 tab sendMessage 抛 "Receiving end does not exist"）
+    chrome.tabs.query({ active: true, currentWindow: true, url: ["*://www.bilibili.com/video/*", "*://www.bilibili.com/list/*", "*://www.youtube.com/watch*"] }, ([tab]) => {
       if (tab?.id) {
         // force:true 绕过上报开关：用户在「手动」模式下点「上报」就是明确要上报，不该被自动开关拦截
         chrome.tabs.sendMessage(tab.id, { type: "RE_AGG", force: true }, () => {
@@ -417,6 +567,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         // 切纯扩展：断 WS + 清 pending（onclose→scheduleReconnect 已被 isStandalone 守卫拦，不会重连）
         try { ws?.close(); } catch {}
         ws = null;
+        lastError = null; // 纯扩展不连，无连接错误
         await chrome.storage.local.set({ pendingIngests: [] });
       } else {
         // 切回 server：重置退避计数并触发连接
@@ -426,6 +577,35 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       sendResponse({ ok: true, mode });
     });
     return true;
+  } else if (msg?.type === "SET_ACTIVE_SERVER") {
+    // 切激活 server：落盘 activeServerId + 重载 activeServer 内存 + 热切换（关旧 ws → 新地址 connect）。
+    // 清 pendingIngests：离线 payload 是对旧 server 缓存的，补发到新 server 会错位（对齐切 standalone 的清空策略）。
+    (async () => {
+      const items = await chrome.storage.local.get(SERVERS_KEY);
+      const servers = normalizeServers(items[SERVERS_KEY]);
+      const entry = resolveActiveServer(servers, typeof msg.id === 'string' ? msg.id : null);
+      const newId = entry?.id ?? null;
+      await chrome.storage.local.set({ [ACTIVE_SERVER_KEY]: newId });
+      activeServerId = newId;
+      activeServer = entry ? parseServerUrl(entry.url) : null;
+      reconnectAttempts = 0;
+      lastError = null; // 切到新 server，清旧错误（重新评估可达性/握手）
+      try { ws?.close(); } catch {}
+      ws = null;
+      await chrome.storage.local.set({ pendingIngests: [] });
+      if (!isStandalone(connectionMode) && activeServer) connect();
+      sendResponse({ ok: true, activeServerId: newId, hasServer: !!activeServer });
+    })();
+    return true;
+  } else if (msg?.type === "RECONNECT") {
+    // 手动重连：重置鉴权失败态 + 触发连接（用户改 token / 开自动重连后点「重连」）
+    authFailed = false;
+    lastError = null;
+    reconnectAttempts = 0;
+    try { ws?.close(); } catch {}
+    ws = null;
+    if (!isStandalone(connectionMode) && activeServer) connect();
+    sendResponse({ ok: true });
   }
   return true;
 });
@@ -434,7 +614,9 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
 // 频率控制：同时只 1 个 navigate（navCollectBusy 锁）；tab 关闭后间隔 = navGapBaseMs + 随机 navGapRandomMs（防风控）。
 let navCollectBusy = false;
 const pendingNavCollect = new Map(); // bvid -> { resolve }
-// 间隔配置（chrome.storage.local 可覆盖：nav_gap_base_ms / nav_gap_random_ms，单位 ms）。默认 1s + 随机 0-2s。
+const activeYtCollects = new Set(); // 正在 fetch-youtube-subtitle 的 videoId 集合（其被动 INGEST 视为主动采集,绕过上报开关）
+// settled 后宽限期：菜单触发翻译轨（CC→原轨→翻译,~2s 起步 + 每步 800ms）迟到 body 的等待窗口
+const YT_SETTLE_GRACE_MS = 8000;// 间隔配置（chrome.storage.local 可覆盖：nav_gap_base_ms / nav_gap_random_ms，单位 ms）。默认 1s + 随机 0-2s。
 let navGapBaseMs = 1000;
 let navGapRandomMs = 2000;
 async function loadNavGapConfig() {
@@ -442,6 +624,17 @@ async function loadNavGapConfig() {
   if (typeof cfg.nav_gap_base_ms === 'number' && cfg.nav_gap_base_ms >= 0) navGapBaseMs = cfg.nav_gap_base_ms;
   if (typeof cfg.nav_gap_random_ms === 'number' && cfg.nav_gap_random_ms >= 0) navGapRandomMs = cfg.nav_gap_random_ms;
 }
+async function loadReconnectConfig() {
+  const cfg = await chrome.storage.local.get(['reconnect_base_ms', 'reconnect_max_ms', 'auto_reconnect']);
+  if (typeof cfg.reconnect_base_ms === 'number' && cfg.reconnect_base_ms >= 0) reconnectBaseMs = cfg.reconnect_base_ms;
+  if (typeof cfg.reconnect_max_ms === 'number' && cfg.reconnect_max_ms >= 0) reconnectMaxMs = cfg.reconnect_max_ms;
+  if (typeof cfg.auto_reconnect === 'boolean') autoReconnect = cfg.auto_reconnect;
+}
+// 配置改了即时重载（options UI 改 → background 自动用新值，无需消息往返）
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area !== 'local') return;
+  if ('reconnect_base_ms' in changes || 'reconnect_max_ms' in changes || 'auto_reconnect' in changes) loadReconnectConfig();
+});
 async function collectViaNavigate(bvid, timeoutMs = 20000) {
   while (navCollectBusy) await new Promise((r) => setTimeout(r, 500)); // 等锁（同时只 1 个 navigate）
   navCollectBusy = true;
@@ -472,12 +665,86 @@ async function collectViaNavigate(bvid, timeoutMs = 20000) {
   }
 }
 
+// YouTube 主动采集（fetch-youtube-subtitle action）：后台开 tab 到 watch?v=<id>,
+// 等 content-yt 就绪并采集（CAPTION_TRACKS + FETCH_SUBTITLE 兜底/菜单触发）,
+// 通过 GET_LOCAL_STATE 轮询判定采集完成（has-subtitle + 所有轨定居,或 no-subtitle）,
+// INGEST 由 content-yt 自行走被动链路上报（复用现有链路,编排层不重复上报）。
+// 与 B 站 collectViaNavigate 的差异:YouTube 字幕 URL 带签名不能后台拼,必须靠页面运行时;
+// 且 content-yt 不需要 NAV_TRIGGER 通知——页面加载即自动采集。
+async function collectYoutubeViaNavigate(videoId, timeoutMs = 45000) {
+  while (navCollectBusy) await new Promise((r) => setTimeout(r, 500)); // 等锁（同时只 1 个 navigate）
+  navCollectBusy = true;
+  let reused = false;
+  let tabId = null;
+  const watchUrl = `https://www.youtube.com/watch?v=${videoId}`;
+  try {
+    activeYtCollects.add(videoId); // 登记进行中的 YouTube 主动采集（INGEST 处理器据此放行 force）
+    // 复用已打开的同视频 tab（reload 刷新页面状态）;无则后台新建（active:false 不抢焦点）
+    const [existing] = await chrome.tabs.query({ url: `${watchUrl}*` });
+    if (existing?.id) {
+      tabId = existing.id;
+      reused = true;
+      await chrome.tabs.reload(tabId);
+    } else {
+      const tab = await chrome.tabs.create({ url: watchUrl, active: false });
+      tabId = tab.id;
+    }
+    // 轮询 GET_LOCAL_STATE 直到终态。判定依据（content-yt GET_LOCAL_STATE 响应）：
+    //   state=no-subtitle           captionTracks 已读且为空 → 成功 0 轨
+    //   state=has-subtitle+settled  所有轨定居（body 到齐或已尝试）→ 等 INGEST 宽限后汇总
+    //   state=has-subtitle 未定居    body 还在抓（FETCH_SUBTITLE / 菜单触发翻译轨）→ 继续等
+    //   not-loaded / null           页面未就绪 → 继续等
+    const t0 = Date.now();
+    let firstSettledAt = 0; // 首次 settled 的时刻（宽限期起算点）
+    for (;;) {
+      if (Date.now() - t0 > timeoutMs) throw new Error(`YouTube 采集超时（${Math.round(timeoutMs / 1000)}s）`);
+      const state = await new Promise((resolve) => {
+        chrome.tabs.sendMessage(tabId, { type: "GET_LOCAL_STATE", vid: videoId }, (resp) => {
+          if (chrome.runtime.lastError) resolve(null); // content-yt 未注入/未就绪
+          else resolve(resp);
+        });
+      });
+      if (state?.ok && state.state === "no-subtitle") {
+        // captionTracks 已读且为空（纯音乐/直播/真无字幕）——任务成功但 0 轨
+        return { videoId, captured: 0, tracks: 0, reason: "no_subtitle", navigated: true, reused };
+      }
+      if (state?.ok && state.state === "has-subtitle" && state.settled) {
+        // settled 后的 INGEST：flushIfReady 已发（或菜单触发的翻译轨 TIMEDTEXT_BODY 还在路上——
+        // 宽限 SETTLE_GRACE_MS 等迟到的翻译 body 再 flush,翻译轨是主动采集中文的关键产出）。
+        if (!firstSettledAt) firstSettledAt = Date.now();
+        if (Date.now() - firstSettledAt < YT_SETTLE_GRACE_MS) {
+          await new Promise((r) => setTimeout(r, 500));
+          continue;
+        }
+        // 宽限期过完再取一次最新状态（宽限期间迟到的翻译轨已构造进 captionTracks）
+        const final = await new Promise((resolve) => {
+          chrome.tabs.sendMessage(tabId, { type: "GET_LOCAL_STATE", vid: videoId }, (resp) => resolve(resp));
+        });
+        await new Promise((r) => setTimeout(r, 1500)); // 等 INGEST 经 WS 落库
+        const subs = final?.subs ?? state.subs ?? [];
+        const captured = subs.filter((s) => s.has_body).length;
+        return {
+          videoId, captured, tracks: subs.length, navigated: true, reused,
+          ...(captured === 0 ? { reason: "pot_limited" } : {}),
+        };
+      }
+      // 未就绪/未定居：500ms 后重试
+      await new Promise((r) => setTimeout(r, 500));
+    }
+  } finally {
+    activeYtCollects.delete(videoId);
+    if (tabId != null && !reused) { try { await chrome.tabs.remove(tabId); } catch {} } // 复用的 tab 不关
+    navCollectBusy = false;
+    await new Promise((r) => setTimeout(r, navGapBaseMs + Math.random() * navGapRandomMs)); // 关闭间隔（防风控,对齐 B 站）
+  }
+}
+
 // 统一 ingest 上报：WS OPEN 直发；断线时落 pendingIngests storage，重连后 flushPendingIngests 补发。
 // fetch-subtitle（主动）与 content→background INGEST（被动）共用，保证 WS 断时不丢。
 // 纯扩展模式下短路（不连不存 pending）——由调用前的 INGEST 短路与本函数守卫双重覆盖。
 function sendIngest(payload) {
   if (isStandalone(connectionMode)) return; // 纯扩展：不上报、不存 pending（永不补发）
-  if (ws?.readyState === WebSocket.OPEN) {
+  if (authenticated) { // 鉴权通过才直发（未握手/已断线 → 存 pending，hello-ack 后 flush）
     ws.send(JSON.stringify({ type: "ingest", payload }));
   } else {
     chrome.storage.local.get(["pendingIngests"], ({ pendingIngests = [] }) => {
@@ -496,7 +763,7 @@ async function flushPendingIngests() {
   await chrome.storage.local.set({ pendingIngests: [] });
 }
 
-loadPersistedState().then(() => loadNavGapConfig()).then(() => {
+loadPersistedState().then(() => loadNavGapConfig()).then(() => loadReconnectConfig()).then(() => {
   // 纯扩展模式：启动不连 server（模式由 storage 持久，SW 回收重启后仍生效）
   if (!isStandalone(connectionMode)) connect();
 });

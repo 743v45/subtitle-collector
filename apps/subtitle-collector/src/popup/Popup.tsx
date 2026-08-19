@@ -1,13 +1,16 @@
-import { type ComponentType, useCallback, useEffect, useRef, useState } from 'react';
+import { type ComponentType, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   useBiliLogin,
   useCollected,
   useConnectionStatus,
   useCreator,
+  useCreatorCollected,
   useLocalCollected,
   useClientId,
   useReporting,
-  useUpperVideos,
+  useServerConfig,
+  useSpaceMid,
+  useUpperAllVideos,
   diffConsistency,
   type CollectedState,
   type ConnectionStatus,
@@ -15,9 +18,9 @@ import {
   type CreatorState,
   type LocalCollectedState,
   type LoginState,
-  type UpperVideosState,
+  type UpperAllState,
 } from './hooks';
-import { bili, LOGOS, type Platform, type StatIconName } from './platforms';
+import { LOGOS, type Platform, type StatIconName } from './platforms';
 import { fmtNum } from './format';
 import { cn } from '@/lib/utils';
 import type { ConsistencyIssue, LocalSub, SubtitleBody } from './types';
@@ -97,27 +100,37 @@ function useSubtitleFormat(): [SubtitleFormat, (f: SubtitleFormat) => void] {
 export function Popup() {
   const conn = useConnectionStatus();
   const standalone = conn.mode === 'standalone';
-  const login = useBiliLogin();
   const reporting = useReporting();
-  const { collected: serverCollected, currentBvid } = useCollected();
-  const { local } = useLocalCollected(currentBvid);
+  const serverCfg = useServerConfig();
+  // 当前激活 server 名（ConnDot hover 用：已连接时看连的哪个 server）
+  const activeServerName = serverCfg.servers.find((s) => s.id === serverCfg.activeServerId)?.name ?? null;
+  // useCollected 先于 useBiliLogin：login 仅在 B 站页查（YouTube/无关页不发 nav 请求）
+  // httpBase 来自激活 server：热切换 server 后 useCollected/useCreator 自动重查新地址
+  const { collected: serverCollected, currentVid, currentPlatform } = useCollected(serverCfg.httpBase);
+  const login = useBiliLogin(currentPlatform?.id === 'bilibili');
+  const { local } = useLocalCollected(currentVid);
   const consistency = diffConsistency(local, serverCollected);
-  // 非视频页精简：只显示平台头 + 底部上报开关；视频信息卡 / 手动补采是视频页专属。
-  // currentBvid 在 tabs.query 回调后才就绪（视频页=bvid / 非视频页=null），首帧 null 即隐藏，
+  // 非视频页精简：只显示品牌头 + 底部上报开关；平台头/视频信息卡 / 手动补采是视频页专属。
+  // currentVid 在 tabs.query 回调后才就绪（视频页=vid / 非视频页=null），首帧 null 即隐藏，
   // 回调后视频页才出现——既精简非视频页，也避免"非视频页 → BVxxx"的初始值闪烁。
-  // 多平台时这里改用 detectPlatform(tabUrl)，平台头/统计自动按当前平台渲染。
-  const isVideoPage = currentBvid !== null;
+  // detectPlatform(tabUrl) 决定 currentPlatform，平台头/统计按当前平台渲染；无关页 currentPlatform=null 不渲染平台头。
+  const isVideoPage = currentVid !== null;
   // 上报是上报字幕：没字幕（no-subtitle）→ 上报按钮置灰
   const hasSubtitle = local.state === 'has-subtitle';
   // server ok 时从 video.creator_id 查 UP 主详情；其它态（loading/server-down/not-collected）
   // 没有 creator_id → useCreator 返回 none，CreatorCard 不渲染，无噪音。
   const creatorId =
     serverCollected.state === 'ok' ? serverCollected.video.creator_id : undefined;
-  // 在 Popup 顶层取 creator（而非 CreatorCard 内部）：source_uid 还要喂给 useUpperVideos
+  // 在 Popup 顶层取 creator（而非 CreatorCard 内部）：source_uid 还要喂给 UP 全量列表
   // 读 background passive 缓存，避免在 CreatorCard 里再调一次 useCreator 双发请求。
-  const creatorState = useCreator(creatorId);
+  const creatorState = useCreator(creatorId, serverCfg.httpBase);
   const upMid = creatorState.state === 'ok' ? creatorState.creator.source_uid : null;
-  const upperVideos = useUpperVideos(upMid);
+  // UP 全部视频列表入口（2026-08-19）：空间页（URL 解析 mid）优先，视频页回落 server creator mid。
+  // 纯扩展模式空间页仍可用（B 站数据不经 server），视频页 standalone 无 creator mid 自然不渲染。
+  const spaceMid = useSpaceMid();
+  const upperMid = spaceMid ?? upMid;
+  const upperAll = useUpperAllVideos(upperMid);
+  const upperCollected = useCreatorCollected(upperMid, serverCfg.httpBase, !standalone);
 
   // 手动上报反馈：reporting → success/failed（INGEST_RESULT.ok）/ 超时 failed（未连接 / 上报未达 server）。
   // 字幕数据视频页加载时已由 content.js 自动采集，这里只是把已采集数据上报到 collector-server。
@@ -139,12 +152,12 @@ export function Popup() {
     }, 8000);
   };
 
-  // 收到当前 bvid 的 INGEST_RESULT → 按 ok 显示上报成功/失败
+  // 收到当前 vid 的 INGEST_RESULT → 按 ok 显示上报成功/失败
   useEffect(() => {
-    if (!currentBvid) return;
+    if (!currentVid) return;
     const handler = (msg: unknown) => {
       const m = msg as { type?: string; ok?: boolean; source_vid?: string };
-      if (m?.type === 'INGEST_RESULT' && m.source_vid === currentBvid && reportRef.current) {
+      if (m?.type === 'INGEST_RESULT' && m.source_vid === currentVid && reportRef.current) {
         reportRef.current = false;
         const ok = m.ok !== false;
         setReportStatus(ok ? 'success' : 'failed');
@@ -153,25 +166,36 @@ export function Popup() {
     };
     chrome.runtime.onMessage.addListener(handler);
     return () => chrome.runtime.onMessage.removeListener(handler);
-  }, [currentBvid]);
+  }, [currentVid]);
 
   return (
     <div className="space-y-3 p-3">
       <BrandHeader />
-      <PlatformHead platform={bili} conn={conn} login={login} />
-      {currentBvid && (
+      {/* 无关页 currentPlatform=null：不渲染平台头，自然只剩 BrandHeader + FooterActions（空状态） */}
+      {currentPlatform && <PlatformHead platform={currentPlatform} conn={conn} login={login} serverName={activeServerName} />}
+      {currentVid && currentPlatform && (
         <>
           <CollectedBlock
-            platform={bili}
-            bvid={currentBvid}
+            platform={currentPlatform}
+            bvid={currentVid}
             local={local}
             server={serverCollected}
             consistency={consistency}
           />
-          {/* CreatorCard / UpperVideosList 依赖 server API / 被动缓存：纯扩展下隐藏 */}
+          {/* CreatorCard 依赖 server API：纯扩展下隐藏；
+              YouTube server 态为 not-collected（无 creator_id）→ CreatorCard 自然返回 null，不展示 */}
           {!standalone && <CreatorCard creator={creatorState} />}
-          {!standalone && <UpperVideosList state={upperVideos} />}
         </>
+      )}
+      {/* UP 全部视频卡：空间页/视频页通用（折叠 + 总数/已采 + 勾选批量采集） */}
+      {upperMid && (
+        <UpperAllVideosCard
+          mid={upperMid}
+          state={upperAll}
+          collected={upperCollected}
+          httpBase={serverCfg.httpBase}
+          standalone={standalone}
+        />
       )}
       <FooterActions
         reporting={reporting}
@@ -194,15 +218,29 @@ function BrandHeader() {
       <div className="flex items-center gap-2">
         <SubCatchLogo className="h-[26px] w-[26px]" />
         <div className="leading-tight">
-          <div className="text-[15px] font-bold tracking-[0.3px] text-slate-900">SubCatch</div>
+          <div className="flex items-baseline gap-1.5">
+            <div className="text-[15px] font-bold tracking-[0.3px] text-slate-900">SubCatch</div>
+            {/* 版本直出（manifest.version）：每次发布 bump，用户据此对照是否跑的最新构建 */}
+            <span className="text-[10px] tabular-nums text-slate-400" title="扩展版本（chrome://extensions 可对照）">
+              v{chrome.runtime.getManifest().version}
+            </span>
+          </div>
           <div className="text-[11px] text-slate-500">字幕捕手 · 多平台视频字幕采集</div>
         </div>
       </div>
       <div className="flex items-center gap-1.5">
-        <PlatformLogoBadge color="bg-[#FB7299]" path={LOGOS.bilibili} title="哔哩哔哩" />
-        <PlatformLogoBadge color="bg-black" path={LOGOS.tiktok} title="抖音" />
-        <PlatformLogoBadge color="bg-[#FF2442]" path={LOGOS.xiaohongshu} title="小红书" />
-        <PlatformLogoBadge color="bg-[#FF0000]" path={LOGOS.youtube} title="YouTube" />
+        <PlatformLogoBadge color="bg-[#FB7299]" path={LOGOS.bilibili} title="哔哩哔哩" href="https://www.bilibili.com" />
+        <PlatformLogoBadge color="bg-black" path={LOGOS.tiktok} title="抖音" href="https://www.tiktok.com" />
+        <PlatformLogoBadge color="bg-[#FF2442]" path={LOGOS.xiaohongshu} title="小红书" href="https://www.xiaohongshu.com" />
+        <PlatformLogoBadge color="bg-[#FF0000]" path={LOGOS.youtube} title="YouTube" href="https://www.youtube.com" />
+        <button
+          type="button"
+          onClick={() => chrome.runtime.openOptionsPage()}
+          title="配置"
+          className="flex h-6 w-6 items-center justify-center rounded-md text-slate-500 transition-opacity hover:opacity-70"
+        >
+          <GearIcon className="h-[14px] w-[14px]" />
+        </button>
       </div>
     </div>
   );
@@ -213,20 +251,29 @@ function PlatformLogoBadge({
   color,
   path,
   title,
+  href,
 }: {
   color: string;
   path: string;
   title: string;
+  href?: string;
 }) {
+  const logo = (
+    <svg viewBox="0 0 24 24" fill="currentColor" className="h-[14px] w-[14px]" aria-hidden="true">
+      <path d={path} />
+    </svg>
+  );
+  // 有 href 渲染为链接（点击打开平台网站），否则不可点击 span
+  const className = cn(
+    'flex h-6 w-6 items-center justify-center rounded-md text-white',
+    href && 'transition-opacity hover:opacity-70',
+    color
+  );
+  if (!href) return <span title={title} className={className}>{logo}</span>;
   return (
-    <span
-      title={title}
-      className={cn('flex h-6 w-6 items-center justify-center rounded-md text-white', color)}
-    >
-      <svg viewBox="0 0 24 24" fill="currentColor" className="h-[14px] w-[14px]" aria-hidden="true">
-        <path d={path} />
-      </svg>
-    </span>
+    <a href={href} target="_blank" rel="noreferrer" title={title} className={className}>
+      {logo}
+    </a>
   );
 }
 
@@ -249,14 +296,17 @@ function SubCatchLogo({ className }: { className?: string }) {
 
 // 平台头：平台 logo + 名称 + 全局连接状态点 + 该平台登录态。
 // 连接是采集服务端（全局），登录是平台特定；多平台时都按当前平台显示。
+// LoginBadge 仅 B 站显示（YouTube 无 B 站 nav 登录态概念，useBiliLogin 在非 bili 时不查）。
 function PlatformHead({
   platform,
   conn,
   login,
+  serverName,
 }: {
   platform: Platform;
   conn: ConnInfo;
   login: LoginState;
+  serverName?: string | null;
 }) {
   return (
     <div className="flex items-center gap-2 rounded-lg border bg-muted/30 px-2.5 py-2">
@@ -271,9 +321,9 @@ function PlatformHead({
         </svg>
       </span>
       <span className="text-sm font-semibold">{platform.name}</span>
-      <LoginBadge login={login} />
+      {platform.id === 'bilibili' && <LoginBadge login={login} />}
       <div className="ml-auto flex items-center gap-2">
-        <ConnDot conn={conn} />
+        <ConnDot conn={conn} serverName={serverName} />
       </div>
     </div>
   );
@@ -283,17 +333,22 @@ function PlatformHead({
 //   server + connected → 🟢 已连接    点击 → 切纯扩展
 //   server + 断       → 🔴 未连接    点击 → 切纯扩展
 //   standalone        → ⚪ 纯扩展    点击 → 切回 server
-function ConnDot({ conn }: { conn: ConnInfo }) {
+function ConnDot({ conn, serverName }: { conn: ConnInfo; serverName?: string | null }) {
   if (conn.loading) return <StatusPlaceholder className="h-3.5 w-14" />;
   const standalone = conn.mode === 'standalone';
   const dot = standalone ? 'bg-slate-400' : conn.connected ? 'bg-emerald-500' : 'bg-red-500';
   const text = standalone ? '纯扩展' : conn.connected ? '已连接' : '未连接';
   const color = standalone ? 'text-slate-500' : conn.connected ? 'text-emerald-600' : 'text-red-600';
+  const title = standalone
+    ? '点击连接 server'
+    : conn.connected
+      ? `已连接${serverName ? `：${serverName}` : ''}（点击切换纯扩展）`
+      : '点击切换为纯扩展（不连接、不上报）';
   return (
     <button
       type="button"
       onClick={() => conn.setMode(standalone ? 'server' : 'standalone')}
-      title={standalone ? '点击连接 server' : '点击切换为纯扩展（不连接、不上报）'}
+      title={title}
       className="flex items-center gap-1 text-xs transition-opacity hover:opacity-70"
     >
       <span className={cn('h-1.5 w-1.5 rounded-full', dot)} />
@@ -486,7 +541,7 @@ function CollectedBlock({
   consistency: ConsistencyIssue[];
 }) {
   // 非视频页判定走 server（useCollected 的 tabs.query 本地解析 URL）：
-  // useLocalCollected 在 currentBvid 未就绪时保持 loading，不再判 non-video，避免 loading→空→loading 闪烁。
+  // useLocalCollected 在 currentVid 未就绪时保持 loading，不再判 non-video，避免 loading→空→loading 闪烁。
   if (server.state === 'non-video') return null;
 
   if (local.state === 'loading') {
@@ -661,29 +716,314 @@ function CreatorCard({ creator }: { creator: CreatorState }) {
   );
 }
 
-// UP 最新视频列表：读 background passive 缓存（ensureUpperVideos 在被动采集时写入）。
-// loading / empty 不渲染（避免无缓存时的空白闪烁），仅在 ok 时展示最近 5 条 + 缓存时间。
-function UpperVideosList({ state }: { state: UpperVideosState }) {
-  if (state.state !== 'ok') return null;
+// UP 全部视频卡（2026-08-19，替换旧「最近 5 条被动缓存」卡）：
+// 收起态 = 总数 + 已采 M + 拉取进度一行；展开 = 过滤条（状态/时间/播放量档位）+ 勾选列表 + 批量采集。
+// 数据：background fetchAllUpperVideos 全量分页（storage 唯一真相，onChanged 增量渲染）；
+// 已采标注：server /api/videos?creator_uid（standalone / server-down → collected=null，状态列隐藏）。
+// 批量采集：勾选 bvids → POST /api/collect-tasks/batch → server 调度器串行派发 fetch-subtitle（免导航）。
+function UpperAllVideosCard({
+  mid,
+  state,
+  collected,
+  httpBase,
+  standalone,
+}: {
+  mid: string;
+  state: UpperAllState;
+  collected: Set<string> | null;
+  httpBase: string;
+  standalone: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  // 过滤条件（档位化，适配 popup 窄空间）：状态 tab / 时间范围 / 播放量下限
+  const [statusFilter, setStatusFilter] = useState<'all' | 'uncollected' | 'collected'>('all');
+  const [timeDays, setTimeDays] = useState(0); // 0=全部
+  const [viewMin, setViewMin] = useState(0);   // 0=不限
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [batch, setBatch] = useState<{ state: 'idle' | 'submitting' | 'done' | 'failed'; msg: string }>({
+    state: 'idle',
+    msg: '',
+  });
+
+  // useMemo 须在早退前调用（Rules of Hooks）：非 ok 态给空数组
+  const filtered = useMemo(() => {
+    if (state.state !== 'ok') return [];
+    const sinceMs = timeDays > 0 ? Date.now() - timeDays * 86400_000 : 0;
+    return state.items.filter((it) => {
+      if (statusFilter !== 'all' && collected) {
+        const isCollected = collected.has(it.bvid);
+        if (statusFilter === 'collected' ? !isCollected : isCollected) return false;
+      }
+      if (sinceMs > 0 && (it.created == null || it.created * 1000 < sinceMs)) return false;
+      if (viewMin > 0 && (it.play == null || it.play < viewMin)) return false;
+      return true;
+    });
+  }, [state, statusFilter, timeDays, viewMin, collected]);
+
+  // loading（无任何缓存数据，全量任务刚起步）：占位行而非不渲染——空间页首开时
+  // 用户需知道列表在路上（UP 视频多时全量分页约十几秒），否则像「空间页没反应」。
+  if (state.state !== 'ok') {
+    return (
+      <Card>
+        <CardContent className="p-3 text-xs text-muted-foreground">
+          UP 全部视频 · 拉取中…（首次需全量分页，视频多时约十几秒；完成后自动出现）
+        </CardContent>
+      </Card>
+    );
+  }
+  const { items, total, done, error } = state;
+
+  const collectedCount = collected ? items.filter((it) => collected.has(it.bvid)).length : null;
+
+  const toggle = (bvid: string) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(bvid)) next.delete(bvid);
+      else next.add(bvid);
+      return next;
+    });
+  };
+  // 全选未采（对当前过滤后的视图；勾选过已采的也一并清掉，语义=「采集这批」）
+  const selectUncollected = () => {
+    setSelected(new Set(filtered.filter((it) => !collected?.has(it.bvid)).map((it) => it.bvid)));
+  };
+
+  const submitBatch = async () => {
+    if (selected.size === 0 || batch.state === 'submitting') return;
+    if (selected.size > 50) {
+      const okToGo = window.confirm(`将创建 ${selected.size} 个采集任务（串行执行，约需 ${Math.ceil((selected.size * 8) / 60)} 分钟），确认？`);
+      if (!okToGo) return;
+    }
+    setBatch({ state: 'submitting', msg: '' });
+    try {
+      const r = await fetch(`${httpBase}/api/collect-tasks/batch`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ bvids: [...selected] }),
+      });
+      const d = await r.json();
+      if (!d?.ok) throw new Error(d?.error ?? `HTTP ${r.status}`);
+      setBatch({ state: 'done', msg: `已建 ${d.created} 个任务${d.skipped ? `，跳过 ${d.skipped} 个（排队中）` : ''}` });
+      setSelected(new Set());
+      setTimeout(() => setBatch({ state: 'idle', msg: '' }), 3500);
+    } catch (e) {
+      setBatch({ state: 'failed', msg: String((e as Error)?.message ?? e) });
+      setTimeout(() => setBatch({ state: 'idle', msg: '' }), 3500);
+    }
+  };
+
   return (
     <Card>
-      <CardContent className="space-y-1 p-3">
-        <div className="text-xs text-muted-foreground">
-          UP 最新视频（被动缓存 · {new Date(state.fetchedAt).toLocaleString()}）
-        </div>
-        {state.items.slice(0, 5).map((it) => (
-          <a
-            key={it.bvid}
-            href={`https://www.bilibili.com/video/${it.bvid}`}
-            target="_blank"
-            rel="noreferrer"
-            className="block truncate text-xs hover:text-primary"
-          >
-            {it.title}
-          </a>
-        ))}
+      <CardContent className="space-y-2 p-3">
+        <Collapsible open={open} onOpenChange={setOpen}>
+          <div className="flex items-center gap-1">
+            <CollapsibleTrigger className="flex min-w-0 flex-1 items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground">
+              <ChevronIcon className={cn('h-3 w-3 shrink-0 transition-transform', open && 'rotate-90')} />
+              <span className="shrink-0 font-medium text-foreground">UP 全部视频</span>
+              <span className="shrink-0 tabular-nums">共 {total} 条</span>
+              {collectedCount != null && (
+                <span className="shrink-0 tabular-nums text-emerald-600">已采 {collectedCount}</span>
+              )}
+              {/* 拉取中进度 / 中断标记（title 给错误详情） */}
+              {!done && <span className="shrink-0 tabular-nums animate-pulse">拉取中 {items.length}/{total}</span>}
+              {error && (
+                <span title={error} className="shrink-0 text-amber-500">
+                  ⚠ 中断
+                </span>
+              )}
+              <span className="ml-auto shrink-0 text-[10px] tabular-nums text-muted-foreground/50">
+                {new Date(state.fetchedAt).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}
+              </span>
+            </CollapsibleTrigger>
+            {/* ↻ 清缓存重拉（旧缓存缺封面字段 / 数据过期时用；拉取进行中禁用） */}
+            <button
+              type="button"
+              onClick={() =>
+                chrome.runtime.sendMessage({ type: 'FETCH_UPPER_ALL', mid, refresh: true }, () => void chrome.runtime.lastError)
+              }
+              disabled={!done}
+              title="清除缓存重新拉取"
+              className="flex h-5 w-5 shrink-0 items-center justify-center rounded text-muted-foreground/60 transition-colors hover:bg-muted hover:text-foreground disabled:opacity-30"
+            >
+              <RefreshIcon className={cn('h-3 w-3', !done && 'animate-spin')} />
+            </button>
+          </div>
+          <CollapsibleContent className="space-y-2 pt-2">
+            {/* 过滤条：状态 tab（已采标注可用时）+ 时间/播放量档位（横向小 pill，同字幕格式抽屉样式） */}
+            <div className="flex flex-wrap items-center gap-1">
+              {collected && (
+                <>
+                  {(
+                    [
+                      ['all', `全部 ${items.length}`],
+                      ['uncollected', `未采 ${items.length - (collectedCount ?? 0)}`],
+                      ['collected', `已采 ${collectedCount ?? 0}`],
+                    ] as const
+                  ).map(([value, label]) => (
+                    <FilterPill key={value} active={statusFilter === value} onClick={() => setStatusFilter(value)}>
+                      {label}
+                    </FilterPill>
+                  ))}
+                </>
+              )}
+              <FilterPill active={timeDays === 182} onClick={() => setTimeDays(timeDays === 182 ? 0 : 182)}>
+                近半年
+              </FilterPill>
+              <FilterPill active={timeDays === 365} onClick={() => setTimeDays(timeDays === 365 ? 0 : 365)}>
+                近一年
+              </FilterPill>
+              {(
+                [
+                  [1000, '1千+'],
+                  [10000, '1万+'],
+                  [100000, '10万+'],
+                ] as const
+              ).map(([value, label]) => (
+                <FilterPill key={value} active={viewMin === value} onClick={() => setViewMin(viewMin === value ? 0 : value)}>
+                  {label}
+                </FilterPill>
+              ))}
+            </div>
+
+            {/* 列表：可滚动；每条 checkbox + 已采点 + 标题链接 + 时长/播放/日期小字 */}
+            <div className="max-h-80 space-y-0.5 overflow-y-auto pr-0.5">
+              {filtered.map((it) => {
+                const isCollected = collected?.has(it.bvid) ?? null;
+                const isSelected = selected.has(it.bvid);
+                return (
+                  <div
+                    key={it.bvid}
+                    className={cn(
+                      'flex items-center gap-1.5 rounded px-1 py-0.5 text-xs transition-colors',
+                      isSelected ? 'bg-brand/10' : 'hover:bg-muted/60'
+                    )}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={isSelected}
+                      onChange={() => toggle(it.bvid)}
+                      className="h-3 w-3 shrink-0 accent-brand"
+                      aria-label={`选择 ${it.title}`}
+                    />
+                    {/* 封面缩略图（16:9，无 pic/旧缓存占位灰块；no-referrer 防 CDN 防盗链） */}
+                    {it.pic ? (
+                      <img
+                        src={it.pic}
+                        alt=""
+                        loading="lazy"
+                        referrerPolicy="no-referrer"
+                        className="h-9 w-16 shrink-0 rounded object-cover"
+                      />
+                    ) : (
+                      <span className="h-9 w-16 shrink-0 rounded bg-muted" />
+                    )}
+                    {isCollected != null && (
+                      <span
+                        title={isCollected ? '字幕已采集' : '未采集'}
+                        className={cn('h-1.5 w-1.5 shrink-0 rounded-full', isCollected ? 'bg-emerald-500' : 'bg-slate-300')}
+                      />
+                    )}
+                    <a
+                      href={`https://www.bilibili.com/video/${it.bvid}`}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="min-w-0 flex-1 truncate hover:text-primary"
+                      title={it.title}
+                    >
+                      {it.title}
+                    </a>
+                    <span className="shrink-0 tabular-nums text-[10px] text-muted-foreground/70">
+                      {it.length ?? ''}
+                      {it.play != null ? ` · ${fmtNum(it.play)}` : ''}
+                      {it.created != null ? ` · ${new Date(it.created * 1000).toLocaleDateString('zh-CN', { month: 'numeric', day: 'numeric' })}` : ''}
+                    </span>
+                  </div>
+                );
+              })}
+              {filtered.length === 0 && (
+                <div className="py-2 text-center text-xs text-muted-foreground">无匹配视频（调整过滤条件）</div>
+              )}
+            </div>
+
+            {/* 底部操作：全选未采 / 清空 + 采集选中（standalone 置灰：无 server 可收任务） */}
+            <div className="flex items-center gap-1.5">
+              <button
+                type="button"
+                onClick={selectUncollected}
+                className="rounded border border-input bg-background px-2 py-0.5 text-xs transition-colors hover:bg-accent hover:text-accent-foreground"
+              >
+                全选未采
+              </button>
+              {selected.size > 0 && (
+                <button
+                  type="button"
+                  onClick={() => setSelected(new Set())}
+                  className="rounded px-1.5 py-0.5 text-xs text-muted-foreground transition-colors hover:text-foreground"
+                >
+                  清空
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => void submitBatch()}
+                disabled={standalone || selected.size === 0 || batch.state === 'submitting'}
+                title={standalone ? '纯扩展模式：不连接 server，无法创建采集任务' : undefined}
+                className={cn(
+                  'ml-auto rounded px-2.5 py-0.5 text-xs text-white transition-colors',
+                  batch.state === 'done'
+                    ? 'bg-emerald-500 hover:bg-emerald-600'
+                    : batch.state === 'failed'
+                      ? 'bg-destructive hover:bg-destructive/90'
+                      : 'bg-brand hover:bg-brand/90',
+                  (standalone || selected.size === 0 || batch.state === 'submitting') && 'cursor-not-allowed opacity-50'
+                )}
+              >
+                {batch.state === 'submitting'
+                  ? '提交中…'
+                  : batch.state === 'done'
+                    ? batch.msg || '已提交 ✓'
+                    : batch.state === 'failed'
+                      ? batch.msg || '失败 ✗'
+                      : `采集选中 (${selected.size})`}
+              </button>
+            </div>
+            {/* done/failed 且按钮文本放不下时的完整反馈（msg 已含数字，按钮态短暂展示即可） */}
+            {(batch.state === 'done' || batch.state === 'failed') && batch.msg && (
+              <div className={cn('text-[10px]', batch.state === 'done' ? 'text-emerald-600' : 'text-destructive')}>
+                {batch.msg}
+              </div>
+            )}
+            <div className="text-[10px] text-muted-foreground/50">UID {mid}</div>
+          </CollapsibleContent>
+        </Collapsible>
       </CardContent>
     </Card>
+  );
+}
+
+// 过滤条件小 pill（选中=品牌色，点选 toggle）
+function FilterPill({
+  active,
+  onClick,
+  children,
+}: {
+  active: boolean;
+  onClick: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={cn(
+        'rounded border px-2 py-0.5 text-xs transition-colors',
+        active
+          ? 'border-brand bg-brand text-brand-foreground'
+          : 'border-input bg-background hover:bg-accent hover:text-accent-foreground'
+      )}
+    >
+      {children}
+    </button>
   );
 }
 
@@ -756,6 +1096,7 @@ function SubtitleCopySection({
   const [fmtOpen, setFmtOpen] = useState(false);
   const [copiedUrl, setCopiedUrl] = useState<string | null>(null);
   const [failedUrl, setFailedUrl] = useState<string | null>(null);
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null); // 展开预览字幕内容的轨 url（点「预览」toggle）
 
   const copyableSubs = subs.filter((s) => s.has_body);
 
@@ -826,44 +1167,68 @@ function SubtitleCopySection({
             const label = subtitleTrackLabel(s);
             const justCopied = !!url && copiedUrl === url;
             const justFailed = !!url && failedUrl === url;
+            // 字幕规模预览：有效字数（去空白字符，避免 YouTube asr 词间空格导致虚高）
+            const ytCues = url ? (bodies[url]?.body ?? []) : [];
+            const totalChars = ytCues.reduce((n, c) => n + (c?.content?.replace(/\s/g, '').length ?? 0), 0);
+            const previewText = ytCues.length > 0 ? `${fmtNum(totalChars)} 字` : '';
             return (
-              <div
-                key={url ?? i}
-                className="flex items-center justify-between rounded border border-input px-2 py-1 text-xs"
-              >
-                <span className="flex min-w-0 items-center gap-2">
-                  <span className="font-medium">{label}</span>
-                  {s.lan && s.lan_doc && (
-                    <span className="text-muted-foreground">{s.lan}</span>
-                  )}
-                  {isAi && (
-                    <Badge variant="secondary" className="shrink-0 px-1.5 py-0 text-[10px] leading-tight font-normal">
-                      AI
-                    </Badge>
-                  )}
-                </span>
-                <button
-                  type="button"
-                  disabled={!selectable}
-                  onClick={() => url && onCopy(url)}
-                  className={cn(
-                    'shrink-0 rounded px-2 py-0.5 text-xs transition-colors',
-                    justFailed
-                      ? 'bg-destructive text-destructive-foreground'
-                      : justCopied
-                        ? 'bg-secondary text-secondary-foreground'
-                        : 'bg-brand text-brand-foreground hover:bg-brand/90',
-                    !selectable && 'cursor-not-allowed opacity-50'
-                  )}
-                >
-                  {!selectable
-                    ? '未获取'
-                    : justCopied
-                      ? '已复制'
-                      : justFailed
-                        ? '失败'
-                        : '复制'}
-                </button>
+              <div key={url ?? i} className="space-y-1">
+                <div className="flex items-center justify-between rounded border border-input px-2 py-1 text-xs">
+                  <div className="flex min-w-0 flex-col gap-0.5">
+                    <span className="flex min-w-0 items-center gap-2">
+                      <span className="font-medium">{label}</span>
+                      {s.lan && s.lan_doc && (
+                        <span className="text-muted-foreground">{s.lan}</span>
+                      )}
+                      {isAi && (
+                        <Badge variant="secondary" className="shrink-0 px-1.5 py-0 text-[10px] leading-tight font-normal">
+                          AI
+                        </Badge>
+                      )}
+                    </span>
+                    {selectable && previewText && (
+                      <span className="text-[10px] text-muted-foreground/70">{previewText}</span>
+                    )}
+                  </div>
+                  <div className="flex shrink-0 items-center gap-1">
+                    {selectable && (
+                      <button
+                        type="button"
+                        onClick={() => setPreviewUrl((p) => (p === url ? null : url))}
+                        className="shrink-0 rounded bg-secondary px-2 py-0.5 text-xs text-secondary-foreground transition-colors hover:bg-secondary/80"
+                      >
+                        {previewUrl === url ? '收起' : '预览'}
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      disabled={!selectable}
+                      onClick={() => url && onCopy(url)}
+                      className={cn(
+                        'shrink-0 rounded px-2 py-0.5 text-xs transition-colors',
+                        justFailed
+                          ? 'bg-destructive text-destructive-foreground'
+                          : justCopied
+                            ? 'bg-secondary text-secondary-foreground'
+                            : 'bg-brand text-brand-foreground hover:bg-brand/90',
+                        !selectable && 'cursor-not-allowed opacity-50'
+                      )}
+                    >
+                      {!selectable
+                        ? '未获取'
+                        : justCopied
+                          ? '已复制'
+                          : justFailed
+                            ? '失败'
+                            : '复制'}
+                    </button>
+                  </div>
+                </div>
+                {previewUrl === url && selectable && bodies[url] && (
+                  <pre className="max-h-48 overflow-auto rounded border border-input bg-muted/40 p-2 font-mono text-[10px] leading-relaxed whitespace-pre-wrap break-words">
+                    {formatSubtitle(bodies[url], format)}
+                  </pre>
+                )}
               </div>
             );
           })}
@@ -973,6 +1338,26 @@ function ChevronIcon({ className }: { className?: string }) {
   return (
     <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className} aria-hidden="true">
       <path d="m9 18 6-6-6-6" />
+    </svg>
+  );
+}
+
+// 刷新图标（UP 全量卡 ↻ 清缓存重拉按钮）。
+function RefreshIcon({ className }: { className?: string }) {
+  return (
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className} aria-hidden="true">
+      <path d="M21 12a9 9 0 1 1-2.64-6.36" />
+      <path d="M21 3v6h-6" />
+    </svg>
+  );
+}
+
+// 配置齿轮图标（BrandHeader 右上角，点击打开独立配置页 options.html）。
+function GearIcon({ className }: { className?: string }) {
+  return (
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className} aria-hidden="true">
+      <circle cx="12" cy="12" r="3" />
+      <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z" />
     </svg>
   );
 }

@@ -12,7 +12,7 @@ function json(res: ServerResponse, status: number, body: unknown): void {
   res.end(JSON.stringify(body));
 }
 
-const GROUP_BY: readonly StatsGroupBy[] = ['creator', 'tname', 'lang', 'track-type'];
+const GROUP_BY: readonly StatsGroupBy[] = ['creator', 'tname', 'lang', 'track-type', 'tag'];
 
 export function handleStatsHttp(req: IncomingMessage, res: ServerResponse, db: Database.Database): void {
   const url = new URL(req.url ?? '/', 'http://localhost');
@@ -25,7 +25,7 @@ export function handleStatsHttp(req: IncomingMessage, res: ServerResponse, db: D
   if (type === 'aggregate') {
     const groupByRaw = url.searchParams.get('groupBy');
     if (!groupByRaw || !(GROUP_BY as readonly string[]).includes(groupByRaw)) {
-      json(res, 400, { ok: false, error: 'groupBy must be one of creator|tname|lang|track-type' });
+      json(res, 400, { ok: false, error: 'groupBy must be one of creator|tname|lang|track-type|tag' });
       return;
     }
     // 同 /api/videos 的全部 VideoFilter 透传（数字/布尔非法忽略）。

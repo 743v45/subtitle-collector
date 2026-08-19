@@ -1,6 +1,6 @@
-import { useState } from 'react';
 import { getStatsOverview, getStatsAggregate } from '../api';
 import { useAsync } from '@/lib/useAsync';
+import { useQueryUpdater, useRoute } from '../router';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
@@ -9,9 +9,10 @@ import type { StatsGroupBy, KeyValue } from '../types';
 
 const GROUP_LABEL: Record<StatsGroupBy, string> = {
   tname: '分区',
-  creator: 'UP 主',
+  creator: '创作者',
   lang: '语言',
   'track-type': '轨类型',
+  tag: '标签',
 };
 const TRACK_TYPE_LABEL: Record<string, string> = { '1': 'AI 字幕', '2': 'CC 字幕' };
 
@@ -40,7 +41,13 @@ function StatCard({ label, value }: { label: string; value: number }) {
 
 export function StatsPage() {
   const overview = useAsync(() => getStatsOverview(), []);
-  const [groupBy, setGroupBy] = useState<StatsGroupBy>('tname');
+  // 分组维度进 URL（#/stats?groupBy=lang），非默认 tname 才写
+  const route = useRoute();
+  const updateQuery = useQueryUpdater();
+  const groupByRaw = route.query.get('groupBy');
+  const groupBy: StatsGroupBy = (Object.keys(GROUP_LABEL) as StatsGroupBy[]).includes(groupByRaw as StatsGroupBy)
+    ? (groupByRaw as StatsGroupBy)
+    : 'tname';
   const agg = useAsync(() => getStatsAggregate(groupBy), [groupBy]);
 
   return (
@@ -65,7 +72,7 @@ export function StatsPage() {
             <StatCard label="视频" value={overview.data.videos} />
             <StatCard label="字幕轨" value={overview.data.tracks} />
             <StatCard label="字幕版本" value={overview.data.versions} />
-            <StatCard label="UP 主" value={overview.data.creators} />
+            <StatCard label="创作者" value={overview.data.creators} />
             <StatCard label="语言数" value={overview.data.languages} />
             <StatCard label="分区数" value={overview.data.categories} />
           </div>
@@ -78,7 +85,7 @@ export function StatsPage() {
       {/* 分组聚合 Top 榜 */}
       <div className="flex gap-1 pt-2">
         {(Object.keys(GROUP_LABEL) as StatsGroupBy[]).map((g) => (
-          <Button key={g} variant={groupBy === g ? 'default' : 'outline'} size="sm" onClick={() => setGroupBy(g)}>
+          <Button key={g} variant={groupBy === g ? 'default' : 'outline'} size="sm" onClick={() => updateQuery({ groupBy: g === 'tname' ? null : g })}>
             按{GROUP_LABEL[g]}
           </Button>
         ))}

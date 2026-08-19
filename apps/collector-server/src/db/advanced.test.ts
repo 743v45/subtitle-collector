@@ -317,3 +317,70 @@ test('WAL 已启用：migrate 后 journal_mode = wal', () => {
     assert.equal(mode, 'wal');
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
+
+// ---- 视频标签（四档）筛选与聚合 ----
+// setup 样本的 bili tags：BV1=游戏/实况、BV2=数码、BV3=游戏、BV4=空。
+// 下面再补关系档标签后验证 tags=/tag_source=/groupBy=tag。
+import { applyVideoTags } from './tags.js';
+
+test('tags 精确筛选：四档并查 + tag_source 分支 + AND 语义', () => {
+  const { db, dir } = setup();
+  try {
+    // 给 BV1 打 manual 档「游戏」（与 bili 自带同名，多档并存）、BV2 打 ai 档「游戏」
+    applyVideoTags(db, [{ source: 'bilibili', source_vid: 'BV1' }], ['游戏'], 'manual');
+    applyVideoTags(db, [{ source: 'bilibili', source_vid: 'BV2' }], ['游戏'], 'ai');
+
+    // tags=游戏 精确（四档并查）：BV1（bili+manual）+ BV2（ai）+ BV3（bili）→ 3 个
+    let r = listVideosFiltered(db, { tags: ['游戏'] });
+    assert.equal(r.total, 3);
+
+    // tag_source=bili 只查 extra：BV1 + BV3 → 2 个
+    r = listVideosFiltered(db, { tags: ['游戏'], tag_source: ['bili'] });
+    assert.equal(r.total, 2);
+
+    // tag_source=manual：只 BV1
+    r = listVideosFiltered(db, { tags: ['游戏'], tag_source: ['manual'] });
+    assert.equal(r.total, 1);
+    assert.equal(r.items[0].source_vid, 'BV1');
+
+    // tag_source=manual,ai（关系档两档）：BV1 + BV2
+    r = listVideosFiltered(db, { tags: ['游戏'], tag_source: ['manual', 'ai'] });
+    assert.equal(r.total, 2);
+
+    // AND：tags=游戏,实况 → 只有 BV1 同时有两个
+    r = listVideosFiltered(db, { tags: ['游戏', '实况'] });
+    assert.equal(r.total, 1);
+    assert.equal(r.items[0].source_vid, 'BV1');
+
+    // 旧 tag= 模糊扩展为四档并查（超集兼容）：tag=游 命中 游戏（含 manual/bili 各视频）
+    r = listVideosFiltered(db, { tag: '游' });
+    assert.equal(r.total, 3);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('aggregateStats groupBy=tag：四档并聚 + DISTINCT 去重 + tag_source 过滤 + 其他 filter 生效', () => {
+  const { db, dir } = setup();
+  try {
+    applyVideoTags(db, [{ source: 'bilibili', source_vid: 'BV1' }], ['游戏'], 'manual');
+    applyVideoTags(db, [{ source: 'bilibili', source_vid: 'BV2' }], ['游戏'], 'ai');
+
+    // 全档聚合：游戏（BV1 bili + BV1 manual + BV2 ai + BV3 bili → DISTINCT 3 视频）、实况 1、数码 1
+    let agg = aggregateStats(db, 'tag', {}, 20);
+    const gameRow = agg.find((r) => r.key === '游戏')!;
+    assert.equal(gameRow.count, 3); // 同名多档 DISTINCT 按 1 计
+    assert.equal(agg.find((r) => r.key === '实况')!.count, 1);
+    assert.equal(agg.find((r) => r.key === '数码')!.count, 1);
+
+    // tag_source=bili 只聚 extra：游戏 = BV1+BV3 = 2
+    agg = aggregateStats(db, 'tag', { tag_source: ['bili'] }, 20);
+    assert.equal(agg.find((r) => r.key === '游戏')!.count, 2);
+
+    // tag_source=manual 只聚关系档：游戏 = BV1 = 1
+    agg = aggregateStats(db, 'tag', { tag_source: ['manual'] }, 20);
+    assert.equal(agg.find((r) => r.key === '游戏')!.count, 1);
+
+    // 其他 filter 生效（两分支都受 where 约束）：q=标题B → 只剩 BV2 的 ai 游戏
+    agg = aggregateStats(db, 'tag', { q: '标题B' }, 20);
+    assert.deepEqual(agg, [{ key: '数码', count: 1 }, { key: '游戏', count: 1 }]);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});

@@ -34,7 +34,21 @@ export function toVtt(body: SubtitleLine[]): string {
 
 export function SubtitleView({ body, sourceVid }: { body: SubtitleLine[]; sourceVid?: string }) {
   const fmt = (sec: number) => { const m = Math.floor(sec / 60); const s = Math.floor(sec % 60); return `${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`; };
-  const copy = (text: string) => { navigator.clipboard.writeText(text); };
+  // navigator.clipboard 在非 secure context(http 域名,如 caddy 反代的 collector.work.taevas.host)不可用 → execCommand 兜底
+  const copy = async (text: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+    } catch {
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      ta.style.position = 'fixed';
+      ta.style.opacity = '0';
+      document.body.appendChild(ta);
+      ta.select();
+      try { document.execCommand('copy'); } catch {}
+      document.body.removeChild(ta);
+    }
+  };
   // 下载：生成文本 → Blob → 触发浏览器下载，文件名用 BV 号
   const download = (fmt: 'srt' | 'vtt' | 'txt') => {
     const text = fmt === 'srt' ? toSrt(body) : fmt === 'vtt' ? toVtt(body) : toTxt(body);

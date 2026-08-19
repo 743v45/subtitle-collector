@@ -1,5 +1,7 @@
+import { extractBiliVid, extractYoutubeVid } from '../../vid-extract.mjs';
+
 // popup 平台显示 adapter：logo / 名称 / 统计字段 / URL 识别，数据驱动渲染。
-// 现只接入 bilibili；YouTube / 抖音 / 小红书的官方 logo（simple-icons path）已预取在 LOGOS，
+// 已接入 bilibili + YouTube；抖音 / 小红书的官方 logo（simple-icons path）已预取在 LOGOS，
 // 待 content/inject/hooks 支持后注册到 PLATFORMS 即可，popup 结构零改动。
 
 export type StatIconName = 'play' | 'like' | 'coin' | 'star' | 'share' | 'danmaku';
@@ -16,7 +18,11 @@ export interface Platform {
   name: string;
   logo: string; // simple-icons SVG path（fill 当前色）
   brandBgClass: string; // 平台头图标背景 Tailwind 类（每平台品牌色）
-  urlPattern: RegExp; // 视频页识别 + videoId 提取（capture group 1）
+  hostPattern: RegExp; // 域名匹配（判断是否该平台：首页/搜索/视频页等任意页面都算）
+  // 从视频页 URL 提取 videoId（非视频页返回 null）。
+  // bili：先试 /video/BVxxx 路径，无则试 ?bvid= query（列表型播放页：稍后再看/收藏夹）。
+  // 提取纯函数抽在 vid-extract.mjs（供 node:test，与 popup 共用同一份逻辑）。
+  extractVid: (url: string) => string | null;
   statFields: StatField[];
 }
 
@@ -38,7 +44,9 @@ export const bili: Platform = {
   logo: LOGOS.bilibili,
   // brandBgClass 用全局 brand token（B站粉）；其它平台接入时换 bg-[#xxx] 任意值类。
   brandBgClass: 'bg-brand',
-  urlPattern: /bilibili\.com\/video\/(BV[0-9A-Za-z]+)/,
+  hostPattern: /bilibili\.com/,
+  // 提取逻辑见 vid-extract.mjs：先 /video/BVxxx 路径（旧页兼容），再 ?bvid= query（列表播放页）。
+  extractVid: extractBiliVid,
   statFields: [
     { key: 'view', label: '播放', icon: 'play' },
     { key: 'like', label: '点赞', icon: 'like' },
@@ -49,10 +57,34 @@ export const bili: Platform = {
   ],
 };
 
-// 当前接入的平台（加 YouTube/抖音/小红书时 push + content/inject 支持）。
-export const PLATFORMS: Platform[] = [bili];
+export const youtube: Platform = {
+  id: 'youtube',
+  name: 'YouTube',
+  logo: LOGOS.youtube,
+  // YouTube 品牌红；用 Tailwind 任意值类（popup 强制 Tailwind，无手写 CSS）。
+  brandBgClass: 'bg-[#FF0000]',
+  hostPattern: /youtube\.com/,
+  // 11 位视频 ID。匹配 watch 页 v 参数任意位置：标准 watch?v=、桌面版 watch?app=desktop&v= 等。
+  // detectPlatform 已用 hostPattern 限定 youtube 域，extractVid 只管提 v。逻辑见 vid-extract.mjs。
+  extractVid: extractYoutubeVid,
+  statFields: [
+    { key: 'view', label: '播放', icon: 'play' },
+    { key: 'like', label: '点赞', icon: 'like' },
+  ],
+};
 
+// 当前接入的平台（抖音/小红书待 content/inject/hooks 支持后 push）。
+export const PLATFORMS: Platform[] = [bili, youtube];
+
+// 按域名判断平台（任意页面：首页/搜索/视频页都识别为该平台）。无关站返回 null。
 export function detectPlatform(url: string | undefined): Platform | null {
   if (!url) return null;
-  return PLATFORMS.find((p) => p.urlPattern.test(url)) ?? null;
+  return PLATFORMS.find((p) => p.hostPattern.test(url)) ?? null;
+}
+
+// 从视频页 URL 提取 videoId（非视频页/首页等返回 null）。
+// 转发到 platform.extractVid（签名保留不变，hooks.ts 调用零改动）。
+export function extractVid(url: string | undefined, platform: Platform): string | null {
+  if (!url) return null;
+  return platform.extractVid(url);
 }

@@ -2,13 +2,18 @@
   "manifest_version": 3,
   "name": "SubCatch — 字幕捕手",
   "short_name": "SubCatch",
-  "version": "0.1.0",
+  "version": "0.1.2",
   "description": "一键捕获 B 站 / 抖音 / 小红书 / YouTube 视频字幕，采集到本地服务端",
   "permissions": ["activeTab", "tabs", "storage", "alarms"],
   "host_permissions": [
     "*://*.bilibili.com/*",
+    "*://*.youtube.com/*",
     "*://127.0.0.1/*",
-    "*://localhost/*"
+    "*://localhost/*",
+    "ws://*/*",
+    "wss://*/*",
+    "http://*/*",
+    "https://*/*"
   ],
   "icons": {
     "16": "icons/icon-16.png",
@@ -18,18 +23,30 @@
   },
   "content_scripts": [
     {
-      "matches": ["*://www.bilibili.com/video/*"],
+      "matches": ["*://www.bilibili.com/video/*", "*://www.bilibili.com/list/*"],
       "js": ["inject.js"],
       "world": "MAIN",
       "run_at": "document_start"
     },
     {
-      "matches": ["*://www.bilibili.com/video/*"],
+      "matches": ["*://www.bilibili.com/video/*", "*://www.bilibili.com/list/*"],
       "js": ["content.js"],
+      "run_at": "document_start"
+    },
+    {
+      "matches": ["*://*.youtube.com/watch*"],
+      "js": ["inject-yt.js"],
+      "world": "MAIN",
+      "run_at": "document_start"
+    },
+    {
+      "matches": ["*://*.youtube.com/watch*"],
+      "js": ["content-yt.js"],
       "run_at": "document_start"
     }
   ],
   "background": { "service_worker": "background.js", "type": "module" },
+  "options_ui": { "page": "options.html", "open_in_tab": true },
   "action": {
     "default_popup": "popup.html",
     "default_icon": {

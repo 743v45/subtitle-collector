@@ -3,12 +3,16 @@
   "private": true,
   "scripts": {
     "build": "turbo build",
+    "build:server": "pnpm -C apps/collector-server build",
+    "build:web": "pnpm -C apps/collector-web build",
+    "build:ext": "pnpm -C apps/subtitle-collector build",
     "dev": "turbo dev",
     "dev:server": "pnpm -C apps/collector-server dev",
     "dev:web": "pnpm -C apps/collector-web dev",
     "dev:ext": "pnpm -C apps/subtitle-collector dev",
     "test": "turbo run test",
     "test:ext": "turbo run build --filter=@bilibili-ext/subtitle-collector && node scripts/verify-collector.mjs",
+    "test:youtube": "turbo run build --filter=@bilibili-ext/subtitle-collector && node scripts/verify-youtube-collector.mjs",
     "cli": "pnpm -C apps/collector-server exec tsx src/cli/main.ts",
     "collect-uppers": "pnpm -C apps/collector-server exec tsx ../../scripts/collect-uppers.mts"
   },

@@ -14,12 +14,14 @@ export function parseBiliResponse(body) {
 }
 
 // search/type response.data → { total, items:[{bvid,title,up,mid,play,duration,pubdate}] }
+// total 取 numResults：B 站已把 data.page 从 {count} 对象改为数字（当前页码），
+// 老的 page.count 不存在了（实测 2026-08），总数在顶层 numResults（封顶显示 1000）。
 export function formatSearchResult(data) {
   const items = Array.isArray(data?.result) ? data.result.map((r) => ({
     bvid: r.bvid, title: (r.title || '').replace(/<em[^>]*>|<\/em>/g, ''), up: r.author, mid: r.mid,
     play: r.play ?? 0, duration: r.duration ?? 0, pubdate: r.pubdate ?? 0,
   })) : [];
-  return { total: data?.page?.count ?? items.length, items };
+  return { total: data?.numResults ?? items.length, items };
 }
 
 // AI 字幕独立接口 /x/v2/subtitle/web/view（B 站新版播放器用，返回 protobuf/octet-stream）。

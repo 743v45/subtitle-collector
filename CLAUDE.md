@@ -47,3 +47,7 @@ B 站**字幕（subtitle）**相关浏览器扩展的 monorepo（pnpm + turbo，
 - **同步更新**：新增/完成功能必须同步更新该列表；过期列表比没有更糟。
 - **优先级判断**：当前最大缺口是消费端（🚧 批量提取分析）。消费端手动流程跑顺前，采集侧新能力默认冻结。
 - **分析执行方**：分析在 Claude Code 会话中完成，系统只负责原料包导出（`export bundle`）与产物落盘规范；内置 AI pipeline 为远期项。
+
+## 7. 扩展版本号纪律
+
+`apps/subtitle-collector/manifest.json` 的 `version` 在**每次涉及扩展改动的提交里必须 bump**（补丁位 +1，如 0.1.1 → 0.1.2）。popup 品牌头直出 `manifest.version`，用户据此对照本地扩展是否为最新构建（chrome://extensions 刷新后核对）。collector-server / collector-web 走 docker rebuild 自带最新，无需手动版本。

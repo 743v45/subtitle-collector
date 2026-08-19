@@ -1,0 +1,30 @@
+# collector-server 容器编排
+#
+# 数据库：bind mount ./data → /data，文件不进镜像、不进项目。
+# 首次启动前，若要保留现有数据，把库拷过来：
+#   mkdir -p data && cp apps/collector-server/bilibili-collector.db data/bilibili-collector.db
+# （WAL 模式：先停掉本地 dev server 再拷，或连 -shm/-wal 一起拷）
+#
+# 启动：docker compose up -d --build
+# 看 TOKEN 等可在仓库根放 .env，或直接 export。
+
+services:
+  collector:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: collector-server:latest
+    container_name: collector-server
+    restart: unless-stopped
+    ports:
+      - "21527:21527"
+    environment:
+      COLLECTOR_PORT: "21527"
+      COLLECTOR_HOST: "0.0.0.0"
+      # ⚠️ 生产必改！生成：node -e "console.log(require('crypto').randomBytes(24).toString('hex'))"
+      # 且必须与 apps/subtitle-collector/config.js 的 TOKEN 完全一致，否则扩展连不上。
+      COLLECTOR_TOKEN: ${COLLECTOR_TOKEN:-change-me-collector-token}
+      # 从宿主 localhost（经 -p 映射）访问无需填；从局域网 IP/主机名访问则填上，逗号分隔。
+      COLLECTOR_ALLOWED_HOSTS: ${COLLECTOR_ALLOWED_HOSTS:-}
+    volumes:
+      - ./data:/data
