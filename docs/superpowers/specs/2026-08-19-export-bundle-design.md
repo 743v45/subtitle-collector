@@ -144,7 +144,7 @@ UP: <creator_name>  时长: <mm:ss>  发布: <YYYY-MM-DD>  BV: <source_vid>
 
 | 轮次 | 日期 | 范围 | 结果 | 备注 |
 |---|---|---|---|---|
-| 1 | 待跑 | 单测 + 真库冒烟 | — | 实现完成后回填 |
+| 1 | 2026-08-19 | 单测（stampedTxt/ANALYZE/buildBundle 9 用例 + 装配端到端 2 用例，全套 243 绿）+ 真库冒烟（yawyd 库：3136 命中 → limit 5，with_subtitle=5） | 通过 | 抽查 txt 头部元信息、`[分:秒]` 行格式、manifest 条目均符合设计 |
 
 ## 6. 不做（YAGNI）
 

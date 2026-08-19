@@ -4,6 +4,11 @@
 
 ---
 
+## v0.2 —— export bundle 原料包导出（消费端第一块）
+
+- CLI `export bundle`：按任意过滤器（UP 主/搜索/标签/付费/时间…）批量导出分析原料包——`manifest.json`（清单 + `subtitle:null` 盲区标记 + errors 容错）+ `videos/*.txt`（`[分:秒] 字幕` 行格式正文，头部带标题/UP/轨元信息）+ `ANALYZE.md`（观点汇总/面试题库/理念整理三类产物模板，产物写回 bundle 目录）。
+- 分析在 Claude Code 会话完成，系统零 AI 集成。真库验收：3136 有字幕视频命中 → 一条命令出包。
+
 ## v0.1 —— 被动采集 MVP（浏览即入库）
 
 > 状态：**可用**。打开 B 站视频页，扩展自动拦截 player API + 字幕轨，上报本地服务端落 SQLite，网页可查阅。
