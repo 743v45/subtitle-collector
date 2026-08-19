@@ -102,9 +102,7 @@ function TaskPreviewBody({ task, detail, onReload }: { task: CollectTask; detail
 
   return (
     <div className="space-y-2 pt-1">
-      {detail && <div className="truncate text-sm font-medium">{detail.video.title}</div>}
-
-      {/* 轨列表 */}
+      {/* 轨列表（标题已在卡片主行直出,预览区不重复） */}
       <div className="flex flex-wrap gap-1">
         {tracks.length === 0 && <span className="text-xs text-muted-foreground">视频无字幕轨（仅元信息入库）</span>}
         {tracks.map((t) => (
@@ -168,9 +166,16 @@ function TaskRow({ task, onDelete }: { task: CollectTask; onDelete: (id: number)
     <Card>
       <CardContent className="p-3 space-y-1.5">
         <div className="flex items-center gap-2">
-          <span className={cn('rounded px-1.5 py-0.5 text-xs font-medium', meta.className)}>{meta.label}</span>
-          <span className="text-xs text-muted-foreground">{PLATFORM_LABEL[task.source] ?? task.source} · {task.source_vid}</span>
-          <span className="ml-auto text-xs text-muted-foreground">{formatTs(task.created_at)}</span>
+          <span className={cn('shrink-0 rounded px-1.5 py-0.5 text-xs font-medium', meta.className)}>{meta.label}</span>
+          {/* 标题直出（server JOIN videos）；未入库（pending/failed）回落 平台·BV号 */}
+          {task.title ? (
+            <span className="min-w-0 flex-1 truncate text-sm font-medium" title={task.title}>{task.title}</span>
+          ) : (
+            <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
+              {PLATFORM_LABEL[task.source] ?? task.source} · {task.source_vid}
+            </span>
+          )}
+          <span className="ml-auto shrink-0 text-xs text-muted-foreground">{formatTs(task.created_at)}</span>
           {canOpen && (
             <Button
               variant="ghost"
@@ -206,6 +211,10 @@ function TaskRow({ task, onDelete }: { task: CollectTask; onDelete: (id: number)
           </Button>
         </div>
         <div className={cn('text-sm', task.status === 'failed' ? 'text-destructive' : 'text-muted-foreground')}>
+          {/* 有标题时次行给 平台·BV号 + 摘要;无标题保持摘要 */}
+          {task.title && (
+            <span className="text-xs">{PLATFORM_LABEL[task.source] ?? task.source} · {task.source_vid} · </span>
+          )}
           {resultSummary(task)}
         </div>
         {expanded && canOpen && <TaskPreview task={task} />}

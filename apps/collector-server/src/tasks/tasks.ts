@@ -16,9 +16,18 @@ export interface CollectTask {
   client_id: string | null;
   error: string | null;
   result: string | null;
+  title: string | null; // 库内视频标题（LEFT JOIN videos；采集页直接展示,未入库为 null）
   created_at: number;
   finished_at: number | null;
 }
+
+// 任务行 + 库内视频标题（videos 有 UNIQUE(source, source_vid),JOIN 不扇出）
+const TASK_WITH_TITLE = `
+  SELECT t.*, v.title AS title
+  FROM collect_tasks t
+  LEFT JOIN videos v ON v.source = t.source AND v.source_vid = t.source_vid
+  WHERE t.id = ?
+`;
 
 // 单任务在扩展侧最长执行时间（导航加载页面 + 采字幕 + 汇总），对齐 B 站 navigate 采集 20s + 余量
 const COMMAND_TIMEOUT_MS = 60_000;
@@ -111,7 +120,7 @@ export function createTask(db: Database.Database, target: ParsedTarget): Collect
 }
 
 export function getTask(db: Database.Database, id: number): CollectTask | null {
-  const row = db.prepare('SELECT * FROM collect_tasks WHERE id = ?').get(id) as CollectTask | undefined;
+  const row = db.prepare(TASK_WITH_TITLE).get(id) as CollectTask | undefined;
   return row ?? null;
 }
 
@@ -122,7 +131,12 @@ export function deleteTask(db: Database.Database, id: number): boolean {
 
 export function listTasks(db: Database.Database, limit = 20): { total: number; items: CollectTask[] } {
   const total = (db.prepare('SELECT COUNT(*) AS n FROM collect_tasks').get() as { n: number }).n;
-  const items = db.prepare('SELECT * FROM collect_tasks ORDER BY id DESC LIMIT ?').all(limit) as CollectTask[];
+  const items = db.prepare(`
+    SELECT t.*, v.title AS title
+    FROM collect_tasks t
+    LEFT JOIN videos v ON v.source = t.source AND v.source_vid = t.source_vid
+    ORDER BY t.id DESC LIMIT ?
+  `).all(limit) as CollectTask[];
   return { total, items };
 }
 

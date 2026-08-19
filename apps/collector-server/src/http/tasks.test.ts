@@ -8,6 +8,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type Database from 'better-sqlite3';
 import { openDb, migrate } from '../db/migrate.js';
+import { ingestVideo } from '../db/ingest.js';
 import { attachWsServer } from '../ws/server.js';
 import { handleTasksHttp } from './tasks.js';
 import { attachTaskScheduler, getTask } from '../tasks/tasks.js';
@@ -134,6 +135,32 @@ test('GET /api/collect-tasks 与 /api/collect-tasks/:id：列表 + 单查', asyn
 
     const none = await httpReq(ctx.port, 'GET', '/api/collect-tasks/99999');
     assert.equal(none.status, 404);
+  } finally { ctx.cleanup(); }
+});
+
+test('GET 列表/单查：任务带出库内视频标题（LEFT JOIN videos.title），未入库为 null', async () => {
+  const ctx = await setup();
+  try {
+    // 库里已有 BV1TITLE01xx（标题「标题直接展示测试」）；BV1NOTLIB0x 不在库（BV+10 位满足解析校验）
+    ingestVideo(ctx.db, {
+      source: 'bilibili',
+      video: { source_vid: 'BV1TITLE01xx', title: '标题直接展示测试', creator: { source_uid: 'u1', name: 'UP' }, extra: {}, duration: 100, published_at: 1700000000000 },
+      tracks: [],
+    });
+    const withTitle = await httpReq(ctx.port, 'POST', '/api/collect-tasks', { text: 'https://www.bilibili.com/video/BV1TITLE01xx' });
+    const noTitle = await httpReq(ctx.port, 'POST', '/api/collect-tasks', { text: 'https://www.bilibili.com/video/BV1NOTLIB0xy' });
+    assert.equal(withTitle.status, 200);
+    assert.equal(noTitle.status, 200);
+
+    const list = await httpReq(ctx.port, 'GET', '/api/collect-tasks?limit=10');
+    assert.equal(list.status, 200);
+    const t1 = list.json.items.find((i: any) => i.id === withTitle.json.task.id);
+    const t2 = list.json.items.find((i: any) => i.id === noTitle.json.task.id);
+    assert.equal(t1.title, '标题直接展示测试'); // 命中 videos → 标题直出
+    assert.equal(t2.title, null);                // 未入库 → null
+
+    const one = await httpReq(ctx.port, 'GET', `/api/collect-tasks/${withTitle.json.task.id}`);
+    assert.equal(one.json.task.title, '标题直接展示测试');
   } finally { ctx.cleanup(); }
 });
 
