@@ -157,17 +157,19 @@ test('createTasksBatch：空数组 / 非数组输入零任务', () => {
 
 // ── expandUpperVideos：经扩展 WS 代理拉 UP 全量列表 + 标注已采 ──
 
-// fake requestCommand：两页共 3 条（ps=2），第二页 pn=2
+// fake requestCommand：模拟真实扩展契约（background.js list-upper-videos action 读
+// msg.page / msg.page_size，缺省回落 pn=1 / ps=30）。回归 BUG（2026-08-19）：server 曾发明
+// pn/ps 参数名 → 扩展永远收到 page=undefined → 每页都回第 1 页 → 列表 30 条重复 N 遍。
 function fakePagedCommand(pages: Record<number, any>): UpperExpandDeps {
   const calls: Array<{ action: string; params: Record<string, unknown> }> = [];
   return {
     listClients: () => [{ client_id: 'ext-A' }],
     requestCommand: async (_cid, action, params) => {
       calls.push({ action, params });
-      const pn = Number(params.pn ?? 1);
-      const page = pages[pn];
-      if (!page) return { ok: false, code: 'timeout' as const };
-      return { ok: true, result: { ok: true, data: page } };
+      const page = Number(params.page ?? 1); // 对齐真实扩展：page 缺省 = 第 1 页
+      const data = pages[page];
+      if (!data) return { ok: false, code: 'timeout' as const };
+      return { ok: true, result: { ok: true, data } };
     },
     sleep: async () => {}, // 测试不等待节流
     pageGapMs: 0,
@@ -176,7 +178,7 @@ function fakePagedCommand(pages: Record<number, any>): UpperExpandDeps {
   };
 }
 
-test('expandUpperVideos：分页循环拉全量 + 已采标注', async () => {
+test('expandUpperVideos：分页循环拉全量（page 参数对齐扩展契约）+ 已采标注', async () => {
   const { db, cleanup } = setupDb();
   try {
     // 库里已有 BV2（该 UP 已采 1 条）
@@ -198,11 +200,37 @@ test('expandUpperVideos：分页循环拉全量 + 已采标注', async () => {
     assert.equal(r.items.length, 3);
     assert.deepEqual(r.items.map((x) => x.collected), [false, true, false]);
     assert.equal(r.items[0].title, '视频一');
-    // 分页正确：两页各一次 list-upper-videos，第二页 pn=2
+    // 分页正确（契约）：两次调用分别带 page=1 / page=2
     const calls = (deps as any).calls as Array<{ action: string; params: Record<string, unknown> }>;
     assert.equal(calls.length, 2);
-    assert.equal(calls[0].params.pn, 1);
-    assert.equal(calls[1].params.pn, 2);
+    assert.equal(calls[0].params.page, 1);
+    assert.equal(calls[1].params.page, 2);
+  } finally { cleanup(); }
+});
+
+test('expandUpperVideos：分页重叠（页间新投稿位移）按 bvid 去重 + 连续无新页终止', async () => {
+  const { db, cleanup } = setupDb();
+  try {
+    // 第 1 页 A+B；第 2 页重复 B（位移重叠）+ C；第 3 页起全重复 → 无新页终止，不死循环
+    const page1 = [
+      { bvid: 'BV1aa411c7mD', title: 'A', created: 1, play: 1, length: '1:00' },
+      { bvid: 'BV1bb411c7mD', title: 'B', created: 2, play: 2, length: '2:00' },
+    ];
+    const deps = fakePagedCommand({
+      1: { total: 3, items: page1 },
+      2: { total: 3, items: [
+        { bvid: 'BV1bb411c7mD', title: 'B', created: 2, play: 2, length: '2:00' }, // 重叠
+        { bvid: 'BV1cc411c7mD', title: 'C', created: 3, play: 3, length: '3:00' },
+      ] },
+      // 第 3 页起返回 page1 的重复（模拟扩展回落/风控下的重复页）
+      3: { total: 3, items: page1 },
+      4: { total: 3, items: page1 },
+      5: { total: 3, items: page1 },
+    });
+    const r = await expandUpperVideos(db, '296399504', deps);
+    const bvids = r.items.map((x) => x.bvid);
+    assert.equal(new Set(bvids).size, bvids.length, '结果必须无重复 bvid');
+    assert.deepEqual(bvids.sort(), ['BV1aa411c7mD', 'BV1bb411c7mD', 'BV1cc411c7mD']);
   } finally { cleanup(); }
 });
 

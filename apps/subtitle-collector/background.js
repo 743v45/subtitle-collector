@@ -89,8 +89,10 @@ async function fetchAllUpperVideos(mid) {
   if (upperAllInflight.has(mid)) return { status: 'inflight' };
   upperAllInflight.add(mid);
   let items = [];
+  const seen = new Set(); // bvid 去重：页间新投稿使分页位移重叠时防重复（重复 key 会打乱 popup 列表渲染）
   let total = 0;
   let error = null;
+  let noNewStreak = 0; // 连续整页无新视频页数（≥3 判定分页停滞，终止保部分结果）
   try {
     for (let pn = 1; ; pn++) {
       await ensureWbiKeys();
@@ -103,13 +105,21 @@ async function fetchAllUpperVideos(mid) {
       }
       const vlist = parsed.data?.list?.vlist ?? [];
       total = parsed.data?.page?.count ?? items.length + vlist.length;
-      items = items.concat(vlist.map((v) => ({
-        bvid: v.bvid, title: v.title, created: v.created ?? null,
-        play: v.play ?? null, length: v.length ?? null,
-      })));
+      let added = 0;
+      for (const v of vlist) {
+        if (!v?.bvid || seen.has(v.bvid)) continue;
+        seen.add(v.bvid);
+        added++;
+        items.push({
+          bvid: v.bvid, title: v.title, created: v.created ?? null,
+          play: v.play ?? null, length: v.length ?? null,
+        });
+      }
       // 每页落盘：popup 实时进度 + SW 回收兜底
       await chrome.storage.local.set({ [key]: { items, total, done: false, error: null, fetchedAt: Date.now() } });
       if (vlist.length === 0 || items.length >= total) break;
+      noNewStreak = added > 0 ? 0 : noNewStreak + 1;
+      if (noNewStreak >= 3) break;
       await new Promise((r) => setTimeout(r, UPPER_ALL_PAGE_GAP_MS));
     }
   } catch (e) {

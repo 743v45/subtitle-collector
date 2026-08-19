@@ -184,17 +184,24 @@ export async function expandUpperVideos(
   const clientId = clients[0].client_id;
 
   const items: UpperVideoItem[] = [];
+  const seen = new Set<string>(); // bvid 去重（页间新投稿导致分页位移重叠时防重复）
   let total = 0;
-  for (let pn = 1; ; pn++) {
-    const r = await reqCmd(clientId, 'list-upper-videos', { mid, pn, ps: 30 }, UPPER_PAGE_TIMEOUT_MS);
+  let noNewStreak = 0; // 连续整页无新视频的页数（≥3 判定分页停滞/重叠死循环，终止）
+  for (let page = 1; ; page++) {
+    // 契约对齐 background.js list-upper-videos action：读 msg.page / msg.page_size（曾误用 pn/ps
+    // 导致扩展每页都回落第 1 页、列表整页重复 N 遍 —— 2026-08-19 回归修复）
+    const r = await reqCmd(clientId, 'list-upper-videos', { mid, page, page_size: 30 }, UPPER_PAGE_TIMEOUT_MS);
     if (!r.ok) throw new Error(r.code === 'offline' ? '扩展离线（拉取中断）' : '扩展执行超时');
     const result = r.result ?? {};
     if (result.ok === false) throw new Error(String(result.error ?? 'list-upper-videos 失败'));
     const data = result.data ?? {};
     const pageItems: Array<{ bvid?: unknown; title?: unknown; created?: unknown; play?: unknown; length?: unknown }> = Array.isArray(data.items) ? data.items : [];
     total = typeof data.total === 'number' ? data.total : items.length + pageItems.length;
+    let added = 0;
     for (const v of pageItems) {
-      if (typeof v?.bvid !== 'string') continue;
+      if (typeof v?.bvid !== 'string' || seen.has(v.bvid)) continue;
+      seen.add(v.bvid);
+      added++;
       items.push({
         bvid: v.bvid,
         title: typeof v.title === 'string' ? v.title : '',
@@ -205,6 +212,8 @@ export async function expandUpperVideos(
       });
     }
     if (pageItems.length === 0 || items.length >= total) break;
+    noNewStreak = added > 0 ? 0 : noNewStreak + 1;
+    if (noNewStreak >= 3) break; // 整页重复连续 3 页：分页停滞（重叠/回落），保已拉部分终止
     await sleep(gap); // 页间节流防风控
   }
 
