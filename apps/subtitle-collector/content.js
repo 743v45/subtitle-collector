@@ -20,12 +20,18 @@ window.addEventListener("message", (event) => {
     if ((cur.meta.subs ?? []).length === 0) {
       // 自动上报关时浏览不主动点 AI 字幕（不打扰用户；且上报关 INGEST 会被丢）；
       // navigate 主动采集由 background 发 NAV_TRIGGER_AI 强制点（绕过此开关）。
-      chrome.storage.local.get(["reportingEnabled"], ({ reportingEnabled }) => {
-        if (reportingEnabled !== false && !cur.aiTriggered) {
-          cur.aiTriggered = true; cur.expectAi = true;
-          setTimeout(triggerAiSubtitle, 1500); // 等播放器 UI 就绪
-        }
-      });
+      // 扩展 reload/更新后旧 content 驻留（上下文失效）时 storage 调用同步抛
+      // "Extension context invalidated"——try/catch 兜底，对齐 FETCH_SUBTITLE/INGEST 的防护。
+      try {
+        chrome.storage.local.get(["reportingEnabled"], ({ reportingEnabled }) => {
+          if (reportingEnabled !== false && !cur.aiTriggered) {
+            cur.aiTriggered = true; cur.expectAi = true;
+            setTimeout(triggerAiSubtitle, 1500); // 等播放器 UI 就绪
+          }
+        });
+      } catch (e) {
+        console.warn(`[content] reportingEnabled 读取异常（扩展上下文可能已失效）bvid=${data.bvid} err=${e?.message}`);
+      }
     }
   } else if (type === "SUBTITLE_BODY") {
     for (const [bvid, cur] of collected.entries()) {
