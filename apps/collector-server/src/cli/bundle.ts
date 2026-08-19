@@ -3,6 +3,9 @@
 // 措辞：字幕（subtitle），非弹幕。分析在 Claude Code 会话完成，本模块只产原料。
 
 import { extractBody } from './subtitleFormat.js';
+import type Database from 'better-sqlite3';
+import { videosList, type VideosListOpts } from './commands/videos.js';
+import { resolveSubtitle } from './commands/export.js';
 
 // ── 时间格式化 ──
 
@@ -113,3 +116,100 @@ export const ANALYZE_MD = `# 分析指引（bundle 自述）
   > 来源: 视频B [05:00]
 \`\`\`
 `;
+
+// ── buildBundle 类型 ──
+
+export interface BundleSubtitleMeta {
+  file: string;                 // 相对 bundle 根
+  lan: string | null;
+  lan_doc: string | null;
+  track_type: number | null;    // 1=AI 2=CC
+  version_id: number;
+  origin: string;               // external | manual | asr
+}
+
+export interface BundleVideoEntry {
+  id: number; source: string; source_vid: string;
+  title: string; creator_name: string | null; creator_source_uid: string | null;
+  duration: number | null; published_at: number | null; first_seen_at: number;
+  track_count: number;
+  subtitle: BundleSubtitleMeta | null;  // null = 无字幕/轨缺失/payload 损坏
+}
+
+export interface BundleManifest {
+  generated_at: number;
+  filters: VideosListOpts;      // camelCase 原样回显（since/until 为毫秒数）
+  total_matched: number;
+  exported: number;
+  limit: number;
+  videos: BundleVideoEntry[];
+  errors?: Array<{ source_vid: string; message: string }>;
+}
+
+export interface BundleFile { path: string; content: string; }  // path 相对 bundle 根
+export interface BundleResult { manifest: BundleManifest; files: BundleFile[]; }
+
+export interface BuildBundleOpts {
+  filters: VideosListOpts;  // 不含 page/size（buildBundle 内部固定 page=1, size=limit）
+  track?: string;           // 统一覆盖默认轨
+  limit: number;            // >0
+  now: number;              // generated_at（毫秒，注入保持纯函数）
+}
+
+// ── 视频正文头部（标题 + 元信息一行 + 轨一行 + 空行 + 正文）──
+
+function videoHeader(v: BundleVideoEntry, sub: BundleSubtitleMeta): string {
+  const dur = v.duration != null ? secsToClock(v.duration) : '未知';
+  const pub = v.published_at != null ? new Date(v.published_at).toISOString().slice(0, 10) : '未知';
+  const trackTypeLabel = sub.track_type === 2 ? 'CC' : sub.track_type === 1 ? 'AI' : '?';
+  const trackLabel = sub.lan_doc && sub.lan ? `${sub.lan_doc}(${sub.lan}, ${trackTypeLabel})` : `${sub.lan ?? '(无lan)'}`;
+  return [
+    `# ${v.title}`,
+    `UP: ${v.creator_name ?? '未知UP'}  时长: ${dur}  发布: ${pub}  BV: ${v.source_vid}`,
+    `轨: ${trackLabel}  版本来源: ${sub.origin}`,
+    '',
+  ].join('\n');
+}
+
+// ── 组装（纯函数：只读 db，不落盘；时间由 opts.now 注入）──
+
+export function buildBundle(db: Database.Database, opts: BuildBundleOpts): BundleResult {
+  const page = videosList(db, { ...opts.filters, page: 1, size: opts.limit });
+  const videos: BundleVideoEntry[] = [];
+  const files: BundleFile[] = [{ path: 'ANALYZE.md', content: ANALYZE_MD }];
+  const errors: Array<{ source_vid: string; message: string }> = [];
+
+  for (const v of page.items) {
+    const entry: BundleVideoEntry = {
+      id: v.id, source: v.source, source_vid: v.source_vid,
+      title: v.title, creator_name: v.creator_name, creator_source_uid: v.creator_source_uid,
+      duration: v.duration, published_at: v.published_at, first_seen_at: v.first_seen_at,
+      track_count: v.track_count, subtitle: null,
+    };
+    const r = resolveSubtitle(db, { source: v.source, sourceVid: v.source_vid, track: opts.track, format: 'json' });
+    if (r.kind === 'ok') {
+      try {
+        const body = stampedTxt(r.payload);
+        const sub: BundleSubtitleMeta = {
+          file: `videos/${v.source_vid}.txt`,
+          lan: r.trackLan ?? null, lan_doc: r.trackLanDoc ?? null,
+          track_type: r.trackType ?? null, version_id: r.versionId, origin: r.versionOrigin ?? '?',
+        };
+        entry.subtitle = sub;
+        files.push({ path: sub.file, content: `${videoHeader(entry, sub)}${body}` });
+      } catch (err) {
+        // payload 损坏：记 errors、subtitle 保持 null，不中断整包
+        errors.push({ source_vid: v.source_vid, message: (err as Error).message });
+      }
+    }
+    videos.push(entry);
+  }
+
+  const manifest: BundleManifest = {
+    generated_at: opts.now, filters: opts.filters,
+    total_matched: page.total, exported: page.items.length, limit: opts.limit,
+    videos, ...(errors.length > 0 ? { errors } : {}),
+  };
+  files.unshift({ path: 'manifest.json', content: `${JSON.stringify(manifest, null, 2)}\n` });
+  return { manifest, files };
+}
