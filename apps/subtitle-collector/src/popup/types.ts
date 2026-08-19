@@ -22,6 +22,8 @@ export interface CollectedExtra {
   pages?: unknown[];
   stat?: CollectedStat;
   tags?: { tag_name: string }[];
+  // 合集（inject readVideoExtra 采集）：当前视频属于合集时非空，popup 合集卡入口。
+  ugc_season?: { id?: number; title?: string } | null;
 }
 
 export interface CollectedVideo {

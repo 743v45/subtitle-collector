@@ -13,9 +13,9 @@ export interface VideoFilter {
   source?: string;           // videos.source 精确
   tid?: number;              // extra.tid 精确
   tname?: string;            // extra.tname 模糊
-  tag?: string;              // 标签名模糊（四档并查：bili extra + manual/batch/ai 关系表）
-  tags?: string[];           // 标签名精确（AND 语义，四档并查）
-  tag_source?: string[];     // 档位过滤（manual/batch/ai/bili 子集；省略=四档全查）
+  tag?: string;              // 标签名模糊（五档并查：bili/season extra + manual/batch/ai 关系表）
+  tags?: string[];           // 标签名精确（AND 语义，五档并查）
+  tag_source?: string[];     // 档位过滤（manual/batch/ai/bili/season 子集；省略=五档全查）
   subtitle_q?: string;       // 字幕正文关键词模糊（命中 subtitle_versions.payload）
   lang?: string;             // subtitle_tracks.lan 模糊（zh 命中 zh-Hans）
   track_type?: number;       // subtitle_tracks.track_type 精确（1=AI 2=CC）
@@ -90,17 +90,18 @@ export interface Overview {
 }
 
 // 标签匹配 EXISTS 片段：一个标签名（精确 = 或模糊 LIKE）× 档位（tag_source 过滤）。
-// bili 档查 extra json_each；manual/batch/ai 档查 video_tags 关系表。OR 连接。
-// tag_source 省略/含全部四档 → 两路都拼；只含 bili → 只 extra 路；只含关系档 → 只关系路。
+// bili 档查 extra json_each $.tags；season 档查 extra json_extract $.ugc_season.title（同为只读实时读）；
+// manual/batch/ai 档查 video_tags 关系表。OR 连接。
+// tag_source 省略/含全部五档 → 各路都拼；只含 bili → 只 extra tags 路；只含 season → 只 season 路；只含关系档 → 只关系路。
 function tagMatchCond(name: string, mode: 'exact' | 'like', tagSource?: string[]): { cond: string; params: unknown[] } {
-  const allSources = ['manual', 'batch', 'ai', 'bili'];
+  const allSources = ['manual', 'batch', 'ai', 'bili', 'season'];
   const sources = tagSource?.length ? tagSource.filter((s) => allSources.includes(s)) : allSources;
   if (sources.length === 0) sources.push(...allSources);
   const op = mode === 'exact' ? '=' : 'LIKE';
   const val = mode === 'exact' ? name : `%${name}%`;
   const branches: string[] = [];
   const params: unknown[] = [];
-  const relSources = sources.filter((s) => s !== 'bili');
+  const relSources = sources.filter((s) => s !== 'bili' && s !== 'season');
   if (relSources.length > 0) {
     const placeholders = relSources.map(() => '?').join(',');
     branches.push(
@@ -111,6 +112,12 @@ function tagMatchCond(name: string, mode: 'exact' | 'like', tagSource?: string[]
   if (sources.includes('bili')) {
     branches.push(
       `EXISTS (SELECT 1 FROM json_each(v.extra, '$.tags') WHERE json_extract(json_each.value, '$.tag_name') ${op} ?)`,
+    );
+    params.push(val);
+  }
+  if (sources.includes('season')) {
+    branches.push(
+      `json_extract(v.extra, '$.ugc_season.title') ${op} ?`,
     );
     params.push(val);
   }
@@ -369,14 +376,14 @@ export function aggregateStats(
              GROUP BY t.track_type ORDER BY count DESC, key ASC LIMIT ?`;
       break;
     case 'tag': {
-      // 四档并聚：关系表三档 UNION ALL bili extra json_each，外层 COUNT(DISTINCT video_id)
-      // （同名多档并存时按 1 计——聚合语义是「有几个视频带此标签」）。
-      // tag_source 过滤：只含 bili → 只第二分支；只含关系档 → 第一分支带 IN；省略 → 全查。
-      const allSources = ['manual', 'batch', 'ai', 'bili'];
+      // 五档并聚：关系表三档 UNION ALL bili extra json_each + season extra json_extract，
+      // 外层 COUNT(DISTINCT video_id)（同名多档并存时按 1 计——聚合语义是「有几个视频带此标签」）。
+      // tag_source 过滤：只含 bili/season → 只对应 extra 分支；只含关系档 → 第一分支带 IN；省略 → 全查。
+      const allSources = ['manual', 'batch', 'ai', 'bili', 'season'];
       const sources = filter.tag_source?.length
         ? filter.tag_source.filter((s) => allSources.includes(s))
         : allSources;
-      const relSources = sources.filter((s) => s !== 'bili');
+      const relSources = sources.filter((s) => s !== 'bili' && s !== 'season');
       const parts: string[] = [];
       const params2: unknown[] = [];
       if (relSources.length > 0) {
@@ -395,6 +402,13 @@ export function aggregateStats(
           `SELECT v.id as vid, json_extract(je.value, '$.tag_name') as name
              FROM videos v LEFT JOIN creators c ON c.id = v.creator_id, json_each(v.extra, '$.tags') je
              ${where}`,
+        );
+        params2.push(...params);
+      }
+      if (sources.includes('season')) {
+        parts.push(
+          `SELECT v.id as vid, json_extract(v.extra, '$.ugc_season.title') as name
+             FROM videos v LEFT JOIN creators c ON c.id = v.creator_id ${where}`,
         );
         params2.push(...params);
       }

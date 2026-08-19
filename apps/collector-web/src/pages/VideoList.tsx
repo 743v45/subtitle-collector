@@ -261,6 +261,7 @@ export function VideoList() {
               <SelectItem value="batch">批量</SelectItem>
               <SelectItem value="ai">AI</SelectItem>
               <SelectItem value="bili">B站</SelectItem>
+              <SelectItem value="season">合集</SelectItem>
             </SelectContent>
           </Select>
           <Input

@@ -6,17 +6,19 @@ import { parseVideoFilter, parseBool } from './filter.js';
 import { applyVideoTags, removeVideoTags, isTagSource, getVideoTagsByVideoIds, getVideoTagsForDetail, type TagSource } from '../db/tags.js';
 import { getTagPriority, type TagPrioritySource } from '../db/settings.js';
 
-// 合并 bili（extra.tags）与关系三档，同名按 tag_priority 取优先档（winner）。
+// 合并 bili（extra.tags）+ season（extra.ugc_season.title）与关系三档，同名按 tag_priority 取优先档（winner）。
 // 列表用（去重）；详情要全档时传 keepAll=true。
 function mergeTagDetails(
   biliNames: string[],
   relTags: Array<{ name: string; source: TagSource }>,
   priority: TagPrioritySource[],
   keepAll = false,
+  seasonNames: string[] = [],
 ): Array<{ name: string; source: TagPrioritySource }> {
   const all: Array<{ name: string; source: TagPrioritySource }> = [
     ...biliNames.map((name) => ({ name, source: 'bili' as const })),
     ...relTags.map((t) => ({ name: t.name, source: t.source })),
+    ...seasonNames.map((name) => ({ name, source: 'season' as const })),
   ];
   if (keepAll) {
     return all.sort((a, b) => {
@@ -52,7 +54,7 @@ function readJsonBody(req: IncomingMessage): Promise<unknown> {
 
 const SORT_KEYS: readonly VideoSortKey[] = ['first_seen', 'published_at', 'title', 'duration', 'view'];
 
-// 列表项富化：用 json_extract 从 extra 取 tid/tname/tags/view，并合并关系档标签按优先级 dedupe。
+// 列表项富化：用 json_extract 从 extra 取 tid/tname/tags/view/season_title，并合并关系档标签按优先级 dedupe。
 // tags（兼容旧字段）= winner 标签名数组；tag_details = [{name, source}]（同名只保留优先级最高档）。
 function enrichItems(
   db: Database.Database,
@@ -66,9 +68,10 @@ function enrichItems(
             json_extract(extra, '$.tid') AS tid,
             json_extract(extra, '$.tname') AS tname,
             json_extract(extra, '$.tags') AS tags,
+            json_extract(extra, '$.ugc_season.title') AS season_title,
             CAST(json_extract(extra, '$.stat.view') AS INTEGER) AS view
        FROM videos WHERE id IN (${placeholders})`,
-  ).all(...ids) as Array<{ id: number; tid: number | null; tname: string | null; tags: string | null; view: number | null }>;
+  ).all(...ids) as Array<{ id: number; tid: number | null; tname: string | null; tags: string | null; season_title: string | null; view: number | null }>;
   const byId = new Map(rows.map((r) => [r.id, r]));
   const relTags = getVideoTagsByVideoIds(db, ids);
   const priority = getTagPriority(db);
@@ -87,7 +90,7 @@ function enrichItems(
         biliNames = []; // extra.tags 非合法 JSON → 空数组
       }
     }
-    const tag_details = mergeTagDetails(biliNames, relTags.get(it.id) ?? [], priority);
+    const tag_details = mergeTagDetails(biliNames, relTags.get(it.id) ?? [], priority, false, r?.season_title ? [r.season_title] : []);
     return { ...it, tid: r?.tid ?? null, tname: r?.tname ?? null, tags: tag_details.map((t) => t.name), view: r?.view ?? null, tag_details };
   });
 }
@@ -142,7 +145,7 @@ export async function handleQueryHttp(req: IncomingMessage, res: ServerResponse,
       const b = await readJsonBody(req) as { names?: unknown; source?: unknown };
       const names = Array.isArray(b.names) ? b.names.filter((n): n is string => typeof n === 'string' && n.trim().length > 0) : [];
       if (names.length === 0) { json(res, 400, { ok: false, error: 'names:string[] required' }); return; }
-      if (b.source === 'bili') { json(res, 400, { ok: false, error: 'bili tags are read-only (from video extra)' }); return; }
+      if (b.source === 'bili' || b.source === 'season') { json(res, 400, { ok: false, error: 'bili/season tags are read-only (from video extra)' }); return; }
       if (!isTagSource(b.source)) { json(res, 400, { ok: false, error: 'source must be manual|batch|ai' }); return; }
       const r = applyVideoTags(db, [{ source, source_vid: sourceVid }], names, b.source);
       json(res, 200, { ok: true, inserted: r.inserted, missing: r.missing });
@@ -153,7 +156,7 @@ export async function handleQueryHttp(req: IncomingMessage, res: ServerResponse,
       const name = url.searchParams.get('name');
       if (!name) { json(res, 400, { ok: false, error: 'name query param required' }); return; }
       const sourceParam = url.searchParams.get('source');
-      if (sourceParam === 'bili') { json(res, 400, { ok: false, error: 'bili tags are read-only' }); return; }
+      if (sourceParam === 'bili' || sourceParam === 'season') { json(res, 400, { ok: false, error: 'bili/season tags are read-only' }); return; }
       if (sourceParam != null && !isTagSource(sourceParam)) { json(res, 400, { ok: false, error: 'source must be manual|batch|ai' }); return; }
       const r = removeVideoTags(db, [{ source, source_vid: sourceVid }], [name], sourceParam ?? undefined);
       json(res, 200, { ok: true, removed: r.removed, missing: r.missing });
@@ -167,9 +170,10 @@ export async function handleQueryHttp(req: IncomingMessage, res: ServerResponse,
     const sourceVid = decodeURIComponent(detailMatch[2]);
     const detail = getVideo(db, source, sourceVid);
     if (!detail) { json(res, 404, { ok: false, error: 'not found' }); return; }
-    // 全档 tag_details（不去重，详情页四色全展示）：bili（extra.tags）+ 关系三档
+    // 全档 tag_details（不去重，详情页五档全展示）：bili（extra.tags）+ season（extra.ugc_season.title）+ 关系三档
     // 注意 getVideo 返回的 extra 是 TEXT（JSON 字符串），需 parse 后再取 tags
     let biliNames: string[] = [];
+    let seasonNames: string[] = [];
     try {
       const extraObj = typeof detail.video.extra === 'string' ? JSON.parse(detail.video.extra) : detail.video.extra;
       const arr = (extraObj as { tags?: unknown } | null)?.tags;
@@ -178,10 +182,12 @@ export async function handleQueryHttp(req: IncomingMessage, res: ServerResponse,
           .map((x) => (x && typeof x.tag_name === 'string' ? x.tag_name : null))
           .filter((t): t is string => t !== null);
       }
-    } catch { /* extra 非合法 JSON → 无 bili 标签 */ }
+      const seasonTitle = (extraObj as { ugc_season?: { title?: unknown } } | null)?.ugc_season?.title;
+      if (typeof seasonTitle === 'string' && seasonTitle) seasonNames = [seasonTitle];
+    } catch { /* extra 非合法 JSON → 无 bili/season 标签 */ }
     const relTags = getVideoTagsForDetail(db, detail.video.id as number);
     const priority = getTagPriority(db);
-    json(res, 200, { ok: true, ...detail, tag_details: mergeTagDetails(biliNames, relTags, priority, true) });
+    json(res, 200, { ok: true, ...detail, tag_details: mergeTagDetails(biliNames, relTags, priority, true, seasonNames) });
     return;
   }
 

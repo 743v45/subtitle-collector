@@ -22,9 +22,9 @@ function fmtTime(ms: number): string {
   return new Date(ms).toLocaleString();
 }
 
-const DEFAULT_PRIORITY: TagSource[] = ['manual', 'batch', 'bili', 'ai'];
+const DEFAULT_PRIORITY: TagSource[] = ['manual', 'batch', 'bili', 'season', 'ai'];
 
-// 标签库档位过滤（bili 档来自视频自带、无独立实体，不在过滤组）
+// 标签库档位过滤（bili/season 档来自视频自带 extra、无独立实体，不在过滤组）
 type LibraryScope = '' | 'manual' | 'batch' | 'ai';
 const SCOPES: { value: LibraryScope; label: string }[] = [
   { value: '', label: '全部' },

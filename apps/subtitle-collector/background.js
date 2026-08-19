@@ -134,6 +134,79 @@ async function fetchAllUpperVideos(mid, refresh = false) {
   return { status: 'done', error };
 }
 
+// ── 合集（ugc_season）视频：全量分页拉取（popup 合集卡触发，2026-08-19）──
+// 对齐 fetchAllUpperVideos 模式：storage 唯一真相 + 页间节流 + 中断保部分结果。
+// API：/x/polymer/web-space/seasons_archives_list（免 wbi 签名，season_id 单独可用——纯扩展模式也能拉）。
+// item 字段对齐 UpperAllVideoItem（length 从 duration 秒转 "M:SS"，复用 popup 行渲染）。
+const seasonAllInflight = new Set(); // 正在全量拉取的 seasonId（重复触发复用同一任务）
+const SEASON_ALL_TTL_MS = 3600 * 1000;
+const SEASON_ALL_PAGE_GAP_MS = 500; // 页间节流防风控（-412）
+const SEASON_ALL_PS = 30;           // seasons_archives_list 单页条数
+
+async function fetchAllSeasonVideos(seasonId, refresh = false) {
+  const key = `seasonVideos:${seasonId}`;
+  if (!refresh) {
+    const { [key]: cached } = await chrome.storage.local.get(key);
+    if (cached?.fetchedAt && cached.done && !cached.error && Date.now() - cached.fetchedAt < SEASON_ALL_TTL_MS) {
+      return { status: 'cached' };
+    }
+  }
+  if (seasonAllInflight.has(seasonId)) return { status: 'inflight' };
+  seasonAllInflight.add(seasonId);
+  const items = [];
+  const seen = new Set(); // bvid 去重（合集追加投稿使分页位移重叠时防重复）
+  let total = 0;
+  let error = null;
+  let noNewStreak = 0; // 连续整页无新条目页数（≥3 判定分页停滞，终止保部分结果）
+  try {
+    for (let pageNum = 1; ; pageNum++) {
+      const parsed = await biliFetch('/x/polymer/web-space/seasons_archives_list', {
+        params: { season_id: seasonId, sort_reverse: false, page_num: pageNum, page_size: SEASON_ALL_PS },
+      });
+      if (!parsed.ok) {
+        error = 'seasons_archives_list ' + parsed.code + (items.length ? `（已拉 ${items.length}/${total}，中断）` : '');
+        break;
+      }
+      const archives = parsed.data?.archives ?? [];
+      total = parsed.data?.page?.total ?? items.length + archives.length;
+      let added = 0;
+      for (const a of archives) {
+        if (!a?.bvid || seen.has(a.bvid)) continue;
+        seen.add(a.bvid);
+        added++;
+        items.push({
+          bvid: a.bvid, title: a.title, created: a.pubdate ?? null,
+          play: a.stat?.view ?? null,
+          // duration 秒 → "M:SS"（对齐 UP 卡 length 渲染；超 1 小时 "H:MM:SS"）
+          length: typeof a.duration === 'number' && a.duration >= 0 ? fmtLength(a.duration) : null,
+          pic: typeof a.pic === 'string' ? (a.pic.startsWith('//') ? 'https:' + a.pic : a.pic) : null,
+        });
+      }
+      // 每页落盘：popup 实时进度 + SW 回收兜底
+      await chrome.storage.local.set({ [key]: { items, total, done: false, error: null, fetchedAt: Date.now() } });
+      if (archives.length === 0 || items.length >= total) break;
+      noNewStreak = added > 0 ? 0 : noNewStreak + 1;
+      if (noNewStreak >= 3) break;
+      await new Promise((r) => setTimeout(r, SEASON_ALL_PAGE_GAP_MS));
+    }
+  } catch (e) {
+    error = String(e?.message ?? e);
+  }
+  await chrome.storage.local.set({ [key]: { items, total, done: true, error, fetchedAt: Date.now() } });
+  seasonAllInflight.delete(seasonId);
+  return { status: 'done', error };
+}
+
+// duration 秒 → "M:SS" / "H:MM:SS"（与 B 站 arc/search 的 length 字段同构）
+function fmtLength(sec) {
+  const t = Math.floor(sec);
+  const h = Math.floor(t / 3600);
+  const m = Math.floor((t % 3600) / 60);
+  const s = t % 60;
+  const ss = String(s).padStart(2, '0');
+  return h > 0 ? `${h}:${String(m).padStart(2, '0')}:${ss}` : `${m}:${ss}`;
+}
+
 // MV3 SW 保活兜底：周期 alarm 唤醒 SW，若 ws 未 OPEN 则触发重连（C1）
 chrome.alarms.create("keepalive", { periodInMinutes: 0.4 });
 chrome.alarms.onAlarm.addListener((a) => {
@@ -525,6 +598,14 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     // UP 全部视频全量拉取：异步长任务（页间节流），立即回执状态；数据经 storage 增量流出。
     // refresh=true 绕过缓存强制重拉（popup ↻ 按钮；inflight 进行中则忽略）。
     fetchAllUpperVideos(String(msg.mid), msg.refresh === true).then(
+      (r) => sendResponse({ ok: true, ...r }),
+      (e) => sendResponse({ ok: false, error: String(e?.message ?? e) })
+    );
+    return true;
+  } else if (msg?.type === "FETCH_SEASON_ALL" && msg.seasonId != null) {
+    // 合集视频全量拉取：异步长任务（页间节流），立即回执状态；数据经 storage 增量流出。
+    // refresh=true 绕过缓存强制重拉（popup ↻ 按钮；inflight 进行中则忽略）。
+    fetchAllSeasonVideos(Number(msg.seasonId), msg.refresh === true).then(
       (r) => sendResponse({ ok: true, ...r }),
       (e) => sendResponse({ ok: false, error: String(e?.message ?? e) })
     );

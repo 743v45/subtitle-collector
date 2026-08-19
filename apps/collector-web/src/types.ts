@@ -103,7 +103,7 @@ export interface VideoFilter {
   tname?: string;
   tag?: string;
   tags?: string[];       // 精确标签过滤（AND，逗号 join 传 server）
-  tag_source?: string[]; // 标签档位过滤（manual/batch/bili/ai，逗号 join 传 server）
+  tag_source?: string[]; // 标签档位过滤（manual/batch/bili/season/ai，逗号 join 传 server）
   subtitle_q?: string; // 字幕正文关键词
   lang?: string;
   has_subtitle?: boolean;

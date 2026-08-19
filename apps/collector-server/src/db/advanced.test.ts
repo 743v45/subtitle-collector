@@ -384,3 +384,67 @@ test('aggregateStats groupBy=tag：四档并聚 + DISTINCT 去重 + tag_source �
     assert.deepEqual(agg, [{ key: '数码', count: 1 }, { key: '游戏', count: 1 }]);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
+
+// ---- season 档（合集标签，只读实时读 extra.ugc_season.title）筛选与聚合 ----
+function setupSeason(): { db: Database.Database; dir: string } {
+  const { db, dir } = freshDb();
+  const ingest = (sv: string, title: string, extra: Record<string, unknown>) =>
+    ingestVideo(db, {
+      source: 'bilibili',
+      video: { source_vid: sv, title, creator: { source_uid: '9', name: 'Gamma UP' }, extra, duration: 100, published_at: T },
+      tracks: [],
+    });
+  // SV1/SV2 同合集「AI前沿」；SV3 无合集；SV4 合集「AI前沿-2026」（前缀重叠防误匹配）
+  ingest('SV1', '合集视频一', { ugc_season: { id: 1, title: 'AI前沿' } });
+  ingest('SV2', '合集视频二', { ugc_season: { id: 1, title: 'AI前沿' } });
+  ingest('SV3', '普通视频', {});
+  ingest('SV4', '另一合集', { ugc_season: { id: 2, title: 'AI前沿-2026' } });
+  return { db, dir };
+}
+
+test('season 档筛选：tags 精确 + tag=模糊 + tag_source=season 分支', () => {
+  const { db, dir } = setupSeason();
+  try {
+    // tags=AI前沿 精确（五档并查，season 路命中）：SV1 + SV2
+    let r = listVideosFiltered(db, { tags: ['AI前沿'] });
+    assert.equal(r.total, 2);
+
+    // tag_source=season：SV1 + SV2；精确名不含「AI前沿-2026」（SV4 不命中 = 精确匹配）
+    r = listVideosFiltered(db, { tags: ['AI前沿'], tag_source: ['season'] });
+    assert.equal(r.total, 2);
+
+    // tag=AI前沿 模糊：命中 SV1/SV2/SV4（LIKE 前缀）
+    r = listVideosFiltered(db, { tag: 'AI前沿' });
+    assert.equal(r.total, 3);
+
+    // tag_source=bili（不含 season）：合集名不命中（无 bili tags）→ 0
+    r = listVideosFiltered(db, { tags: ['AI前沿'], tag_source: ['bili'] });
+    assert.equal(r.total, 0);
+
+    // AND：tags=AI前沿,不存在 → 0（season 命中一个但另一个全档无）
+    r = listVideosFiltered(db, { tags: ['AI前沿', '不存在'] });
+    assert.equal(r.total, 0);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('aggregateStats groupBy=tag：season 档并聚 + tag_source 过滤', () => {
+  const { db, dir } = setupSeason();
+  try {
+    // 全档聚合：AI前沿=2、AI前沿-2026=1
+    let agg = aggregateStats(db, 'tag', {}, 20);
+    assert.equal(agg.find((r) => r.key === 'AI前沿')!.count, 2);
+    assert.equal(agg.find((r) => r.key === 'AI前沿-2026')!.count, 1);
+
+    // tag_source=season 只聚 season 分支
+    agg = aggregateStats(db, 'tag', { tag_source: ['season'] }, 20);
+    assert.deepEqual(agg, [{ key: 'AI前沿', count: 2 }, { key: 'AI前沿-2026', count: 1 }]);
+
+    // tag_source=manual（关系档）：无 → 空聚合
+    agg = aggregateStats(db, 'tag', { tag_source: ['manual'] }, 20);
+    assert.deepEqual(agg, []);
+
+    // 其他 filter 生效：q=合集视频一 → 只剩 SV1 的 season 标签
+    agg = aggregateStats(db, 'tag', { q: '合集视频一' }, 20);
+    assert.deepEqual(agg, [{ key: 'AI前沿', count: 1 }]);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});

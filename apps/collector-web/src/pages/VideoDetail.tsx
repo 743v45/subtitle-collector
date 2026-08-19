@@ -150,7 +150,7 @@ export function VideoDetail({ source, sourceVid, onBack }: { source: string; sou
         </CardContent>
       </Card>
 
-      {/* 标签（四档带色全展示不去重；manual/batch/ai 可增删，bili 为视频自带只读） */}
+      {/* 标签（五档带色全展示不去重；manual/batch/ai 可增删，bili/season 为视频自带只读） */}
       <Card>
         <CardContent className="space-y-2 p-4">
           <div className="flex flex-wrap items-center gap-1.5">
@@ -167,7 +167,7 @@ export function VideoDetail({ source, sourceVid, onBack }: { source: string; sou
                   className={TAG_SOURCE_CLASS[t.source]}
                 >
                   {t.name}
-                  {t.source !== 'bili' && (
+                  {t.source !== 'bili' && t.source !== 'season' && (
                     <button
                       type="button"
                       aria-label={`移除标签 ${t.name}`}

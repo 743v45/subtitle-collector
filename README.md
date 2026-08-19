@@ -10,10 +10,11 @@ B 站**字幕（subtitle）**相关浏览器扩展与配套服务的 monorepo（
 
 状态标记：✅ 已实现 ｜ 🚧 待建（当前优先级）｜ 📋 远期规划
 
-### 批量采集（✅ 三入口全通）
+### 批量采集（✅ 四入口全通）
 
 - ✅ **单视频**：浏览被动入库（打开 B 站视频页自动采）+ 手动补采 `collect subtitle <bvid>`
-- ✅ **UP 主批量**：`collect upper-videos <mid>` / `collect new-videos <mid>` / `collect discover <mid...>`
+- ✅ **UP 主批量**：`collect upper-videos <mid>` / `collect new-videos <mid>` / `collect discover <mid...>` + popup「UP 全部视频」卡勾选批量
+- ✅ **合集批量**：popup 合集卡（视频属合集时列出全集 `seasons_archives_list` 全量分页，勾选批量采集上报）
 - ✅ **搜索批量**：`collect search <keyword>` / `collect find <keyword>`（粉丝数/发布时间/播放量等条件过滤）
 - ✅ 充电专属视频采集 + 付费标记（`videos list --paid`）
 - ✅ 无字幕视频兜底：subtitle-extractor 浏览器本地 Whisper 转写
@@ -21,6 +22,7 @@ B 站**字幕（subtitle）**相关浏览器扩展与配套服务的 monorepo（
 ### 查询与导出（✅）
 
 - ✅ web 后台：视频库浏览 / 搜索 / UP 主 / 分类管理 / 采集日志
+- ✅ 视频标签五档：manual/batch/ai（落表）+ bili（视频自带）/ **season（合集，只读实时读 extra.ugc_season.title）**，tag_priority 可调 + 按档位过滤/聚合
 - ✅ 字幕正文全文检索：`sub search <keyword>`（带时间戳定位片段）
 - ✅ 导出：`export subtitle`（srt/vtt/txt/json）、`export videos`（csv/ndjson/table）
 

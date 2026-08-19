@@ -8,6 +8,7 @@ import {
   useLocalCollected,
   useClientId,
   useReporting,
+  useSeasonVideos,
   useServerConfig,
   useSpaceMid,
   useUpperAllVideos,
@@ -18,6 +19,7 @@ import {
   type CreatorState,
   type LocalCollectedState,
   type LoginState,
+  type SeasonAllState,
   type UpperAllState,
 } from './hooks';
 import { LOGOS, type Platform, type StatIconName } from './platforms';
@@ -132,6 +134,18 @@ export function Popup() {
   const upperAll = useUpperAllVideos(upperMid);
   const upperCollected = useCreatorCollected(upperMid, serverCfg.httpBase, !standalone);
 
+  // 合集卡入口（2026-08-19）：B 站视频页且当前视频属于合集（local extra.ugc_season）时展示。
+  // 只依赖本地数据源（content.js GET_LOCAL_STATE）——纯扩展模式也能拉合集列表（B 站 API 直连），
+  // 仅已采标注/批量采集需 server（standalone 按钮置灰）。已采标注复用 upperCollected：
+  // 合集内视频同属一个 UP（B 站合集只能装 UP 自己的视频），upperMid 为 null 时状态列自然隐藏。
+  const season = useMemo(() => {
+    if (!currentVid || currentPlatform?.id !== 'bilibili') return null;
+    const extra = local.state === 'has-subtitle' || local.state === 'no-subtitle' ? local.extra : null;
+    const s = extra?.ugc_season;
+    return typeof s?.id === 'number' && typeof s.title === 'string' && s.title ? { id: s.id, title: s.title } : null;
+  }, [currentVid, currentPlatform, local]);
+  const seasonAll = useSeasonVideos(season);
+
   // 手动上报反馈：reporting → success/failed（INGEST_RESULT.ok）/ 超时 failed（未连接 / 上报未达 server）。
   // 字幕数据视频页加载时已由 content.js 自动采集，这里只是把已采集数据上报到 collector-server。
   // 数据刷新交给 useCollected / useLocalCollected 各自监听 INGEST_RESULT（刷新不再清 loading，无闪烁）。
@@ -186,6 +200,16 @@ export function Popup() {
               YouTube server 态为 not-collected（无 creator_id）→ CreatorCard 自然返回 null，不展示 */}
           {!standalone && <CreatorCard creator={creatorState} />}
         </>
+      )}
+      {/* 合集卡：当前视频属于合集时（视频卡下方、UP 卡前）；勾选批量采集复用 collect-tasks/batch */}
+      {season && (
+        <SeasonVideosCard
+          season={season}
+          state={seasonAll}
+          collected={upperCollected}
+          httpBase={serverCfg.httpBase}
+          standalone={standalone}
+        />
       )}
       {/* UP 全部视频卡：空间页/视频页通用（折叠 + 总数/已采 + 勾选批量采集） */}
       {upperMid && (
@@ -716,20 +740,27 @@ function CreatorCard({ creator }: { creator: CreatorState }) {
   );
 }
 
-// UP 全部视频卡（2026-08-19，替换旧「最近 5 条被动缓存」卡）：
-// 收起态 = 总数 + 已采 M + 拉取进度一行；展开 = 过滤条（状态/时间/播放量档位）+ 勾选列表 + 批量采集。
-// 数据：background fetchAllUpperVideos 全量分页（storage 唯一真相，onChanged 增量渲染）；
-// 已采标注：server /api/videos?creator_uid（standalone / server-down → collected=null，状态列隐藏）。
+// 通用「勾选批量采集卡」主体（2026-08-19）：UP 全部视频卡 / 合集卡共用的列表体——
+// 折叠态 = 标题行（title + 总数 + 已采 + 拉取进度 + ↻）；展开 = 过滤条（状态/时间/播放量档位）
+// + 勾选列表（封面缩略图 + 已采点 + 标题链接 + 时长/播放/日期小字）+ 批量采集。
+// 数据：state 由各自 hook 提供（background 全量分页，storage 唯一真相）；
+// 已采标注：collected 为已采 bvid 集合（null=不可用 → 状态列隐藏）。
 // 批量采集：勾选 bvids → POST /api/collect-tasks/batch → server 调度器串行派发 fetch-subtitle（免导航）。
-function UpperAllVideosCard({
-  mid,
+function BatchCollectCard({
+  title,
+  titleText,
+  footer,
+  onRefresh,
   state,
   collected,
   httpBase,
   standalone,
 }: {
-  mid: string;
-  state: UpperAllState;
+  title: ReactNode;               // 折叠态标题（含色块的富文本）
+  titleText: string;              // 纯文本标题（loading 提示用）
+  footer: ReactNode;              // 展开态底部极小灰字（UP 卡 UID / 合集卡 season_id）
+  onRefresh: () => void;          // ↻ 清缓存重拉（包装组件各自发对应消息）
+  state: UpperAllState | SeasonAllState;
   collected: Set<string> | null;
   httpBase: string;
   standalone: boolean;
@@ -760,13 +791,13 @@ function UpperAllVideosCard({
     });
   }, [state, statusFilter, timeDays, viewMin, collected]);
 
-  // loading（无任何缓存数据，全量任务刚起步）：占位行而非不渲染——空间页首开时
-  // 用户需知道列表在路上（UP 视频多时全量分页约十几秒），否则像「空间页没反应」。
+  // loading（无任何缓存数据，全量任务刚起步）：占位行而非不渲染——首开时用户需知道列表在路上
+  //（视频多时全量分页约十几秒），否则像「没反应」。
   if (state.state !== 'ok') {
     return (
       <Card>
         <CardContent className="p-3 text-xs text-muted-foreground">
-          UP 全部视频 · 拉取中…（首次需全量分页，视频多时约十几秒；完成后自动出现）
+          {titleText} · 拉取中…（首次需全量分页，条目多时约十几秒；完成后自动出现）
         </CardContent>
       </Card>
     );
@@ -819,7 +850,7 @@ function UpperAllVideosCard({
           <div className="flex items-center gap-1">
             <CollapsibleTrigger className="flex min-w-0 flex-1 items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground">
               <ChevronIcon className={cn('h-3 w-3 shrink-0 transition-transform', open && 'rotate-90')} />
-              <span className="shrink-0 font-medium text-foreground">UP 全部视频</span>
+              <span className="shrink-0 font-medium text-foreground">{title}</span>
               <span className="shrink-0 tabular-nums">共 {total} 条</span>
               {collectedCount != null && (
                 <span className="shrink-0 tabular-nums text-emerald-600">已采 {collectedCount}</span>
@@ -838,9 +869,7 @@ function UpperAllVideosCard({
             {/* ↻ 清缓存重拉（旧缓存缺封面字段 / 数据过期时用；拉取进行中禁用） */}
             <button
               type="button"
-              onClick={() =>
-                chrome.runtime.sendMessage({ type: 'FETCH_UPPER_ALL', mid, refresh: true }, () => void chrome.runtime.lastError)
-              }
+              onClick={onRefresh}
               disabled={!done}
               title="清除缓存重新拉取"
               className="flex h-5 w-5 shrink-0 items-center justify-center rounded text-muted-foreground/60 transition-colors hover:bg-muted hover:text-foreground disabled:opacity-30"
@@ -993,11 +1022,76 @@ function UpperAllVideosCard({
                 {batch.msg}
               </div>
             )}
-            <div className="text-[10px] text-muted-foreground/50">UID {mid}</div>
+            {footer}
           </CollapsibleContent>
         </Collapsible>
       </CardContent>
     </Card>
+  );
+}
+
+// UP 全部视频卡（2026-08-19，替换旧「最近 5 条被动缓存」卡）：
+// 空间页（URL 解析 mid）/ 视频页（server creator mid）入口，全量分页拉取 + 勾选批量采集。
+// 数据：background fetchAllUpperVideos 全量分页（storage 唯一真相，onChanged 增量渲染）；
+// 已采标注：server /api/videos?creator_uid（standalone / server-down → collected=null，状态列隐藏）。
+function UpperAllVideosCard({
+  mid,
+  state,
+  collected,
+  httpBase,
+  standalone,
+}: {
+  mid: string;
+  state: UpperAllState;
+  collected: Set<string> | null;
+  httpBase: string;
+  standalone: boolean;
+}) {
+  return (
+    <BatchCollectCard
+      title="UP 全部视频"
+      titleText="UP 全部视频"
+      footer={<div className="text-[10px] text-muted-foreground/50">UID {mid}</div>}
+      onRefresh={() =>
+        chrome.runtime.sendMessage({ type: 'FETCH_UPPER_ALL', mid, refresh: true }, () => void chrome.runtime.lastError)
+      }
+      state={state}
+      collected={collected}
+      httpBase={httpBase}
+      standalone={standalone}
+    />
+  );
+}
+
+// 合集卡（2026-08-19）：当前视频属于合集（local extra.ugc_season）时展示，列出合集内全部视频。
+// 数据：background fetchAllSeasonVideos（seasons_archives_list 全量分页，storage 唯一真相）；
+// 已采标注：复用 upperCollected（合集内视频同属一个 UP）；批量采集走通用卡主体。
+function SeasonVideosCard({
+  season,
+  state,
+  collected,
+  httpBase,
+  standalone,
+}: {
+  season: { id: number; title: string };
+  state: SeasonAllState;
+  collected: Set<string> | null;
+  httpBase: string;
+  standalone: boolean;
+}) {
+  return (
+    <BatchCollectCard
+      title={`合集 ${season.title}`}
+      titleText={`合集 ${season.title}`}
+      footer={<div className="text-[10px] text-muted-foreground/50">season_id {season.id}</div>}
+      onRefresh={() =>
+        chrome.runtime.sendMessage({ type: 'FETCH_SEASON_ALL', seasonId: season.id, refresh: true }, () => void chrome.runtime.lastError)
+      }
+      state={state}
+      collected={collected}
+      httpBase={httpBase}
+      standalone={standalone}
+    />
   );
 }
 

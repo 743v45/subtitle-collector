@@ -463,6 +463,68 @@ export function useUpperAllVideos(mid: string | null | undefined): UpperAllState
   return state;
 }
 
+// —— 合集（ugc_season）视频列表（background 全量分页拉取，storage 唯一数据真相，2026-08-19）——
+// 挂载即触发 FETCH_SEASON_ALL（fresh 缓存命中直接读；否则 background 起任务/复用 inflight），
+// background 每页写 chrome.storage.local[`seasonVideos:${seasonId}`] → storage.onChanged 增量渲染进度。
+// item 字段与 UpperAllVideoItem 同构（length 为 "M:SS" 字符串），复用 popup 行渲染。
+export interface SeasonVideoItem {
+  bvid: string;
+  title: string;
+  created: number | null; // unix 秒（seasons_archives_list 的 pubdate）
+  play: number | null;
+  length: string | null;  // "MM:SS" / "HH:MM:SS"（duration 秒转换）
+  pic?: string | null;    // 封面 URL（已归一 https:）
+}
+export type SeasonAllState =
+  | { state: 'loading' }
+  | {
+      state: 'ok';
+      items: SeasonVideoItem[];
+      total: number;
+      done: boolean;         // false = 拉取进行中（items 为已拉部分）
+      error: string | null;  // 风控中断等（部分结果仍可用）
+      fetchedAt: number;
+    };
+
+export function useSeasonVideos(season: { id: number; title: string } | null): SeasonAllState {
+  const [state, setState] = useState<SeasonAllState>({ state: 'loading' });
+  const read = useCallback((seasonId: number) => {
+    const key = `seasonVideos:${seasonId}`;
+    chrome.storage.local.get([key], (items) => {
+      const cached = items[key] as Omit<Extract<SeasonAllState, { state: 'ok' }>, 'state'> | undefined;
+      if (cached && Array.isArray(cached.items)) {
+        setState({
+          state: 'ok',
+          items: cached.items,
+          total: cached.total ?? cached.items.length,
+          done: !!cached.done,
+          error: cached.error ?? null,
+          fetchedAt: cached.fetchedAt ?? 0,
+        });
+      } else {
+        setState({ state: 'loading' });
+      }
+    });
+  }, []);
+  useEffect(() => {
+    if (!season) {
+      setState({ state: 'loading' });
+      return;
+    }
+    setState({ state: 'loading' });
+    read(season.id);
+    // 触发全量任务（回执仅表状态，数据走 storage）
+    chrome.runtime.sendMessage({ type: 'FETCH_SEASON_ALL', seasonId: season.id }, () => void chrome.runtime.lastError);
+    const handler = (changes: Record<string, chrome.storage.StorageChange>, area: string) => {
+      if (area !== 'local') return;
+      if (`seasonVideos:${season.id}` in changes) read(season.id);
+    };
+    chrome.storage.onChanged.addListener(handler);
+    return () => chrome.storage.onChanged.removeListener(handler);
+  }, [season, read]);
+  return state;
+}
+
 // —— UP 已采集合：server /api/videos?creator_uid 分页拉已采 bvid 集合（采集状态标注用）——
 // server-down / standalone → null（列表照常展示，采集状态与批量按钮隐藏）。
 // 分页上限 10 页（×100 条）：万级视频的 UP 极罕见，防失控足够。
