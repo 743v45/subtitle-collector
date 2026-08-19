@@ -382,6 +382,126 @@ export function useUpperVideos(mid: string | null | undefined): UpperVideosState
   return state;
 }
 
+// —— 空间页 mid：tabs.query 解析 space.bilibili.com/{mid}（UP 全量列表空间页入口）——
+// 纯数字首段路径（/upload/video 等子页不干扰）。非空间页返回 null。
+export function useSpaceMid(): string | null {
+  const [mid, setMid] = useState<string | null>(null);
+  useEffect(() => {
+    chrome.tabs.query({ active: true, currentWindow: true }, ([tab]) => {
+      let m: string | null = null;
+      try {
+        const u = tab?.url ? new URL(tab.url) : null;
+        if (u && u.hostname === 'space.bilibili.com') {
+          const seg = u.pathname.split('/').filter(Boolean)[0];
+          if (seg && /^\d+$/.test(seg)) m = seg;
+        }
+      } catch { /* 非法 URL 忽略 */ }
+      setMid(m);
+    });
+  }, []);
+  return mid;
+}
+
+// —— UP 全部视频（background 全量分页拉取，storage 唯一数据真相，2026-08-19）——
+// 挂载即触发 FETCH_UPPER_ALL（fresh 缓存命中直接读；否则 background 起任务/复用 inflight），
+// background 每页写 chrome.storage.local[`upperAllVideos:${mid}`] → storage.onChanged 增量渲染进度。
+export interface UpperAllVideoItem {
+  bvid: string;
+  title: string;
+  created: number | null; // unix 秒（arc/search 原样）
+  play: number | null;
+  length: string | null;  // "MM:SS" / "HH:MM:SS"（arc/search 原样）
+}
+export type UpperAllState =
+  | { state: 'loading' }
+  | {
+      state: 'ok';
+      items: UpperAllVideoItem[];
+      total: number;
+      done: boolean;         // false = 拉取进行中（items 为已拉部分）
+      error: string | null;  // 风控中断等（部分结果仍可用）
+      fetchedAt: number;
+    };
+
+export function useUpperAllVideos(mid: string | null | undefined): UpperAllState {
+  const [state, setState] = useState<UpperAllState>({ state: 'loading' });
+  const read = useCallback((m: string) => {
+    const key = `upperAllVideos:${m}`;
+    chrome.storage.local.get([key], (items) => {
+      const cached = items[key] as Omit<Extract<UpperAllState, { state: 'ok' }>, 'state'> | undefined;
+      if (cached && Array.isArray(cached.items)) {
+        setState({
+          state: 'ok',
+          items: cached.items,
+          total: cached.total ?? cached.items.length,
+          done: !!cached.done,
+          error: cached.error ?? null,
+          fetchedAt: cached.fetchedAt ?? 0,
+        });
+      } else {
+        setState({ state: 'loading' });
+      }
+    });
+  }, []);
+  useEffect(() => {
+    if (!mid) {
+      setState({ state: 'loading' });
+      return;
+    }
+    setState({ state: 'loading' });
+    read(mid);
+    // 触发全量任务（回执仅表状态，数据走 storage）
+    chrome.runtime.sendMessage({ type: 'FETCH_UPPER_ALL', mid }, () => void chrome.runtime.lastError);
+    const handler = (changes: Record<string, chrome.storage.StorageChange>, area: string) => {
+      if (area !== 'local') return;
+      if (`upperAllVideos:${mid}` in changes) read(mid);
+    };
+    chrome.storage.onChanged.addListener(handler);
+    return () => chrome.storage.onChanged.removeListener(handler);
+  }, [mid, read]);
+  return state;
+}
+
+// —— UP 已采集合：server /api/videos?creator_uid 分页拉已采 bvid 集合（采集状态标注用）——
+// server-down / standalone → null（列表照常展示，采集状态与批量按钮隐藏）。
+// 分页上限 10 页（×100 条）：万级视频的 UP 极罕见，防失控足够。
+export function useCreatorCollected(
+  mid: string | null | undefined,
+  httpBase: string,
+  enabled: boolean,
+): Set<string> | null {
+  const [set, setSet] = useState<Set<string> | null>(null);
+  useEffect(() => {
+    if (!mid || !enabled) {
+      setSet(null);
+      return;
+    }
+    let alive = true;
+    (async () => {
+      try {
+        const acc = new Set<string>();
+        const size = 100;
+        for (let page = 1; page <= 10; page++) {
+          const r = await fetch(
+            `${httpBase}/api/videos?source=bilibili&creator_uid=${encodeURIComponent(mid)}&page=${page}&size=${size}`,
+            { cache: 'no-cache' },
+          );
+          const d = await r.json();
+          if (!d?.ok) break;
+          const items: Array<{ source_vid?: string }> = d.items ?? [];
+          for (const it of items) if (typeof it.source_vid === 'string') acc.add(it.source_vid);
+          if (items.length < size) break;
+        }
+        if (alive) setSet(acc);
+      } catch {
+        if (alive) setSet(null);
+      }
+    })();
+    return () => { alive = false; };
+  }, [mid, httpBase, enabled]);
+  return set;
+}
+
 // —— 上报开关：启动从 storage 读（默认开，!==false），切换时发 SET_REPORTING ——
 // enabled 初始 null=未知：避免首帧硬编码 true（"开"）→ storage 实际 false 时"开→关"的翻转闪烁；
 // storage 回调回来才落到真实 boolean，Popup 在 null 期间显示中性占位。

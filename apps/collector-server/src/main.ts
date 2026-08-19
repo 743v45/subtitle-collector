@@ -73,6 +73,8 @@ const httpServer = createServer((req, res) => {
   if (!httpOriginAllowed(req)) { res.writeHead(403, { 'Content-Type': 'application/json' }); res.end('{"ok":false,"error":"forbidden"}'); return; } // C2
   if (req.url?.startsWith('/api/clients')) { handleClientsHttp(req, res); return; }
   if (req.url?.startsWith('/api/collect-tasks')) { void handleTasksHttp(req, res, db); return; }
+  // /api/upper-videos/expand（按 UP 批量的列表拉取，handler 在 http/tasks.ts——批量采集域）
+  if (req.url?.startsWith('/api/upper-videos')) { void handleTasksHttp(req, res, db); return; }
   if (req.url?.startsWith('/api/categories')) { handleCategoriesHttp(req, res, db); return; }
   if (req.url?.startsWith('/api/creators')) { handleCreatorsHttp(req, res, db); return; }
   if (req.url?.startsWith('/api/stats')) { handleStatsHttp(req, res, db); return; }

@@ -4,6 +4,7 @@ import { listClients, requestCommand } from '../ws/server.js';
 // ── 采集任务系统：手机/网页提交 → server 派发给桌面扩展 → 扩展采集回执 ──
 // 设计依据：docs/superpowers/specs/2026-08-13-mobile-collect-task-design.md
 // 状态机：pending → dispatched → succeeded | failed
+// 批量扩展（2026-08-19）：docs/superpowers/specs/2026-08-19-upper-all-videos-batch-design.md
 
 export type TaskStatus = 'pending' | 'dispatched' | 'succeeded' | 'failed';
 
@@ -117,6 +118,107 @@ export function createTask(db: Database.Database, target: ParsedTarget): Collect
     'INSERT INTO collect_tasks (source, source_vid, url, status, created_at) VALUES (?, ?, ?, ?, ?)',
   ).run(target.source, target.source_vid, target.url, 'pending', now);
   return getTask(db, Number(info.lastInsertRowid))!;
+}
+
+// ── 批量建任务（popup/web 按 UP 批量采集）──
+// 去重：同 (source, source_vid) 已有未终态任务（pending/dispatched）跳过；终态（succeeded/failed）允许重采。
+// 入参 bvid 非法（非 BV 格式）或重复直接忽略，不进 skipped 也不建任务。
+export function createTasksBatch(
+  db: Database.Database,
+  bvids: unknown,
+): { created: CollectTask[]; skipped: string[] } {
+  const created: CollectTask[] = [];
+  const skipped: string[] = [];
+  const seen = new Set<string>();
+  for (const bvid of Array.isArray(bvids) ? bvids : []) {
+    if (typeof bvid !== 'string' || !/^BV[0-9A-Za-z]{10}$/.test(bvid) || seen.has(bvid)) continue;
+    seen.add(bvid);
+    const active = db.prepare(
+      "SELECT 1 FROM collect_tasks WHERE source = 'bilibili' AND source_vid = ? AND status IN ('pending', 'dispatched')",
+    ).get(bvid);
+    if (active) { skipped.push(bvid); continue; }
+    created.push(createTask(db, { source: 'bilibili', source_vid: bvid, url: `https://www.bilibili.com/video/${bvid}` }));
+  }
+  return { created, skipped };
+}
+
+// ── UP 全部视频列表（web 端「按 UP 批量」用，server 经扩展 WS 代理拉取）──
+// server 不直连 B 站（无浏览器 cookie/wbi 环境且数据中心 IP 易风控），分页循环复用扩展的
+// list-upper-videos action（background.js arc/search 封装），页间节流对齐 popup 全量拉取的 500ms。
+export interface UpperVideoItem {
+  bvid: string;
+  title: string;
+  created: number | null;
+  play: number | null;
+  length: string | null; // arc/search 原样 "MM:SS" / "HH:MM:SS"
+  collected: boolean;    // 已入库（videos 表命中）
+}
+
+// 依赖注入（测试 mock 用）；生产默认真 WS 实现。
+export interface UpperExpandDeps {
+  listClients?: () => Array<{ client_id: string }>;
+  requestCommand?: (
+    clientId: string,
+    action: string,
+    params: Record<string, unknown>,
+    timeoutMs?: number,
+  ) => Promise<{ ok: true; result: any } | { ok: false; code: 'offline' | 'timeout' }>;
+  sleep?: (ms: number) => Promise<void>;
+  pageGapMs?: number;
+}
+
+const UPPER_PAGE_TIMEOUT_MS = 30_000; // 单页（30 条）30s 上限，全量循环整体不设超时
+
+export async function expandUpperVideos(
+  db: Database.Database,
+  mid: string,
+  deps: UpperExpandDeps = {},
+): Promise<{ total: number; items: UpperVideoItem[] }> {
+  const lsClients = deps.listClients ?? listClients;
+  const reqCmd = deps.requestCommand ?? requestCommand;
+  const sleep = deps.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
+  const gap = deps.pageGapMs ?? 500;
+
+  const clients = lsClients();
+  if (clients.length === 0) throw new Error('扩展离线：UP 视频列表需经桌面扩展拉取（连上扩展后重试）');
+  const clientId = clients[0].client_id;
+
+  const items: UpperVideoItem[] = [];
+  let total = 0;
+  for (let pn = 1; ; pn++) {
+    const r = await reqCmd(clientId, 'list-upper-videos', { mid, pn, ps: 30 }, UPPER_PAGE_TIMEOUT_MS);
+    if (!r.ok) throw new Error(r.code === 'offline' ? '扩展离线（拉取中断）' : '扩展执行超时');
+    const result = r.result ?? {};
+    if (result.ok === false) throw new Error(String(result.error ?? 'list-upper-videos 失败'));
+    const data = result.data ?? {};
+    const pageItems: Array<{ bvid?: unknown; title?: unknown; created?: unknown; play?: unknown; length?: unknown }> = Array.isArray(data.items) ? data.items : [];
+    total = typeof data.total === 'number' ? data.total : items.length + pageItems.length;
+    for (const v of pageItems) {
+      if (typeof v?.bvid !== 'string') continue;
+      items.push({
+        bvid: v.bvid,
+        title: typeof v.title === 'string' ? v.title : '',
+        created: typeof v.created === 'number' ? v.created : null,
+        play: typeof v.play === 'number' ? v.play : null,
+        length: typeof v.length === 'string' ? v.length : null,
+        collected: false,
+      });
+    }
+    if (pageItems.length === 0 || items.length >= total) break;
+    await sleep(gap); // 页间节流防风控
+  }
+
+  // 标注已采：videos 表 source_vid IN 分批查（SQLite 绑定变量上限兜底 chunk 500）
+  for (let i = 0; i < items.length; i += 500) {
+    const chunk = items.slice(i, i + 500);
+    const ph = chunk.map(() => '?').join(',');
+    const rows = db.prepare(
+      `SELECT source_vid FROM videos WHERE source = 'bilibili' AND source_vid IN (${ph})`,
+    ).all(...chunk.map((x) => x.bvid)) as Array<{ source_vid: string }>;
+    const hit = new Set(rows.map((row) => row.source_vid));
+    for (const it of chunk) it.collected = hit.has(it.bvid);
+  }
+  return { total, items };
 }
 
 export function getTask(db: Database.Database, id: number): CollectTask | null {

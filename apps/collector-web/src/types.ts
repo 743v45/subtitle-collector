@@ -84,6 +84,16 @@ export interface CollectTask {
   finished_at: number | null;
 }
 
+// ── UP 全部视频条目（/api/upper-videos/expand；arc/search 原样字段 + server 已采标注）──
+export interface UpperVideoItem {
+  bvid: string;
+  title: string;
+  created: number | null; // unix 秒
+  play: number | null;
+  length: string | null;  // "MM:SS" / "HH:MM:SS"
+  collected: boolean;
+}
+
 // ── 视频多维筛选（对应 server advanced.ts VideoFilter + ListFilter）──
 export interface VideoFilter {
   q?: string;

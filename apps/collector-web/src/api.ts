@@ -1,7 +1,7 @@
 import type {
   VideoListItem, VideoDetail, VideoFilter, ClientInfo,
   StatsOverview, KeyValue, StatsGroupBy, CreatorDetail, ChangeRow,
-  TagSource, CollectTask,
+  TagSource, CollectTask, UpperVideoItem,
 } from './types';
 import type { SubtitleLine } from '@/components/SubtitleView';
 
@@ -144,6 +144,28 @@ export async function getCollectTask(id: number): Promise<CollectTask> {
 export async function deleteCollectTask(id: number): Promise<void> {
   const r = await fetch(`${BASE}/api/collect-tasks/${id}`, { method: 'DELETE' });
   await ensureOk(r, () => undefined);
+}
+
+// ── 按 UP 批量采集（2026-08-19）──
+// UP 全部视频列表：server 经扩展 WS 代理分页拉取（arc/search）+ 查库标注已采。
+// 扩展离线 / 拉取失败 → 抛错（ensureOk 带 server error 文案）。
+export async function expandUpperVideos(mid: string): Promise<{ total: number; items: UpperVideoItem[] }> {
+  const r = await fetch(`${BASE}/api/upper-videos/expand`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ mid }),
+  });
+  return ensureOk(r, (j) => ({ total: j.total ?? 0, items: j.items ?? [] }));
+}
+
+// 批量建采集任务（popup/web 勾选批量共用端点；pending/dispatched 任务去重跳过）
+export async function createCollectTasksBatch(bvids: string[]): Promise<{ created: number; skipped: number }> {
+  const r = await fetch(`${BASE}/api/collect-tasks/batch`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ bvids }),
+  });
+  return ensureOk(r, (j) => ({ created: j.created ?? 0, skipped: j.skipped ?? 0 }));
 }
 
 export async function setReporting(clientId: string, enabled: boolean): Promise<boolean> {

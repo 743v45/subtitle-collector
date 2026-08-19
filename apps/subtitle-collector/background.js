@@ -70,6 +70,56 @@ async function ensureUpperVideos(mid) {
   await chrome.storage.local.set({ [`upperVideos:${mid}`]: { items, fetchedAt: Date.now() }, [key]: Date.now() });
 }
 
+// ── UP 全部视频：全量分页拉取（popup 空间页/视频页触发，2026-08-19）──
+// storage 是唯一数据真相：每页增量写 chrome.storage.local[`upperAllVideos:${mid}`]，popup 用
+// storage.onChanged 渲染进度；SW 意外回收不丢已拉页（重开 popup 重触发续拉——从头拉，B 站侧幂等）。
+// 风控中断保留已拉页 + error 标记（部分结果仍可勾选批量采集）。
+const upperAllInflight = new Set(); // 正在全量拉取的 mid（重复触发复用同一任务）
+const UPPER_ALL_TTL_MS = 3600 * 1000;
+const UPPER_ALL_PAGE_GAP_MS = 500; // 页间节流防风控（-412）
+const UPPER_ALL_PS = 30;           // arc/search 单页条数
+
+async function fetchAllUpperVideos(mid) {
+  const key = `upperAllVideos:${mid}`;
+  const { [key]: cached } = await chrome.storage.local.get(key);
+  // 缓存命中：完成 + 无错 + 1h 内
+  if (cached?.fetchedAt && cached.done && !cached.error && Date.now() - cached.fetchedAt < UPPER_ALL_TTL_MS) {
+    return { status: 'cached' };
+  }
+  if (upperAllInflight.has(mid)) return { status: 'inflight' };
+  upperAllInflight.add(mid);
+  let items = [];
+  let total = 0;
+  let error = null;
+  try {
+    for (let pn = 1; ; pn++) {
+      await ensureWbiKeys();
+      const parsed = await biliFetch('/x/space/wbi/arc/search', {
+        wbi: true, params: { mid, pn, ps: UPPER_ALL_PS, order: 'pubdate' }, wbiKeys,
+      });
+      if (!parsed.ok) {
+        error = 'arc/search ' + parsed.code + (items.length ? `（已拉 ${items.length}/${total}，中断）` : '');
+        break;
+      }
+      const vlist = parsed.data?.list?.vlist ?? [];
+      total = parsed.data?.page?.count ?? items.length + vlist.length;
+      items = items.concat(vlist.map((v) => ({
+        bvid: v.bvid, title: v.title, created: v.created ?? null,
+        play: v.play ?? null, length: v.length ?? null,
+      })));
+      // 每页落盘：popup 实时进度 + SW 回收兜底
+      await chrome.storage.local.set({ [key]: { items, total, done: false, error: null, fetchedAt: Date.now() } });
+      if (vlist.length === 0 || items.length >= total) break;
+      await new Promise((r) => setTimeout(r, UPPER_ALL_PAGE_GAP_MS));
+    }
+  } catch (e) {
+    error = String(e?.message ?? e);
+  }
+  await chrome.storage.local.set({ [key]: { items, total, done: true, error, fetchedAt: Date.now() } });
+  upperAllInflight.delete(mid);
+  return { status: 'done', error };
+}
+
 // MV3 SW 保活兜底：周期 alarm 唤醒 SW，若 ws 未 OPEN 则触发重连（C1）
 chrome.alarms.create("keepalive", { periodInMinutes: 0.4 });
 chrome.alarms.onAlarm.addListener((a) => {
@@ -455,6 +505,13 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     sendResponse({ ok: true });
   } else if (msg?.type === "WS_STATUS") {
     sendResponse({ ok: true, connected: authenticated, mode: connectionMode, activeServerId, error: lastError });
+  } else if (msg?.type === "FETCH_UPPER_ALL" && msg.mid) {
+    // UP 全部视频全量拉取：异步长任务（页间节流），立即回执状态；数据经 storage 增量流出
+    fetchAllUpperVideos(String(msg.mid)).then(
+      (r) => sendResponse({ ok: true, ...r }),
+      (e) => sendResponse({ ok: false, error: String(e?.message ?? e) })
+    );
+    return true;
   } else if (msg?.type === "FETCH_SUBTITLE" && msg.url) {
     // content script 请求 background 抓字幕体（background 有 host_permissions，免 CORS）
     // B 站新版播放器改用同源 protobuf endpoint，inject 拦不到旧 aisubtitle 请求，故由 background 主动抓

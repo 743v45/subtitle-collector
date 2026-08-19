@@ -9,6 +9,7 @@ export interface VideoFilter {
   q?: string;                // title / creator 名 模糊
   creator?: string;          // creator 名 模糊
   creator_id?: number;       // creator id 精确（UP 详情页拉该 UP 视频）
+  creator_uid?: string;      // creator source_uid 精确（popup/web 按 B 站 mid 直查已采集合，免 mid→id 两跳）
   source?: string;           // videos.source 精确
   tid?: number;              // extra.tid 精确
   tname?: string;            // extra.tname 模糊
@@ -132,6 +133,11 @@ function buildVideoWhere(f: VideoFilter): { where: string; params: unknown[] } {
   if (f.creator_id != null) {
     conds.push('v.creator_id = ?');
     params.push(f.creator_id);
+  }
+  if (f.creator_uid) {
+    // source_uid 精确（子查询防 LIKE 误匹配：296 命中 1296）。多源（bilibili/youtube）uid 不互通，调用方带 source 过滤收窄。
+    conds.push('v.creator_id IN (SELECT id FROM creators WHERE source_uid = ?)');
+    params.push(f.creator_uid);
   }
   if (f.source) {
     conds.push('v.source = ?');

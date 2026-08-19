@@ -1,6 +1,6 @@
 import { type IncomingMessage, type ServerResponse } from 'node:http';
 import type Database from 'better-sqlite3';
-import { extractVideoUrl, expandShortLink, parseVideoUrl, createTask, getTask, deleteTask, listTasks, kickTaskScheduler, type FetchLike } from '../tasks/tasks.js';
+import { extractVideoUrl, expandShortLink, parseVideoUrl, createTask, createTasksBatch, expandUpperVideos, getTask, deleteTask, listTasks, kickTaskScheduler, type FetchLike } from '../tasks/tasks.js';
 
 function json(res: ServerResponse, status: number, body: unknown): void {
   res.writeHead(status, { 'Content-Type': 'application/json' });
@@ -17,9 +17,11 @@ function readJsonBody(req: IncomingMessage): Promise<any> {
 
 // ── 采集任务 HTTP 接口（手机/网页提交入口）──
 // POST   /api/collect-tasks        { text } → 从粘贴文本提取 URL → 建 pending 任务并尝试派发
+// POST   /api/collect-tasks/batch  { bvids[] } → 批量建任务（popup/web 按 UP 勾选批量采集）并尝试派发
 // GET    /api/collect-tasks        最近任务列表（手机「采集」页主体）
 // GET    /api/collect-tasks/:id    单任务状态（手机每 2s 轮询直到终态）
 // DELETE /api/collect-tasks/:id    删除任务（采集页删除按钮,任意状态可删）
+// POST   /api/upper-videos/expand  { mid } → 经扩展 WS 代理拉 UP 全部视频 + 标注已采（web「按 UP 批量」用）
 export async function handleTasksHttp(req: IncomingMessage, res: ServerResponse, db: Database.Database): Promise<void> {
   const url = new URL(req.url ?? '/', 'http://localhost');
   const pathname = url.pathname;
@@ -45,6 +47,34 @@ export async function handleTasksHttp(req: IncomingMessage, res: ServerResponse,
       return;
     }
     json(res, 405, { ok: false, error: 'method not allowed' });
+    return;
+  }
+
+  // 批量建任务（数字 id 路由之前匹配，防 /batch 被 (\d+) 之外的逻辑误吃——正则不匹配非数字，顺序只是可读性）
+  if (pathname === '/api/collect-tasks/batch') {
+    if (req.method !== 'POST') { json(res, 405, { ok: false, error: 'method not allowed' }); return; }
+    const body = await readJsonBody(req);
+    const bvids = Array.isArray(body?.bvids) ? body.bvids : [];
+    if (bvids.length === 0) { json(res, 400, { ok: false, error: 'bvids: string[] required（至少一个 BV 号）' }); return; }
+    const r = createTasksBatch(db, bvids);
+    if (r.created.length > 0) kickTaskScheduler(); // 事件驱动：建任务立即尝试派发
+    json(res, 200, { ok: true, created: r.created.length, skipped: r.skipped.length, tasks: r.created });
+    return;
+  }
+
+  // UP 全部视频列表（经扩展代理拉取；main.ts 把 /api/upper-videos 前缀路由到本 handler）
+  if (pathname === '/api/upper-videos/expand') {
+    if (req.method !== 'POST') { json(res, 405, { ok: false, error: 'method not allowed' }); return; }
+    const body = await readJsonBody(req);
+    const mid = typeof body?.mid === 'string' ? body.mid.trim() : '';
+    if (!/^\d+$/.test(mid)) { json(res, 400, { ok: false, error: 'mid（B 站用户数字 ID）required' }); return; }
+    try {
+      const r = await expandUpperVideos(db, mid);
+      json(res, 200, { ok: true, ...r });
+    } catch (e) {
+      // 扩展离线/超时/风控 → 503（可重试的临时态）
+      json(res, 503, { ok: false, error: String((e as Error)?.message ?? e) });
+    }
     return;
   }
 
