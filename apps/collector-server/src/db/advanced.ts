@@ -83,6 +83,7 @@ export interface Overview {
   creators: number;
   languages: number;
   categories: number;
+  today_videos: number; // 当日本地 00:00 起 first_seen_at 新入库视频数（采集页摘要行）
   first_seen_min: number | null;
   first_seen_max: number | null;
 }
@@ -406,6 +407,9 @@ export function aggregateStats(
 // 总览计数：视频/轨/版本/UP/语言/分区数 + first_seen 时间范围。
 // languages 取 subtitle_tracks.lan 去重计数；categories 取 extra.tname 去重计数。
 export function countOverview(db: Database.Database): Overview {
+  // 当日本地零点（ms epoch）：today_videos 的下界。跨时区按 server 本地时区算。
+  const todayStart = new Date();
+  todayStart.setHours(0, 0, 0, 0);
   return db.prepare(`
     SELECT
       (SELECT COUNT(*) FROM videos) as videos,
@@ -414,7 +418,8 @@ export function countOverview(db: Database.Database): Overview {
       (SELECT COUNT(*) FROM creators) as creators,
       (SELECT COUNT(DISTINCT lan) FROM subtitle_tracks WHERE lan IS NOT NULL) as languages,
       (SELECT COUNT(DISTINCT json_extract(extra, '$.tname')) FROM videos WHERE json_extract(extra, '$.tname') IS NOT NULL) as categories,
+      (SELECT COUNT(*) FROM videos WHERE first_seen_at >= ?) as today_videos,
       (SELECT MIN(first_seen_at) FROM videos) as first_seen_min,
       (SELECT MAX(first_seen_at) FROM videos) as first_seen_max
-  `).get() as Overview;
+  `).get(todayStart.getTime()) as Overview;
 }

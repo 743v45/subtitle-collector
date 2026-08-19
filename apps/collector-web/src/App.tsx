@@ -12,12 +12,11 @@ import { ChangesLog } from './pages/ChangesLog';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { cn } from '@/lib/utils';
+import { navigate, useRoute, type Tab } from './router';
 import {
   BarChart3, Film, FolderTree, Inbox, MonitorSmartphone, MoreHorizontal, ScrollText, Tags, Users,
   type LucideIcon,
 } from 'lucide-react';
-
-type Tab = 'collect' | 'videos' | 'stats' | 'clients' | 'categories' | 'tags' | 'creators' | 'changes';
 
 // 导航分级：移动端底部 bar 只放高频 3 格,低频 5 格收进「更多」弹层;桌面顶部单行全量。
 const TABS: { key: Tab; label: string; icon: LucideIcon }[] = [
@@ -35,12 +34,15 @@ const PRIMARY_TABS = TABS.filter((t) => PRIMARY_KEYS.has(t.key));
 const SECONDARY_TABS = TABS.filter((t) => !PRIMARY_KEYS.has(t.key));
 
 export default function App() {
-  const [tab, setTab] = useState<Tab>('collect');
-  const [videoView, setVideoView] = useState<{ source: string; sourceVid: string } | null>(null);
-  const [creatorView, setCreatorView] = useState<number | null>(null);
+  // 路由即状态：tab / 视频详情 / 创作者详情全来自 URL hash,刷新/分享/后退天然还原
+  const route = useRoute();
+  const { tab, videoView, creatorView } = route;
   const [moreOpen, setMoreOpen] = useState(false);
 
-  const switchTab = (t: Tab) => { setTab(t); setVideoView(null); setCreatorView(null); };
+  const switchTab = (t: Tab) => navigate(`/${t}`);
+
+  // 视频详情的 query 即进入前的列表筛选（onOpen 时附加）→ 返回列表原样还原
+  const listQs = route.query.toString();
 
   const page = tab === 'collect' ? (
     <CollectPage />
@@ -58,14 +60,14 @@ export default function App() {
     creatorView != null
       ? <CreatorDetailPage
           id={creatorView}
-          onBack={() => setCreatorView(null)}
-          onOpenVideo={(s, v) => { setVideoView({ source: s, sourceVid: v }); setTab('videos'); }}
+          onBack={() => navigate('/creators')}
+          onOpenVideo={(s, v) => navigate(`/videos/${s}/${encodeURIComponent(v)}`)}
         />
-      : <CreatorsPage onOpen={(id) => setCreatorView(id)} />
+      : <CreatorsPage onOpen={(id) => navigate(`/creators/${id}`)} />
   ) : videoView ? (
-    <VideoDetail source={videoView.source} sourceVid={videoView.sourceVid} onBack={() => setVideoView(null)} />
+    <VideoDetail source={videoView.source} sourceVid={videoView.sourceVid} onBack={() => navigate('/videos' + (listQs ? `?${listQs}` : ''))} />
   ) : (
-    <VideoList onOpen={(s, v) => setVideoView({ source: s, sourceVid: v })} />
+    <VideoList />
   );
 
   return (

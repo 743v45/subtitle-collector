@@ -9,6 +9,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { useToast } from '@/components/ui/toast';
 import { useAsync } from '@/lib/useAsync';
 import { cn } from '@/lib/utils';
+import { navigate } from '../router';
 import { GripVertical } from 'lucide-react';
 import { listTags, renameTag, deleteTag, getTagPriority, putTagPriority, type TagItem } from '@/api';
 import { TAG_SOURCE_DOT, TAG_SOURCE_LABEL, type TagSource } from '@/lib/tagSources';
@@ -213,7 +214,16 @@ export function TagsPage() {
             const rowBusy = deletingId === t.id || renameTarget?.id === t.id;
             return (
               <TableRow key={t.id}>
-                <TableCell className="font-medium">{t.name}</TableCell>
+                <TableCell className="font-medium">
+                  {/* 点击名称 → 视频页按该标签筛选（URL 直达,可分享/后退） */}
+                  <button
+                    className="underline-offset-2 hover:underline"
+                    title={`查看带「${t.name}」标签的视频`}
+                    onClick={() => navigate(`/videos?tag=${encodeURIComponent(t.name)}`)}
+                  >
+                    {t.name}
+                  </button>
+                </TableCell>
                 <TableCell className="tabular-nums">{t.counts.manual}</TableCell>
                 <TableCell className="tabular-nums">{t.counts.batch}</TableCell>
                 <TableCell className="tabular-nums">{t.counts.ai}</TableCell>

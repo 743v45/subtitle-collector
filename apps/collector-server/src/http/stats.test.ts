@@ -18,7 +18,7 @@ const T = 1_700_000_000_000; // 基准毫秒时间戳
 // V2 alpha 科技 zh-Hans AI（tags 数码，tid 122，view 5000）
 // V3 beta 单机游戏 en CC（tags 游戏，tid 17，view 200）
 // V4 beta 生活 无轨（tags []，tid 21，view 50）
-function setup(): Promise<{ port: number; cleanup: () => void; alphaId: number }> {
+function setup(opts: { withTodayVideo?: boolean } = {}): Promise<{ port: number; cleanup: () => void; alphaId: number }> {
   const dir = mkdtempSync(join(tmpdir(), 'collector-stats-'));
   const db = openDb(join(dir, 'test.db'));
   migrate(db);
@@ -51,6 +51,16 @@ function setup(): Promise<{ port: number; cleanup: () => void; alphaId: number }
   setSeen('BV2', T + 200);
   setSeen('BV3', T + 300);
   setSeen('BV4', T + 400);
+
+  // 可选：插一条「今日」视频（today_videos 用例用；本地 00:00 后 1 分钟，确保 ≥ 当日零点）
+  if (opts.withTodayVideo) {
+    const midnight = new Date();
+    midnight.setHours(0, 0, 0, 0);
+    ingest('BV5', '今日视频', '1', 'Alpha UP', { tid: 17, tname: '单机游戏', tags: [], stat: { view: 1 } }, 100, T + 5000, [
+      { lan: 'zh-Hans', lan_doc: 'CC中文', track_type: 2, versions: [{ origin: 'external', payload: { body: [] } }] },
+    ]);
+    setSeen('BV5', midnight.getTime() + 60_000);
+  }
 
   // 给 alpha 补富字段，验证 creator 详情（task #3）
   const alphaRow = db.prepare("SELECT id FROM creators WHERE source_uid = '1'").get() as { id: number };
@@ -160,6 +170,25 @@ test('GET /api/stats?type=overview：总览数字正确', async () => {
     assert.equal(r.json.overview.categories, 3);
     assert.equal(r.json.overview.first_seen_min, T + 100);
     assert.equal(r.json.overview.first_seen_max, T + 400);
+  } finally { ctx.cleanup(); }
+});
+
+test('GET /api/stats?type=overview：today_videos 只计当日本地 00:00 后入库的视频', async () => {
+  const ctx = await setup({ withTodayVideo: true });
+  try {
+    const r = await httpGet(ctx.port, '/api/stats?type=overview');
+    assert.equal(r.status, 200);
+    // 仅 BV5（今日）；BV1-4 的 first_seen 在 2023 年 → 不计
+    assert.equal(r.json.overview.today_videos, 1);
+  } finally { ctx.cleanup(); }
+});
+
+test('GET /api/stats?type=overview：无当日入库时 today_videos = 0', async () => {
+  const ctx = await setup();
+  try {
+    const r = await httpGet(ctx.port, '/api/stats?type=overview');
+    assert.equal(r.status, 200);
+    assert.equal(r.json.overview.today_videos, 0);
   } finally { ctx.cleanup(); }
 });
 

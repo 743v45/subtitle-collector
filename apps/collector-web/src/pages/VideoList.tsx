@@ -9,6 +9,8 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { cn } from '@/lib/utils';
 import { useAsync } from '@/lib/useAsync';
 import { TAG_SOURCE_CLASS, type TagSource } from '@/lib/tagSources';
+import { navigate, useQueryUpdater, useRoute } from '../router';
+import { videoListFromQuery } from '../videoFilterUrl';
 import { ArrowDown, ArrowUp, ChevronDown, RotateCcw } from 'lucide-react';
 import type { VideoFilter, VideoListItem } from '../types';
 
@@ -47,43 +49,31 @@ function formatView(n: number | null | undefined): string {
   return `${(n / 100000000).toFixed(1)}亿`;
 }
 
-export function VideoList({ onOpen }: { onOpen: (source: string, sourceVid: string) => void }) {
-  // q / 字幕关键词 都走防抖（300ms）
-  const [qInput, setQInput] = useState('');
-  const [q, setQ] = useState('');
-  const [subtitleQInput, setSubtitleQInput] = useState('');
-  const [subtitleQ, setSubtitleQ] = useState('');
-  // 平台（B 站/YouTube）+ 分区（下拉，选项从 aggregate 拉）
-  const [source, setSource] = useState('');
-  const [tname, setTname] = useState('');
-  // 次要筛选（折叠区）：标签（下拉，精确）+ 标签档位（下拉）
-  const [tagName, setTagName] = useState('');
-  const [tagSourceSel, setTagSourceSel] = useState('');
-  const [lang, setLang] = useState('');
-  const [hasSubtitle, setHasSubtitle] = useState(false);
-  // 时间区间（YYYY-MM-DD）+ 时长区间（分钟）+ 播放量区间（万）
-  const [dateField, setDateField] = useState<DateField>('first_seen');
-  const [sinceDate, setSinceDate] = useState('');
-  const [untilDate, setUntilDate] = useState('');
-  const [minDur, setMinDur] = useState('');
-  const [maxDur, setMaxDur] = useState('');
-  const [minView, setMinView] = useState('');
-  const [maxView, setMaxView] = useState('');
-  // 排序
-  const [sort, setSort] = useState<SortField | undefined>(undefined);
-  const [desc, setDesc] = useState(true);
-  // 折叠态 + 分页
-  const [showMore, setShowMore] = useState(false);
-  const [page, setPage] = useState(1);
+export function VideoList() {
+  // ── 筛选状态：URL 是唯一真相 ──
+  // 全部筛选从 hash query 派生（#/videos?source=youtube&page=2），变更 replace 写回；
+  // 刷新/分享/后退/标签页跳入都还原。输入框本地回显防抖 300ms 后写 URL。
+  const route = useRoute();
+  const updateQuery = useQueryUpdater();
+  const f = videoListFromQuery(route.query);
 
+  // 筛选变更（resetPage：任一筛选变化回第 1 页）
+  const setFilter = (patch: Record<string, string | null | undefined>) => updateQuery(patch, { resetPage: true });
+
+  // 搜索框：本地回显 + 防抖写 q/sq（打字不打爆历史栈、不打断输入）
+  const [qInput, setQInput] = useState(f.q);
+  const [sqInput, setSqInput] = useState(f.sq);
+  // 外部 query 变化（后退/分享/标签页跳入）→ 同步输入框；同值时 React bail out 无感
+  useEffect(() => { setQInput(f.q); }, [f.q]);
+  useEffect(() => { setSqInput(f.sq); }, [f.sq]);
   useEffect(() => {
-    const t = setTimeout(() => setQ(qInput), 300);
+    const t = setTimeout(() => { if (qInput !== f.q) setFilter({ q: qInput || null }); }, 300);
     return () => clearTimeout(t);
   }, [qInput]);
   useEffect(() => {
-    const t = setTimeout(() => setSubtitleQ(subtitleQInput), 300);
+    const t = setTimeout(() => { if (sqInput !== f.sq) setFilter({ sq: sqInput || null }); }, 300);
     return () => clearTimeout(t);
-  }, [subtitleQInput]);
+  }, [sqInput]);
 
   // 分区下拉选项：从 aggregate groupBy=tname 拉（过滤空/unknown），topN=200 覆盖常见分区
   const { data: partitionsData } = useAsync(() => getStatsAggregate('tname', {}, 200), []);
@@ -94,74 +84,61 @@ export function VideoList({ onOpen }: { onOpen: (source: string, sourceVid: stri
   const tagOptions = (tagAggData ?? []).filter((t) => t.key);
 
   // 日期 → 毫秒时间戳（since 当天 00:00，until 当天 23:59:59.999）；分钟 → 秒；万 → 绝对值
-  const since = sinceDate ? new Date(sinceDate + 'T00:00:00').getTime() : undefined;
-  const until = untilDate ? new Date(untilDate + 'T23:59:59.999').getTime() : undefined;
-  const min_duration = minDur && Number.isFinite(Number(minDur)) ? Math.floor(Number(minDur)) * 60 : undefined;
-  const max_duration = maxDur && Number.isFinite(Number(maxDur)) ? Math.floor(Number(maxDur)) * 60 : undefined;
-  const min_view = minView && Number.isFinite(Number(minView)) ? Math.floor(Number(minView)) * 10000 : undefined;
-  const max_view = maxView && Number.isFinite(Number(maxView)) ? Math.floor(Number(maxView)) * 10000 : undefined;
+  const since = f.sinceDate ? new Date(f.sinceDate + 'T00:00:00').getTime() : undefined;
+  const until = f.untilDate ? new Date(f.untilDate + 'T23:59:59.999').getTime() : undefined;
+  const min_duration = f.minDur && Number.isFinite(Number(f.minDur)) ? Math.floor(Number(f.minDur)) * 60 : undefined;
+  const max_duration = f.maxDur && Number.isFinite(Number(f.maxDur)) ? Math.floor(Number(f.maxDur)) * 60 : undefined;
+  const min_view = f.minView && Number.isFinite(Number(f.minView)) ? Math.floor(Number(f.minView)) * 10000 : undefined;
+  const max_view = f.maxView && Number.isFinite(Number(f.maxView)) ? Math.floor(Number(f.maxView)) * 10000 : undefined;
 
+  const queryKey = route.query.toString();
   const { data, loading, error, reload } = useAsync(
     () =>
       listVideos({
-        q: q || undefined,
-        source: source || undefined,
-        subtitle_q: subtitleQ || undefined,
-        tname: tname || undefined,
-        tags: tagName ? [tagName] : undefined,
-        tag_source: tagSourceSel ? [tagSourceSel] : undefined,
-        lang: lang || undefined,
-        has_subtitle: hasSubtitle || undefined,
-        date_field: dateField,
+        q: f.q || undefined,
+        source: f.source || undefined,
+        subtitle_q: f.sq || undefined,
+        tname: f.tname || undefined,
+        tags: f.tag ? [f.tag] : undefined,
+        tag_source: f.tagSource ? [f.tagSource] : undefined,
+        lang: f.lang || undefined,
+        has_subtitle: f.hasSubtitle || undefined,
+        date_field: f.dateField,
         since,
         until,
         min_duration,
         max_duration,
         min_view,
         max_view,
-        sort,
-        desc: sort ? desc : undefined,
-        page,
+        sort: f.sort,
+        desc: f.sort ? f.desc : undefined,
+        page: f.page,
         size: PAGE_SIZE,
       }),
-    [source, q, subtitleQ, tname, tagName, tagSourceSel, lang, hasSubtitle, dateField, since, until, min_duration, max_duration, min_view, max_view, sort, desc, page],
+    [queryKey],
   );
 
   const items = data?.items ?? [];
   const total = data?.total ?? 0;
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
 
-  // 任一筛选变化都回到第 1 页
-  const onFilterChange = <T,>(setter: (v: T) => void) => (v: T) => {
-    setter(v);
-    setPage(1);
-  };
+  // 折叠态（瞬态 UI,不进 URL）
+  const [showMore, setShowMore] = useState(false);
 
   function resetAll() {
     setQInput('');
-    setQ('');
-    setSource('');
-    setSubtitleQInput('');
-    setSubtitleQ('');
-    setTname('');
-    setTagName('');
-    setTagSourceSel('');
-    setLang('');
-    setHasSubtitle(false);
-    setDateField('first_seen');
-    setSinceDate('');
-    setUntilDate('');
-    setMinDur('');
-    setMaxDur('');
-    setMinView('');
-    setMaxView('');
-    setSort(undefined);
-    setDesc(true);
-    setPage(1);
+    setSqInput('');
+    navigate('/videos');
   }
 
   // 任一次要筛选已激活时，"更多筛选"按钮给个视觉提示
-  const secondaryActive = !!(tagName || tagSourceSel || lang || hasSubtitle || sinceDate || untilDate || minDur || maxDur || minView || maxView);
+  const secondaryActive = !!(f.tag || f.tagSource || f.lang || f.hasSubtitle || f.sinceDate || f.untilDate || f.minDur || f.maxDur || f.minView || f.maxView);
+
+  // 进详情：URL 附加当前列表 query → 返回时筛选原样还原
+  const openVideo = (source: string, sourceVid: string) => {
+    const qs = queryKey ? `?${queryKey}` : '';
+    navigate(`/videos/${source}/${encodeURIComponent(sourceVid)}${qs}`);
+  };
 
   return (
     <div className="space-y-4">
@@ -179,8 +156,8 @@ export function VideoList({ onOpen }: { onOpen: (source: string, sourceVid: stri
           onChange={(e) => setQInput(e.target.value)}
         />
         <Select
-          value={source || '__all'}
-          onValueChange={(v) => onFilterChange(setSource)(v === '__all' ? '' : v)}
+          value={f.source || '__all'}
+          onValueChange={(v) => setFilter({ source: v === '__all' ? null : v })}
         >
           <SelectTrigger className="w-[120px]">
             <SelectValue placeholder="平台" />
@@ -194,12 +171,12 @@ export function VideoList({ onOpen }: { onOpen: (source: string, sourceVid: stri
         <Input
           className="min-w-[160px] flex-1"
           placeholder="搜字幕内容"
-          value={subtitleQInput}
-          onChange={(e) => setSubtitleQInput(e.target.value)}
+          value={sqInput}
+          onChange={(e) => setSqInput(e.target.value)}
         />
         <Select
-          value={tname || '__all'}
-          onValueChange={(v) => onFilterChange(setTname)(v === '__all' ? '' : v)}
+          value={f.tname || '__all'}
+          onValueChange={(v) => setFilter({ tname: v === '__all' ? null : v })}
         >
           <SelectTrigger className="w-[150px]">
             <SelectValue placeholder="分区" />
@@ -215,8 +192,8 @@ export function VideoList({ onOpen }: { onOpen: (source: string, sourceVid: stri
         </Select>
         <div className="flex items-center gap-1">
           <Select
-            value={sort ?? '__default'}
-            onValueChange={(v) => onFilterChange(setSort)(v === '__default' ? undefined : (v as SortField))}
+            value={f.sort ?? '__default'}
+            onValueChange={(v) => setFilter({ sort: v === '__default' ? null : (v as SortField) })}
           >
             <SelectTrigger className="w-[140px]">
               <SelectValue placeholder="排序" />
@@ -234,11 +211,11 @@ export function VideoList({ onOpen }: { onOpen: (source: string, sourceVid: stri
             variant="outline"
             size="sm"
             className="px-2"
-            disabled={!sort}
-            title={desc ? '当前降序，点击切换升序' : '当前升序，点击切换降序'}
-            onClick={() => onFilterChange(setDesc)(!desc)}
+            disabled={!f.sort}
+            title={f.desc ? '当前降序，点击切换升序' : '当前升序，点击切换降序'}
+            onClick={() => setFilter({ desc: f.desc ? '0' : null })}
           >
-            {desc ? <ArrowDown className="h-4 w-4" /> : <ArrowUp className="h-4 w-4" />}
+            {f.desc ? <ArrowDown className="h-4 w-4" /> : <ArrowUp className="h-4 w-4" />}
           </Button>
         </div>
         <Button variant="ghost" size="sm" onClick={() => setShowMore((s) => !s)}>
@@ -256,8 +233,8 @@ export function VideoList({ onOpen }: { onOpen: (source: string, sourceVid: stri
       {showMore && (
         <div className="flex flex-wrap items-center gap-3 rounded-md border bg-muted/30 p-3">
           <Select
-            value={tagName || '__all'}
-            onValueChange={(v) => onFilterChange(setTagName)(v === '__all' ? '' : v)}
+            value={f.tag || '__all'}
+            onValueChange={(v) => setFilter({ tag: v === '__all' ? null : v })}
           >
             <SelectTrigger className="w-[160px]">
               <SelectValue placeholder="标签" />
@@ -272,8 +249,8 @@ export function VideoList({ onOpen }: { onOpen: (source: string, sourceVid: stri
             </SelectContent>
           </Select>
           <Select
-            value={tagSourceSel || '__all'}
-            onValueChange={(v) => onFilterChange(setTagSourceSel)(v === '__all' ? '' : v)}
+            value={f.tagSource || '__all'}
+            onValueChange={(v) => setFilter({ tag_source: v === '__all' ? null : v })}
           >
             <SelectTrigger className="w-[120px]">
               <SelectValue placeholder="标签档位" />
@@ -289,8 +266,8 @@ export function VideoList({ onOpen }: { onOpen: (source: string, sourceVid: stri
           <Input
             className="max-w-[140px]"
             placeholder="语言，如 zh/en"
-            value={lang}
-            onChange={(e) => onFilterChange(setLang)(e.target.value)}
+            value={f.lang}
+            onChange={(e) => setFilter({ lang: e.target.value || null })}
           />
           <div className="flex items-center gap-1 text-xs text-muted-foreground">
             <span>时长</span>
@@ -299,8 +276,8 @@ export function VideoList({ onOpen }: { onOpen: (source: string, sourceVid: stri
               min={0}
               className="w-20"
               placeholder="最小"
-              value={minDur}
-              onChange={(e) => onFilterChange(setMinDur)(e.target.value)}
+              value={f.minDur}
+              onChange={(e) => setFilter({ min_dur: e.target.value || null })}
             />
             <span>~</span>
             <Input
@@ -308,8 +285,8 @@ export function VideoList({ onOpen }: { onOpen: (source: string, sourceVid: stri
               min={0}
               className="w-20"
               placeholder="最大"
-              value={maxDur}
-              onChange={(e) => onFilterChange(setMaxDur)(e.target.value)}
+              value={f.maxDur}
+              onChange={(e) => setFilter({ max_dur: e.target.value || null })}
             />
             <span>分钟</span>
           </div>
@@ -320,8 +297,8 @@ export function VideoList({ onOpen }: { onOpen: (source: string, sourceVid: stri
               min={0}
               className="w-20"
               placeholder="最小"
-              value={minView}
-              onChange={(e) => onFilterChange(setMinView)(e.target.value)}
+              value={f.minView}
+              onChange={(e) => setFilter({ min_view: e.target.value || null })}
             />
             <span>~</span>
             <Input
@@ -329,13 +306,13 @@ export function VideoList({ onOpen }: { onOpen: (source: string, sourceVid: stri
               min={0}
               className="w-20"
               placeholder="最大"
-              value={maxView}
-              onChange={(e) => onFilterChange(setMaxView)(e.target.value)}
+              value={f.maxView}
+              onChange={(e) => setFilter({ max_view: e.target.value || null })}
             />
             <span>万</span>
           </div>
           <div className="flex items-center gap-1 text-xs text-muted-foreground">
-            <Select value={dateField} onValueChange={(v) => onFilterChange(setDateField)(v as DateField)}>
+            <Select value={f.dateField} onValueChange={(v) => setFilter({ date_field: v === 'first_seen' ? null : (v as DateField) })}>
               <SelectTrigger className="h-8 w-[88px]">
                 <SelectValue />
               </SelectTrigger>
@@ -347,39 +324,39 @@ export function VideoList({ onOpen }: { onOpen: (source: string, sourceVid: stri
             <Input
               type="date"
               className="w-36"
-              value={sinceDate}
-              onChange={(e) => onFilterChange(setSinceDate)(e.target.value)}
+              value={f.sinceDate}
+              onChange={(e) => setFilter({ since_date: e.target.value || null })}
             />
             <span>~</span>
             <Input
               type="date"
               className="w-36"
-              value={untilDate}
-              onChange={(e) => onFilterChange(setUntilDate)(e.target.value)}
+              value={f.untilDate}
+              onChange={(e) => setFilter({ until_date: e.target.value || null })}
             />
           </div>
           <Button
-            variant={hasSubtitle ? 'default' : 'outline'}
+            variant={f.hasSubtitle ? 'default' : 'outline'}
             size="sm"
-            onClick={() => onFilterChange(setHasSubtitle)(!hasSubtitle)}
+            onClick={() => setFilter({ has_subtitle: f.hasSubtitle ? null : '1' })}
           >
-            仅含字幕：{hasSubtitle ? '开' : '关'}
+            仅含字幕：{f.hasSubtitle ? '开' : '关'}
           </Button>
         </div>
       )}
 
       {/* 分页 */}
       <div className="flex items-center justify-between rounded-md border bg-muted/40 px-4 py-2 text-sm text-muted-foreground">
-        <div>第 {page}/{totalPages} 页</div>
+        <div>第 {f.page}/{totalPages} 页</div>
         <div className="flex gap-2">
-          <Button variant="outline" size="sm" disabled={page <= 1} onClick={() => setPage((p) => Math.max(1, p - 1))}>
+          <Button variant="outline" size="sm" disabled={f.page <= 1} onClick={() => updateQuery({ page: f.page - 1 > 1 ? String(f.page - 1) : null })}>
             上一页
           </Button>
           <Button
             variant="outline"
             size="sm"
-            disabled={page >= totalPages || total === 0}
-            onClick={() => setPage((p) => p + 1)}
+            disabled={f.page >= totalPages || total === 0}
+            onClick={() => updateQuery({ page: String(f.page + 1) })}
           >
             下一页
           </Button>
@@ -409,7 +386,7 @@ export function VideoList({ onOpen }: { onOpen: (source: string, sourceVid: stri
           </Card>
         )}
 
-        {!loading && !error && items.map((v) => <VideoRow key={v.id} v={v} onOpen={onOpen} />)}
+        {!loading && !error && items.map((v) => <VideoRow key={v.id} v={v} onOpen={openVideo} />)}
 
         {!loading && !error && items.length === 0 && (
           <Card className="col-span-full">

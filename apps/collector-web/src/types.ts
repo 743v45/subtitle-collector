@@ -113,6 +113,7 @@ export interface VideoFilter {
 export interface StatsOverview {
   videos: number; tracks: number; versions: number; creators: number;
   languages: number; categories: number;
+  today_videos: number; // 当日本地 00:00 起入库视频数（采集页摘要行）
   first_seen_min: number | null; first_seen_max: number | null;
 }
 export interface KeyValue { key: string; count: number; }

@@ -1,10 +1,10 @@
-import { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Card, CardContent } from '@/components/ui/card';
 import { useAsync } from '@/lib/useAsync';
+import { useQueryUpdater, useRoute } from '../router';
 import { getChanges } from '@/api';
 import type { ChangeRow } from '@/types';
 
@@ -26,8 +26,12 @@ function ValueCell({ v }: { v: string | null }) {
 }
 
 export function ChangesLog() {
-  const [entity, setEntity] = useState<string>('');
-  const [page, setPage] = useState(1);
+  // 类型筛选 + 页码进 URL（#/changes?entity=video&page=2），刷新/后退还原
+  const route = useRoute();
+  const updateQuery = useQueryUpdater();
+  const entity = route.query.get('entity') ?? '';
+  const pageRaw = Number(route.query.get('page'));
+  const page = Number.isInteger(pageRaw) && pageRaw > 1 ? pageRaw : 1;
   const { data, loading, error, reload } = useAsync(
     () => getChanges({ entity: entity || undefined, page, size: PAGE_SIZE }),
     [entity, page],
@@ -46,7 +50,7 @@ export function ChangesLog() {
       <div className="flex flex-wrap items-center gap-2">
         <Select
           value={entity || '__all'}
-          onValueChange={(v) => { setEntity(v === '__all' ? '' : v); setPage(1); }}
+          onValueChange={(v) => updateQuery({ entity: v === '__all' ? null : v }, { resetPage: true })}
         >
           <SelectTrigger className="w-32">
             <SelectValue placeholder="类型" />
@@ -117,8 +121,8 @@ export function ChangesLog() {
       <div className="flex items-center justify-between rounded-md border bg-muted/40 px-4 py-2 text-sm text-muted-foreground">
         <div>第 {page}/{totalPages} 页</div>
         <div className="flex gap-2">
-          <Button variant="outline" size="sm" disabled={page <= 1} onClick={() => setPage((p) => Math.max(1, p - 1))}>上一页</Button>
-          <Button variant="outline" size="sm" disabled={page >= totalPages || total === 0} onClick={() => setPage((p) => p + 1)}>下一页</Button>
+          <Button variant="outline" size="sm" disabled={page <= 1} onClick={() => updateQuery({ page: page - 1 > 1 ? String(page - 1) : null })}>上一页</Button>
+          <Button variant="outline" size="sm" disabled={page >= totalPages || total === 0} onClick={() => updateQuery({ page: String(page + 1) })}>下一页</Button>
         </div>
       </div>
 
