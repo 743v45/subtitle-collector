@@ -428,6 +428,8 @@ async function connect() {
             const items = vlist.map((v) => ({
               bvid: v.bvid, title: v.title, created: v.created ?? null,
               play: v.play ?? null, length: v.length ?? null,
+              // 封面预览透传（"//" 协议头相对形式归一 https:；server expand → web 端缩略图）
+              pic: typeof v.pic === 'string' ? (v.pic.startsWith('//') ? 'https:' + v.pic : v.pic) : null,
             }));
             ws.send(JSON.stringify({
               type: "result", id: msg.id, ok: true,
