@@ -754,8 +754,17 @@ function UpperAllVideosCard({
     });
   }, [state, statusFilter, timeDays, viewMin, collected]);
 
-  // loading / 尚无任何缓存数据：不渲染（避免空白闪烁，对齐旧卡惯例）
-  if (state.state !== 'ok') return null;
+  // loading（无任何缓存数据，全量任务刚起步）：占位行而非不渲染——空间页首开时
+  // 用户需知道列表在路上（UP 视频多时全量分页约十几秒），否则像「空间页没反应」。
+  if (state.state !== 'ok') {
+    return (
+      <Card>
+        <CardContent className="p-3 text-xs text-muted-foreground">
+          UP 全部视频 · 拉取中…（首次需全量分页，视频多时约十几秒；完成后自动出现）
+        </CardContent>
+      </Card>
+    );
+  }
   const { items, total, done, error } = state;
 
   const collectedCount = collected ? items.filter((it) => collected.has(it.bvid)).length : null;
