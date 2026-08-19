@@ -105,6 +105,43 @@ test('resolveSubtitle: NOT_FOUND（视频 / track / version）', () => {
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
+// ── resolveSubtitle：轨信息扩展（bundle 消费）──
+
+test('resolveSubtitle: 默认轨路径返回轨信息 lan/lan_doc/track_type/origin', () => {
+  const { db, dir } = setup();
+  try {
+    const r = resolveSubtitle(db, { source: 'bilibili', sourceVid: 'BV1', format: 'json' });
+    assert.equal(r.kind, 'ok');
+    if (r.kind !== 'ok') throw new Error('unreachable');
+    assert.equal(r.trackLan, 'zh-Hans');
+    assert.equal(r.trackLanDoc, 'CC中文');
+    assert.equal(r.trackType, 2);
+    assert.equal(r.versionOrigin, 'external');
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('resolveSubtitle: --track en 路径返回 en 轨信息', () => {
+  const { db, dir } = setup();
+  try {
+    const r = resolveSubtitle(db, { source: 'bilibili', sourceVid: 'BV1', track: 'en', format: 'json' });
+    assert.equal(r.kind, 'ok');
+    if (r.kind !== 'ok') throw new Error('unreachable');
+    assert.equal(r.trackLan, 'en');
+    assert.equal(r.trackType, 1);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('resolveSubtitle: 显式 --version 路径不填轨信息（可选字段缺省）', () => {
+  const { db, dir, ids } = setup();
+  try {
+    const r = resolveSubtitle(db, { source: 'bilibili', sourceVid: 'BV1', versionId: ids.zhVer, format: 'json' });
+    assert.equal(r.kind, 'ok');
+    if (r.kind !== 'ok') throw new Error('unreachable');
+    assert.equal(r.trackLan, undefined);
+    assert.equal(r.versionOrigin, undefined);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
 // ── resolveSubtitle：各字幕格式输出 ──
 
 test('resolveSubtitle: srt 头块序号+逗号毫秒时间戳+content', () => {

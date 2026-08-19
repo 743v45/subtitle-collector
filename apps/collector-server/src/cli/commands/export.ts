@@ -36,7 +36,11 @@ export interface ExportSubtitleOpts {
 }
 
 export type SubtitleResolveResult =
-  | { kind: 'ok'; payload: unknown; text: string; format: SubtitleFormat; versionId: number }
+  | {
+    kind: 'ok'; payload: unknown; text: string; format: SubtitleFormat; versionId: number;
+    // 轨信息（bundle 消费）：仅走 getVideo 的路径填充；显式 --version 直取时不填（可选，向后兼容）
+    trackLan?: string | null; trackLanDoc?: string | null; trackType?: number | null; versionOrigin?: string;
+  }
   | { kind: 'not_found'; message: string };
 
 /**
@@ -81,7 +85,10 @@ export function resolveSubtitle(db: Database.Database, opts: ExportSubtitleOpts)
 
   const v = getVersionPayload(db, ver.id);
   if (!v) return { kind: 'not_found', message: `subtitle_version not found: id=${ver.id}` };
-  return { kind: 'ok', payload: v.payload, text: convertSubtitle(v.payload, fmt), format: fmt, versionId: v.id };
+  return {
+    kind: 'ok', payload: v.payload, text: convertSubtitle(v.payload, fmt), format: fmt, versionId: v.id,
+    trackLan: track.lan, trackLanDoc: track.lan_doc, trackType: track.track_type, versionOrigin: ver.origin,
+  };
 }
 
 // ── export videos 文件序列化（-o 写文件用；stdout 走 emitResult）──

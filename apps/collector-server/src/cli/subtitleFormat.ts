@@ -47,8 +47,9 @@ function secsToStamp(seconds: number, sep: ',' | '.'): string {
 /**
  * 从 payload 中校验并提取 body 数组。
  * 结构不符（非对象、缺 body、body 非数组/空、条目缺字段或类型不对）时抛清晰错误。
+ * 导出供 bundle.ts 复用（stamped txt 行格式，见 [bundle.ts](../bundle.ts)）。
  */
-function extractBody(payload: unknown): BodyItem[] {
+export function extractBody(payload: unknown): BodyItem[] {
   if (typeof payload !== 'object' || payload === null || !('body' in payload)) {
     throw new Error('字幕 payload 结构不符：期望 B 站字幕 JSON 对象（含 body 字段）');
   }
