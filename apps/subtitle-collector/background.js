@@ -79,12 +79,14 @@ const UPPER_ALL_TTL_MS = 3600 * 1000;
 const UPPER_ALL_PAGE_GAP_MS = 500; // 页间节流防风控（-412）
 const UPPER_ALL_PS = 30;           // arc/search 单页条数
 
-async function fetchAllUpperVideos(mid) {
+async function fetchAllUpperVideos(mid, refresh = false) {
   const key = `upperAllVideos:${mid}`;
-  const { [key]: cached } = await chrome.storage.local.get(key);
-  // 缓存命中：完成 + 无错 + 1h 内
-  if (cached?.fetchedAt && cached.done && !cached.error && Date.now() - cached.fetchedAt < UPPER_ALL_TTL_MS) {
-    return { status: 'cached' };
+  if (!refresh) {
+    const { [key]: cached } = await chrome.storage.local.get(key);
+    // 缓存命中：完成 + 无错 + 1h 内（refresh=true 强制重拉，供 popup ↻ 按钮清旧缓存）
+    if (cached?.fetchedAt && cached.done && !cached.error && Date.now() - cached.fetchedAt < UPPER_ALL_TTL_MS) {
+      return { status: 'cached' };
+    }
   }
   if (upperAllInflight.has(mid)) return { status: 'inflight' };
   upperAllInflight.add(mid);
@@ -113,6 +115,8 @@ async function fetchAllUpperVideos(mid) {
         items.push({
           bvid: v.bvid, title: v.title, created: v.created ?? null,
           play: v.play ?? null, length: v.length ?? null,
+          // 封面预览：pic 常为 "//i2.hdslb.com/..." 协议头相对形式，归一 https:
+          pic: typeof v.pic === 'string' ? (v.pic.startsWith('//') ? 'https:' + v.pic : v.pic) : null,
         });
       }
       // 每页落盘：popup 实时进度 + SW 回收兜底
@@ -516,8 +520,9 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   } else if (msg?.type === "WS_STATUS") {
     sendResponse({ ok: true, connected: authenticated, mode: connectionMode, activeServerId, error: lastError });
   } else if (msg?.type === "FETCH_UPPER_ALL" && msg.mid) {
-    // UP 全部视频全量拉取：异步长任务（页间节流），立即回执状态；数据经 storage 增量流出
-    fetchAllUpperVideos(String(msg.mid)).then(
+    // UP 全部视频全量拉取：异步长任务（页间节流），立即回执状态；数据经 storage 增量流出。
+    // refresh=true 绕过缓存强制重拉（popup ↻ 按钮；inflight 进行中则忽略）。
+    fetchAllUpperVideos(String(msg.mid), msg.refresh === true).then(
       (r) => sendResponse({ ok: true, ...r }),
       (e) => sendResponse({ ok: false, error: String(e?.message ?? e) })
     );

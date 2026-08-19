@@ -188,11 +188,11 @@ test('expandUpperVideos：分页循环拉全量（page 参数对齐扩展契约�
 
     const deps = fakePagedCommand({
       1: { total: 3, items: [
-        { bvid: 'BV1xx411c7mD', title: '视频一', created: 1700000000, play: 100, length: '5:30' },
-        { bvid: 'BV2xx411c7mD', title: '已采视频', created: 1700000100, play: 200, length: '6:00' },
+        { bvid: 'BV1xx411c7mD', title: '视频一', created: 1700000000, play: 100, length: '5:30', pic: '//i0.hdslb.com/bfs/a.jpg' },
+        { bvid: 'BV2xx411c7mD', title: '已采视频', created: 1700000100, play: 200, length: '6:00', pic: 'https://i0.hdslb.com/bfs/b.jpg' },
       ] },
       2: { total: 3, items: [
-        { bvid: 'BV3xx411c7mD', title: '视频三', created: 1700000200, play: 300, length: '7:00' },
+        { bvid: 'BV3xx411c7mD', title: '视频三', created: 1700000200, play: 300, length: '7:00' }, // 无 pic → null
       ] },
     });
     const r = await expandUpperVideos(db, '296399504', deps);
@@ -200,6 +200,8 @@ test('expandUpperVideos：分页循环拉全量（page 参数对齐扩展契约�
     assert.equal(r.items.length, 3);
     assert.deepEqual(r.items.map((x) => x.collected), [false, true, false]);
     assert.equal(r.items[0].title, '视频一');
+    // 封面透传："//" 协议头相对形式归一 https:；完整 URL 原样；缺失 → null
+    assert.deepEqual(r.items.map((x) => x.pic), ['https://i0.hdslb.com/bfs/a.jpg', 'https://i0.hdslb.com/bfs/b.jpg', null]);
     // 分页正确（契约）：两次调用分别带 page=1 / page=2
     const calls = (deps as any).calls as Array<{ action: string; params: Record<string, unknown> }>;
     assert.equal(calls.length, 2);

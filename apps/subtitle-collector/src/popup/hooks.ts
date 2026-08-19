@@ -411,6 +411,7 @@ export interface UpperAllVideoItem {
   created: number | null; // unix 秒（arc/search 原样）
   play: number | null;
   length: string | null;  // "MM:SS" / "HH:MM:SS"（arc/search 原样）
+  pic?: string | null;    // 封面 URL（已归一 https:；旧缓存可能缺字段）
 }
 export type UpperAllState =
   | { state: 'loading' }

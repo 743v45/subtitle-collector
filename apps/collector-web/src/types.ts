@@ -91,6 +91,7 @@ export interface UpperVideoItem {
   created: number | null; // unix 秒
   play: number | null;
   length: string | null;  // "MM:SS" / "HH:MM:SS"
+  pic: string | null;     // 封面 URL（server 已归一 https:）
   collected: boolean;
 }
 

@@ -307,6 +307,18 @@ function UpperBatchSection({ onTasksChanged }: { onTasksChanged: () => void }) {
                       onChange={() => toggle(it.bvid)}
                       className="size-3.5 shrink-0 accent-primary"
                     />
+                    {/* 封面缩略图（16:9，缺失占位灰块；no-referrer 防 CDN 防盗链） */}
+                    {it.pic ? (
+                      <img
+                        src={it.pic}
+                        alt=""
+                        loading="lazy"
+                        referrerPolicy="no-referrer"
+                        className="h-11 w-20 shrink-0 rounded object-cover"
+                      />
+                    ) : (
+                      <span className="h-11 w-20 shrink-0 rounded bg-muted" />
+                    )}
                     <span
                       title={it.collected ? '字幕已采集' : '未采集'}
                       className={cn('size-1.5 shrink-0 rounded-full', it.collected ? 'bg-emerald-500' : 'bg-muted-foreground/30')}

@@ -218,7 +218,13 @@ function BrandHeader() {
       <div className="flex items-center gap-2">
         <SubCatchLogo className="h-[26px] w-[26px]" />
         <div className="leading-tight">
-          <div className="text-[15px] font-bold tracking-[0.3px] text-slate-900">SubCatch</div>
+          <div className="flex items-baseline gap-1.5">
+            <div className="text-[15px] font-bold tracking-[0.3px] text-slate-900">SubCatch</div>
+            {/* 版本直出（manifest.version）：每次发布 bump，用户据此对照是否跑的最新构建 */}
+            <span className="text-[10px] tabular-nums text-slate-400" title="扩展版本（chrome://extensions 可对照）">
+              v{chrome.runtime.getManifest().version}
+            </span>
+          </div>
           <div className="text-[11px] text-slate-500">字幕捕手 · 多平台视频字幕采集</div>
         </div>
       </div>
@@ -810,24 +816,38 @@ function UpperAllVideosCard({
     <Card>
       <CardContent className="space-y-2 p-3">
         <Collapsible open={open} onOpenChange={setOpen}>
-          <CollapsibleTrigger className="flex w-full items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground">
-            <ChevronIcon className={cn('h-3 w-3 transition-transform', open && 'rotate-90')} />
-            <span className="font-medium text-foreground">UP 全部视频</span>
-            <span className="tabular-nums">共 {total} 条</span>
-            {collectedCount != null && (
-              <span className="tabular-nums text-emerald-600">已采 {collectedCount}</span>
-            )}
-            {/* 拉取中进度 / 中断标记（title 给错误详情） */}
-            {!done && <span className="tabular-nums animate-pulse">拉取中 {items.length}/{total}</span>}
-            {error && (
-              <span title={error} className="text-amber-500">
-                ⚠ 中断
+          <div className="flex items-center gap-1">
+            <CollapsibleTrigger className="flex min-w-0 flex-1 items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground">
+              <ChevronIcon className={cn('h-3 w-3 shrink-0 transition-transform', open && 'rotate-90')} />
+              <span className="shrink-0 font-medium text-foreground">UP 全部视频</span>
+              <span className="shrink-0 tabular-nums">共 {total} 条</span>
+              {collectedCount != null && (
+                <span className="shrink-0 tabular-nums text-emerald-600">已采 {collectedCount}</span>
+              )}
+              {/* 拉取中进度 / 中断标记（title 给错误详情） */}
+              {!done && <span className="shrink-0 tabular-nums animate-pulse">拉取中 {items.length}/{total}</span>}
+              {error && (
+                <span title={error} className="shrink-0 text-amber-500">
+                  ⚠ 中断
+                </span>
+              )}
+              <span className="ml-auto shrink-0 text-[10px] tabular-nums text-muted-foreground/50">
+                {new Date(state.fetchedAt).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}
               </span>
-            )}
-            <span className="ml-auto text-[10px] tabular-nums text-muted-foreground/50">
-              {new Date(state.fetchedAt).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}
-            </span>
-          </CollapsibleTrigger>
+            </CollapsibleTrigger>
+            {/* ↻ 清缓存重拉（旧缓存缺封面字段 / 数据过期时用；拉取进行中禁用） */}
+            <button
+              type="button"
+              onClick={() =>
+                chrome.runtime.sendMessage({ type: 'FETCH_UPPER_ALL', mid, refresh: true }, () => void chrome.runtime.lastError)
+              }
+              disabled={!done}
+              title="清除缓存重新拉取"
+              className="flex h-5 w-5 shrink-0 items-center justify-center rounded text-muted-foreground/60 transition-colors hover:bg-muted hover:text-foreground disabled:opacity-30"
+            >
+              <RefreshIcon className={cn('h-3 w-3', !done && 'animate-spin')} />
+            </button>
+          </div>
           <CollapsibleContent className="space-y-2 pt-2">
             {/* 过滤条：状态 tab（已采标注可用时）+ 时间/播放量档位（横向小 pill，同字幕格式抽屉样式） */}
             <div className="flex flex-wrap items-center gap-1">
@@ -885,6 +905,18 @@ function UpperAllVideosCard({
                       className="h-3 w-3 shrink-0 accent-brand"
                       aria-label={`选择 ${it.title}`}
                     />
+                    {/* 封面缩略图（16:9，无 pic/旧缓存占位灰块；no-referrer 防 CDN 防盗链） */}
+                    {it.pic ? (
+                      <img
+                        src={it.pic}
+                        alt=""
+                        loading="lazy"
+                        referrerPolicy="no-referrer"
+                        className="h-9 w-16 shrink-0 rounded object-cover"
+                      />
+                    ) : (
+                      <span className="h-9 w-16 shrink-0 rounded bg-muted" />
+                    )}
                     {isCollected != null && (
                       <span
                         title={isCollected ? '字幕已采集' : '未采集'}
@@ -1306,6 +1338,16 @@ function ChevronIcon({ className }: { className?: string }) {
   return (
     <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className} aria-hidden="true">
       <path d="m9 18 6-6-6-6" />
+    </svg>
+  );
+}
+
+// 刷新图标（UP 全量卡 ↻ 清缓存重拉按钮）。
+function RefreshIcon({ className }: { className?: string }) {
+  return (
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className} aria-hidden="true">
+      <path d="M21 12a9 9 0 1 1-2.64-6.36" />
+      <path d="M21 3v6h-6" />
     </svg>
   );
 }

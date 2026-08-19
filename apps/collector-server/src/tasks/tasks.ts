@@ -151,7 +151,14 @@ export interface UpperVideoItem {
   created: number | null;
   play: number | null;
   length: string | null; // arc/search 原样 "MM:SS" / "HH:MM:SS"
+  pic: string | null;    // 封面 URL（"//" 协议头相对形式归一为 https:）
   collected: boolean;    // 已入库（videos 表命中）
+}
+
+// 封面 URL 归一：arc/search 的 pic 常为 "//i2.hdslb.com/..." 协议头相对形式，补 https:
+function normalizePic(p: unknown): string | null {
+  if (typeof p !== 'string' || p === '') return null;
+  return p.startsWith('//') ? `https:${p}` : p;
 }
 
 // 依赖注入（测试 mock 用）；生产默认真 WS 实现。
@@ -195,7 +202,7 @@ export async function expandUpperVideos(
     const result = r.result ?? {};
     if (result.ok === false) throw new Error(String(result.error ?? 'list-upper-videos 失败'));
     const data = result.data ?? {};
-    const pageItems: Array<{ bvid?: unknown; title?: unknown; created?: unknown; play?: unknown; length?: unknown }> = Array.isArray(data.items) ? data.items : [];
+    const pageItems: Array<{ bvid?: unknown; title?: unknown; created?: unknown; play?: unknown; length?: unknown; pic?: unknown }> = Array.isArray(data.items) ? data.items : [];
     total = typeof data.total === 'number' ? data.total : items.length + pageItems.length;
     let added = 0;
     for (const v of pageItems) {
@@ -208,6 +215,7 @@ export async function expandUpperVideos(
         created: typeof v.created === 'number' ? v.created : null,
         play: typeof v.play === 'number' ? v.play : null,
         length: typeof v.length === 'string' ? v.length : null,
+        pic: normalizePic(v.pic),
         collected: false,
       });
     }

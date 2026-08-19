@@ -39,3 +39,7 @@ B 站**字幕（subtitle）**相关浏览器扩展的 monorepo（pnpm + turbo，
 ## 5. 文档跳转（沿用全局）
 
 所有与代码/文档相关的输出须带 `[file:行号](path#L行号)` 链接定位，禁止笼统描述。
+
+## 6. 扩展版本号纪律
+
+`apps/subtitle-collector/manifest.json` 的 `version` 在**每次涉及扩展改动的提交里必须 bump**（补丁位 +1，如 0.1.1 → 0.1.2）。popup 品牌头直出 `manifest.version`，用户据此对照本地扩展是否为最新构建（chrome://extensions 刷新后核对）。collector-server / collector-web 走 docker rebuild 自带最新，无需手动版本。
