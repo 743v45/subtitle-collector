@@ -75,7 +75,7 @@ function setupDb(): { db: Database.Database; dir: string } {
     video: {
       source_vid: 'BV2', title: '标题B（无字幕）',
       creator: { source_uid: '1', name: 'Alpha UP' },
-      extra: { tid: 23, tname: '科技', stat: { view: 2000 } }, duration: 300, published_at: null,
+      extra: { tid: 23, tname: '科技', stat: { view: 2000 } }, duration: 300,
     },
     tracks: [],
   });
@@ -137,7 +137,7 @@ test('buildBundle: payload 损坏 → errors[] 记录、subtitle:null、整包�
   migrate(db);
   ingestVideo(db, {
     source: 'bilibili',
-    video: { source_vid: 'BVX', title: '损坏', creator: { source_uid: '9', name: 'X' }, extra: {}, duration: 60, published_at: null },
+    video: { source_vid: 'BVX', title: '损坏', creator: { source_uid: '9', name: 'X' }, extra: {}, duration: 60 },
     tracks: [{ lan: 'zh-Hans', lan_doc: 'AI中文', track_type: 1, versions: [{ origin: 'asr', payload: { broken: true }, source_url: null }] }],
   });
   try {

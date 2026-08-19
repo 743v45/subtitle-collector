@@ -9,16 +9,17 @@
 
 import type Database from 'better-sqlite3';
 import { Command } from 'commander';
-import { writeFileSync } from 'node:fs';
+import { writeFileSync, existsSync, mkdirSync, readdirSync } from 'node:fs';
+import { join } from 'node:path';
 import { getCliContext } from '../main.js';
 import { emitResult, emitError } from '../output.js';
 import { openReadonlyDb } from '../db.js';
 import { getVideo, getVersionPayload } from '../../db/queries.js';
 import type { VideoListItemAdvanced, PageResult, VideoSortKey } from '../../db/advanced.js';
 import { convertSubtitle, type SubtitleFormat } from '../subtitleFormat.js';
+import { buildBundle } from '../bundle.js';
 // videos.ts 暴露 videosList（camelCase opts → snake_case filter）+ normalizeTimestamp，export videos 直接复用查询逻辑。
-import { videosList, normalizeTimestamp } from './videos.js';
-import type { VideosListOpts } from './videos.js';
+import { videosList, normalizeTimestamp, type VideosListOpts } from './videos.js';
 
 const SUBTITLE_FORMATS = ['srt', 'vtt', 'txt', 'json'] as const;
 const VIDEOS_FORMATS = ['json', 'csv', 'ndjson'] as const;
@@ -143,6 +144,19 @@ interface VideosRawOpts {
   q?: string; creator?: string; source?: string; tid?: string; tname?: string; tag?: string; lang?: string;
   trackType?: string; hasSubtitle?: boolean; since?: string; until?: string; minDuration?: string; maxDuration?: string;
   sort?: string; desc?: boolean; page?: string; size?: string; output?: string;
+}
+
+// export bundle 原始选项：过滤器同 videos list（去分页去 -o）+ bundle 专属三项。
+// VideosRawOpts（export videos 的）缺 subtitle-q/paid/min-view/max-view（其装配未暴露），这里补齐。
+interface BundleRawOpts extends Omit<VideosRawOpts, 'page' | 'size' | 'output'> {
+  subtitleQ?: string;
+  paid?: boolean;
+  minView?: string;
+  maxView?: string;
+  out?: string;
+  track?: string;
+  limit?: string;
+  force?: boolean;
 }
 
 function parseNum(raw: string | undefined, name: string): number | undefined {
@@ -282,6 +296,64 @@ export function buildExportCommand(): Command {
       } else {
         emitResult(result, format);
       }
+    });
+
+  // export bundle（分析原料包：manifest.json + videos/*.txt + ANALYZE.md；分析在会话完成，产物写回 --out 目录）
+  exp
+    .command('bundle')
+    .description('按条件批量导出分析原料包（manifest.json + videos/*.txt + ANALYZE.md）；过滤器同 videos list（无分页）')
+    .requiredOption('--out <dir>', '输出目录（已存在且非空时需 --force；同名文件覆盖，不清理多余旧文件）')
+    .option('--track <lan>', '统一覆盖字幕轨（默认各视频默认轨：CC中文>AI中文>en）')
+    .option('--limit <n>', '最多导出视频数（默认 500）')
+    .option('--force', '允许写入已存在且非空的 --out 目录')
+    // —— 过滤器（同 export videos，去分页去 -o）——
+    .option('--q <text>', '标题 / UP 名模糊匹配')
+    .option('--creator <name>', 'UP 名模糊匹配')
+    .option('--source <src>', '视频来源（精确）')
+    .option('--tid <id>', '分区 tid（精确）')
+    .option('--tname <name>', '分区名模糊匹配')
+    .option('--tag <tag>', '标签名模糊匹配')
+    .option('--subtitle-q <text>', '字幕正文关键词模糊匹配')
+    .option('--lang <lang>', '字幕语言模糊匹配')
+    .option('--track-type <type>', '字幕轨类型（1=AI 2=CC），精确')
+    .option('--has-subtitle', '仅含至少一条字幕版本的视频')
+    .option('--paid', '仅付费视频')
+    .option('--since <ts>', '起始时间（Unix 秒/毫秒 或 ISO8601），比对 first_seen_at')
+    .option('--until <ts>', '结束时间，比对 first_seen_at')
+    .option('--min-duration <s>', '最小时长（秒）')
+    .option('--max-duration <s>', '最大时长（秒）')
+    .option('--min-view <n>', '最小播放量')
+    .option('--max-view <n>', '最大播放量')
+    .option('--sort <key>', '排序键：first_seen|published_at|title|duration|view')
+    .option('--desc', '降序（默认升序）')
+    .action((raw: BundleRawOpts) => {
+      const ctx = getCliContext();
+      const db = openDbOrEmit(ctx.dbPath);
+      if (!raw.out) return emitError('--out 必填', 'ARGS');
+      if (existsSync(raw.out) && readdirSync(raw.out).length > 0 && !raw.force) {
+        return emitError(`--out 目录已存在且非空: ${raw.out}（覆盖请加 --force）`, 'ARGS');
+      }
+      const filters: VideosListOpts = {
+        q: raw.q, creator: raw.creator, source: raw.source,
+        tid: parseNum(raw.tid, '--tid'), tname: raw.tname, tag: raw.tag,
+        subtitleQ: raw.subtitleQ, lang: raw.lang,
+        trackType: parseNum(raw.trackType, '--track-type'),
+        hasSubtitle: raw.hasSubtitle, paid: raw.paid,
+        since: parseTime(raw.since, '--since'), until: parseTime(raw.until, '--until'),
+        minDuration: parseNum(raw.minDuration, '--min-duration'), maxDuration: parseNum(raw.maxDuration, '--max-duration'),
+        minView: parseNum(raw.minView, '--min-view'), maxView: parseNum(raw.maxView, '--max-view'),
+        sort: parseSort(raw.sort), desc: raw.desc,
+      };
+      const built = buildBundle(db, { filters, track: raw.track, limit: parseNum(raw.limit, '--limit') ?? 500, now: Date.now() });
+      mkdirSync(join(raw.out, 'videos'), { recursive: true });
+      for (const f of built.files) writeFileSync(join(raw.out, f.path), f.content);
+      emitResult({
+        ok: true, path: raw.out,
+        videos_total: built.manifest.total_matched, exported: built.manifest.exported,
+        with_subtitle: built.manifest.videos.filter((v) => v.subtitle).length,
+        without_subtitle: built.manifest.videos.filter((v) => !v.subtitle).length,
+        files: built.files.length,
+      }, ctx.format);
     });
 
   return exp;

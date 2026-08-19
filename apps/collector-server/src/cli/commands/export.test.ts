@@ -10,7 +10,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import type Database from 'better-sqlite3';
-import { mkdtempSync, rmSync, writeFileSync, readFileSync, statSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync, readFileSync, statSync, mkdirSync, readdirSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -267,5 +267,44 @@ test('端到端: export subtitle --sub-format vtt 经 commander 输出 WEBVTT（
     assert.equal(r.status, 0, `期望 exit=0，实际 exit=${r.status}，stderr=${r.stderr}`);
     assert.match(r.stdout, /WEBVTT/, `stdout 缺 WEBVTT 头（--sub-format 未生效）: ${r.stdout.slice(0, 80)}`);
     assert.doesNotMatch(r.stdout, /^1\r?\n00:00:00,360/, `仍输出 srt 格式，--sub-format vtt 未被 commander 接收`);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+// ── 端到端：export bundle（装配 / 落盘 / 回执 / --force 防护）──
+
+test('端到端: export bundle 导出目录结构 + 回执', () => {
+  const { db, dir } = setup();
+  db.close();
+  const out = join(dir, 'bundle-out');
+  try {
+    const r = spawnSync('./node_modules/.bin/tsx', [
+      'src/cli/main.ts', '--db', join(dir, 'test.db'), '--quiet',
+      'export', 'bundle', '--creator', 'Alpha UP', '--out', out,
+    ], { encoding: 'utf-8' });
+    assert.equal(r.status, 0, `期望 exit=0，实际 exit=${r.status}，stderr=${r.stderr}`);
+    const receipt = JSON.parse(r.stdout);
+    assert.equal(receipt.ok, true);
+    assert.equal(receipt.exported, 1);   // fixture 仅 BV1 命中 Alpha UP 且有字幕
+    assert.equal(receipt.with_subtitle, 1);
+    assert.equal(receipt.without_subtitle, 0);
+    assert.deepEqual(readdirSync(out).sort(), ['ANALYZE.md', 'manifest.json', 'videos']);
+    assert.ok(readdirSync(join(out, 'videos')).includes('BV1.txt'));
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('端到端: export bundle --out 已存在且非空且无 --force → ARGS(2)', () => {
+  const { db, dir } = setup();
+  db.close();
+  const out = join(dir, 'occupied');
+  mkdirSync(out);
+  writeFileSync(join(out, 'old.txt'), 'x');
+  try {
+    const r = spawnSync('./node_modules/.bin/tsx', [
+      'src/cli/main.ts', '--db', join(dir, 'test.db'), '--quiet',
+      'export', 'bundle', '--creator', 'Alpha UP', '--out', out,
+    ], { encoding: 'utf-8' });
+    assert.equal(r.status, 2);
+    const receipt = JSON.parse(r.stdout);
+    assert.ok(receipt.error.includes('--force'));
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
