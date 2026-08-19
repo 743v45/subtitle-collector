@@ -4,6 +4,36 @@ B 站**字幕（subtitle）**相关浏览器扩展与配套服务的 monorepo（
 
 > 措辞红线：本项目是**字幕**系统，**不是弹幕（danmaku）**。详见 [CLAUDE.md](CLAUDE.md) 第 4 节。
 
+## 目标与功能（Feature 列表）
+
+> 项目目的：**批量**采集 B 站小众/技术向视频的字幕，**批量**提取分析，产出三种文字资产——**观点汇总**（大家怎么看某技术话题）、**面试题库**（面试内容整理）、**理念整理**（UP 主系列视频的方法论提炼）。工具链是手段，分析产物才是产出。
+
+状态标记：✅ 已实现 ｜ 🚧 待建（当前优先级）｜ 📋 远期规划
+
+### 批量采集（✅ 三入口全通）
+
+- ✅ **单视频**：浏览被动入库（打开 B 站视频页自动采）+ 手动补采 `collect subtitle <bvid>`
+- ✅ **UP 主批量**：`collect upper-videos <mid>` / `collect new-videos <mid>` / `collect discover <mid...>`
+- ✅ **搜索批量**：`collect search <keyword>` / `collect find <keyword>`（粉丝数/发布时间/播放量等条件过滤）
+- ✅ 充电专属视频采集 + 付费标记（`videos list --paid`）
+- ✅ 无字幕视频兜底：subtitle-extractor 浏览器本地 Whisper 转写
+
+### 查询与导出（✅）
+
+- ✅ web 后台：视频库浏览 / 搜索 / UP 主 / 分类管理 / 采集日志
+- ✅ 字幕正文全文检索：`sub search <keyword>`（带时间戳定位片段）
+- ✅ 导出：`export subtitle`（srt/vtt/txt/json）、`export videos`（csv/ndjson/table）
+
+### 批量提取分析（🚧 当前最大缺口，消费端）
+
+- 🚧 **原料包导出** `export bundle`：按 UP 主 / 搜索主题，把一批视频的元信息 + 字幕打包成目录（manifest.json + 每视频 .txt）
+- 🚧 **分析产物规范**：bundle → Claude Code 会话分析 → 产物落盘 `analysis/<主题>/`，三类模板：
+  - **观点汇总**：某技术话题，多个 UP 主怎么看（含分歧与共识）
+  - **面试题库**：面试相关视频 → 题目 + 考点 + 参考答案
+  - **理念整理**：某 UP 主系列视频 → 核心理念 / 方法论提炼
+- 📋 内置 AI pipeline（CLI 一条命令自动分析，需 API 集成）：远期，待手动流程跑顺后再评估
+- 📋 评论采集：远期（当前分析数据源 = 视频/字幕内容，不含评论区）
+
 ## 架构
 
 | App | 类型 | 作用 |
@@ -11,7 +41,7 @@ B 站**字幕（subtitle）**相关浏览器扩展与配套服务的 monorepo（
 | [apps/subtitle-collector](apps/subtitle-collector) | 浏览器扩展（MV3，Vite + @crxjs 构建） | 在 B 站页面注入、抽取字幕元信息，经 WebSocket 上报给本地服务端 |
 | [apps/collector-server](apps/collector-server) | 后端（Node + TS） | 本地回环服务：收扩展上报（WS `/ext`）+ HTTP API（`/api/*`）+ 静态托管 web 产物 |
 | [apps/collector-web](apps/collector-web) | 前端（React + Vite） | 字幕库浏览/详情 UI；`vite build` 产物直接写入 `apps/collector-server/public/`，由 server 托管 |
-| [apps/subtitle-extractor](apps/subtitle-extractor) | 预留占位 | 暂未实现（空目录） |
+| [apps/subtitle-extractor](apps/subtitle-extractor) | 浏览器扩展（MV3，Vite + transformers.js） | B站音轨提取 → 浏览器本地 Whisper 转写 → SRT/VTT 导出（无字幕视频兜底，零后端、数据不出本机） |
 
 数据流（本地闭环，全部跑在 `127.0.0.1`）：
 
