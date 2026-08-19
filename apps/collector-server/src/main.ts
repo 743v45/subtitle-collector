@@ -41,8 +41,11 @@ const httpOriginAllowed = (req: IncomingMessage): boolean => {
   const o = String(origin);
   return o.startsWith('chrome-extension://') // 扩展
     || o.startsWith('http://localhost')       // 同源 collector-web
+    || o.startsWith('https://localhost')
     || o.startsWith('http://127.0.0.1')
-    || ALLOWED_HOSTS.some((h) => o === `http://${h}` || o.startsWith(`http://${h}:`)); // 显式放行的主机(精确匹配,防前缀注入如 fake.lan.evil.com)
+    || o.startsWith('https://127.0.0.1')
+    || ALLOWED_HOSTS.some((h) => o === `http://${h}` || o.startsWith(`http://${h}:`)
+                        || o === `https://${h}` || o.startsWith(`https://${h}:`)); // 显式放行的主机(精确匹配,防前缀注入如 fake.lan.evil.com)
 };
 
 // Task 6 Step 15: 静态托管 collector-web 构建产物。
