@@ -386,12 +386,12 @@ export function VideoList({ onOpen }: { onOpen: (source: string, sourceVid: stri
         </div>
       </div>
 
-      {/* 列表区：loading / error / 空态 */}
-      <div className="space-y-2">
+      {/* 列表区：响应式网格（移动单列 / md 两列 / xl 三列），loading / error / 空态 */}
+      <div className="grid grid-cols-1 gap-2 md:grid-cols-2 md:gap-3 xl:grid-cols-3">
         {loading &&
-          Array.from({ length: 4 }).map((_, i) => (
+          Array.from({ length: 6 }).map((_, i) => (
             <Card key={i}>
-              <CardHeader className="space-y-2 p-4">
+              <CardHeader className="space-y-2 p-3">
                 <Skeleton className="h-4 w-3/4" />
                 <Skeleton className="h-3 w-1/2" />
               </CardHeader>
@@ -399,7 +399,7 @@ export function VideoList({ onOpen }: { onOpen: (source: string, sourceVid: stri
           ))}
 
         {!loading && error && (
-          <Card>
+          <Card className="col-span-full">
             <CardContent className="flex flex-col items-center gap-2 p-6 text-center text-sm">
               <div className="text-destructive">加载失败：{error}</div>
               <Button variant="outline" size="sm" onClick={reload}>
@@ -412,7 +412,7 @@ export function VideoList({ onOpen }: { onOpen: (source: string, sourceVid: stri
         {!loading && !error && items.map((v) => <VideoRow key={v.id} v={v} onOpen={onOpen} />)}
 
         {!loading && !error && items.length === 0 && (
-          <Card>
+          <Card className="col-span-full">
             <CardContent className="p-6 text-center text-sm text-muted-foreground">暂无数据</CardContent>
           </Card>
         )}
@@ -447,10 +447,10 @@ function VideoRow({ v, onOpen }: { v: VideoListItem; onOpen: (source: string, so
       onClick={() => onOpen(v.source, v.source_vid)}
       className="cursor-pointer transition-colors hover:bg-accent"
     >
-      <CardHeader className="space-y-1 p-4">
-        <CardTitle className="flex items-center gap-1.5 text-base font-medium">
-          <PlatformIcon source={v.source} className={cn('h-3.5 w-3.5 shrink-0', iconColor)} />
-          <span className="truncate">{v.title}</span>
+      <CardHeader className="space-y-1 p-3">
+        <CardTitle className="flex items-start gap-1.5 text-sm font-medium">
+          <PlatformIcon source={v.source} className={cn('mt-0.5 h-3.5 w-3.5 shrink-0', iconColor)} />
+          <span className="line-clamp-2">{v.title}</span>
         </CardTitle>
         <CardDescription className="text-xs flex flex-wrap items-center gap-x-2">
           <span>{v.creator_name ?? '—'}</span>
