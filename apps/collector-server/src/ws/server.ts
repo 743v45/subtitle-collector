@@ -4,6 +4,13 @@ import type { IncomingMessage, Server } from 'node:http';
 import type Database from 'better-sqlite3';
 import { ingestVideo, ingestUpper, type IngestRequest, type IngestUpperRequest } from '../db/ingest.js';
 import { notifyClientOnline } from '../tasks/tasks.js';
+import { amendLateResult } from '../tasks/amend.js';
+import { releaseClient } from '../tasks/inflight.js';
+
+// 超时命令的 params 暂存：result 迟到时 pending 已删，靠它定位任务做改判（amendLateResult）。
+// 上限防无界增长；改判命中或永不迟到则等淘汰。
+const MAX_TIMED_OUT = 200;
+const timedOutParams = new Map<string, Record<string, unknown>>();
 
 interface ExtConn {
   ws: WebSocket;
@@ -106,6 +113,13 @@ export function attachWsServer(httpServer: Server, _db: Database.Database, expec
           clearTimeout(entry.timer);
           pending.delete(msg.id);
           entry.resolve(msg);
+        } else if (timedOutParams.has(msg.id)) {
+          // 迟到 result（命令已超时、任务已落 failed）：按暂存 params 改判超时失败任务——
+          // 扩展实际执行完成（可能已 INGEST 落库），failed 是假失败，用户按提示重试会重复采集
+          const params = timedOutParams.get(msg.id)!;
+          timedOutParams.delete(msg.id);
+          const amended = amendLateResult(_db, params, { ok: msg.ok === true, data: msg.data });
+          console.log(`[ext] 迟到 result id=${msg.id} ok=${msg.ok}${amended ? ' → 已改判超时任务为 succeeded' : ''}`);
         } else {
           console.log(`[ext] result id=${msg.id} ok=${msg.ok}`);
         }
@@ -116,6 +130,9 @@ export function attachWsServer(httpServer: Server, _db: Database.Database, expec
     ws.on('close', () => {
       console.log(`[ws] close client_id=${conn.clientId ?? '(未握手)'}`);
       if (conn.clientId && connections.get(conn.clientId) === conn) connections.delete(conn.clientId);
+      // 释放调度器 inFlight 占位：断线扩展不再有在途命令，重连的同 client 立即可接新任务
+      //（否则占位要等命令超时，最长 180s）
+      if (conn.clientId) releaseClient(conn.clientId);
     });
   });
 
@@ -173,7 +190,15 @@ export async function requestCommand(
   if (!sent) return { ok: false, code: 'offline' };
   return new Promise((resolve) => {
     const timer = setTimeout(() => {
-      if (pending.has(id)) { pending.delete(id); resolve({ ok: false, code: 'timeout' }); }
+      if (pending.has(id)) {
+        pending.delete(id);
+        // 暂存 params 供迟到 result 改判（见 result 处理）；超上限淘汰最旧
+        if (timedOutParams.size >= MAX_TIMED_OUT) {
+          timedOutParams.delete(timedOutParams.keys().next().value as string);
+        }
+        timedOutParams.set(id, params);
+        resolve({ ok: false, code: 'timeout' });
+      }
     }, timeoutMs);
     pending.set(id, {
       resolve: (msg: any) => resolve({ ok: true, result: msg }),

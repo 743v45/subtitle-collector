@@ -1,23 +1,12 @@
 import { type IncomingMessage, type ServerResponse } from 'node:http';
 import type Database from 'better-sqlite3';
-import { extractVideoUrl, expandShortLink, parseVideoUrl, createTask, createTasksBatch, expandUpperVideos, getTask, deleteTask, listTasks, kickTaskScheduler, type FetchLike } from '../tasks/tasks.js';
-
-function json(res: ServerResponse, status: number, body: unknown): void {
-  res.writeHead(status, { 'Content-Type': 'application/json' });
-  res.end(JSON.stringify(body));
-}
-
-function readJsonBody(req: IncomingMessage): Promise<any> {
-  return new Promise((resolve) => {
-    let buf = '';
-    req.on('data', (c) => (buf += c));
-    req.on('end', () => { try { resolve(buf ? JSON.parse(buf) : {}); } catch { resolve({}); } });
-  });
-}
+import { extractVideoUrl, expandShortLink, parseVideoUrl, createTask, createTasksBatch, findActiveTask, expandUpperVideos, getTask, deleteTask, listTasks, kickTaskScheduler, type FetchLike } from '../tasks/tasks.js';
+import { json, readJsonBody } from './http-util.js';
 
 // ── 采集任务 HTTP 接口（手机/网页提交入口）──
 // POST   /api/collect-tasks        { text } → 从粘贴文本提取 URL → 建 pending 任务并尝试派发
-// POST   /api/collect-tasks/batch  { bvids[] } → 批量建任务（popup/web 按 UP 勾选批量采集）并尝试派发
+//                                  （同视频已有未终态任务则返回既有任务，created:false）
+// POST   /api/collect-tasks/batch  { vids[], source?, client_id? } → 批量建任务（popup/web 按 UP 勾选批量采集）并尝试派发
 // GET    /api/collect-tasks        最近任务列表（手机「采集」页主体）
 // GET    /api/collect-tasks/:id    单任务状态（手机每 2s 轮询直到终态）
 // DELETE /api/collect-tasks/:id    删除任务（采集页删除按钮,任意状态可删）
@@ -36,9 +25,13 @@ export async function handleTasksHttp(req: IncomingMessage, res: ServerResponse,
       const expanded = await expandShortLink(rawUrl, fetcher);
       const target = parseVideoUrl(expanded);
       if (!target) { json(res, 400, { ok: false, error: '链接无法识别为 B 站 / YouTube 视频' }); return; }
+      // 未终态去重（判据同批量端点）：同 (source, source_vid) 已有 pending/dispatched → 返回既有任务
+      //（created:false）不新建——手机分享文本双击提交不再产生两条 pending（可能双采）
+      const active = findActiveTask(db, target.source, target.source_vid);
+      if (active) { json(res, 200, { ok: true, task: active, created: false }); return; }
       const task = createTask(db, target);
       kickTaskScheduler(); // 事件驱动：建任务立即尝试派发
-      json(res, 200, { ok: true, task });
+      json(res, 200, { ok: true, task, created: true });
       return;
     }
     if (req.method === 'GET') {
@@ -54,12 +47,16 @@ export async function handleTasksHttp(req: IncomingMessage, res: ServerResponse,
   if (pathname === '/api/collect-tasks/batch') {
     if (req.method !== 'POST') { json(res, 405, { ok: false, error: 'method not allowed' }); return; }
     const body = await readJsonBody(req);
-    // 兼容两种 body：{bvids[]}（bilibili，旧）与 {vids[], source}（source=bilibili|youtube，2026-08-21）
+    // body 统一格式（2026-08-21，趁无外部消费者一次改齐）：{vids[], source?, client_id?}
+    //   - bvids 旧键彻底删除（旧格式 = {vids, source:'bilibili'}，语义已并入）→ 旧请求 400 可见
+    //   - client_id（可选）snake_case 对齐 API 其余字段（source_vid/creator_client_id）：
+    //     创建者扩展 ID —— sticky 派发（任务跟随创建者，离线降级任意）
     const source = body?.source === 'youtube' ? 'youtube' : 'bilibili';
-    const vids = Array.isArray(body?.vids) ? body.vids : (Array.isArray(body?.bvids) ? body.bvids : []);
+    const vids = Array.isArray(body?.vids) ? body.vids : null;
+    const clientId = typeof body?.client_id === 'string' && body.client_id ? body.client_id : null;
     const label = source === 'youtube' ? 'YouTube 视频 ID（11 位）' : 'BV 号';
-    if (vids.length === 0) { json(res, 400, { ok: false, error: `vids: string[] required（至少一个${label}）` }); return; }
-    const r = createTasksBatch(db, vids, source);
+    if (!vids || vids.length === 0) { json(res, 400, { ok: false, error: `vids: string[] required（至少一个${label}）` }); return; }
+    const r = createTasksBatch(db, vids, source, clientId);
     if (r.created.length > 0) kickTaskScheduler(); // 事件驱动：建任务立即尝试派发
     json(res, 200, { ok: true, created: r.created.length, skipped: r.skipped.length, tasks: r.created });
     return;

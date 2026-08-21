@@ -5,6 +5,7 @@ import { listVideosFiltered, getChanges, type VideoSortKey, type VideoListItemAd
 import { parseVideoFilter, parseBool } from './filter.js';
 import { applyVideoTags, removeVideoTags, isTagSource, getVideoTagsByVideoIds, getVideoTagsForDetail, type TagSource } from '../db/tags.js';
 import { getTagPriority, type TagPrioritySource } from '../db/settings.js';
+import { json, readJsonBody } from './http-util.js';
 
 // 合并 bili（extra.tags）+ season（extra.ugc_season.title）与关系三档，同名按 tag_priority 取优先档（winner）。
 // 列表用（去重）；详情要全档时传 keepAll=true。
@@ -35,20 +36,6 @@ function mergeTagDetails(
   return [...winner.values()].sort((a, b) => {
     const pa = rank.get(a.source) ?? 99; const pb = rank.get(b.source) ?? 99;
     return pa !== pb ? pa - pb : a.name.localeCompare(b.name);
-  });
-}
-
-function json(res: ServerResponse, status: number, body: unknown): void {
-  res.writeHead(status, { 'Content-Type': 'application/json' });
-  res.end(JSON.stringify(body));
-}
-
-function readJsonBody(req: IncomingMessage): Promise<unknown> {
-  return new Promise((resolve, reject) => {
-    let raw = '';
-    req.on('data', (c) => { raw += c; });
-    req.on('end', () => { try { resolve(raw ? JSON.parse(raw) : {}); } catch (e) { reject(e); } });
-    req.on('error', reject);
   });
 }
 

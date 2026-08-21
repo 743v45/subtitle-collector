@@ -448,3 +448,32 @@ test('aggregateStats groupBy=tag：season 档并聚 + tag_source 过滤', () => 
     assert.deepEqual(agg, [{ key: 'AI前沿', count: 1 }]);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
+
+// ── 表达式索引：tid 等值 / stat.view 范围过滤走索引而非全表扫 ──
+// 索引表达式必须与 buildVideoWhere 里的查询表达式逐字一致（SQLite 表达式索引按表达式文本匹配；
+// view 查询带 CAST 包裹，索引也得带 CAST，裸 json_extract 索引服务不了该查询）。
+test('EXPLAIN QUERY PLAN：tid 等值过滤走 idx_videos_extra_tid（SEARCH 非 SCAN）', () => {
+  const { db, dir } = freshDb();
+  try {
+    // 镜像 listVideosFiltered 的 FROM/WHERE 形状（buildVideoWhere 的 tid 分支）
+    const plan = db.prepare(`
+      EXPLAIN QUERY PLAN SELECT v.id FROM videos v LEFT JOIN creators c ON c.id = v.creator_id
+      WHERE json_extract(v.extra, '$.tid') = ?
+    `).all(17) as Array<{ detail: string }>;
+    assert.ok(plan.some((p) => /SEARCH v USING (COVERING )?INDEX idx_videos_extra_tid/.test(p.detail)),
+      `tid 过滤应走表达式索引，实际计划：${plan.map((p) => p.detail).join(' | ')}`);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('EXPLAIN QUERY PLAN：stat.view 范围过滤走 idx_videos_extra_view（SEARCH 非 SCAN）', () => {
+  const { db, dir } = freshDb();
+  try {
+    // 镜像 buildVideoWhere 的 min_view 分支（CAST 包裹，与索引表达式一致）
+    const plan = db.prepare(`
+      EXPLAIN QUERY PLAN SELECT v.id FROM videos v LEFT JOIN creators c ON c.id = v.creator_id
+      WHERE CAST(json_extract(v.extra, '$.stat.view') AS INTEGER) >= ?
+    `).all(1000) as Array<{ detail: string }>;
+    assert.ok(plan.some((p) => /SEARCH v USING (COVERING )?INDEX idx_videos_extra_view/.test(p.detail)),
+      `view 过滤应走表达式索引，实际计划：${plan.map((p) => p.detail).join(' | ')}`);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});

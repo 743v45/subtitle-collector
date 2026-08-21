@@ -202,7 +202,7 @@ export function CreatorsPage({ onOpen }: { onOpen: (id: number) => void }) {
                     </SelectContent>
                   </Select>
                 </TableCell>
-                <TableCell className="text-right tabular-nums">{c.fans != null ? c.fans.toLocaleString() : '—'}</TableCell>
+                <TableCell className="text-right tabular-nums">{c.fans != null ? c.fans.toLocaleString('zh-CN') : '—'}</TableCell>
                 <TableCell className="text-right tabular-nums">{c.video_count}</TableCell>
               </TableRow>
             ))

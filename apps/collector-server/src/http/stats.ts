@@ -6,11 +6,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import type Database from 'better-sqlite3';
 import { aggregateStats, countOverview, type StatsGroupBy } from '../db/advanced.js';
 import { parseVideoFilter } from './filter.js';
-
-function json(res: ServerResponse, status: number, body: unknown): void {
-  res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8' });
-  res.end(JSON.stringify(body));
-}
+import { json } from './http-util.js';
 
 const GROUP_BY: readonly StatsGroupBy[] = ['creator', 'tname', 'lang', 'track-type', 'tag'];
 

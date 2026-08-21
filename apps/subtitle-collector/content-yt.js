@@ -15,7 +15,9 @@ const collected = new Map();
 // 否则 inject hook 拦不到、兜底无 body）。对齐 B 站 content.js triggerAiSubtitle 自动点字幕按钮的模式。
 // 播放器 UI 未就绪时轮询重试 ~10s。选择器多兜底（ytp 经典类 + aria-label/title 多语言）。
 function triggerYtSubtitle(round = 0) {
-  const sel = '.ytp-subtitles-button, button[aria-label*="subtitles" i], button[aria-label*="字幕"], button[aria-label*="caption" i], button[title*="subtitles" i], button[title*="字幕"]';
+  const sel = '.ytp-subtitles-button, button[aria-label*="subtitles" i], button[aria-label*="字幕"], button[aria-label*="caption" i], button[title*="subtitles" i], button[title*="字幕"]' +
+    ', button[aria-label*="utertexte" i], button[aria-label*="sous-titres" i], button[aria-label*="subtítulos" i], button[aria-label*="자막"]' +
+    ', button[aria-label*="субтитры" i], button[aria-label*="sottotitoli" i], button[aria-label*="legendas" i]';
   const btn = document.querySelector(sel);
   if (!btn) {
     if (round < 20) setTimeout(() => triggerYtSubtitle(round + 1), 500);
@@ -71,19 +73,21 @@ async function openSubtitleMenu() {
   const gear = await waitForSelector('.ytp-settings-button');
   if (!gear) { console.warn('[content-yt] 菜单 齿轮未找到'); return false; }
   try { gear.click(); } catch (e) { console.warn('[content-yt] 点齿轮失败', e?.message); return false; }
-  const sub = await waitForMenuItem(/^(字幕|subtitles?|caption|CC)/i);
+  const sub = await waitForMenuItem(/^(字幕|subtitles?|caption|CC|utertexte|sous-titres|subtítulos|자막|субтитры|sottotitoli|legendas)/i);
   if (!sub) { console.warn('[content-yt] 菜单 字幕项未找到'); return false; }
   try { sub.click(); } catch { return false; }
   return true;
 }
 
 // 选原轨（切到原轨，触发原轨 timedtext 请求 → inject 拦 → 原轨 body，如英文）
-// 原轨项：字幕菜单里不含「关闭/自动翻译/>>/选项」的语言项；优先含 langName（如"英语"），否则第一个语言项
+// 原轨项：字幕菜单里不含「关闭/自动翻译/>>/选项」的语言项；优先含 langName（如"英语"），否则第一个语言项。
+// 排除表覆盖中简繁/英/主流界面（關閉/自動翻譯/自動翻訳/off/options/translate 系），缺词即误点非语言项。
+const NON_LANG_MENU_RE = /关闭|關閉|自动翻译|自動翻譯|自動翻訳|auto.?translat|translate|übersetzen|traducir|traduire|>>|选项|選項|options?|off\b/i;
 async function selectOriginalTrack(langName) {
   if (!(await openSubtitleMenu())) return false;
-  const isLang = (t) => !!t && !/关闭|自动翻译|>>|选项/.test(t) && (!langName || t.includes(langName));
+  const isLang = (t) => !!t && !NON_LANG_MENU_RE.test(t) && (!langName || t.includes(langName));
   let item = langName ? await waitForMenuItem(isLang) : null;
-  if (!item) item = await waitForMenuItem((t) => !!t && !/关闭|自动翻译|>>|选项/.test(t));
+  if (!item) item = await waitForMenuItem((t) => !!t && !NON_LANG_MENU_RE.test(t));
   if (!item) { console.warn('[content-yt] 原轨项未找到'); return false; }
   try { item.click(); console.log(`[content-yt] 选原轨: ${item.textContent.trim()}`); } catch { return false; }
   return true;
@@ -94,7 +98,7 @@ async function selectOriginalTrack(langName) {
 async function triggerYtTranslation(targetLang) {
   let langRe;
   if (targetLang.startsWith("zh")) {
-    langRe = /简体|simplified|中文/i;
+    langRe = /简体|簡體|simplified|中文/i;
   } else if (targetLang === "en") {
     langRe = /^english|英语|英文/i;
   } else {
@@ -102,7 +106,7 @@ async function triggerYtTranslation(targetLang) {
     return;
   }
   if (!(await openSubtitleMenu())) return;
-  const auto = await waitForMenuItem(/auto.?translate|自动翻译|auto-trans|translate/i);
+  const auto = await waitForMenuItem(/auto.?translate|自动翻译|自動翻譯|自動翻訳|auto-trans|translate|übersetzen|traducir|traduire/i);
   if (!auto) { console.warn('[content-yt] 翻译菜单 自动翻译项未找到'); return; }
   try { auto.click(); } catch (e) { console.warn('[content-yt] 翻译菜单 点自动翻译项失败', e?.message); return; }
   const lang = await waitForMenuItem(langRe);

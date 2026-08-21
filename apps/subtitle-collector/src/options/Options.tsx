@@ -147,9 +147,9 @@ function ServerPanel() {
     }
   };
 
-  // 仅在非 loading 分支使用（此时 disp.phase 为 standalone/server）
-  const dot = disp.phase === 'standalone' ? 'bg-slate-400' : disp.connected ? 'bg-emerald-500' : 'bg-red-500';
-  const statusText = disp.phase === 'standalone' ? '纯扩展（不连接）' : disp.connected ? '已连接' : '未连接';
+  // loading 分支只渲染「读取中…」不消费这两个值；先判 server 再取 connected，类型即收敛
+  const dot = disp.phase === 'server' ? (disp.connected ? 'bg-emerald-500' : 'bg-red-500') : 'bg-slate-400';
+  const statusText = disp.phase === 'server' ? (disp.connected ? '已连接' : '未连接') : '纯扩展（不连接）';
 
   return (
     <div className="max-w-2xl space-y-4">

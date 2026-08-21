@@ -32,33 +32,69 @@ export function extractYoutubeChannelKey(url) {
   return null;
 }
 
-// —— 计数文本解析："127K views" / "1.2M views" / "299" → number（K=1e3，M=1e6，去逗号）——
+// —— 计数文本解析："127K views" / "1.5B views" / "12万次观看" / "299" → number ——
+// K=1e3、M=1e6、B=1e9、万/萬=1e4、亿/億=1e8，去半/全角逗号。界面语言由用户浏览器环境决定
+//（SSR 请求的 Accept-Language 会被 YouTube cookie 压过），英文与中文简繁都需识别。
 export function parseCountText(text) {
   if (typeof text !== 'string') return null;
-  const m = text.replace(/,/g, '').match(/([\d.]+)\s*([KM])?/);
+  const m = text.replace(/[,，]/g, '').match(/([\d.]+)\s*([KMB]|万|萬|亿|億)?/);
   if (!m) return null;
   const n = Number(m[1]);
   if (!Number.isFinite(n)) return null;
-  const mult = m[2] === 'K' ? 1e3 : m[2] === 'M' ? 1e6 : 1;
+  const u = m[2];
+  const mult = u === 'K' ? 1e3 : u === 'M' ? 1e6 : u === 'B' ? 1e9
+    : u === '万' || u === '萬' ? 1e4 : u === '亿' || u === '億' ? 1e8 : 1;
   return Math.round(n * mult);
 }
 
-// —— 相对时间解析："2 weeks ago" / "9 months ago" / "Streamed 1 year ago" → 估算 unix 秒 ——
-// 粗粒度估算（供「近半年/一年」过滤档位）；now 注入便于测试。
-export function parseRelativeTime(text, now = Date.now()) {
+// —— 相对时间文本："2 weeks ago" / "9 months ago" / "8个月前" / "2週前" ——
+// 共享匹配（数量 + 单位 → canonical 单位），供估算与档位两条路径复用；now 注入便于测试。
+// 中英简繁单位均识别（界面语言随用户环境）；多字符单位在前，防"分钟"被"分"截胡。
+const REL_UNIT_CANON = {
+  second: 'second', seconds: 'second', minute: 'minute', minutes: 'minute',
+  hour: 'hour', hours: 'hour', day: 'day', days: 'day',
+  week: 'week', weeks: 'week', month: 'month', months: 'month',
+  year: 'year', years: 'year',
+  '秒': 'second', '分': 'minute', '分钟': 'minute', '分鐘': 'minute',
+  '时': 'hour', '時': 'hour', '小时': 'hour', '小時': 'hour', '時間': 'hour',
+  '天': 'day', '日': 'day', '周': 'week', '週': 'week', '星期': 'week',
+  '月': 'month', '个月': 'month', '個月': 'month', 'か月': 'month', 'ヶ月': 'month', '年': 'year',
+};
+function matchRelativeText(text) {
   if (typeof text !== 'string') return null;
-  const m = text.match(/(\d+)\s+(second|minute|hour|day|week|month|year)s?\s+ago/i);
+  const m = text.match(
+    /(\d+)\s*(seconds?|minutes?|hours?|days?|weeks?|months?|years?|分鐘|分钟|小時|小时|時間|個月|个月|か月|ヶ月|星期|秒|分|時|时|天|日|周|週|月|年)\s*(ago|前)/i,
+  );
   if (!m) return null;
-  const n = Number(m[1]);
+  const unit = REL_UNIT_CANON[m[2].toLowerCase()];
+  return unit ? { n: Number(m[1]), unit } : null;
+}
+
+// 估算 unix 秒（恒定单位换算，粗粒度；显示排序等弱口径用）。
+export function parseRelativeTime(text, now = Date.now()) {
+  const r = matchRelativeText(text);
+  if (!r) return null;
   const unitSec = {
     second: 1, minute: 60, hour: 3600, day: 86400,
     week: 604800, month: 2592000, year: 31536000,
-  }[m[2].toLowerCase()];
-  return Math.floor(now / 1000) - n * unitSec;
+  }[r.unit];
+  return Math.floor(now / 1000) - r.n * unitSec;
+}
+
+// 相对文本 → 月数档位："1 year ago"→12、"7 months ago"→7、周及以下→0。
+// 时间过滤的判断口径：YouTube 满 12 个月后统一显示 "N years ago"（同一档覆盖真实
+// 12~24 月），秒级估算无法与页面上肉眼数的档位对齐，按档位才能让 "1 year ago"
+// 落入「近一年」、"2 years ago" 落在「近一年」外。
+export function relativeMonths(text) {
+  const r = matchRelativeText(text);
+  if (!r) return null;
+  if (r.unit === 'month') return r.n;
+  if (r.unit === 'year') return r.n * 12;
+  return 0; // second/minute/hour/day/week 均不足一月
 }
 
 // —— lockupViewModel → 视频条目（宽容：contentType 非 VIDEO / contentId 非 11 位 → null）——
-// 返回 { vid, title, created(unix秒估), play, length("M:SS"), pic }。
+// 返回 { vid, title, created(unix秒估), agoText(原始相对文本), play, length("M:SS"), pic }。
 // pic 不解析页面（直接拼 i.ytimg.com 稳定缩略图 URL）。
 export function parseLockup(l) {
   if (!l || l.contentType !== 'LOCKUP_CONTENT_TYPE_VIDEO') return null;
@@ -66,15 +102,16 @@ export function parseLockup(l) {
   if (!vid) return null;
   const md = l.metadata?.lockupMetadataViewModel ?? {};
   const title = typeof md.title?.content === 'string' && md.title.content ? md.title.content : null;
-  // metadataRows → metadataParts：内容判别（views 结尾 / ago 结尾），顺序不依赖
+  // metadataRows → metadataParts：内容判别（views / 次观看 结尾，ago / 前 结尾），顺序不依赖
   let play = null;
   let created = null;
+  let agoText = null;
   const rows = md.metadata?.contentMetadataViewModel?.metadataRows ?? [];
   for (const row of rows) {
     for (const p of row?.metadataParts ?? []) {
       const t = p?.text?.content ?? '';
-      if (/views?$/i.test(t)) play = parseCountText(t);
-      else if (/ago$/i.test(t)) created = parseRelativeTime(t);
+      if (/(views?|次观看|次觀看)$/i.test(t)) play = parseCountText(t);
+      else if (/(ago|前)$/i.test(t)) { agoText = t; created = parseRelativeTime(t); }
     }
   }
   // 时长 badge："11:38"（thumbnailBottomOverlayViewModel.badges[].text，结构嵌套深用递归找）
@@ -88,7 +125,7 @@ export function parseLockup(l) {
     for (const v of Object.values(node)) findDur(v);
   };
   findDur(overlays);
-  return { vid, title, created, play, length, pic: `https://i.ytimg.com/vi/${vid}/mqdefault.jpg` };
+  return { vid, title, created, agoText, play, length, pic: `https://i.ytimg.com/vi/${vid}/mqdefault.jpg` };
 }
 
 // —— 递归收集指定 key 的子节点（JSON 树遍历，YouTube 结构层级不定）——
@@ -139,8 +176,10 @@ export function parseYtChannelHtml(html) {
   if (key) out.inntertubeKey = key[1];
   const ver = html.match(/"INNERTUBE_CONTEXT_CLIENT_VERSION":"([^"]+)"/);
   if (ver) out.clientVersion = ver[1];
-  // 频道视频总数："299 videos" / "1.2K videos"（header 文本）
-  const vc = html.match(/"([\d.,]+[KM]?) videos"/);
+  // 频道视频总数（header metadataParts 的 text.content）："299 videos" / "1.2K videos" /
+  // "299 个视频" / "1.2万 个视频" / "299 個影片" / "299 本の動画"（语言随用户环境）。
+  // 锚定 "content": 前缀：i18n 模板串（"VIDEO_COUNT":{"case1":"1 个视频",...}）不带此前缀。
+  const vc = html.match(/"content":"([\d.,]+\s*[KMB万亿萬億]?) ?(?:videos|个视频|個影片|本の動画)"/);
   if (vc) out.total = parseCountText(vc[1]);
   const parsed = parseYtBrowseResponse(d);
   out.items = parsed.items;

@@ -13,8 +13,9 @@ import { emitResult, emitError } from '../output.js';
 import { getCliContext } from '../main.js';
 import { openReadonlyDb } from '../db.js';
 
-/** 采集类命令默认超时（高于管控类 5000，给扩展 fetch+入库留时间）。 */
-const DEFAULT_COLLECT_TIMEOUT_MS = 30000; // 主动采集 navigate（充电视频）需等被动 INGEST ~20s + 间隔，15s 不够
+/** 采集类命令默认超时：对齐 server 调度器分档（tasks.ts commandTimeoutMs——bilibili 90s / youtube 180s），
+ *  覆盖扩展全链路（导航+多请求+宽限+关 tab）；低于扩展实际耗时会把仍在执行的任务判成失败。 */
+const DEFAULT_COLLECT_TIMEOUT_MS = 180000;
 
 /** ServerClient 最小接口（便于测试注入 mock）。 */
 export interface CollectClient {
@@ -31,6 +32,65 @@ export async function resolveClientId(client: CollectClient, explicit?: string):
   return (first as { client_id: string }).client_id;
 }
 
+// ── 扩展命令统一入口（2026-08-21 端点形状收敛后）──
+// server /api/clients/:id/command 的约定：成功 200 且 result 直接是扩展回执 data；
+// 扩展执行失败 502 / 客户端离线 404 / 回执超时 504 —— HTTP 状态即结果，CLI 不再挖 result.ok。
+
+/** sendCommand 成功响应体：result = 扩展回执 data（无内层 ok/data 包装）。 */
+export interface CommandResp<T = Record<string, unknown>> {
+  ok: boolean;
+  client_id?: string;
+  action?: string;
+  result?: T;
+}
+
+/** 扩展命令失败：status 为 server 映射的 HTTP 状态（502 扩展执行失败 / 404 离线 / 504 超时），
+ *  extError 为错误体里的 error 原文（扩展执行失败时即扩展回执 error），message 带 action 上下文。 */
+export class ExtCommandError extends Error {
+  readonly status: number;
+  readonly extError: string;
+  constructor(action: string, status: number, extError: string) {
+    super(`${action} failed: ${extError}`);
+    this.name = 'ExtCommandError';
+    this.status = status;
+    this.extError = extError;
+  }
+}
+
+/** 下发扩展命令的统一入口：成功透传响应体；失败（ServerResponseError，requestJson 已带 HTTP 状态）
+ *  解析错误体的 error 字段转 ExtCommandError（带 action 上下文）；非 HTTP 错误原样上抛。 */
+export async function sendExtCommand(
+  client: CollectClient,
+  clientId: string,
+  action: string,
+  params: Record<string, unknown>,
+  timeout: number,
+): Promise<CommandResp> {
+  try {
+    return await client.sendCommand(clientId, action, params, timeout) as CommandResp;
+  } catch (err) {
+    if (err instanceof ServerResponseError) {
+      let extError = err.body;
+      try {
+        const j = JSON.parse(err.body) as { error?: unknown };
+        if (typeof j.error === 'string' && j.error) extError = j.error;
+      } catch { /* 非 JSON 错误体：body 原文作 extError */ }
+      throw new ExtCommandError(action, err.status, extError);
+    }
+    throw err;
+  }
+}
+
+/** 单条采集的失败软/硬分类：need_login / risk_control → 硬停（抛 STOP 错，继续采大概率全失败）；
+ *  其余扩展错误 → 软失败（返回 error 原文记 reason，继续下一条）。传输层错误原样上抛（整轮失败）。 */
+function classifyCollectError(err: unknown, id: string): string {
+  if (!(err instanceof ExtCommandError)) throw err;
+  if (err.extError === 'need_login' || err.extError === 'risk_control') {
+    throw new Error(`collect ${id} STOP: ${err.extError}（请处理后重跑）`);
+  }
+  return err.extError;
+}
+
 // ── 纯处理函数（可测：注入 mock client + 参数，返回结构化数据）──
 
 export interface SearchOpts { page?: number; order?: string; tid?: number; }
@@ -45,7 +105,7 @@ export async function collectSearch(
 ): Promise<unknown> {
   const params: Record<string, unknown> = { keyword, page: opts.page ?? 1, order: opts.order ?? 'pubdate' };
   if (opts.tid != null) params.tid = opts.tid;
-  return client.sendCommand(clientId, 'search', params, timeout);
+  return sendExtCommand(client, clientId, 'search', params, timeout);
 }
 
 /** `collect subtitle <bvid>`：下发 fetch-subtitle，扩展 fetch view+player+字幕体→ingest。 */
@@ -55,7 +115,7 @@ export async function collectSubtitle(
   bvid: string,
   timeout: number,
 ): Promise<unknown> {
-  return client.sendCommand(clientId, 'fetch-subtitle', { bvid }, timeout);
+  return sendExtCommand(client, clientId, 'fetch-subtitle', { bvid }, timeout);
 }
 
 /** `collect dedupe <bvid...>`：直读 SQLite，判据=video 是否存在（无字幕视频采过后也入 videos）。
@@ -133,11 +193,13 @@ export async function collectYtChannelVideos(
   opts: { refresh?: boolean },
   timeout: number,
 ): Promise<unknown> {
-  return client.sendCommand(clientId, 'list-yt-channel-videos', { ident, refresh: opts.refresh === true }, timeout);
+  return sendExtCommand(client, clientId, 'list-yt-channel-videos', { ident, refresh: opts.refresh === true }, timeout);
 }
 
 /** `collect yt-videos <key> --collect`：逐条采集未入库视频（fetch-youtube-subtitle navigate，串行 + sleep 防风控）。
- *  已入库（videos 表命中）跳过——判据对齐 collectDedupe（无字幕也入 videos）。返回逐条结果。 */
+ *  已入库（videos 表命中）跳过——判据对齐 collectDedupe（无字幕也入 videos）。返回逐条结果。
+ *  失败分类见 classifyCollectError：need_login/risk_control 硬停、其余扩展错误软记 reason、
+ *  传输层错误整轮抛出。sleep 注入供测试（默认逐条间隔下限 1s 防风控）。 */
 export async function collectYtVideosRun(
   client: CollectClient,
   clientId: string,
@@ -145,23 +207,21 @@ export async function collectYtVideosRun(
   vids: string[],
   sleepMs: number,
   timeout: number,
+  sleep: (ms: number) => Promise<void> = (ms) => new Promise((r) => setTimeout(r, ms)),
 ): Promise<Array<{ vid: string; ok: boolean; reason?: string }>> {
   const { missing } = collectDedupe(db, vids, 'youtube');
   const out: Array<{ vid: string; ok: boolean; reason?: string }> = [];
   for (const vid of missing) {
-    const resp = await client.sendCommand(clientId, 'fetch-youtube-subtitle', { videoId: vid }, timeout) as {
-      result?: { error?: string; data?: { reason?: string; captured?: number } };
-    };
-    const err = resp.result?.error;
-    if (err === 'need_login' || err === 'risk_control') {
-      throw new Error(`collect ${vid} STOP: ${err}（请处理后重跑）`);
+    let data: { captured?: number; reason?: string } | undefined;
+    let extError: string | undefined;
+    try {
+      const resp = await sendExtCommand(client, clientId, 'fetch-youtube-subtitle', { videoId: vid }, timeout);
+      data = resp.result;
+    } catch (err) {
+      extError = classifyCollectError(err, vid);
     }
-    out.push({
-      vid,
-      ok: !err && (resp.result?.data?.captured ?? 0) > 0,
-      reason: err ?? resp.result?.data?.reason,
-    });
-    await new Promise((r) => setTimeout(r, Math.max(sleepMs, 1000)));
+    out.push({ vid, ok: !extError && (data?.captured ?? 0) > 0, reason: extError ?? data?.reason });
+    await sleep(Math.max(sleepMs, 1000));
   }
   return out;
 }
@@ -173,7 +233,7 @@ export async function collectUpperInfo(
   mid: string,
   timeout: number,
 ): Promise<unknown> {
-  return client.sendCommand(clientId, 'get-upper-info', { mid }, timeout);
+  return sendExtCommand(client, clientId, 'get-upper-info', { mid }, timeout);
 }
 
 export interface UpperVideosOpts { page?: number; size?: number; }
@@ -187,18 +247,12 @@ export interface UpperVideoItem {
   length?: string;
 }
 
-/** list-upper-videos 扩展回执形状（外层 server 包装 + result.data 列表）。 */
+/** list-upper-videos 响应体（server 包装）：result 即扩展 data（total/items 列表）。 */
 export interface UpperVideosResp {
   ok: boolean;
   client_id?: string;
   action?: string;
-  result?: {
-    type?: string;
-    id?: string;
-    ok: boolean;
-    error?: string;
-    data?: { total?: number; items?: UpperVideoItem[] };
-  };
+  result?: { total?: number; items?: UpperVideoItem[] };
 }
 
 /** `collect upper-videos <mid>`：下发 list-upper-videos，返回视频列表（不入库）。 */
@@ -209,7 +263,7 @@ export async function collectUpperVideos(
   opts: UpperVideosOpts,
   timeout: number,
 ): Promise<unknown> {
-  return client.sendCommand(clientId, 'list-upper-videos',
+  return sendExtCommand(client, clientId, 'list-upper-videos',
     { mid, page: opts.page ?? 1, page_size: opts.size ?? 30 }, timeout);
 }
 
@@ -232,13 +286,16 @@ export async function collectUpperVideosAll(
   let lastResp: UpperVideosResp | undefined;
   const maxPages = 200;
   for (let page = 1; page <= maxPages; page++) {
-    const resp = await client.sendCommand(clientId, 'list-upper-videos',
-      { mid, page, page_size: size }, timeout) as UpperVideosResp;
-    if (!resp.ok || !resp.result?.ok) {
-      throw new Error(`list-upper-videos page=${page} failed: ${resp.result?.error ?? 'server error'}`);
+    // 单页失败（扩展执行失败 → server 502 → ExtCommandError）：补 page 上下文再抛（分页调试需要页号）
+    let resp: UpperVideosResp;
+    try {
+      resp = await collectUpperVideos(client, clientId, mid, { page, size }, timeout) as UpperVideosResp;
+    } catch (err) {
+      if (err instanceof ExtCommandError) throw new Error(`list-upper-videos page=${page} failed: ${err.extError}`);
+      throw err;
     }
     lastResp = resp;
-    const data = resp.result?.data ?? {};
+    const data = resp.result ?? {};
     total = data.total ?? total;
     const items = data.items ?? [];
     allItems.push(...items);
@@ -253,15 +310,12 @@ export async function collectUpperVideosAll(
   // 用最后一次外层包装 + 合并后的全量 data，保持与单页输出形状一致。
   return {
     ...(lastResp ?? { ok: true }),
-    result: {
-      ...(lastResp?.result ?? { ok: true }),
-      ok: true,
-      data: { total: resultTotal, items: filtered },
-    },
+    result: { total: resultTotal, items: filtered },
   };
 }
 
-/** `collect new-videos <mid>`：拉 UP 主视频列表（经扩展）+ 直读 SQLite 对比 → 返回 new/collected。 */
+/** `collect new-videos <mid>`：拉 UP 主视频列表（经扩展）+ 直读 SQLite 对比 → 返回 new/collected。
+ *  拉取失败（扩展执行失败等）抛 ExtCommandError（message 带 action 上下文）。 */
 export async function collectNewVideos(
   client: CollectClient,
   clientId: string,
@@ -270,15 +324,10 @@ export async function collectNewVideos(
   opts: UpperVideosOpts,
   timeout: number,
 ): Promise<{ total: number; new: string[]; collected: string[] }> {
-  const resp = await collectUpperVideos(client, clientId, mid, opts, timeout) as {
-    ok: boolean; result?: { ok: boolean; error?: string; data?: { total?: number; items?: Array<{ bvid: string }> } };
-  };
-  if (!resp.ok || !resp.result?.ok) {
-    throw new Error(`list-upper-videos failed: ${resp.result?.error ?? 'server error'}`);
-  }
-  const items = resp.result?.data?.items ?? [];
+  const resp = await collectUpperVideos(client, clientId, mid, opts, timeout) as CommandResp<{ total?: number; items?: Array<{ bvid: string }> }>;
+  const items = resp.result?.items ?? [];
   const bvids = items.map((it) => it.bvid).filter(Boolean);
-  if (bvids.length === 0) return { total: resp.result?.data?.total ?? 0, new: [], collected: [] };
+  if (bvids.length === 0) return { total: resp.result?.total ?? 0, new: [], collected: [] };
   const placeholders = bvids.map(() => '?').join(',');
   const rows = db.prepare(
     `SELECT source_vid FROM videos WHERE source = 'bilibili' AND source_vid IN (${placeholders})`,
@@ -287,7 +336,7 @@ export async function collectNewVideos(
   const collected: string[] = [];
   const newArr: string[] = [];
   for (const b of bvids) (set.has(b) ? collected : newArr).push(b);
-  return { total: resp.result?.data?.total ?? bvids.length, new: newArr, collected };
+  return { total: resp.result?.total ?? bvids.length, new: newArr, collected };
 }
 
 /** `collect discover <mid...>`：批量多 UP，每个跑 new-videos，汇总 per_mid + all_new。单 mid 失败记录 error，不影响其他。 */
@@ -428,7 +477,8 @@ export async function resolveFans(
 }
 
 /** 多页搜索合并：循环 collectSearch page=1..pages，合并 items；首页取 raw_total。
- *  提前终止：某页 items 为空、或累计达 raw_total、或翻满 pages。 */
+ *  提前终止：某页 items 为空、或累计达 raw_total、或翻满 pages。
+ *  单页扩展失败 → server 502 → ExtCommandError，补 page 上下文再抛（分页调试需要页号）。 */
 export async function collectFindSearch(
   client: CollectClient,
   clientId: string,
@@ -439,13 +489,14 @@ export async function collectFindSearch(
   const all: SearchItem[] = [];
   let rawTotal = 0;
   for (let page = 1; page <= opts.pages; page++) {
-    const resp = await collectSearch(client, clientId, keyword, { page, order: opts.order, tid: opts.tid }, timeout) as {
-      ok: boolean; result?: { ok: boolean; error?: string; data?: { total?: number; items?: SearchItem[] } };
-    };
-    if (!resp.ok || !resp.result?.ok) {
-      throw new Error(`search page=${page} failed: ${resp.result?.error ?? 'server error'}`);
+    let resp: CommandResp<{ total?: number; items?: SearchItem[] }>;
+    try {
+      resp = await collectSearch(client, clientId, keyword, { page, order: opts.order, tid: opts.tid }, timeout) as CommandResp<{ total?: number; items?: SearchItem[] }>;
+    } catch (err) {
+      if (err instanceof ExtCommandError) throw new Error(`search page=${page} failed: ${err.extError}`);
+      throw err;
     }
-    const data = resp.result.data ?? {};
+    const data = resp.result ?? {};
     if (page === 1) rawTotal = data.total ?? 0;
     const items = data.items ?? [];
     all.push(...items);
@@ -501,6 +552,7 @@ export async function collectFind(
 /**
  * 统一 HTTP 错误归一化（对齐 clients.ts:90-101 模式 + collect 特有的 no online client 分支）：
  * - `ServerUnreachableError`（server 没开/ECONNREFUSED）→ `SERVER_UNREACHABLE`（退 3）。
+ * - `ExtCommandError`（扩展命令失败：502 扩展执行失败 / 404 离线 / 504 超时）→ `RUNTIME`（退 1，透传扩展 error）。
  * - `ServerResponseError` status 404 → `NOT_FOUND`（退 5）；其余非 2xx → `RUNTIME`（退 1，带 status/body）。
  * - `no online client`（扩展未连）→ `ARGS`（退 2）。
  * - 其他：`RUNTIME`（退 1）。
@@ -510,6 +562,9 @@ export async function collectFind(
 function handleHttpError(err: unknown): never {
   if (err instanceof ServerUnreachableError) {
     emitError(err.message, 'SERVER_UNREACHABLE');
+  }
+  if (err instanceof ExtCommandError) {
+    emitError(err.message, 'RUNTIME', { status: err.status, error: err.extError });
   }
   if (err instanceof ServerResponseError) {
     if (err.status === 404) {
@@ -533,7 +588,7 @@ export function buildCollectCommand(): Command {
     .option('--order <o>', '排序（默认 pubdate）', 'pubdate')
     .option('--tid <id>', '分区 tid')
     .option('--client <id>', '扩展 client_id（缺省取第一个在线）')
-    .option('--timeout <ms>', '等扩展回执的超时毫秒（默认 15000）', (v) => Number.parseInt(v, 10), DEFAULT_COLLECT_TIMEOUT_MS)
+    .option('--timeout <ms>', '等扩展回执的超时毫秒（默认 180000）', (v) => Number.parseInt(v, 10), DEFAULT_COLLECT_TIMEOUT_MS)
     .action(async (keyword: string, opts: { page: number; order: string; tid?: string; client?: string; timeout: number }) => {
       if (!Number.isFinite(opts.timeout) || opts.timeout <= 0) emitError(`invalid --timeout: ${opts.timeout}`, 'ARGS');
       const ctx = getCliContext();
@@ -552,7 +607,7 @@ export function buildCollectCommand(): Command {
     .command('subtitle <bvid>')
     .description('采集单个视频字幕入库（扩展 fetch view+player+字幕体）')
     .option('--client <id>', '扩展 client_id（缺省取第一个在线）')
-    .option('--timeout <ms>', '超时毫秒（默认 15000）', (v) => Number.parseInt(v, 10), DEFAULT_COLLECT_TIMEOUT_MS)
+    .option('--timeout <ms>', '超时毫秒（默认 180000）', (v) => Number.parseInt(v, 10), DEFAULT_COLLECT_TIMEOUT_MS)
     .action(async (bvid: string, opts: { client?: string; timeout: number }) => {
       if (!Number.isFinite(opts.timeout) || opts.timeout <= 0) emitError(`invalid --timeout: ${opts.timeout}`, 'ARGS');
       const ctx = getCliContext();
@@ -586,7 +641,7 @@ export function buildCollectCommand(): Command {
     .command('upper-info <mid>')
     .description('采集 UP 主资料入库（扩展 fetch acc/info + relation/stat）')
     .option('--client <id>', '扩展 client_id（缺省取第一个在线）')
-    .option('--timeout <ms>', '超时毫秒（默认 15000）', (v) => Number.parseInt(v, 10), DEFAULT_COLLECT_TIMEOUT_MS)
+    .option('--timeout <ms>', '超时毫秒（默认 180000）', (v) => Number.parseInt(v, 10), DEFAULT_COLLECT_TIMEOUT_MS)
     .action(async (mid: string, opts: { client?: string; timeout: number }) => {
       if (!Number.isFinite(opts.timeout) || opts.timeout <= 0) emitError(`invalid --timeout: ${opts.timeout}`, 'ARGS');
       const ctx = getCliContext();
@@ -608,7 +663,7 @@ export function buildCollectCommand(): Command {
     .option('--all', '全量翻页拉完所有视频（默认仅首页）')
     .option('--since-created <unix>', '只保留发布时间 >= 该 UNIX 秒的视频（null 保留，--all 时生效）', (v) => Number.parseInt(v, 10))
     .option('--client <id>', '扩展 client_id')
-    .option('--timeout <ms>', '超时毫秒（默认 15000）', (v) => Number.parseInt(v, 10), DEFAULT_COLLECT_TIMEOUT_MS)
+    .option('--timeout <ms>', '超时毫秒（默认 180000）', (v) => Number.parseInt(v, 10), DEFAULT_COLLECT_TIMEOUT_MS)
     .action(async (mid: string, opts: { page: number; size: number; all?: boolean; sinceCreated?: number; client?: string; timeout: number }) => {
       if (!Number.isFinite(opts.timeout) || opts.timeout <= 0) emitError(`invalid --timeout: ${opts.timeout}`, 'ARGS');
       const ctx = getCliContext();
@@ -646,13 +701,15 @@ export function buildCollectCommand(): Command {
       const client = new ServerClient(ctx.serverUrl, ctx.token);
       try {
         const clientId = await resolveClientId(client as CollectClient, opts.client);
-        const data = await collectYtChannelVideos(client as CollectClient, clientId, ident, { refresh: opts.refresh }, opts.timeout) as {
-          ok: boolean; result?: { ok: boolean; error?: string; data?: { channel_id?: string; channel_name?: string; total?: number; items?: YtChannelVideoItem[]; error?: string | null } };
-        };
-        if (!data.ok || !data.result?.ok) {
-          emitError(`list-yt-channel-videos failed: ${data.result?.error ?? 'server error'}`, 'RUNTIME');
-        }
-        const d = data.result?.data ?? {};
+        // 拉取失败（扩展执行失败等）抛 ExtCommandError → handleHttpError 统一退出
+        const resp = await collectYtChannelVideos(client as CollectClient, clientId, ident, { refresh: opts.refresh }, opts.timeout) as CommandResp<{
+          channel_id?: string;
+          channel_name?: string;
+          total?: number;
+          items?: YtChannelVideoItem[];
+          error?: string | null;
+        }>;
+        const d = resp.result ?? {};
         // since-days 过滤：null created 保留（YouTube 相对时间解析失败时防漏采）
         const sinceUnix = opts.sinceDays != null ? Math.floor(Date.now() / 1000) - opts.sinceDays * 86400 : null;
         const items = sinceUnix != null
@@ -682,7 +739,7 @@ export function buildCollectCommand(): Command {
     .option('--page <n>', '页码（默认 1）', (v) => Number.parseInt(v, 10), 1)
     .option('--size <n>', '每页条数（默认 30）', (v) => Number.parseInt(v, 10), 30)
     .option('--client <id>', '扩展 client_id')
-    .option('--timeout <ms>', '超时毫秒（默认 15000）', (v) => Number.parseInt(v, 10), DEFAULT_COLLECT_TIMEOUT_MS)
+    .option('--timeout <ms>', '超时毫秒（默认 180000）', (v) => Number.parseInt(v, 10), DEFAULT_COLLECT_TIMEOUT_MS)
     .action(async (mid: string, opts: { page: number; size: number; client?: string; timeout: number }) => {
       if (!Number.isFinite(opts.timeout) || opts.timeout <= 0) emitError(`invalid --timeout: ${opts.timeout}`, 'ARGS');
       const ctx = getCliContext();
@@ -709,7 +766,7 @@ export function buildCollectCommand(): Command {
     .option('--page <n>', '页码（默认 1）', (v) => Number.parseInt(v, 10), 1)
     .option('--size <n>', '每页条数（默认 30）', (v) => Number.parseInt(v, 10), 30)
     .option('--client <id>', '扩展 client_id')
-    .option('--timeout <ms>', '超时毫秒（默认 15000）', (v) => Number.parseInt(v, 10), DEFAULT_COLLECT_TIMEOUT_MS)
+    .option('--timeout <ms>', '超时毫秒（默认 180000）', (v) => Number.parseInt(v, 10), DEFAULT_COLLECT_TIMEOUT_MS)
     .action(async (mids: string[], opts: { page: number; size: number; client?: string; timeout: number }) => {
       if (mids.length === 0) emitError('at least one <mid> required', 'ARGS');
       if (!Number.isFinite(opts.timeout) || opts.timeout <= 0) emitError(`invalid --timeout: ${opts.timeout}`, 'ARGS');
@@ -740,7 +797,7 @@ export function buildCollectCommand(): Command {
     .option('--no-cache', '忽略 creators 表 fans 缓存，全部实时查（用于刷新粉丝数）')
     .option('--sleep <ms>', '实时查 fans / 采字幕 的间隔毫秒（默认 600）', (v) => Number.parseInt(v, 10), 600)
     .option('--client <id>', '扩展 client_id（缺省取第一个在线）')
-    .option('--timeout <ms>', '等扩展回执的超时毫秒（默认 15000）', (v) => Number.parseInt(v, 10), DEFAULT_COLLECT_TIMEOUT_MS)
+    .option('--timeout <ms>', '等扩展回执的超时毫秒（默认 180000）', (v) => Number.parseInt(v, 10), DEFAULT_COLLECT_TIMEOUT_MS)
     .action(async (keyword: string, opts: {
       tid?: number; order: string; pages: number; minFans: number;
       since?: string; sinceDays?: number; collect?: boolean; cache?: boolean; sleep: number;
@@ -779,33 +836,38 @@ export function buildCollectCommand(): Command {
             }
           },
           async fetchFans(mid) {
-            const resp = await collectUpperInfo(client as CollectClient, clientId, mid, opts.timeout) as {
-              ok: boolean; result?: { ok: boolean; data?: { fans?: number }; error?: string };
-            };
+            // 实时查失败（扩展执行失败 → 502）→ fans 未知（null，保守保留候选）；传输层错误原样上抛
+            let resp: CommandResp<{ fans?: number }>;
+            try {
+              resp = await collectUpperInfo(client as CollectClient, clientId, mid, opts.timeout) as CommandResp<{ fans?: number }>;
+            } catch (err) {
+              if (err instanceof ExtCommandError) return null;
+              throw err;
+            }
             await new Promise((r) => setTimeout(r, sleepMs)); // 防风控
-            if (!resp.ok || !resp.result?.ok) return null;
-            const f = resp.result.data?.fans;
+            const f = resp.result?.fans;
             return f != null && f > 0 ? f : null;
           },
         };
         const data = await collectFind(client as CollectClient, clientId, keyword,
           { pages: opts.pages, order: opts.order, tid: opts.tid, minFans: opts.minFans, since: sinceUnix },
           fansSrc, opts.timeout);
-        // --collect：对最终候选串行采字幕入库（sleep>=1s 防风控；遇 need_login/risk_control 即停）。
+        // --collect：对最终候选串行采字幕入库（sleep>=1s 防风控；失败分类见 classifyCollectError）。
         if (opts.collect && data.items.length > 0) {
           const collected: Array<{ bvid: string; ok: boolean; reason?: string }> = [];
           for (const it of data.items) {
-            const out = await collectSubtitle(client as CollectClient, clientId, it.bvid, opts.timeout) as {
-              result?: { error?: string; data?: { reason?: string; tracks?: number } };
-            };
-            const err = out.result?.error;
-            if (err === 'need_login' || err === 'risk_control') {
-              emitError(`collect ${it.bvid} STOP: ${err}（请处理后重跑）`, 'RUNTIME');
+            let extError: string | undefined;
+            let sdata: { reason?: string; tracks?: number } | undefined;
+            try {
+              const resp = await collectSubtitle(client as CollectClient, clientId, it.bvid, opts.timeout) as CommandResp<{ reason?: string; tracks?: number }>;
+              sdata = resp.result;
+            } catch (err) {
+              extError = classifyCollectError(err, it.bvid);
             }
             collected.push({
               bvid: it.bvid,
-              ok: !err && out.result?.data?.reason !== 'no_subtitle',
-              reason: err ?? out.result?.data?.reason,
+              ok: !extError && sdata?.reason !== 'no_subtitle',
+              reason: extError ?? sdata?.reason,
             });
             await new Promise((r) => setTimeout(r, Math.max(sleepMs, 1000)));
           }

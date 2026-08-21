@@ -60,8 +60,10 @@ export async function clientsReporting(
 /**
  * `clients command <id> <action> [--op --url --vid --timeout]`：下发命令并等扩展回执。
  * 只把用户实际传入的 op/url/vid 收进 params（undefined 不下发），再调 sendCommand。
- * server `POST /api/clients/:id/command` → `{ok, client_id, action, result}`，
- * 其中 result 含扩展回执的 ok/data。
+ * server `POST /api/clients/:id/command` 错误码语义（HTTP 状态即结果）：
+ *   200 → `{ok, client_id, action, result}`，result 直接是扩展回执 data（无 ok/data 包装层）；
+ *   404 客户端离线 / 504 回执超时 / 502 扩展执行失败（error = 扩展回执 error 原文，经
+ *   ServerResponseError 抛到 handleHttpError 归一化）。
  */
 export async function clientsCommand(
   client: ServerClient,

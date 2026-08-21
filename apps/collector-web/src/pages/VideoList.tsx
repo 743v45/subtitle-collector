@@ -28,7 +28,7 @@ const SORT_OPTIONS: { value: SortField; label: string }[] = [
 
 function formatTs(ts: number | null | undefined): string {
   if (!ts) return '';
-  return new Date(ts).toLocaleString();
+  return new Date(ts).toLocaleString('zh-CN');
 }
 
 // 秒 → m:ss / h:mm:ss

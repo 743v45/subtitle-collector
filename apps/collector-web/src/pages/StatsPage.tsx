@@ -25,7 +25,7 @@ const WIDTH_CLASSES = [
 
 function fmtTime(ms: number | null): string {
   if (!ms) return '-';
-  return new Date(ms).toLocaleString();
+  return new Date(ms).toLocaleString('zh-CN');
 }
 
 function StatCard({ label, value }: { label: string; value: number }) {
@@ -33,7 +33,7 @@ function StatCard({ label, value }: { label: string; value: number }) {
     <Card>
       <CardContent className="p-4">
         <div className="text-xs text-muted-foreground">{label}</div>
-        <div className="text-2xl font-semibold tabular-nums">{value.toLocaleString()}</div>
+        <div className="text-2xl font-semibold tabular-nums">{value.toLocaleString('zh-CN')}</div>
       </CardContent>
     </Card>
   );

@@ -8,20 +8,7 @@ import {
   listTags, applyVideoTags, removeVideoTags, renameTag, deleteTag,
   isTagSource, type VideoRef, type TagSource,
 } from '../db/tags.js';
-
-function json(res: ServerResponse, status: number, body: unknown): void {
-  res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8' });
-  res.end(JSON.stringify(body));
-}
-
-function readJsonBody(req: IncomingMessage): Promise<unknown> {
-  return new Promise((resolve, reject) => {
-    let raw = '';
-    req.on('data', (c) => { raw += c; });
-    req.on('end', () => { try { resolve(raw ? JSON.parse(raw) : {}); } catch (e) { reject(e); } });
-    req.on('error', reject);
-  });
-}
+import { json, readJsonBody } from './http-util.js';
 
 // 请求体校验：items 必须是 [{source, source_vid}]，names 是 string[]；source 必须是合法档（bili 只读 → 400）
 function parseApplyBody(b: unknown, needSource: boolean): { refs: VideoRef[]; names: string[]; source?: TagSource } | { error: string } {
@@ -102,7 +89,9 @@ export async function handleTagsHttp(req: IncomingMessage, res: ServerResponse, 
       return;
     }
     if (req.method === 'DELETE') {
-      json(res, deleteTag(db, id) ? 200 : 404, { ok: true });
+      // 404 的 body 与状态码语义一致（ok:false），调用方能从 body 判断失败而非只看状态码
+      if (deleteTag(db, id)) json(res, 200, { ok: true });
+      else json(res, 404, { ok: false, error: 'not found' });
       return;
     }
   }

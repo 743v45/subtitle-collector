@@ -212,7 +212,7 @@ test('handleServerStatus: offline + 无 DB + 无 pid 文件 + 默认 token', asy
       dbPath,
       pidFilePath: pidPath,
       serverUrl: 'http://127.0.0.1:21527',
-      token: 'change-me-collector-token', // 默认 token
+      token: '', // 默认空（无 token 模式，对齐 main.ts）
     });
     assert.equal(result.online, false);
     assert.equal(result.server_url, 'http://127.0.0.1:21527');
@@ -224,7 +224,7 @@ test('handleServerStatus: offline + 无 DB + 无 pid 文件 + 默认 token', asy
     assert.equal(result.pid_file.path, pidPath);
     assert.equal(result.pid_file.exists, false);
     assert.equal(result.pid_file.pid, undefined);
-    // 配置：端口从 serverUrl 解析；token 为默认 → token_configured=false
+    // 配置：端口从 serverUrl 解析；token 为默认空（无 token 模式）→ token_configured=false
     assert.equal(result.config.port, 21527);
     assert.equal(result.config.token_configured, false);
   } finally {

@@ -19,7 +19,7 @@ function errMsg(e: unknown): string {
 }
 
 function fmtTime(ms: number): string {
-  return new Date(ms).toLocaleString();
+  return new Date(ms).toLocaleString('zh-CN');
 }
 
 const DEFAULT_PRIORITY: TagSource[] = ['manual', 'batch', 'bili', 'season', 'ai'];

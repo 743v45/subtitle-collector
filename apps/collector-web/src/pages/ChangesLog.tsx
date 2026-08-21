@@ -11,7 +11,7 @@ import type { ChangeRow } from '@/types';
 const PAGE_SIZE = 30;
 
 function fmtTime(ms: number): string {
-  return new Date(ms).toLocaleString();
+  return new Date(ms).toLocaleString('zh-CN');
 }
 
 // old/new 值可能很长（如 extra JSON），截断显示，hover title 看全

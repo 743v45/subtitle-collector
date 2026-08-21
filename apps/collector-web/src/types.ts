@@ -35,7 +35,6 @@ export interface VideoInfo {
   title: string; creator_name: string | null; duration: number | null;
   extra?: VideoExtra;
   published_at?: number | null;
-  status?: string;
   source?: string;
   source_vid?: string;
 }

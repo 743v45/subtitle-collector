@@ -22,7 +22,7 @@ services:
       COLLECTOR_PORT: "21527"
       COLLECTOR_HOST: "0.0.0.0"
       # ⚠️ 生产必改！生成：node -e "console.log(require('crypto').randomBytes(24).toString('hex'))"
-      # 且必须与 apps/subtitle-collector/config.js 的 TOKEN 完全一致，否则扩展连不上。
+      # 设置后：扩展的 server URL 须带 ?token=xxx（popup 服务器配置里填完整 URL），CLI 须带 Bearer token。
       COLLECTOR_TOKEN: ${COLLECTOR_TOKEN:-change-me-collector-token}
       # 从宿主 localhost（经 -p 映射）访问无需填；从局域网 IP/主机名访问则填上，逗号分隔。
       COLLECTOR_ALLOWED_HOSTS: ${COLLECTOR_ALLOWED_HOSTS:-}

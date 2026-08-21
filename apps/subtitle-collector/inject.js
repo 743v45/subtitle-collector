@@ -88,7 +88,9 @@
       up_name: (window.__INITIAL_STATE__?.videoData?.owner)?.name ?? d.up_info?.name ?? null,
       pic: d.pic, duration: d.video_info?.duration ?? null,
       published_at: d.pubdate ? d.pubdate * 1000 : null,
-      extra: readVideoExtra(d),
+      // 用上面已并入 paid/paid_detail 的 extra —— 曾在此重新调 readVideoExtra(d) 返回全新对象，
+      // 被动路径的付费标志从未进过库（2026-08-21 修复）
+      extra,
       subs: subs.map((s) => ({
         lan: s.lan, lan_doc: s.lan_doc, track_type: s.type ?? null,
         subtitle_url: normalizeUrl(s.subtitle_url),

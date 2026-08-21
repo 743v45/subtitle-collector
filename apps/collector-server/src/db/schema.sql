@@ -49,7 +49,6 @@ CREATE TABLE IF NOT EXISTS videos (
   title         TEXT NOT NULL,
   extra         TEXT,
   duration      INTEGER,
-  status        TEXT DEFAULT 'online',
   published_at  INTEGER,
   paid          INTEGER NOT NULL DEFAULT 0,
   first_seen_at INTEGER NOT NULL,
@@ -57,6 +56,12 @@ CREATE TABLE IF NOT EXISTS videos (
   UNIQUE(source, source_vid)
 );
 CREATE INDEX IF NOT EXISTS idx_videos_first_seen ON videos(first_seen_at DESC);
+-- 表达式索引：tid 等值 / stat.view 范围过滤走索引，免 json_extract 全表扫。
+-- 索引表达式必须与 db/advanced.ts 的查询表达式逐字一致（SQLite 按表达式匹配）：
+-- view 查询带 CAST 包裹，索引也带 CAST。tname 是 LIKE '%…%' 前导通配模糊匹配，
+-- 索引无法服务，不建（advanced.test.ts 的 EXPLAIN QUERY PLAN 断言守着这两条走索引）。
+CREATE INDEX IF NOT EXISTS idx_videos_extra_tid ON videos(json_extract(extra, '$.tid'));
+CREATE INDEX IF NOT EXISTS idx_videos_extra_view ON videos(CAST(json_extract(extra, '$.stat.view') AS INTEGER));
 
 CREATE TABLE IF NOT EXISTS subtitle_tracks (
   id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -74,16 +79,18 @@ CREATE TABLE IF NOT EXISTS subtitle_versions (
   origin        TEXT NOT NULL,
   payload       TEXT NOT NULL,
   body_size     INTEGER,
-  source_url    TEXT,
+  body_hash     TEXT,       -- 字幕体 SHA-256（幂等去重键；存量行为 NULL 不参与去重）
+  source_url    TEXT,       -- 原样保留供来源追溯；带会话签名，不参与去重判定
   asr_engine    TEXT,
   captured_at   INTEGER NOT NULL
   -- 去重在应用层处理（见 db/ingest.ts version 写入分支）：
-  --   origin IN ('external','asr')：按 (track_id, origin, coalesce(asr_engine,''), coalesce(source_url,'')) 先 SELECT，命中则跳过；
+  --   origin IN ('external','asr')：按 (track_id, origin, coalesce(asr_engine,''), body_hash) 先 SELECT，命中则跳过
+  --     （source_url 是 YouTube timedtext / B 站 AI 字幕的带签名临时 URL，跨会话必不同，参与判定会让重采插重复行）；
   --   origin = 'manual'：始终 INSERT 新行（人工导入不去重，保留历史快照）。
   -- 不在 DDL 上设 UNIQUE，否则 manual 多次导入会撞约束报错。
 );
 CREATE INDEX IF NOT EXISTS idx_versions_track ON subtitle_versions(track_id);
-CREATE INDEX IF NOT EXISTS idx_versions_dedup ON subtitle_versions(track_id, origin, asr_engine, source_url);
+CREATE INDEX IF NOT EXISTS idx_versions_dedup ON subtitle_versions(track_id, origin, asr_engine, body_hash);
 
 CREATE TABLE IF NOT EXISTS change_log (
   id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -139,6 +146,7 @@ CREATE TABLE IF NOT EXISTS collect_tasks (
   url         TEXT NOT NULL,
   status      TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','dispatched','succeeded','failed')),
   client_id   TEXT,
+  creator_client_id TEXT, -- 创建者客户端（popup 提交自带；CLI/旧任务 null），sticky 派发用
   error       TEXT,
   result      TEXT,
   created_at  INTEGER NOT NULL,

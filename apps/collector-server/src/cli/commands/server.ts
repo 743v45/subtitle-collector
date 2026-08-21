@@ -18,9 +18,9 @@ import { openReadonlyDb } from '../db.js';
 import { ServerClient } from '../http.js';
 import { countOverview, type Overview } from '../../db/advanced.js';
 
-// 与 [config.ts](../config.ts) 的 DEFAULT_TOKEN 一致；该常量未导出，这里原地复刻并标注，
+// 与 [config.ts](../config.ts) 的 DEFAULT_TOKEN（空 = 无 token 模式）一致；该常量未导出，这里原地复刻并标注，
 // 仅为 status 的 token_configured 判断用——绝不输出 token 明文。
-const DEFAULT_TOKEN = 'change-me-collector-token';
+const DEFAULT_TOKEN = '';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 路径解析（纯）

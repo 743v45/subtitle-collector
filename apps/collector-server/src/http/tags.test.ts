@@ -114,8 +114,12 @@ test('tags API 全链路：apply → list → rename → 优先级 → 单视频
     const mjt = (await call(port, 'GET', '/api/tags')).json.items.find((t: any) => t.name === '面试题');
     r = await call(port, 'DELETE', `/api/tags/${mjt.id}`);
     assert.equal(r.status, 200);
+    assert.equal(r.json.ok, true);
     r = await call(port, 'DELETE', `/api/tags/${mjt.id}`);
     assert.equal(r.status, 404);
+    // 404 的 body 与状态码语义一致（ok:false + error），不能是 ok:true
+    assert.equal(r.json.ok, false);
+    assert.equal(r.json.error, 'not found');
   } finally { cleanup(); }
 });
 

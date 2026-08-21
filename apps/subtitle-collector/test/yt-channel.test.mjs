@@ -4,6 +4,7 @@ import {
   extractYoutubeChannelKey,
   parseCountText,
   parseRelativeTime,
+  relativeMonths,
   parseLockup,
   parseYtBrowseResponse,
   parseYtChannelHtml,
@@ -53,6 +54,15 @@ test('parseCountText：K/M/逗号/纯数字', () => {
   assert.equal(parseCountText(null), null);
 });
 
+test('parseCountText：中文万/亿（简繁，YouTube 中文界面）', () => {
+  assert.equal(parseCountText('12万次观看'), 120000);
+  assert.equal(parseCountText('26.3万次观看'), 263000);
+  assert.equal(parseCountText('1.2亿次观看'), 120000000);
+  assert.equal(parseCountText('12萬次觀看'), 120000); // 繁体
+  assert.equal(parseCountText('1.5B views'), 1500000000); // billion（缺 B 会错值 2 而非 null）
+  assert.equal(parseCountText('无观看次数'), null);
+});
+
 test('parseRelativeTime：单位换算 + Streamed 前缀 + 无 ago 返回 null', () => {
   const now = 1_700_000_000_000;
   assert.equal(parseRelativeTime('2 weeks ago', now), Math.floor(now / 1000) - 2 * 604800);
@@ -60,6 +70,43 @@ test('parseRelativeTime：单位换算 + Streamed 前缀 + 无 ago 返回 null',
   assert.equal(parseRelativeTime('Streamed 1 year ago', now), Math.floor(now / 1000) - 31536000);
   assert.equal(parseRelativeTime('3 hours ago', now), Math.floor(now / 1000) - 3 * 3600);
   assert.equal(parseRelativeTime('today'), null);
+});
+
+// relativeMonths：相对文本 → 月数档位（时间过滤与页面显示同口径）。
+// YouTube 满 12 个月后统一显示 "N years ago"，精确秒无法区分 12~24 月，
+// 档位判断才能让 "1 year ago" 落入「近一年」。
+test('relativeMonths：单位归一化月数档位', () => {
+  assert.equal(relativeMonths('1 year ago'), 12); // 近一年含它（本次修复主案）
+  assert.equal(relativeMonths('2 years ago'), 24);
+  assert.equal(relativeMonths('Streamed 1 year ago'), 12); // 前缀容忍
+  assert.equal(relativeMonths('11 months ago'), 11);
+  assert.equal(relativeMonths('6 months ago'), 6);
+  assert.equal(relativeMonths('7 months ago'), 7);
+  assert.equal(relativeMonths('3 weeks ago'), 0);
+  assert.equal(relativeMonths('5 days ago'), 0);
+  assert.equal(relativeMonths('2 hours ago'), 0);
+  assert.equal(relativeMonths('today'), null);
+  assert.equal(relativeMonths(null), null);
+  assert.equal(relativeMonths(42), null);
+});
+
+// 中文界面（SSR 受浏览器 cookie/语言影响，实际抓到 "12万次观看"/"2周前"）：
+// 相对时间与计数的中英双语解析。
+test('relativeMonths / parseRelativeTime：中文相对时间（简繁）', () => {
+  const now = 1_700_000_000_000;
+  assert.equal(parseRelativeTime('8个月前', now), Math.floor(now / 1000) - 8 * 2592000);
+  assert.equal(parseRelativeTime('2周前', now), Math.floor(now / 1000) - 2 * 604800);
+  assert.equal(parseRelativeTime('1年前', now), Math.floor(now / 1000) - 31536000);
+  assert.equal(parseRelativeTime('3天前', now), Math.floor(now / 1000) - 3 * 86400);
+  assert.equal(relativeMonths('8个月前'), 8);
+  assert.equal(relativeMonths('1年前'), 12);
+  assert.equal(relativeMonths('2周前'), 0);
+  assert.equal(relativeMonths('2週前'), 0); // 繁体周
+  assert.equal(relativeMonths('1個月前'), 1); // 繁体个月
+  assert.equal(relativeMonths('5 分鐘前'), 0); // 繁体分钟（缺它会 null → 新视频被时间过滤吞）
+  assert.equal(relativeMonths('3 小時前'), 0); // 繁体小时
+  assert.equal(relativeMonths('3 時間前'), 0); // 日文
+  assert.equal(relativeMonths('2 か月前'), 2); // 日文
 });
 
 // —— parseLockup：2026-08 实测 lockupViewModel 结构（fixture 摘自 @mattpocockuk/videos）——
@@ -97,8 +144,31 @@ test('parseLockup：视频条目全字段', () => {
   assert.equal(it.title, 'New Skills! v1.2');
   assert.equal(it.play, 127000);
   assert.ok(it.created < Math.floor(Date.now() / 1000));
+  assert.equal(it.agoText, '2 weeks ago'); // 原始相对文本随条目透传（档位过滤用）
   assert.equal(it.length, '11:38');
   assert.equal(it.pic, 'https://i.ytimg.com/vi/gaDdrDdczO4/mqdefault.jpg');
+});
+
+test('parseLockup：中文界面 metadata（次观看/前判别）', () => {
+  // 实测中文 SSR：metadataParts 为 ["12万次观看","2周前"]
+  const zh = parseLockup({
+    ...LOCKUP,
+    metadata: {
+      lockupMetadataViewModel: {
+        title: { content: 'New Skills! v1.2' },
+        metadata: {
+          contentMetadataViewModel: {
+            metadataRows: [
+              { metadataParts: [{ text: { content: '12万次观看' } }, { text: { content: '2周前' } }] },
+            ],
+          },
+        },
+      },
+    },
+  });
+  assert.equal(zh.play, 120000);
+  assert.equal(zh.agoText, '2周前');
+  assert.ok(zh.created != null && zh.created < Math.floor(Date.now() / 1000));
 });
 
 test('parseLockup：playlist lockup / 坏 contentId → null（宽容降级）', () => {
@@ -106,8 +176,7 @@ test('parseLockup：playlist lockup / 坏 contentId → null（宽容降级）',
   assert.equal(parseLockup({ ...LOCKUP, contentId: 'short' }), null);
   assert.equal(parseLockup(null), null);
   // 缺时长/计数（结构不全）仍返回条目，缺字段为 null
-  const partial = parseLockup({ contentId: 'gaDdrDdczO4', contentType: 'LOCKUP_CONTENT_TYPE_VIDEO', metadata: {} });
-  assert.equal(partial.vid, 'gaDdrDdczO4');
+  const partial = parseLockup({ contentId: 'gaDdrDdczO4', contentType: 'LOCKUP_CONTENT_TYPE_VIDEO', metadata: {} });  assert.equal(partial.vid, 'gaDdrDdczO4');
   assert.equal(partial.length, null);
   assert.equal(partial.title, null);
 });
@@ -143,7 +212,7 @@ test('parseYtChannelHtml：channelId/名称/InnerTube/总数/条目', () => {
   });
   const html = `<html><script>var ytInitialData = ${inner};</script>` +
     `<script>yt.setConfig({"INNERTUBE_API_KEY":"AIzaSyTEST","INNERTUBE_CONTEXT_CLIENT_VERSION":"2.20260820.01.00"});</script>` +
-    `<span>"299 videos"</span></html>`;
+    `<span>"content":"299 videos"</span></html>`;
   const out = parseYtChannelHtml(html);
   assert.equal(out.channelId, 'UCswG6FSbgZjbWtdf_hMLaow');
   assert.equal(out.channelName, 'Matt Pocock');
@@ -152,6 +221,22 @@ test('parseYtChannelHtml：channelId/名称/InnerTube/总数/条目', () => {
   assert.equal(out.total, 299);
   assert.equal(out.items.length, 1);
   assert.equal(out.items[0].vid, 'gaDdrDdczO4');
+});
+
+test('parseYtChannelHtml：总数 header 多语言（英文/简繁中/日文）', () => {
+  // 实测 header text.content："299 videos" / "299 个视频" / "1.2万 个视频" / "299 個影片" / "299 本の動画"
+  const mk = (label) => `<html><script>var ytInitialData = {};</script><span>"content":"${label}"</span></html>`;
+  assert.equal(parseYtChannelHtml(mk('299 videos')).total, 299);
+  assert.equal(parseYtChannelHtml(mk('1.2K videos')).total, 1200);
+  assert.equal(parseYtChannelHtml(mk('299 个视频')).total, 299);
+  assert.equal(parseYtChannelHtml(mk('1.2万 个视频')).total, 12000);
+  assert.equal(parseYtChannelHtml(mk('299 個影片')).total, 299);
+  assert.equal(parseYtChannelHtml(mk('299 本の動画')).total, 299);
+  // 负例：条目播放数（"127K views"，views≠videos 词条）不误当频道总数
+  assert.equal(parseYtChannelHtml(mk('127K views')).total, null);
+  // 负例：i18n 模板串（无 "content": 前缀）不误当频道总数
+  const tpl = `<html><script>var ytInitialData = {};</script><span>"VIDEO_COUNT":{"case1":"1 个视频","other":"# 个视频"}</span></html>`;
+  assert.equal(parseYtChannelHtml(tpl).total, null);
 });
 
 test('parseYtChannelHtml：无 ytInitialData / 坏 JSON → 全空不炸', () => {

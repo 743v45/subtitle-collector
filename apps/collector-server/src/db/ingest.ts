@@ -1,4 +1,5 @@
 import type Database from 'better-sqlite3';
+import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
@@ -39,7 +40,7 @@ export interface IngestResult {
   skipped_tracks: number;
 }
 
-const VIDEO_FIELDS = ['title', 'extra', 'duration', 'status', 'published_at', 'paid'] as const;
+const VIDEO_FIELDS = ['title', 'extra', 'duration', 'published_at', 'paid'] as const;
 
 // extra 的 change_log 比较辅助：剔除 stat 子对象后再比较，使统计数字波动不产生 change_log。
 // 库内 videos.extra 仍存完整 JSON（含最新 stat）；仅"是否记变更 + 记录的快照值"这一步忽略 stat。
@@ -96,13 +97,13 @@ export function ingestVideo(db: Database.Database, req: IngestRequest): IngestRe
 
     // 2. video upsert + change_log（按字段）
     const videoSel = db.prepare('SELECT * FROM videos WHERE source = ? AND source_vid = ?');
-    const videoIns = db.prepare('INSERT INTO videos (source, source_vid, creator_id, title, extra, duration, status, published_at, paid, first_seen_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
-    const videoUpd = db.prepare('UPDATE videos SET creator_id = ?, title = ?, extra = ?, duration = ?, status = ?, published_at = ?, paid = ?, updated_at = ? WHERE id = ?');
+    const videoIns = db.prepare('INSERT INTO videos (source, source_vid, creator_id, title, extra, duration, published_at, paid, first_seen_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
+    const videoUpd = db.prepare('UPDATE videos SET creator_id = ?, title = ?, extra = ?, duration = ?, published_at = ?, paid = ?, updated_at = ? WHERE id = ?');
 
     const existingVideo = videoSel.get(r.source, r.video.source_vid) as Record<string, unknown> | undefined;
     let videoId: number;
     if (!existingVideo) {
-      const info = videoIns.run(r.source, r.video.source_vid, creatorId, r.video.title, JSON.stringify(r.video.extra ?? {}), r.video.duration ?? null, 'online', r.video.published_at ?? null, paidInt, now, now);
+      const info = videoIns.run(r.source, r.video.source_vid, creatorId, r.video.title, JSON.stringify(r.video.extra ?? {}), r.video.duration ?? null, r.video.published_at ?? null, paidInt, now, now);
       videoId = Number(info.lastInsertRowid);
       changeIns.run('video', videoId, 'created', null, r.video.title, now);
     } else {
@@ -111,7 +112,6 @@ export function ingestVideo(db: Database.Database, req: IngestRequest): IngestRe
         title: r.video.title,
         extra: JSON.stringify(r.video.extra ?? {}),
         duration: r.video.duration ?? null,
-        status: 'online',
         published_at: r.video.published_at ?? null,
         paid: paidInt,
       };
@@ -126,7 +126,7 @@ export function ingestVideo(db: Database.Database, req: IngestRequest): IngestRe
           changeIns.run('video', videoId, f, oldVal == null ? null : oldCmp, newVal == null ? null : newCmp, now);
         }
       }
-      videoUpd.run(creatorId, fields.title, fields.extra, fields.duration, fields.status, fields.published_at, fields.paid, now, videoId);
+      videoUpd.run(creatorId, fields.title, fields.extra, fields.duration, fields.published_at, fields.paid, now, videoId);
     }
 
     // 3. track upsert
@@ -135,10 +135,14 @@ export function ingestVideo(db: Database.Database, req: IngestRequest): IngestRe
     const trackUpd = db.prepare('UPDATE subtitle_tracks SET lan_doc = ? WHERE id = ?');
 
     // 4. version 写入（按 origin 分支去重）
-    //    - external/asr：按 (track_id, origin, asr_engine, source_url) 先 SELECT，命中跳过（幂等去重）
+    //    - external/asr：按 (track_id, origin, asr_engine, body_hash) 先 SELECT，命中跳过（幂等去重）。
+    //      去重键用字幕体 hash 而非 source_url——source_url 是带会话签名的临时 URL
+    //      （YouTube timedtext 的 signature/expire/pot、B 站 AI 字幕同理），跨会话必不同，
+    //      用它去重会让重采必插重复行。内容真变化（hash 不同）→ 新版本行，符合版本语义。
+    //      存量行 body_hash 为 NULL：NULL = ? 不成立，天然不参与去重（成为孤立历史行）。
     //    - manual：始终 INSERT 新行（人工导入不去重，保留每次导入的快照）
-    const verSel = db.prepare('SELECT id FROM subtitle_versions WHERE track_id = ? AND origin = ? AND coalesce(asr_engine,\'\') = coalesce(?,\'\') AND coalesce(source_url,\'\') = coalesce(?,\'\')');
-    const verIns = db.prepare('INSERT INTO subtitle_versions (track_id, origin, payload, body_size, source_url, asr_engine, captured_at) VALUES (?, ?, ?, ?, ?, ?, ?)');
+    const verSel = db.prepare('SELECT id FROM subtitle_versions WHERE track_id = ? AND origin = ? AND coalesce(asr_engine,\'\') = coalesce(?,\'\') AND body_hash = ?');
+    const verIns = db.prepare('INSERT INTO subtitle_versions (track_id, origin, payload, body_size, body_hash, source_url, asr_engine, captured_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)');
 
     let inserted = 0;
     let skipped = 0;
@@ -154,13 +158,14 @@ export function ingestVideo(db: Database.Database, req: IngestRequest): IngestRe
       }
       for (const v of t.versions) {
         const payloadStr = JSON.stringify(v.payload);
+        const bodyHash = createHash('sha256').update(payloadStr).digest('hex');
         if (v.origin !== 'manual') {
           // external/asr：去重——命中现有行则跳过
-          const ex = verSel.get(trackId, v.origin, v.asr_engine ?? null, v.source_url ?? null) as { id: number } | undefined;
+          const ex = verSel.get(trackId, v.origin, v.asr_engine ?? null, bodyHash) as { id: number } | undefined;
           if (ex) { skipped++; continue; }
         }
         // manual（或 external/asr 首次）：始终 INSERT 新行
-        verIns.run(trackId, v.origin, payloadStr, payloadStr.length, v.source_url ?? null, v.asr_engine ?? null, now);
+        verIns.run(trackId, v.origin, payloadStr, payloadStr.length, bodyHash, v.source_url ?? null, v.asr_engine ?? null, now);
         inserted++;
       }
     }
@@ -207,12 +212,14 @@ export function ingestUpper(db: Database.Database, req: IngestUpperRequest): Ing
     const existing = creatorSel.get(r.source, r.creator.source_uid) as Record<string, unknown> | undefined;
 
     if (!existing) {
-      db.prepare(`INSERT INTO creators (source, source_uid, name, avatar, sign, level, sex, official_type, official_title, fans, following, first_seen_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+      const info = db.prepare(`INSERT INTO creators (source, source_uid, name, avatar, sign, level, sex, official_type, official_title, fans, following, first_seen_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`)
         .run(r.source, r.creator.source_uid,
           r.creator.name ?? null, r.creator.avatar ?? null, r.creator.sign ?? null,
           r.creator.level ?? null, r.creator.sex ?? null, r.creator.official_type ?? null,
           r.creator.official_title ?? null, r.creator.fans ?? null, r.creator.following ?? null,
           now, now);
+      // 创建审计对齐 ingestVideo：新建 creator 同样记 change_log 'created'（否则两条创建路径一条审计一条不审计）
+      changeIns.run('creator', Number(info.lastInsertRowid), 'created', null, r.creator.name ?? null, now);
       return { updated_fields: [...UPPER_FIELDS] };
     }
 

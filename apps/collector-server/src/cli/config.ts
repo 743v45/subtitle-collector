@@ -34,7 +34,8 @@ const DEFAULT_DB_PATH = join(appRoot(), 'bilibili-collector.db');
 // server 默认 loopback，与 [main.ts](apps/collector-server/src/main.ts) 的 PORT 一致。
 const DEFAULT_SERVER_URL = 'http://127.0.0.1:21527';
 // 与扩展端 config.js / server main.ts 的默认 token 保持一致。
-const DEFAULT_TOKEN = 'change-me-collector-token';
+// server 端默认空（无 token 模式，main.ts）；CLI 同步默认空，仅 COLLECTOR_TOKEN 显式设置时携带 Bearer
+const DEFAULT_TOKEN = '';
 
 export function resolveConfig(opts: ResolveConfigOpts = {}): ResolvedConfig {
   const dbPath = opts.db ?? process.env.COLLECTOR_DB_PATH ?? DEFAULT_DB_PATH;

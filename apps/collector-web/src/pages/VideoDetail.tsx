@@ -25,10 +25,10 @@ function fmtDuration(sec: number | null | undefined): string | null {
 }
 function fmtTime(ms: number | null | undefined): string | null {
   if (ms == null) return null;
-  return new Date(ms).toLocaleString();
+  return new Date(ms).toLocaleString('zh-CN');
 }
 function fmtNum(n: number | undefined): string {
-  return n != null ? n.toLocaleString() : '-';
+  return n != null ? n.toLocaleString('zh-CN') : '-';
 }
 function copyrightLabel(c: number | undefined): string | null {
   if (c == null) return null;
@@ -146,7 +146,6 @@ export function VideoDetail({ source, sourceVid, onBack }: { source: string; sou
           {source === 'bilibili' && <Field label="分区" value={e?.tname ?? '-'} />}
           {source === 'bilibili' && <Field label="版权" value={copyrightLabel(e?.copyright) ?? '-'} />}
           {source === 'bilibili' && <Field label="P 数" value={e?.pages?.length != null ? String(e.pages.length) : '-'} />}
-          <Field label="状态" value={v.status ?? '-'} />
         </CardContent>
       </Card>
 

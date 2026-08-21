@@ -6,7 +6,8 @@
 //   storage[SERVERS_KEY]       = ServerEntry[]     // [{id,name,url}, ...]
 //   storage[ACTIVE_SERVER_KEY] = string | null      // 选中的 entry.id
 //   ServerEntry.url = 完整 WS 地址，含可选 ?token=xxx
-//     （token 由 server 端生成、嵌在 URL 里；server 也可不要 token——url 无 query 即可）
+//     （server 端可选设 COLLECTOR_TOKEN：设了则 URL 必须带 ?token=xxx——由部署者手工拼上，
+//       server 不生成/下发连接 URL；未设则无 token 模式，URL 不带 query 即可连）
 
 export const SERVERS_KEY = "servers";
 export const ACTIVE_SERVER_KEY = "activeServerId";

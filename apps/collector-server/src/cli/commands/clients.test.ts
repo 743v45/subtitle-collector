@@ -70,11 +70,13 @@ function makeFakeClient(overrides: FakeOverrides = {}): {
         timeout?: number,
       ) => {
         calls.sendCommand.push({ clientId, action, params, timeout });
+        // 对齐 server 收敛后的响应形状（2026-08-21「HTTP 状态即结果」）：
+        // 200 时 result 直接是扩展回执 data（无 {ok,data} 一层包装）；失败走非 200 状态。
         return {
           ok: true,
           client_id: clientId,
           action,
-          result: { ok: true, data: { opened: true } },
+          result: { opened: true },
         };
       }),
   };
@@ -156,14 +158,14 @@ test('clientsCommand: 仅传 op → params 只含 op', async () => {
   assert.deepEqual(calls.sendCommand[0]!.params, { op: 'pause' });
 });
 
-test('clientsCommand: 返回 server 透传体（含 result 回执）', async () => {
+test('clientsCommand: 返回 server 透传体（result 即扩展回执 data，无 ok/data 包装层）', async () => {
   const { client } = makeFakeClient();
   const out = await clientsCommand(client, 'ext-A', 'navigate', { url: 'u' }, 5000);
   assert.deepEqual(out, {
     ok: true,
     client_id: 'ext-A',
     action: 'navigate',
-    result: { ok: true, data: { opened: true } },
+    result: { opened: true },
   });
 });
 

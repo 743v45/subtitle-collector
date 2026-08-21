@@ -82,7 +82,9 @@ pnpm --filter @bilibili-ext/subtitle-collector build   # 产物到 apps/subtitle
 
 加载扩展后，popup 显示「已连接 ✓」需要满足：
 1. collector-server 已在 `127.0.0.1:21527` 运行；
-2. [apps/subtitle-collector/config.js](apps/subtitle-collector/config.js) 的 `TOKEN` 与服务端 `COLLECTOR_TOKEN` **完全一致**（默认都是 `change-me-collector-token`，生产部署务必改掉）。
+2. 扩展 popup 里激活的 server 是默认的 `ws://127.0.0.1:21527/ext`（server 端不设 `COLLECTOR_TOKEN` 时开箱即连，URL 不带 query）。
+
+server 端**可选**设置 `COLLECTOR_TOKEN`：设置后扩展的 server URL 必须带 `?token=xxx`（在 popup 服务器配置里填完整 URL），CLI 请求必须带 Bearer token；不设则是无 token 模式（适合内网）。
 
 ## 环境变量
 
@@ -92,11 +94,11 @@ pnpm --filter @bilibili-ext/subtitle-collector build   # 产物到 apps/subtitle
 |---|---|---|
 | `COLLECTOR_PORT` | `21527` | HTTP + WS 监听端口 |
 | `COLLECTOR_DB_PATH` | `./bilibili-collector.db` | SQLite 路径 |
-| `COLLECTOR_TOKEN` | `change-me-collector-token` | WS 握手 token，**生产必须改成随机串** |
+| `COLLECTOR_TOKEN` | 空（无 token 模式） | 可选鉴权 token；设置后扩展 server URL 须带 `?token=xxx`、CLI 须带 Bearer，暴露部署必须设置 |
 
 关键约束：
 - 服务端固定监听 `127.0.0.1`（防 DNS rebinding，不可改 bind host）。
-- **改 `COLLECTOR_PORT` / `COLLECTOR_TOKEN` 时，必须同步修改** [apps/subtitle-collector/config.js](apps/subtitle-collector/config.js)（扩展侧是硬编码常量，不走 env）。
+- **改 `COLLECTOR_PORT` 时**，须同步修改扩展 popup 里配置的 server URL；**设了 `COLLECTOR_TOKEN` 时**，扩展的 server URL 须带 `?token=xxx`、CLI 须带 Bearer（扩展侧不再有 config.js 常量，server 列表存扩展 storage，popup 可改）。
 - 当前代码直接读 `process.env`（未集成 dotenv）。开发期可 `COLLECTOR_TOKEN=xxx pnpm dev` 注入；生产可 `node --env-file=.env dist/main.js`。
 
 ## 测试

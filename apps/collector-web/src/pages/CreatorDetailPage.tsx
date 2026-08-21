@@ -10,7 +10,7 @@ import { getCreatorDetail, listCategories, setCreatorCategory, listVideos } from
 import type { CreatorDetail, VideoListItem } from '@/types';
 
 function fmtTime(ms: number): string {
-  return new Date(ms).toLocaleString();
+  return new Date(ms).toLocaleString('zh-CN');
 }
 function fmtView(n: number | null | undefined): string {
   if (n == null || !Number.isFinite(n)) return '';
@@ -160,8 +160,8 @@ export function CreatorDetailPage({
                 {creator.source === 'bilibili' && <Field label="等级" value={creator.level != null ? String(creator.level) : null} />}
                 {creator.source === 'bilibili' && <Field label="性别" value={creator.sex} />}
                 {creator.source === 'bilibili' && <Field label="认证" value={creator.official_title} />}
-                <Field label="粉丝" value={creator.fans != null ? creator.fans.toLocaleString() : null} />
-                <Field label="关注" value={creator.following != null ? creator.following.toLocaleString() : null} />
+                <Field label="粉丝" value={creator.fans != null ? creator.fans.toLocaleString('zh-CN') : null} />
+                <Field label="关注" value={creator.following != null ? creator.following.toLocaleString('zh-CN') : null} />
                 <Field label="首见时间" value={fmtTime(creator.first_seen_at)} />
               </CardContent>
             </Card>

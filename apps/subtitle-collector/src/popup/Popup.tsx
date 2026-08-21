@@ -13,6 +13,7 @@ import {
   useUpperAllVideos,
   useUpperEntry,
   useYoutubeChannelVideos,
+  authInit,
   diffConsistency,
   type CollectedState,
   type ConnectionStatus,
@@ -31,6 +32,7 @@ import { cn } from '@/lib/utils';
 import type { ConsistencyIssue, LocalSub, SubtitleBody } from './types';
 import { formatSubtitle, SUBTITLE_FORMATS, type SubtitleFormat } from '../../subtitleFormat.mjs';
 import { isAiSubtitle, subtitleTrackLabel } from '../../subtitleLabel.mjs';
+import { relativeMonths } from '../../yt-channel.mjs';
 import { Badge } from '@/components/ui/badge';
 import { Switch } from '@/components/ui/switch';
 import { Button } from '@/components/ui/button';
@@ -815,6 +817,7 @@ function BatchCollectCard({
   source: 'bilibili' | 'youtube';
 }) {
   const [open, setOpen] = useState(false);
+  const clientId = useClientId(); // 批量提交自带创建者标识（server sticky 派发）
   // 过滤条件（档位化，适配 popup 窄空间）：状态 tab / 时间范围 / 播放量下限
   const [statusFilter, setStatusFilter] = useState<'all' | 'uncollected' | 'collected'>('all');
   const [timeDays, setTimeDays] = useState(0); // 0=全部
@@ -826,19 +829,50 @@ function BatchCollectCard({
   });
 
   // useMemo 须在早退前调用（Rules of Hooks）：非 ok 态给空数组
-  const filtered = useMemo(() => {
-    if (state.state !== 'ok') return [];
+  // 时间过滤双口径：YouTube 条目带原始相对文本（agoText）→ 按月数档位判断，与页面显示
+  // 口径一致（"1 year ago" 覆盖真实 12~24 月，秒级估算会把整档错切到「近一年」外）；
+  // B 站（created 精确秒）及无 agoText 的旧缓存回落精确时间比较。
+  // missingCount：时间/播放档位开启时因数据缺失（ago/计数解析失败 → created/play null）
+  // 被排除的条数 —— 解析失败对用户可见，不再表现为「条目无声消失」。
+  const { filtered, missingCount } = useMemo(() => {
+    if (state.state !== 'ok') return { filtered: [], missingCount: 0 };
     const sinceMs = timeDays > 0 ? Date.now() - timeDays * 86400_000 : 0;
-    return state.items.filter((it) => {
+    const tierMonths = timeDays === 182 ? 6 : timeDays === 365 ? 12 : 0;
+    // 元素联合数组：三态条目（B 站/合集/YouTube）不同构，直接用 state.items 类型会在 push 处收敛成交叉
+    const out: (typeof state.items)[number][] = [];
+    let missing = 0;
+    for (const it of state.items) {
       const vid = vidOf(it);
       if (statusFilter !== 'all' && collected) {
         const isCollected = collected.has(vid);
-        if (statusFilter === 'collected' ? !isCollected : isCollected) return false;
+        if (statusFilter === 'collected' ? !isCollected : isCollected) continue;
       }
-      if (sinceMs > 0 && (it.created == null || it.created * 1000 < sinceMs)) return false;
-      if (viewMin > 0 && (it.play == null || it.play < viewMin)) return false;
-      return true;
-    });
+      let pass = true;
+      let missingData = false;
+      if (tierMonths > 0) {
+        const agoText = 'agoText' in it && typeof it.agoText === 'string' ? it.agoText : null;
+        const months = agoText != null ? relativeMonths(agoText) : null;
+        if (months != null) {
+          if (months > tierMonths) pass = false;
+        } else if (it.created == null) {
+          pass = false;
+          missingData = true;
+        } else if (it.created * 1000 < sinceMs) {
+          pass = false;
+        }
+      }
+      if (viewMin > 0) {
+        if (it.play == null) {
+          pass = false;
+          missingData = true;
+        } else if (it.play < viewMin) {
+          pass = false;
+        }
+      }
+      if (pass) out.push(it);
+      else if (missingData) missing++;
+    }
+    return { filtered: out, missingCount: missing };
   }, [state, statusFilter, timeDays, viewMin, collected]);
 
   // loading（无任何缓存数据，全量任务刚起步）：占位行而非不渲染——首开时用户需知道列表在路上
@@ -878,15 +912,15 @@ function BatchCollectCard({
     }
     setBatch({ state: 'submitting', msg: '' });
     try {
-      // bilibili 沿用旧 body {bvids}；youtube 走 {vids, source}（2026-08-21 server 端点双格式）
-      const body = source === 'youtube'
-        ? { vids: [...selected], source: 'youtube' }
-        : { bvids: [...selected] };
-      const r = await fetch(`${httpBase}/api/collect-tasks/batch`, {
+      // 两平台统一 body：{vids, source, client_id}（2026-08-21 server 删除 bvids 旧键、
+      // clientId 改 snake_case 对齐 API 其余字段 source_vid/creator_client_id）。
+      // client_id：创建者标识 —— sticky 派发（任务跟随创建者，离线才降级别的客户端）
+      const body = { vids: [...selected], source, client_id: clientId ?? undefined };
+      const r = await fetch(`${httpBase}/api/collect-tasks/batch`, authInit({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
-      });
+      }));
       const d = await r.json();
       if (!d?.ok) throw new Error(d?.error ?? `HTTP ${r.status}`);
       setBatch({ state: 'done', msg: `已建 ${d.created} 个任务${d.skipped ? `，跳过 ${d.skipped} 个（排队中）` : ''}` });
@@ -1026,7 +1060,14 @@ function BatchCollectCard({
                 );
               })}
               {filtered.length === 0 && (
-                <div className="py-2 text-center text-xs text-muted-foreground">无匹配视频（调整过滤条件）</div>
+                <div className="py-2 text-center text-xs text-muted-foreground">
+                  无匹配视频（调整过滤条件{missingCount > 0 ? `；另有 ${missingCount} 条缺播放量/日期未纳入` : ''}）
+                </div>
+              )}
+              {filtered.length > 0 && missingCount > 0 && (
+                <div className="py-1 text-center text-[10px] text-muted-foreground/70">
+                  另有 {missingCount} 条缺播放量/日期未纳入过滤
+                </div>
               )}
             </div>
 

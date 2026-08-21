@@ -101,8 +101,27 @@ test('POST /api/clients/:id/command：下发 command 并等 result 回执', asyn
     assert.equal(r.json.ok, true);
     assert.equal(r.json.client_id, 'ext-A');
     assert.equal(r.json.action, 'navigate');
-    assert.equal(r.json.result.ok, true);
-    assert.equal(r.json.result.data.opened, true);
+    // result 直接是扩展回执 data（2026-08-21 去掉 {ok,data} 一层包装，外层 ok 即终判）
+    assert.equal(r.json.result.opened, true);
+    assert.equal(r.json.result.ok, undefined);
+    ws.close();
+  } finally { ctx.cleanup(); }
+});
+
+test('POST /api/clients/:id/command：扩展回执 ok=false → 502 + 扩展 error 透传', async () => {
+  const ctx = await setup();
+  try {
+    const ws = await wsConnect(ctx.port, 'ext-A', true);
+    ws.on('message', (d) => {
+      const m = JSON.parse(d.toString());
+      if (m.action === 'navigate') ws.send(JSON.stringify({ type: 'result', id: m.id, ok: false, error: 'need_login' }));
+    });
+    await new Promise(r => setTimeout(r, 50));
+    const r = await httpReq(ctx.port, 'POST', '/api/clients/ext-A/command', { action: 'navigate', url: 'x' });
+    // 502 = 下游执行体（扩展）失败：error 为扩展回执原文，CLI 经 HTTP 状态即可判失败
+    assert.equal(r.status, 502);
+    assert.equal(r.json.ok, false);
+    assert.equal(r.json.error, 'need_login');
     ws.close();
   } finally { ctx.cleanup(); }
 });

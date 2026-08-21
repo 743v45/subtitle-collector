@@ -163,12 +163,16 @@ export async function expandUpperVideos(mid: string): Promise<{ total: number; i
   return ensureOk(r, (j) => ({ total: j.total ?? 0, items: j.items ?? [] }));
 }
 
-// 批量建采集任务（popup/web 勾选批量共用端点；pending/dispatched 任务去重跳过）
-export async function createCollectTasksBatch(bvids: string[]): Promise<{ created: number; skipped: number }> {
+// 批量建采集任务（popup/web 勾选批量共用端点；pending/dispatched 任务去重跳过）。
+// body 统一 {vids, source}（2026-08-21 删除 bvids 旧键，两平台同格式）；web 入口只有 B 站按 UP 批量。
+export async function createCollectTasksBatch(
+  vids: string[],
+  source: 'bilibili' | 'youtube',
+): Promise<{ created: number; skipped: number }> {
   const r = await fetch(`${BASE}/api/collect-tasks/batch`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ bvids }),
+    body: JSON.stringify({ vids, source }),
   });
   return ensureOk(r, (j) => ({ created: j.created ?? 0, skipped: j.skipped ?? 0 }));
 }
@@ -209,7 +213,7 @@ export async function updateCategory(id: number, patch: { name?: string; sort_or
 
 export async function deleteCategory(id: number): Promise<void> {
   const r = await fetch(`${BASE}/api/categories/${id}`, { method: 'DELETE' });
-  ensureOk(r, () => undefined);
+  await ensureOk(r, () => undefined); // await：否则失败被吞成 floating promise，调用方以为删成功
 }
 
 // ── 标签 ──
@@ -267,7 +271,7 @@ export async function renameTag(id: number, name: string): Promise<TagItem> {
 // 删除标签及其全部视频关联
 export async function deleteTag(id: number): Promise<void> {
   const r = await fetch(`${BASE}/api/tags/${id}`, { method: 'DELETE' });
-  ensureOk(r, () => undefined);
+  await ensureOk(r, () => undefined); // await：否则失败被吞成 floating promise，调用方以为删成功
 }
 
 // 标签展示优先级（四档精确排列，服务端校验非法 400）
@@ -282,7 +286,7 @@ export async function putTagPriority(priority: TagSource[]): Promise<void> {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ priority }),
   });
-  ensureOk(r, () => undefined);
+  await ensureOk(r, () => undefined); // await：否则失败被吞成 floating promise，调用方以为保存成功
 }
 
 // 单视频打标（bili 档 400）
@@ -338,5 +342,5 @@ export async function setCreatorCategory(
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ scope, name }),
   });
-  ensureOk(r, () => undefined);
+  await ensureOk(r, () => undefined); // await：否则失败被吞成 floating promise，调用方以为设置成功
 }

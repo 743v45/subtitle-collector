@@ -6,7 +6,14 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import Database from 'better-sqlite3';
 import { migrate, runMigrations } from '../../db/migrate.js';
-import { collectSearch, collectSubtitle, collectDedupe, collectUpperInfo, collectUpperVideos, collectUpperVideosAll, collectNewVideos, collectDiscover, resolveClientId, collectNosub, filterByPubdate, filterByFans, parseSince, parseDateToUnix, resolveFans, collectFindSearch, collectFind, parseYtChannelArg, collectYtChannelVideos, type CollectClient, type SearchItem, type FindItem, type FansSource } from './collect.js';
+import { ServerResponseError } from '../http.js';
+import {
+  collectSearch, collectSubtitle, collectDedupe, collectUpperInfo, collectUpperVideos, collectUpperVideosAll,
+  collectNewVideos, collectDiscover, resolveClientId, collectNosub, filterByPubdate, filterByFans, parseSince,
+  parseDateToUnix, resolveFans, collectFindSearch, collectFind, parseYtChannelArg, collectYtChannelVideos,
+  collectYtVideosRun, sendExtCommand, ExtCommandError,
+  type CollectClient, type SearchItem, type FindItem, type FansSource,
+} from './collect.js';
 
 function mockClient(sendCommandResult: unknown, listClientsResult: unknown[] = [{ client_id: 'c1' }]) {
   const calls: Array<{ clientId: string; action: string; params: unknown; timeout: number }> = [];
@@ -21,10 +28,10 @@ function mockClient(sendCommandResult: unknown, listClientsResult: unknown[] = [
 }
 
 test('collectSearch 下发 search action 并透传回执', async () => {
-  const c = mockClient({ ok: true, result: { ok: true, data: { total: 5, items: [{ bvid: 'BV1' }] } } });
+  const c = mockClient({ ok: true, result: { total: 5, items: [{ bvid: 'BV1' }] } });
   const out = await collectSearch(c as any, 'c1', 'RAG', { page: 2, order: 'pubdate' }, 15000);
   assert.deepEqual(c.calls[0], { clientId: 'c1', action: 'search', params: { keyword: 'RAG', page: 2, order: 'pubdate' }, timeout: 15000 });
-  assert.deepEqual(out, { ok: true, result: { ok: true, data: { total: 5, items: [{ bvid: 'BV1' }] } } });
+  assert.deepEqual(out, { ok: true, result: { total: 5, items: [{ bvid: 'BV1' }] } });
 });
 
 test('resolveClientId 显式传入则透传', async () => {
@@ -43,10 +50,10 @@ test('resolveClientId 无在线 client → 抛错', async () => {
 });
 
 test('collectSubtitle 下发 fetch-subtitle action', async () => {
-  const c = mockClient({ ok: true, result: { ok: true, data: { bvid: 'BV1', tracks: 2, ingested: true } } });
+  const c = mockClient({ ok: true, result: { bvid: 'BV1', tracks: 2, ingested: true } });
   const out = await collectSubtitle(c as any, 'c1', 'BV1', 15000);
   assert.deepEqual(c.calls[0], { clientId: 'c1', action: 'fetch-subtitle', params: { bvid: 'BV1' }, timeout: 15000 });
-  assert.deepEqual(out, { ok: true, result: { ok: true, data: { bvid: 'BV1', tracks: 2, ingested: true } } });
+  assert.deepEqual(out, { ok: true, result: { bvid: 'BV1', tracks: 2, ingested: true } });
 });
 
 function makeDb() {
@@ -69,17 +76,17 @@ test('collectDedupe 空输入 → 空结果', () => {
 });
 
 test('collectUpperInfo 下发 get-upper-info', async () => {
-  const c = mockClient({ ok: true, result: { ok: true, data: { mid: '123', name: 'up1', fans: 1000 } } });
+  const c = mockClient({ ok: true, result: { mid: '123', name: 'up1', fans: 1000 } });
   const out = await collectUpperInfo(c as any, 'c1', '123', 15000);
   assert.deepEqual(c.calls[0], { clientId: 'c1', action: 'get-upper-info', params: { mid: '123' }, timeout: 15000 });
-  assert.deepEqual(out, { ok: true, result: { ok: true, data: { mid: '123', name: 'up1', fans: 1000 } } });
+  assert.deepEqual(out, { ok: true, result: { mid: '123', name: 'up1', fans: 1000 } });
 });
 
 test('collectUpperVideos 下发 list-upper-videos', async () => {
-  const c = mockClient({ ok: true, result: { ok: true, data: { total: 2, items: [{ bvid: 'BV1' }] } } });
+  const c = mockClient({ ok: true, result: { total: 2, items: [{ bvid: 'BV1' }] } });
   const out = await collectUpperVideos(c as any, 'c1', '123', { page: 1, size: 30 }, 15000);
   assert.deepEqual(c.calls[0], { clientId: 'c1', action: 'list-upper-videos', params: { mid: '123', page: 1, page_size: 30 }, timeout: 15000 });
-  assert.deepEqual(out, { ok: true, result: { ok: true, data: { total: 2, items: [{ bvid: 'BV1' }] } } });
+  assert.deepEqual(out, { ok: true, result: { total: 2, items: [{ bvid: 'BV1' }] } });
 });
 
 test('collectUpperVideosAll 翻页合并直到拿满 total', async () => {
@@ -95,32 +102,39 @@ test('collectUpperVideosAll 翻页合并直到拿满 total', async () => {
     async listClients() { return [{ client_id: 'c1' }]; },
     async sendCommand(clientId: string, action: string, params: Record<string, unknown>, timeout: number) {
       c.calls.push({ page: params.page as number });
-      return { ok: true, result: { ok: true, data: pages[call++] } };
+      return { ok: true, result: pages[call++] };
     },
   };
   const out = await collectUpperVideosAll(c as any, 'c1', '123', 2, 15000);
   assert.equal(c.calls.length, 3);
   assert.deepEqual(c.calls.map((x) => x.page), [1, 2, 3]);
-  assert.deepEqual(out.result?.data?.items?.map((x) => x.bvid), ['a', 'b', 'c', 'd', 'e']);
-  assert.equal(out.result?.data?.total, 5);
+  assert.deepEqual(out.result?.items?.map((x) => x.bvid), ['a', 'b', 'c', 'd', 'e']);
+  assert.equal(out.result?.total, 5);
 });
 
 test('collectUpperVideosAll 一次拿完（items < size 即停，不超翻）', async () => {
-  const c = mockClient({ ok: true, result: { ok: true, data: { total: 2, items: [{ bvid: 'a' }, { bvid: 'b' }] } } });
+  const c = mockClient({ ok: true, result: { total: 2, items: [{ bvid: 'a' }, { bvid: 'b' }] } });
   const out = await collectUpperVideosAll(c as any, 'c1', '123', 30, 15000);
   assert.equal(c.calls.length, 1);
-  assert.equal(out.result?.data?.total, 2);
+  assert.equal(out.result?.total, 2);
 });
 
-test('collectUpperVideosAll 单页失败抛错', async () => {
-  const c = mockClient({ ok: true, result: { ok: false, error: 'bili_-412' } });
-  await assert.rejects(() => collectUpperVideosAll(c as any, 'c1', '123', 30, 15000), /bili_-412|list-upper-videos failed/);
+test('collectUpperVideosAll 单页失败抛错（server 502 → ExtCommandError 带 page 上下文）', async () => {
+  // server 已把扩展回执 ok=false 映射为 502（http/clients.ts），requestJson 抛 ServerResponseError
+  const c = mockClient(null);
+  (c as any).sendCommand = async () => {
+    throw new ServerResponseError(502, JSON.stringify({ ok: false, error: 'bili_-412' }), '/api/clients/c1/command');
+  };
+  await assert.rejects(
+    () => collectUpperVideosAll(c as any, 'c1', '123', 30, 15000),
+    /list-upper-videos page=1 failed: bili_-412/,
+  );
 });
 
 test('collectNewVideos 拉列表 + 对比库 → 返回 new/collected', async () => {
-  const c = mockClient({ ok: true, result: { ok: true, data: { total: 3, items: [
+  const c = mockClient({ ok: true, result: { total: 3, items: [
     { bvid: 'BV1' }, { bvid: 'BV2' }, { bvid: 'BV3' },
-  ] } } });
+  ] } });
   const db = makeDb();
   db.prepare("INSERT INTO videos (source, source_vid, title, first_seen_at) VALUES ('bilibili','BV2','t',1)").run();
   const out = await collectNewVideos(c as any, 'c1', '123', db, { page: 1, size: 30 }, 15000);
@@ -140,7 +154,7 @@ test('collectDiscover 批量多 UP，汇总 per_mid + all_new', async () => {
         const items = call === 1
           ? [{ bvid: 'BV1' }, { bvid: 'BV2' }, { bvid: 'BV3' }]
           : [{ bvid: 'BV2' }, { bvid: 'BV4' }];
-        return { ok: true, result: { ok: true, data: { total: items.length, items } } };
+        return { ok: true, result: { total: items.length, items } };
       }
       return { ok: true };
     },
@@ -163,9 +177,9 @@ test('collectDiscover 单 mid 失败记 error，不影响其他', async () => {
     async sendCommand(clientId: string, action: string, params: Record<string, unknown>, timeout: number) {
       call++;
       if (action === 'list-upper-videos') {
-        // m1 正常，m2（第二次）失败
-        if (call === 1) return { ok: true, result: { ok: true, data: { total: 1, items: [{ bvid: 'BV1' }] } } };
-        return { ok: true, result: { ok: false, error: 'bili_-400' } };
+        // m1 正常，m2（第二次）失败（server 把扩展 ok=false 映射为 502）
+        if (call === 1) return { ok: true, result: { total: 1, items: [{ bvid: 'BV1' }] } };
+        throw new ServerResponseError(502, JSON.stringify({ ok: false, error: 'bili_-400' }), '/api/clients/c1/command');
       }
       return { ok: true };
     },
@@ -176,7 +190,7 @@ test('collectDiscover 单 mid 失败记 error，不影响其他', async () => {
   assert.deepEqual(out.per_mid[0].new, ['BV1']);       // m1 正常
   assert.equal(out.per_mid[0].error, undefined);
   assert.equal(out.per_mid[1].total, 0);               // m2 失败
-  assert.match(out.per_mid[1].error ?? '', /bili_-400|list-upper-videos failed/);
+  assert.match(out.per_mid[1].error ?? '', /list-upper-videos failed: bili_-400/);
   assert.deepEqual(out.all_new, ['BV1']);              // m1 的 new 仍在汇总
 });
 
@@ -189,10 +203,10 @@ test('collectUpperVideosAll sinceCreated 过滤（保留 null created）', async
   ];
   const client: CollectClient = {
     listClients: async () => [{ client_id: 'c1' }],
-    sendCommand: async () => ({ ok: true, result: { ok: true, data: { total: 3, items } } }),
+    sendCommand: async () => ({ ok: true, result: { total: 3, items } }),
   };
   const resp = await collectUpperVideosAll(client, 'c1', 'mid123', 30, 1000, 1700000001);
-  const bv = resp.result!.data!.items!.map((i) => i.bvid);
+  const bv = resp.result!.items!.map((i) => i.bvid);
   assert.deepEqual(bv.sort(), ['BV2', 'BV3']); // BV1 被时间窗过滤；BV3 null 保留
 });
 
@@ -357,7 +371,7 @@ test('collectFindSearch 多页搜索合并 + 首页 raw_total + 拿够早停', a
     async sendCommand(_clientId, action, params, _timeout) {
       if (action === 'search') {
         calls.push(params.page as number);
-        return { ok: true, result: { ok: true, data: pageData[params.page as number] ?? { total: 5, items: [] } } };
+        return { ok: true, result: pageData[params.page as number] ?? { total: 5, items: [] } };
       }
       return { ok: true };
     },
@@ -367,6 +381,19 @@ test('collectFindSearch 多页搜索合并 + 首页 raw_total + 拿够早停', a
   assert.equal(out.items.length, 5);
   assert.deepEqual(calls, [1, 2]); // page2 后 all.length(5) >= raw_total(5) 早停，不翻 page3
   assert.deepEqual(out.items.map((i) => i.bvid), ['BV1', 'BV2', 'BV3', 'BV4', 'BV5']);
+});
+
+test('collectFindSearch 单页扩展失败 → 抛错带 page 上下文', async () => {
+  const client: CollectClient = {
+    listClients: async () => [{ client_id: 'c1' }],
+    async sendCommand() {
+      throw new ServerResponseError(502, JSON.stringify({ ok: false, error: 'risk_control' }), '/api/clients/c1/command');
+    },
+  };
+  await assert.rejects(
+    () => collectFindSearch(client, 'c1', 'kw', { order: 'pubdate', pages: 3 }, 15000),
+    /search page=1 failed: risk_control/,
+  );
 });
 
 test('collectFind 端到端：raw_total/fetched/after_date/after_fans + fans 填回', async () => {
@@ -386,10 +413,10 @@ test('collectFind 端到端：raw_total/fetched/after_date/after_fans + fans 填
     listClients: async () => [{ client_id: 'c1' }],
     async sendCommand(_clientId, action, params, _timeout) {
       if (action === 'search') {
-        return { ok: true, result: { ok: true, data: pageData[params.page as number] ?? { total: 5, items: [] } } };
+        return { ok: true, result: pageData[params.page as number] ?? { total: 5, items: [] } };
       }
       // get-upper-info 不会被 collectFind 直接调用（fans 走注入的 fansSrc）；兜底返回 ok。
-      return { ok: true, result: { ok: true, data: { fans: 0 } } };
+      return { ok: true, result: { fans: 0 } };
     },
   };
   // fansSrc：readFansFromDb 返回 {} → 全走 fetchFans（本地 mid→fans map，独立验证编排逻辑）。
@@ -423,7 +450,7 @@ test('collectFind fans 部分缓存命中 + 部分实时补充', async () => {
     listClients: async () => [{ client_id: 'c1' }],
     async sendCommand(_clientId, action, params, _timeout) {
       if (action === 'search') {
-        return { ok: true, result: { ok: true, data: pageData[params.page as number] ?? { total: 2, items: [] } } };
+        return { ok: true, result: pageData[params.page as number] ?? { total: 2, items: [] } };
       }
       return { ok: true };
     },
@@ -480,11 +507,107 @@ test('collectDedupe source=youtube：按 youtube 域判库（bili 域同名不�
 });
 
 test('collectYtChannelVideos 下发 list-yt-channel-videos（ident + refresh 透传）', async () => {
-  const resp = { ok: true, result: { ok: true, data: { total: 299, items: [] } } };
+  const resp = { ok: true, result: { total: 299, items: [] } };
   const client = mockClient(resp);
   const out = await collectYtChannelVideos(client as unknown as CollectClient, 'c1', { handle: '@x' }, { refresh: true }, 5000);
   assert.equal(out, resp); // 透传返回值
   const c = (client as unknown as { calls: Array<{ action: string; params: Record<string, unknown> }> }).calls[0];
   assert.equal(c.action, 'list-yt-channel-videos');
   assert.deepEqual(c.params, { ident: { handle: '@x' }, refresh: true });
+});
+
+// ── sendExtCommand：/api/clients/:id/command 统一入口（2026-08-21 形状：result=扩展 data，失败走 HTTP 非 2xx）──
+
+test('sendExtCommand 成功透传响应体（result 直接是扩展 data，不再挖内层 ok/data）', async () => {
+  const c = mockClient({ ok: true, result: { total: 5, items: [{ bvid: 'BV1' }] } });
+  const out = await sendExtCommand(c as any, 'c1', 'search', { keyword: 'RAG' }, 15000);
+  assert.deepEqual(out, { ok: true, result: { total: 5, items: [{ bvid: 'BV1' }] } });
+});
+
+test('sendExtCommand 扩展执行失败（502）→ 抛 ExtCommandError（action 上下文 + 扩展 error 原文 + 状态）', async () => {
+  const c = mockClient(null);
+  (c as any).sendCommand = async () => {
+    throw new ServerResponseError(502, JSON.stringify({ ok: false, error: 'need_login' }), '/api/clients/c1/command');
+  };
+  await assert.rejects(
+    () => sendExtCommand(c as any, 'c1', 'fetch-subtitle', { bvid: 'BV1' }, 15000),
+    (err: unknown) =>
+      err instanceof ExtCommandError
+      && err.extError === 'need_login'
+      && err.status === 502
+      && err.message === 'fetch-subtitle failed: need_login',
+  );
+});
+
+test('sendExtCommand 非 JSON 错误体 → body 原文作 extError；非 ServerResponseError 原样上抛', async () => {
+  const raw = mockClient(null);
+  (raw as any).sendCommand = async () => {
+    throw new ServerResponseError(504, 'extension result timeout', '/api/clients/c1/command');
+  };
+  await assert.rejects(
+    () => sendExtCommand(raw as any, 'c1', 'navigate', {}, 1000),
+    (err: unknown) => err instanceof ExtCommandError && err.extError === 'extension result timeout' && err.status === 504,
+  );
+  const boom = new Error('boom');
+  const pass = mockClient(null);
+  (pass as any).sendCommand = async () => { throw boom; };
+  await assert.rejects(() => sendExtCommand(pass as any, 'c1', 'navigate', {}, 1000), (e: unknown) => e === boom);
+});
+
+// ── collectYtVideosRun：逐条采集（新契约——扩展失败 = ServerResponseError(502)）──
+// sleep 注入 no-op：默认实现的逐条间隔下限 1s（防风控），测试不真等。
+const noSleep = async () => {};
+
+function failingClient(results: Array<unknown>): CollectClient {
+  let call = 0;
+  return {
+    listClients: async () => [{ client_id: 'c1' }],
+    async sendCommand() {
+      const r = results[call++];
+      if (r instanceof Error) throw r;
+      return r;
+    },
+  };
+}
+
+test('collectYtVideosRun：扩展失败软记 reason 继续；captured>0 判 ok', async () => {
+  const db = makeDb();
+  const client = failingClient([
+    { ok: true, result: { captured: 1, tracks: 2 } },                                                    // 成功
+    new ServerResponseError(502, JSON.stringify({ ok: false, error: 'video gone' }), '/x'),              // 扩展失败 → 软记
+    { ok: true, result: { captured: 0, reason: 'no_subtitle' } },                                        // 成功但无轨
+  ]);
+  const out = await collectYtVideosRun(client, 'c1', db, ['gaDdrDdczO4', 'F3lL98Pj90o', 'a0b1c2d3e4f'], 0, 15000, noSleep);
+  assert.deepEqual(out, [
+    { vid: 'gaDdrDdczO4', ok: true, reason: undefined },
+    { vid: 'F3lL98Pj90o', ok: false, reason: 'video gone' },
+    { vid: 'a0b1c2d3e4f', ok: false, reason: 'no_subtitle' },
+  ]);
+});
+
+test('collectYtVideosRun：need_login / risk_control → STOP 抛错（不再继续采）', async () => {
+  const db = makeDb();
+  const client = failingClient([
+    new ServerResponseError(502, JSON.stringify({ ok: false, error: 'need_login' }), '/x'),
+  ]);
+  await assert.rejects(
+    () => collectYtVideosRun(client, 'c1', db, ['gaDdrDdczO4'], 0, 15000, noSleep),
+    /STOP: need_login/,
+  );
+  const client2 = failingClient([
+    new ServerResponseError(502, JSON.stringify({ ok: false, error: 'risk_control' }), '/x'),
+  ]);
+  await assert.rejects(
+    () => collectYtVideosRun(client2, 'c1', db, ['gaDdrDdczO4'], 0, 15000, noSleep),
+    /STOP: risk_control/,
+  );
+});
+
+test('collectYtVideosRun：传输层失败（server 不可达）→ 整轮抛出，不软记', async () => {
+  const db = makeDb();
+  const client = failingClient([new Error('network down')]);
+  await assert.rejects(
+    () => collectYtVideosRun(client, 'c1', db, ['gaDdrDdczO4'], 0, 15000, noSleep),
+    /network down/,
+  );
 });

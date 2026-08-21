@@ -7,6 +7,10 @@ import { buildIngestPayload, normalizeUrl, normalizeTags } from "./ingest-payloa
 import {
   parseYtChannelHtml, parseYtBrowseResponse, channelVideosUrl,
 } from "./yt-channel.mjs";
+import { createPendingQueue } from "./pending-ingests.mjs";
+import { pruneExpired } from "./storage-prune.mjs";
+import { selectStaleFetches } from "./fetch-resume.mjs";
+import { upperAllCacheHit } from "./upper-cache.mjs";
 const EXT_VERSION = chrome.runtime.getManifest().version;
 
 let ws = null;
@@ -134,6 +138,10 @@ async function fetchAllUpperVideos(mid, refresh = false) {
   }
   await chrome.storage.local.set({ [key]: { items, total, done: true, error, fetchedAt: Date.now() } });
   upperAllInflight.delete(mid);
+  // 同前缀过期缓存淘汰（done 且超 TTL，见 storage-prune.mjs）：防只写不删涨满配额，
+  // 配额耗尽 set 静默失败会连带废掉「每页落盘 + SW 回收兜底」的长任务恢复。清理失败不影响本任务结果。
+  pruneExpired(chrome.storage.local, 'upperAllVideos:', UPPER_ALL_TTL_MS)
+    .catch((e) => console.warn('[background] upperAllVideos 过期清理失败', String(e?.message ?? e)));
   return { status: 'done', error };
 }
 
@@ -197,6 +205,9 @@ async function fetchAllSeasonVideos(seasonId, refresh = false) {
   }
   await chrome.storage.local.set({ [key]: { items, total, done: true, error, fetchedAt: Date.now() } });
   seasonAllInflight.delete(seasonId);
+  // 同前缀过期缓存淘汰（同 fetchAllUpperVideos 尾部的防配额涨满策略）
+  pruneExpired(chrome.storage.local, 'seasonVideos:', SEASON_ALL_TTL_MS)
+    .catch((e) => console.warn('[background] seasonVideos 过期清理失败', String(e?.message ?? e)));
   return { status: 'done', error };
 }
 
@@ -254,7 +265,9 @@ async function ytBrowseViaTab(tabId, inntertubeKey, clientVersion, token) {
 // 拉取期间确保有一个 youtube.com tab：优先复用已开的（用户就在频道页/看 YouTube 时零感知）；
 // 没有则后台开一个（active:false），由调用方在拉完后关闭（返回 opened 标记）。
 async function ensureYoutubeTab(url) {
-  const [existing] = await chrome.tabs.query({ url: '*://*.youtube.com/*' });
+  const tabs = await chrome.tabs.query({ url: '*://*.youtube.com/*' });
+  // 优先复用非活跃 tab：注入 executeScript 本不打断浏览，但仍不去寄生用户正在看的 tab
+  const existing = tabs.find((t) => !t.active) ?? tabs[0];
   if (existing?.id) return { tabId: existing.id, opened: false };
   const tab = await chrome.tabs.create({ url: url ?? 'https://www.youtube.com/', active: false });
   // 等页面基本就绪（首个 executeScript 太早可能撞导航中——executeScript 自带等待，留 300ms 缓冲）
@@ -325,18 +338,51 @@ async function fetchAllYtChannelVideos(ident, refresh = false) {
   if (ytTab?.opened) { try { await chrome.tabs.remove(ytTab.tabId); } catch {} }
   await persist(true, error);
   ytChannelInflight.delete(key);
+  // 同前缀过期缓存淘汰（同 fetchAllUpperVideos 尾部的防配额涨满策略）
+  pruneExpired(chrome.storage.local, 'ytChannelVideos:', YT_CHANNEL_TTL_MS)
+    .catch((e) => console.warn('[background] ytChannelVideos 过期清理失败', String(e?.message ?? e)));
   return { status: 'done', error };
 }
 
 // MV3 SW 保活兜底：周期 alarm 唤醒 SW，若 ws 未 OPEN 则触发重连（C1）
 chrome.alarms.create("keepalive", { periodInMinutes: 0.4 });
 chrome.alarms.onAlarm.addListener((a) => {
+  if (a.name !== "keepalive") return;
   // 纯扩展模式：不自发重连（用户主动断开，alarm 唤醒也不连）
-  if (a.name === "keepalive" && ws?.readyState !== WebSocket.OPEN && !isStandalone(connectionMode)) connect();
+  if (ws?.readyState !== WebSocket.OPEN && !isStandalone(connectionMode)) connect();
+  // 长任务恢复与连接无关（popup/CLI 两入口都受益），standalone 也扫
+  resumeStaleFetches().catch((e) => console.warn('[background] 长任务恢复扫描失败', String(e?.message ?? e)));
 });
+
+// MV3 长任务恢复：任务态（inflight）在 SW 内存、数据态在 storage，SW 中途被杀后 storage 残留
+// {done:false} 永久中间态——popup 触发的任务重开 popup 会续拉，CLI 经 WS 触发的（list-yt-channel-videos）
+// 无人重触发，部分结果没有消费者。周期扫描宽限期（5min，见 fetch-resume.mjs）外的 done:false 键
+// 重新触发对应拉取：inflight 互斥防重复（本 SW 内存里还在跑的不会被重启），重拉从头、数据侧幂等。
+// 最小实现只覆盖 ytChannelVideos / upperAllVideos 两个前缀。
+const RESUME_PREFIXES = ['ytChannelVideos:', 'upperAllVideos:'];
+async function resumeStaleFetches() {
+  const all = await chrome.storage.local.get(null);
+  const stale = selectStaleFetches(all, RESUME_PREFIXES);
+  for (const { key, prefix, id } of stale) {
+    if (prefix === 'ytChannelVideos:') {
+      // ident 还原：优先存储里的 channelId（首页解析即有、最稳）；无则按 key 形态兜底
+      // （key = channelId ?? handle ?? custom，对齐 ytChannelKey 的取值顺序）
+      const v = all[key];
+      const ident = (typeof v?.channelId === 'string' && v.channelId) ? { channelId: v.channelId }
+        : (/^UC[\w-]{22}$/.test(id) ? { channelId: id } : (id.startsWith('@') ? { handle: id } : { custom: id }));
+      console.log(`[background] 恢复中断的 YT 频道拉取 key=${key}`);
+      fetchAllYtChannelVideos(ident).catch((e) => console.warn('[background] 恢复拉取失败', String(e?.message ?? e)));
+    } else {
+      console.log(`[background] 恢复中断的 UP 视频拉取 mid=${id}`);
+      fetchAllUpperVideos(id).catch((e) => console.warn('[background] 恢复拉取失败', String(e?.message ?? e)));
+    }
+  }
+}
 
 // 启动载入持久态：clientId（无则生成并回写）、reportingEnabled（默认 true）、connectionMode（默认 server）
 async function loadPersistedState() {
+  // 旧版整表 pendingIngests 数组 → 逐键队列（升级瞬间不丢已离线暂存的 payload）
+  await ingestQueue.migrateLegacy();
   const items = await chrome.storage.local.get([CLIENT_ID_KEY, REPORTING_KEY, CONNECTION_MODE_KEY, SERVERS_KEY, ACTIVE_SERVER_KEY]);
   if (items[CLIENT_ID_KEY]) {
     clientId = items[CLIENT_ID_KEY];
@@ -479,6 +525,12 @@ async function connect() {
           ws.send(JSON.stringify({ type: "result", id: msg.id, ok: false, error: String(err.message || err) }));
         }
       } else if (msg.action === "fetch-subtitle") {
+        const vidKey = `bilibili:${msg.bvid}`;
+        if (inFlightCollects.has(vidKey)) {
+          ws.send(JSON.stringify({ type: "result", id: msg.id, ok: false, error: "duplicate in-flight: 同视频采集正在执行" }));
+          return;
+        }
+        inFlightCollects.add(vidKey);
         try {
           const bvid = msg.bvid;
           // 1. view：完整元信息（标题/UP owner/stat/tags/pages/desc，组装 extra）
@@ -565,16 +617,26 @@ async function connect() {
           }
         } catch (err) {
           ws.send(JSON.stringify({ type: "result", id: msg.id, ok: false, error: String(err.message || err) }));
+        } finally {
+          inFlightCollects.delete(vidKey);
         }
       } else if (msg.action === "fetch-youtube-subtitle") {
         // YouTube 主动采集（手机/网页任务驱动）：导航到视频页,复用 content-yt 被动采集链路
         // （inject-yt 读 captionTracks + 拦 timedtext → content-yt 归一化 → INGEST 入库）,
         // 编排层只负责「导航 + 等就绪 + 等采集完成 + 汇总回执」。
+        const ytKey = `youtube:${msg.videoId}`;
+        if (inFlightCollects.has(ytKey)) {
+          ws.send(JSON.stringify({ type: "result", id: msg.id, ok: false, error: "duplicate in-flight: 同视频采集正在执行" }));
+          return;
+        }
+        inFlightCollects.add(ytKey);
         try {
           const data = await collectYoutubeViaNavigate(msg.videoId);
           ws.send(JSON.stringify({ type: "result", id: msg.id, ok: true, data }));
         } catch (err) {
           ws.send(JSON.stringify({ type: "result", id: msg.id, ok: false, error: String(err.message || err) }));
+        } finally {
+          inFlightCollects.delete(ytKey);
         }
       } else if (msg.action === "get-upper-info") {
         try {
@@ -608,7 +670,18 @@ async function connect() {
           ws.send(JSON.stringify({ type: "result", id: msg.id, ok: false, error: String(err.message || err) }));
         }
       } else if (msg.action === "list-upper-videos") {
+        // 缓存复用（忽略 page/page_size）：popup 全量任务（fetchAllUpperVideos）拉完的完整结果
+        // 在 TTL 内直接回执，免去 server expandUpperVideos / CLI collectUpperVideosAll 经此路径
+        // 逐页全量重拉（分钟级 + 页间节流防风控）；total 对齐 items.length，翻页方第一页
+        // items.length >= total 即自然终止。未命中/过期/中断（error）才走下面的单页实拉。
         try {
+          const cacheKey = `upperAllVideos:${msg.mid}`;
+          const { [cacheKey]: cached } = await chrome.storage.local.get(cacheKey);
+          const hit = upperAllCacheHit(cached, UPPER_ALL_TTL_MS);
+          if (hit) {
+            ws.send(JSON.stringify({ type: "result", id: msg.id, ok: true, data: hit }));
+            return;
+          }
           await ensureWbiKeys();
           const parsed = await biliFetch('/x/space/wbi/arc/search', {
             wbi: true,
@@ -670,7 +743,9 @@ async function connect() {
         ws.send(JSON.stringify({ type: "result", id: msg.id, ok: true, data: { reporting_enabled: newEnabled } }));
         // set-reporting 路径不发 reporting-state：server 作为发起方据 result 更新状态
       } else {
-        ws.send(JSON.stringify({ type: "result", id: msg.id, ok: false, error: "unknown action: " + msg.action }));
+        // needs_update：server 下发了本版本不认识的 action（新 server + 旧扩展），
+        // 让 server/CLI 据此提示升级扩展，而非记为普通 failed
+        ws.send(JSON.stringify({ type: "result", id: msg.id, ok: false, error: "unknown action: " + msg.action, needs_update: true }));
       }
     } catch (err) {
       ws.send(JSON.stringify({ type: "result", id: msg.id, ok: false, error: String(err.message || err) }));
@@ -805,11 +880,11 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     const newMode = resolveConnectionMode(msg.mode);
     applyConnectionMode(newMode).then(async (mode) => {
       if (mode === MODE_STANDALONE) {
-        // 切纯扩展：断 WS + 清 pending（onclose→scheduleReconnect 已被 isStandalone 守卫拦，不会重连）
+        // 切纯扩展：断 WS + 清离线队列（onclose→scheduleReconnect 已被 isStandalone 守卫拦，不会重连）
         try { ws?.close(); } catch {}
         ws = null;
         lastError = null; // 纯扩展不连，无连接错误
-        await chrome.storage.local.set({ pendingIngests: [] });
+        await ingestQueue.clear();
       } else {
         // 切回 server：重置退避计数并触发连接
         reconnectAttempts = 0;
@@ -820,7 +895,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     return true;
   } else if (msg?.type === "SET_ACTIVE_SERVER") {
     // 切激活 server：落盘 activeServerId + 重载 activeServer 内存 + 热切换（关旧 ws → 新地址 connect）。
-    // 清 pendingIngests：离线 payload 是对旧 server 缓存的，补发到新 server 会错位（对齐切 standalone 的清空策略）。
+    // 清离线队列：暂存 payload 是对旧 server 缓存的，补发到新 server 会错位（对齐切 standalone 的清空策略）。
     (async () => {
       const items = await chrome.storage.local.get(SERVERS_KEY);
       const servers = normalizeServers(items[SERVERS_KEY]);
@@ -833,7 +908,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       lastError = null; // 切到新 server，清旧错误（重新评估可达性/握手）
       try { ws?.close(); } catch {}
       ws = null;
-      await chrome.storage.local.set({ pendingIngests: [] });
+      await ingestQueue.clear();
       if (!isStandalone(connectionMode) && activeServer) connect();
       sendResponse({ ok: true, activeServerId: newId, hasServer: !!activeServer });
     })();
@@ -855,7 +930,10 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
 // 频率控制：同时只 1 个 navigate（navCollectBusy 锁）；tab 关闭后间隔 = navGapBaseMs + 随机 navGapRandomMs（防风控）。
 let navCollectBusy = false;
 const pendingNavCollect = new Map(); // bvid -> { resolve }
-const activeYtCollects = new Set(); // 正在 fetch-youtube-subtitle 的 videoId 集合（其被动 INGEST 视为主动采集,绕过上报开关）
+const activeYtCollects = new Set();
+// 同视频采集互斥：server 重启重派（resetDispatched）或双入口（CLI 直发 + 调度器）会对同一视频
+// 并发下发采集命令——两套上游请求并发跑（风控暴露翻倍）。执行中的视频直接拒绝重复命令。
+const inFlightCollects = new Set(); // 正在 fetch-youtube-subtitle 的 videoId 集合（其被动 INGEST 视为主动采集,绕过上报开关）
 // settled 后宽限期：菜单触发翻译轨（CC→原轨→翻译,~2s 起步 + 每步 800ms）迟到 body 的等待窗口
 const YT_SETTLE_GRACE_MS = 8000;// 间隔配置（chrome.storage.local 可覆盖：nav_gap_base_ms / nav_gap_random_ms，单位 ms）。默认 1s + 随机 0-2s。
 let navGapBaseMs = 1000;
@@ -881,7 +959,12 @@ async function collectViaNavigate(bvid, timeoutMs = 20000) {
   navCollectBusy = true;
   let tabId = null;
   try {
-    const tab = await chrome.tabs.create({ url: `https://www.bilibili.com/video/${bvid}`, active: true }); // 前台：后台 tab 播放器不活跃，自动点触发不了 aisubtitle
+    // active:false 不抢用户前台焦点（采集是后台任务，不该打断浏览）。取舍：触发链路是 content
+    // 对播放器字幕按钮/语言菜单的合成 DOM click——click 不依赖页面可见性（合成事件无手势要求，
+    // 前台时同样非真实手势），但后台 tab 定时器被浏览器节流（对齐到 ~1s），content 的就绪重试
+    // （按钮 500ms×20 / 菜单 300ms×10）会被拉长，本路径唯一场景（充电视频，20s 超时）内成功率
+    // 可能下降。若实测退化，把 active 改回 true 即恢复旧行为。
+    const tab = await chrome.tabs.create({ url: `https://www.bilibili.com/video/${bvid}`, active: false });
     tabId = tab.id;
     // 通知 content 强制点 AI 字幕（navigate 主动采集，绕过上报开关）。content 注入后接收，未就绪则重试。
     const notify = (retries = 0) => {
@@ -920,9 +1003,10 @@ async function collectYoutubeViaNavigate(videoId, timeoutMs = 45000) {
   const watchUrl = `https://www.youtube.com/watch?v=${videoId}`;
   try {
     activeYtCollects.add(videoId); // 登记进行中的 YouTube 主动采集（INGEST 处理器据此放行 force）
-    // 复用已打开的同视频 tab（reload 刷新页面状态）;无则后台新建（active:false 不抢焦点）
+    // 复用已打开的同视频 tab（reload 刷新页面状态）——但用户正在看的（active）不 reload，
+    // 改开后台新 tab；无既有 tab 也后台新建（active:false 不抢焦点）
     const [existing] = await chrome.tabs.query({ url: `${watchUrl}*` });
-    if (existing?.id) {
+    if (existing?.id && !existing.active) {
       tabId = existing.id;
       reused = true;
       await chrome.tabs.reload(tabId);
@@ -980,28 +1064,39 @@ async function collectYoutubeViaNavigate(videoId, timeoutMs = 45000) {
   }
 }
 
-// 统一 ingest 上报：WS OPEN 直发；断线时落 pendingIngests storage，重连后 flushPendingIngests 补发。
+// 统一 ingest 上报：WS 可用直发；否则入离线队列（pending-ingests.mjs 逐键存储），hello-ack 后补发。
 // fetch-subtitle（主动）与 content→background INGEST（被动）共用，保证 WS 断时不丢。
 // 纯扩展模式下短路（不连不存 pending）——由调用前的 INGEST 短路与本函数守卫双重覆盖。
+// 半开缓解（最小版）：内存 authenticated 感知不到休眠唤醒/NAT 超时后的死链路（readyState 仍报
+// OPEN）——send 前 double-check + 包 try-catch，send 抛错即入队。彻底的半开检测需应用层
+// 心跳/ack（server 协议面），此处只保证「已确认 send 失败的不丢」。
+const ingestQueue = createPendingQueue(chrome.storage.local);
 function sendIngest(payload) {
   if (isStandalone(connectionMode)) return; // 纯扩展：不上报、不存 pending（永不补发）
-  if (authenticated) { // 鉴权通过才直发（未握手/已断线 → 存 pending，hello-ack 后 flush）
-    ws.send(JSON.stringify({ type: "ingest", payload }));
-  } else {
-    chrome.storage.local.get(["pendingIngests"], ({ pendingIngests = [] }) => {
-      chrome.storage.local.set({ pendingIngests: [...pendingIngests, payload] });
-    });
+  if (authenticated && ws?.readyState === WebSocket.OPEN) { // 鉴权通过才直发（未握手/已断线 → 入队，hello-ack 后 flush）
+    try {
+      ws.send(JSON.stringify({ type: "ingest", payload }));
+      return;
+    } catch {
+      console.warn(`[background] ingest 直发失败转离线队列 source_vid=${payload?.video?.source_vid}`);
+    }
   }
+  ingestQueue.enqueue(payload).catch((e) => console.warn('[background] ingest 入队失败', String(e?.message ?? e)));
 }
 
-// 补发暂存记录（重连成功后调用）
-async function flushPendingIngests() {
-  const { pendingIngests = [] } = await chrome.storage.local.get(["pendingIngests"]);
-  if (pendingIngests.length === 0) return;
-  for (const payload of pendingIngests) {
-    if (ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: "ingest", payload }));
-  }
-  await chrome.storage.local.set({ pendingIngests: [] });
+// 补发暂存记录（hello-ack 后调用）：逐条发送、成功即删自己的键——与并发入队互不覆盖，
+// 中途断线剩余保留、下次 hello-ack 续发（旧版整表清空会吞掉并发写入的 payload 与未发项）。
+function flushPendingIngests() {
+  return ingestQueue.flush((payload) => {
+    // 每条 send 前重新校验：循环跨 await，期间连接可能已断/半开
+    if (!authenticated || ws?.readyState !== WebSocket.OPEN) return false;
+    try {
+      ws.send(JSON.stringify({ type: "ingest", payload }));
+      return true;
+    } catch {
+      return false;
+    }
+  });
 }
 
 loadPersistedState().then(() => loadNavGapConfig()).then(() => loadReconnectConfig()).then(() => {

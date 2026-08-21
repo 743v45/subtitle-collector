@@ -283,9 +283,22 @@ test('ingestUpper 字段变化记 change_log', () => {
   try {
     ingestUpper(db, { source: 'bilibili', creator: { source_uid: '123', name: 'up1', sign: '旧签名' } });
     ingestUpper(db, { source: 'bilibili', creator: { source_uid: '123', name: 'up1', sign: '新签名' } });
-    const changes = db.prepare('SELECT field FROM change_log WHERE entity=? AND entity_id=?').all('creator', 1) as Array<{ field: string }>;
-    assert.equal(changes.length, 1);
-    assert.equal(changes[0].field, 'sign');
+    const changes = db.prepare('SELECT field FROM change_log WHERE entity=? AND entity_id=? ORDER BY id').all('creator', 1) as Array<{ field: string }>;
+    // 首次建行记 created（对齐 ingestVideo 的创建审计），第二次记 sign 变更
+    assert.deepEqual(changes.map((c) => c.field), ['created', 'sign']);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('ingestUpper 首次建行记 change_log created（old=null / new=name，对齐 ingestVideo）', () => {
+  const { db, dir } = freshDb();
+  try {
+    ingestUpper(db, { source: 'bilibili', creator: { source_uid: '123', name: 'up1', avatar: 'f' } });
+    const creator = db.prepare("SELECT id, name FROM creators WHERE source_uid='123'").get() as { id: number; name: string };
+    const logs = db.prepare("SELECT * FROM change_log WHERE entity='creator' AND field='created'").all() as any[];
+    assert.equal(logs.length, 1, '首次建行应记一条 created');
+    assert.equal(logs[0].entity_id, creator.id, 'entity_id 应指向新建 creator 行');
+    assert.equal(logs[0].old_value, null);
+    assert.equal(logs[0].new_value, 'up1');
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
@@ -313,5 +326,40 @@ test('runMigrations 幂等：列已存在不抛', () => {
     for (const f of ['sign', 'level', 'sex', 'official_type', 'official_title', 'fans', 'following']) {
       assert.ok(names.includes(f), `creators 应有列 ${f}`);
     }
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+// ── 版本去重键（P0-5）：source_url 是带签名的临时 URL（YouTube timedtext 的
+// signature/expire/pot、B 站 aisubtitle 签名每会话不同），参与去重会导致重采必插重复行。
+// 去重键改为字幕体 body_hash：同内容跨会话/跨签名 URL 只留一行；内容真变化才新增版本行。
+
+test('版本去重：同 body 不同签名 URL → 跳过；body 变化 → 新版本行', () => {
+  const { db, dir } = freshDb();
+  try {
+    const mk = (url: string, body: Array<Record<string, unknown>>) => ({
+      source: 'youtube' as const,
+      video: {
+        source_vid: 'gaDdrDdczO4', title: 'T',
+        creator: { source_uid: 'UC1', name: 'ch' },
+        extra: {}, duration: 60, published_at: 1700000000000,
+      },
+      tracks: [{
+        lan: 'en', track_type: 1,
+        versions: [{ origin: 'external' as const, payload: { body }, source_url: url }],
+      }],
+    });
+    const body = [{ from: 0, to: 2, content: 'hello' }];
+    // 第一次：会话 A 的签名 URL
+    const r1 = ingestVideo(db, mk('https://tt.example/api?signature=AAA&expire=111', body));
+    assert.equal(r1.inserted_tracks, 1);
+    // 第二次：会话 B 的签名 URL（同 body）→ 必须跳过，不新增重复行
+    const r2 = ingestVideo(db, mk('https://tt.example/api?signature=BBB&expire=222', body));
+    assert.equal(r2.inserted_tracks, 0);
+    assert.equal(r2.skipped_tracks, 1);
+    // 第三次：字幕内容更新（B 站 AI 字幕重跑等）→ 新版本行（版本语义）
+    const r3 = ingestVideo(db, mk('https://tt.example/api?signature=CCC&expire=333', [...body, { from: 2, to: 4, content: 'world' }]));
+    assert.equal(r3.inserted_tracks, 1);
+    const c = db.prepare('SELECT COUNT(*) AS c FROM subtitle_versions').get() as { c: number };
+    assert.equal(c.c, 2);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });

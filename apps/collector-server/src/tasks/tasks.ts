@@ -1,5 +1,6 @@
 import type Database from 'better-sqlite3';
 import { listClients, requestCommand } from '../ws/server.js';
+import { inFlight } from './inflight.js';
 
 // ── 采集任务系统：手机/网页提交 → server 派发给桌面扩展 → 扩展采集回执 ──
 // 设计依据：docs/superpowers/specs/2026-08-13-mobile-collect-task-design.md
@@ -15,6 +16,7 @@ export interface CollectTask {
   url: string;
   status: TaskStatus;
   client_id: string | null;
+  creator_client_id?: string | null; // 创建者客户端（popup 提交自带；CLI/旧任务 null），sticky 派发用
   error: string | null;
   result: string | null;
   title: string | null; // 库内视频标题（LEFT JOIN videos；采集页直接展示,未入库为 null）
@@ -30,8 +32,12 @@ const TASK_WITH_TITLE = `
   WHERE t.id = ?
 `;
 
-// 单任务在扩展侧最长执行时间（导航加载页面 + 采字幕 + 汇总），对齐 B 站 navigate 采集 20s + 余量
-const COMMAND_TIMEOUT_MS = 60_000;
+// 单任务在扩展侧的执行预算（按平台分档）——须覆盖扩展全链路（导航加载 + 多请求 + 宽限 + 关 tab 间隔），
+// 超时早于扩展实际完成会落假失败（扩展仍在跑并落库，任务页却显示失败，用户重试 = 重复采集）。
+// bilibili：navigate ~20s + view/tags/player 拉取；youtube：后台 tab + 45s 自限 + 8s 宽限 + 关 tab 间隔。
+export function commandTimeoutMs(source: 'bilibili' | 'youtube'): number {
+  return source === 'youtube' ? 180_000 : 90_000;
+}
 // 兜底轮询周期（事件驱动派发之外，防事件遗漏）
 const SWEEP_MS = 15_000;
 
@@ -112,12 +118,36 @@ export function parseVideoUrl(url: string): ParsedTarget | null {
 
 // ── 任务 CRUD ──
 
-export function createTask(db: Database.Database, target: ParsedTarget): CollectTask {
+export function createTask(
+  db: Database.Database,
+  target: ParsedTarget,
+  creatorClientId: string | null = null,
+): CollectTask {
   const now = Date.now();
   const info = db.prepare(
-    'INSERT INTO collect_tasks (source, source_vid, url, status, created_at) VALUES (?, ?, ?, ?, ?)',
-  ).run(target.source, target.source_vid, target.url, 'pending', now);
+    'INSERT INTO collect_tasks (source, source_vid, url, status, created_at, creator_client_id) VALUES (?, ?, ?, ?, ?, ?)',
+  ).run(target.source, target.source_vid, target.url, 'pending', now, creatorClientId);
   return getTask(db, Number(info.lastInsertRowid))!;
+}
+
+// 未终态判据：pending/dispatched 视为在途（创建去重跳过）；succeeded/failed 为终态（允许重采）
+const ACTIVE_TASK_WHERE = "t.status IN ('pending', 'dispatched')";
+
+// 同 (source, source_vid) 的未终态任务（多条在途取最新一条）——单条创建去重用，
+// 判据与批量端点一致：双击提交返回既有任务而非再建一条（双采）。
+export function findActiveTask(
+  db: Database.Database,
+  source: 'bilibili' | 'youtube',
+  sourceVid: string,
+): CollectTask | null {
+  const row = db.prepare(`
+    SELECT t.*, v.title AS title
+    FROM collect_tasks t
+    LEFT JOIN videos v ON v.source = t.source AND v.source_vid = t.source_vid
+    WHERE t.source = ? AND t.source_vid = ? AND ${ACTIVE_TASK_WHERE}
+    ORDER BY t.id DESC LIMIT 1
+  `).get(source, sourceVid) as CollectTask | undefined;
+  return row ?? null;
 }
 
 // ── 批量建任务（popup/web 按 UP 批量采集）──
@@ -132,6 +162,7 @@ export function createTasksBatch(
   db: Database.Database,
   vids: unknown,
   source: 'bilibili' | 'youtube' = 'bilibili',
+  creatorClientId: string | null = null,
 ): { created: CollectTask[]; skipped: string[] } {
   const re = VID_RE[source];
   const urlFor = (vid: string) =>
@@ -142,11 +173,8 @@ export function createTasksBatch(
   for (const vid of Array.isArray(vids) ? vids : []) {
     if (typeof vid !== 'string' || !re.test(vid) || seen.has(vid)) continue;
     seen.add(vid);
-    const active = db.prepare(
-      'SELECT 1 FROM collect_tasks WHERE source = ? AND source_vid = ? AND status IN (?, ?)',
-    ).get(source, vid, 'pending', 'dispatched');
-    if (active) { skipped.push(vid); continue; }
-    created.push(createTask(db, { source, source_vid: vid, url: urlFor(vid) }));
+    if (findActiveTask(db, source, vid)) { skipped.push(vid); continue; }
+    created.push(createTask(db, { source, source_vid: vid, url: urlFor(vid) }, creatorClientId));
   }
   return { created, skipped };
 }
@@ -277,11 +305,40 @@ export function resetDispatched(db: Database.Database): void {
 // 单进程内运行（对齐现有架构：单 server 进程 + SQLite 同步事务，不引入队列）。
 // 派发策略：
 //   - 每次触发（建任务 / 扩展上线 / 轮询）扫 pending 队列（按创建顺序）；
-//   - 扩展按平台选择：bilibili → 任意在线扩展（现网仅一台）；youtube → 同样任意（扩展是同一只,能力内置）。
-//     多台扩展的路由留待后续（YAGNI,单台起步）;
+//   - 客户端归属（2026-08-21，多客户端 sticky）：任务带 creator_client_id 且创建者在线 →
+//     只派给创建者（忙则本轮跳过等待，不给别的客户端弹采集页）；创建者离线或无归属
+//     （CLI/旧任务）→ 任意空闲客户端；
 //   - 串行：同 client 同时只派 1 个任务（inFlight 集合）,防风控对齐 CLI 采集的 sleep 思路。
 
-const inFlight = new Map<string, number>(); // client_id -> task_id（同时每扩展只跑 1 任务）
+// inFlight 状态在 ./inflight.ts（ws/server 连接 close 时释放，避免循环 import）
+
+// 任务 → 派发目标（纯函数供测试）。三态：
+//   { clientId }  派给它；'wait'  创建者在线但忙（本轮跳过，留给创建者）；null  无任何空闲客户端。
+export function pickClientForTask(
+  task: Pick<CollectTask, 'creator_client_id'>,
+  clients: ReadonlyArray<{ client_id: string }>,
+  inFlight: ReadonlyMap<string, number>,
+): { clientId: string } | 'wait' | null {
+  if (task.creator_client_id) {
+    const creator = clients.find((c) => c.client_id === task.creator_client_id);
+    if (creator) return inFlight.has(creator.client_id) ? 'wait' : { clientId: creator.client_id };
+  }
+  const free = clients.find((c) => !inFlight.has(c.client_id));
+  return free ? { clientId: free.client_id } : null;
+}
+
+// 「扩展版本过旧」分类（2026-08-21）：server 升级新增 action 后，旧扩展不认识 → 回执失败。
+// 判据按回执内容（两种形态）：旧扩展回 "unknown action: <action>" 字符串；新扩展对未知 action
+// 显式带 needs_update:true（回执顶层或 data 内）。不做 hello 能力协商表——单一错误路径不值得
+// 引入版本协商状态，hello 的 ext_version 保持仅日志展示；错误内容分类已足够定位。
+// 提示语区分于普通采集失败（need_login 等）：此错指向更新扩展而非重试。
+const EXT_NEEDS_UPDATE_ERROR = '扩展版本过旧，请更新扩展后重试';
+function extNeedsUpdate(result: { error?: unknown; data?: unknown; needs_update?: unknown } | undefined): boolean {
+  if (result?.needs_update === true) return true;
+  if (typeof result?.error === 'string' && result.error.includes('unknown action')) return true;
+  const data = result?.data;
+  return typeof data === 'object' && data !== null && (data as { needs_update?: unknown }).needs_update === true;
+}
 
 export function attachTaskScheduler(db: Database.Database): void {
   resetDispatched(db); // 启动恢复
@@ -293,10 +350,10 @@ export function attachTaskScheduler(db: Database.Database): void {
       "SELECT * FROM collect_tasks WHERE status = 'pending' ORDER BY id ASC",
     ).all() as CollectTask[];
     for (const task of pendingRows) {
-      // 选一台空闲扩展（暂不分平台路由：单台扩展同时具备 B 站 + YouTube 采集能力）
-      const free = clients.find((c) => !inFlight.has(c.client_id));
-      if (!free) break; // 全忙,等下一个事件/轮询
-      await dispatchTask(db, task.id, free.client_id);
+      const pick = pickClientForTask(task, clients, inFlight);
+      if (pick === 'wait') continue; // 创建者在线但忙：留给创建者，不给别的客户端
+      if (pick === null) break;      // 全忙，等下一个事件/轮询
+      await dispatchTask(db, task.id, pick.clientId);
     }
   };
 
@@ -307,14 +364,17 @@ export function attachTaskScheduler(db: Database.Database): void {
     db2.prepare("UPDATE collect_tasks SET status = 'dispatched', client_id = ? WHERE id = ? AND status = 'pending'").run(clientId, taskId);
     const action = task.source === 'bilibili' ? 'fetch-subtitle' : 'fetch-youtube-subtitle';
     const params = task.source === 'bilibili' ? { bvid: task.source_vid } : { videoId: task.source_vid };
-    const r = await requestCommand(clientId, action, params, COMMAND_TIMEOUT_MS);
+    const r = await requestCommand(clientId, action, params, commandTimeoutMs(task.source));
     if (r.ok && r.result?.ok) {
       const data = r.result.data ?? {};
       db2.prepare("UPDATE collect_tasks SET status = 'succeeded', result = ?, finished_at = ? WHERE id = ?")
         .run(JSON.stringify(data), Date.now(), taskId);
     } else {
+      // 失败分类：未收到回执（offline/timeout）→ 连接层文案；收到失败回执 →
+      // 扩展版本过旧（needs_update 分类，提示更新而非重试）/ 普通失败（扩展 error 原文）
       const error = !r.ok
         ? (r.code === 'offline' ? '扩展离线' : '扩展执行超时')
+        : extNeedsUpdate(r.result) ? EXT_NEEDS_UPDATE_ERROR
         : String(r.result?.error ?? '采集失败');
       db2.prepare("UPDATE collect_tasks SET status = 'failed', error = ?, finished_at = ? WHERE id = ?")
         .run(error, Date.now(), taskId);

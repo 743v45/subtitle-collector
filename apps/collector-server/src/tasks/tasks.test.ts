@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type Database from 'better-sqlite3';
 import { openDb, migrate } from '../db/migrate.js';
-import { extractVideoUrl, expandShortLink, parseVideoUrl, createTask, createTasksBatch, expandUpperVideos, getTask, listTasks, resetDispatched, type FetchLike, type UpperExpandDeps } from './tasks.js';
+import { extractVideoUrl, expandShortLink, parseVideoUrl, createTask, createTasksBatch, findActiveTask, pickClientForTask, commandTimeoutMs, expandUpperVideos, getTask, listTasks, resetDispatched, type FetchLike, type UpperExpandDeps } from './tasks.js';
 
 function setupDb(): { db: Database.Database; cleanup: () => void } {
   const dir = mkdtempSync(join(tmpdir(), 'collector-tasks-'));
@@ -115,6 +115,39 @@ test('resetDispatched：dispatched → pending，终态不动', () => {
     assert.equal(getTask(db, t.id)?.status, 'pending');
     assert.equal(getTask(db, t.id)?.client_id, null);
     assert.equal(getTask(db, t2.id)?.status, 'succeeded'); // 终态不受影响
+  } finally { cleanup(); }
+});
+
+// ── findActiveTask：单条创建未终态去重（判据与批量端点一致）──
+
+test('findActiveTask：pending/dispatched 命中；终态与跨 source 不命中', () => {
+  const { db, cleanup } = setupDb();
+  try {
+    const p = createTask(db, { source: 'bilibili', source_vid: 'BV1aa411c7mD', url: 'https://x' }); // pending
+    const d = createTask(db, { source: 'bilibili', source_vid: 'BV1bb411c7mD', url: 'https://x' });
+    db.prepare("UPDATE collect_tasks SET status='dispatched' WHERE id=?").run(d.id);
+    createTask(db, { source: 'youtube', source_vid: 'BV1cc411c7mD', url: 'https://x' }); // 同 vid 不同 source（youtube 校验宽松也可建行）
+
+    assert.equal(findActiveTask(db, 'bilibili', 'BV1aa411c7mD')?.id, p.id); // pending 命中
+    assert.equal(findActiveTask(db, 'bilibili', 'BV1bb411c7mD')?.id, d.id); // dispatched 命中
+    assert.equal(findActiveTask(db, 'bilibili', 'BV1cc411c7mD'), null);     // source 域隔离（bilibili 侧无此 vid 的在途任务）
+    assert.equal(findActiveTask(db, 'bilibili', 'BV1zz411c7mD'), null);     // 无任务
+
+    // 终态允许重采：succeeded / failed 不命中
+    db.prepare("UPDATE collect_tasks SET status='succeeded', finished_at=? WHERE id=?").run(Date.now(), p.id);
+    db.prepare("UPDATE collect_tasks SET status='failed', error='x', finished_at=? WHERE id=?").run(Date.now(), d.id);
+    assert.equal(findActiveTask(db, 'bilibili', 'BV1aa411c7mD'), null);
+    assert.equal(findActiveTask(db, 'bilibili', 'BV1bb411c7mD'), null);
+  } finally { cleanup(); }
+});
+
+test('findActiveTask：多条在途（异常态）取最新一条', () => {
+  const { db, cleanup } = setupDb();
+  try {
+    const t1 = createTask(db, { source: 'bilibili', source_vid: 'BV1aa411c7mD', url: 'https://x' });
+    const t2 = createTask(db, { source: 'bilibili', source_vid: 'BV1aa411c7mD', url: 'https://x' });
+    assert.equal(findActiveTask(db, 'bilibili', 'BV1aa411c7mD')?.id, t2.id); // ORDER BY id DESC
+    void t1;
   } finally { cleanup(); }
 });
 
@@ -272,4 +305,47 @@ test('expandUpperVideos：扩展离线抛错；单页回执失败抛错', async 
       /-412/,
     );
   } finally { cleanup(); }
+});
+
+// ── pickClientForTask：任务归属（2026-08-21，多客户端 sticky 派发）──
+// 语义：creator 在线 → 永远归 creator（忙则 wait 本轮跳过，不给别人）；离线/无 creator → 任意空闲。
+
+test('pickClientForTask：creator 在线 → 归 creator（即便别人空闲）', () => {
+  const clients = [{ client_id: 'ext-A' }, { client_id: 'ext-B' }];
+  assert.deepEqual(pickClientForTask({ creator_client_id: 'ext-B' }, clients, new Map()), { clientId: 'ext-B' });
+});
+
+test('pickClientForTask：creator 在线但忙 → wait（不给别人）', () => {
+  const clients = [{ client_id: 'ext-A' }, { client_id: 'ext-B' }];
+  assert.equal(pickClientForTask({ creator_client_id: 'ext-B' }, clients, new Map([['ext-B', 7]])), 'wait');
+});
+
+test('pickClientForTask：creator 离线 → 降级任意空闲', () => {
+  const clients = [{ client_id: 'ext-A' }];
+  assert.deepEqual(pickClientForTask({ creator_client_id: 'ext-X' }, clients, new Map()), { clientId: 'ext-A' });
+});
+
+test('pickClientForTask：无 creator（CLI/旧任务）→ 任意空闲（现状语义）', () => {
+  const clients = [{ client_id: 'ext-A' }, { client_id: 'ext-B' }];
+  assert.deepEqual(pickClientForTask({ creator_client_id: null }, clients, new Map()), { clientId: 'ext-A' });
+});
+
+test('pickClientForTask：全忙 → null', () => {
+  assert.equal(pickClientForTask({ creator_client_id: null }, [{ client_id: 'ext-A' }], new Map([['ext-A', 1]])), null);
+});
+
+test('createTasksBatch：creator_client_id 透传到任务行；不传为 null', () => {
+  const { db, cleanup } = setupDb();
+  try {
+    const r = createTasksBatch(db, ['BV1dd411c7mD'], 'bilibili', 'ext-A');
+    assert.equal(r.created[0].creator_client_id, 'ext-A');
+    const r2 = createTasksBatch(db, ['BV1ee411c7mD']);
+    assert.equal(r2.created[0].creator_client_id, null);
+  } finally { cleanup(); }
+});
+
+// ── commandTimeoutMs：按平台分档的执行预算（覆盖扩展全链路，防假失败）──
+test('commandTimeoutMs：youtube 长预算（后台 tab+自限+宽限）、bilibili 短预算', () => {
+  assert.equal(commandTimeoutMs('youtube'), 180_000);
+  assert.equal(commandTimeoutMs('bilibili'), 90_000);
 });

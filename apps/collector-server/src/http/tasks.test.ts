@@ -239,3 +239,140 @@ test('扩展回执失败：任务 → failed,error 存原因', async () => {
     assert.equal(t.error, 'need_login');
   } finally { ws?.close(); ctx.cleanup(); }
 });
+
+// ── 单条创建未终态去重（2026-08-21）：对齐批量端点判据，防手机双击双采 ──
+
+test('POST /api/collect-tasks：同视频已有 pending/dispatched → 返回既有任务（created:false），不新建', async () => {
+  const ctx = await setup();
+  try {
+    const r1 = await httpReq(ctx.port, 'POST', '/api/collect-tasks', { text: 'https://www.bilibili.com/video/BV1xx411c7mD' });
+    assert.equal(r1.status, 200);
+    assert.equal(r1.json.created, true); // 新建
+
+    // 双击/重提交（手机分享文本）：仍 pending → 返回同一条任务
+    const r2 = await httpReq(ctx.port, 'POST', '/api/collect-tasks', { text: '再看一遍 https://www.bilibili.com/video/BV1xx411c7mD' });
+    assert.equal(r2.status, 200);
+    assert.equal(r2.json.ok, true);
+    assert.equal(r2.json.created, false);
+    assert.equal(r2.json.task.id, r1.json.task.id);
+
+    // dispatched（派发在途）同样视为未终态去重命中
+    ctx.db.prepare("UPDATE collect_tasks SET status='dispatched', client_id='ext-A' WHERE id=?").run(r1.json.task.id);
+    const r3 = await httpReq(ctx.port, 'POST', '/api/collect-tasks', { text: 'https://www.bilibili.com/video/BV1xx411c7mD' });
+    assert.equal(r3.json.created, false);
+    assert.equal(r3.json.task.id, r1.json.task.id);
+
+    const list = await httpReq(ctx.port, 'GET', '/api/collect-tasks?limit=10');
+    assert.equal(list.json.total, 1); // 始终只有一条
+  } finally { ctx.cleanup(); }
+});
+
+test('POST /api/collect-tasks：终态（succeeded/failed）允许重采 → 新建（created:true）', async () => {
+  const ctx = await setup();
+  try {
+    const r1 = await httpReq(ctx.port, 'POST', '/api/collect-tasks', { text: 'https://www.bilibili.com/video/BV1xx411c7mD' });
+    ctx.db.prepare("UPDATE collect_tasks SET status='succeeded', finished_at=? WHERE id=?").run(Date.now(), r1.json.task.id);
+    const r2 = await httpReq(ctx.port, 'POST', '/api/collect-tasks', { text: 'https://www.bilibili.com/video/BV1xx411c7mD' });
+    assert.equal(r2.json.created, true);
+    assert.notEqual(r2.json.task.id, r1.json.task.id); // 新任务
+
+    ctx.db.prepare("UPDATE collect_tasks SET status='failed', error='x', finished_at=? WHERE id=?").run(Date.now(), r2.json.task.id);
+    const r3 = await httpReq(ctx.port, 'POST', '/api/collect-tasks', { text: 'https://www.bilibili.com/video/BV1xx411c7mD' });
+    assert.equal(r3.json.created, true);
+    const list = await httpReq(ctx.port, 'GET', '/api/collect-tasks?limit=10');
+    assert.equal(list.json.total, 3);
+  } finally { ctx.cleanup(); }
+});
+
+// ── 批量端点 body 统一格式（2026-08-21）：{vids[], source?, client_id?}，bvids 旧键删除 ──
+
+test('POST /api/collect-tasks/batch：统一 body {vids, source, client_id}，client_id 透传 creator_client_id', async () => {
+  const ctx = await setup();
+  try {
+    const r = await httpReq(ctx.port, 'POST', '/api/collect-tasks/batch', {
+      vids: ['gaDdrDdczO4', 'F3lL98Pj90o'],
+      source: 'youtube',
+      client_id: 'ext-A',
+    });
+    assert.equal(r.status, 200);
+    assert.equal(r.json.ok, true);
+    assert.equal(r.json.created, 2);
+    assert.equal(r.json.tasks[0].source, 'youtube');
+    for (const t of r.json.tasks) {
+      assert.equal(t.creator_client_id, 'ext-A'); // snake_case client_id → sticky 派发依据
+      assert.equal(t.status, 'pending');
+    }
+  } finally { ctx.cleanup(); }
+});
+
+test('POST /api/collect-tasks/batch：source 缺省 bilibili（旧 {bvids} 语义并入 vids）', async () => {
+  const ctx = await setup();
+  try {
+    const r = await httpReq(ctx.port, 'POST', '/api/collect-tasks/batch', { vids: ['BV1xx411c7mD', 'BV1yy411c7mD'] });
+    assert.equal(r.status, 200);
+    assert.equal(r.json.created, 2);
+    assert.equal(r.json.tasks[0].source, 'bilibili');
+    assert.equal(r.json.tasks[0].creator_client_id, null); // 未传 client_id → null（任意客户端可接）
+  } finally { ctx.cleanup(); }
+});
+
+test('POST /api/collect-tasks/batch：bvids 旧键 / camelCase clientId 均不认 → 400 / 视为未传', async () => {
+  const ctx = await setup();
+  try {
+    // bvids 键彻底删除：旧格式请求失败可见，逼调用方升级（无外部消费者，一次改齐）
+    const r1 = await httpReq(ctx.port, 'POST', '/api/collect-tasks/batch', { bvids: ['BV1xx411c7mD'] });
+    assert.equal(r1.status, 400);
+    assert.equal(r1.json.ok, false);
+    assert.match(r1.json.error, /vids/);
+
+    // clientId（camelCase）不是合法键：视为未传，任务 creator_client_id = null
+    const r2 = await httpReq(ctx.port, 'POST', '/api/collect-tasks/batch', { vids: ['BV1xx411c7mD'], clientId: 'ext-A' });
+    assert.equal(r2.status, 200);
+    assert.equal(r2.json.tasks[0].creator_client_id, null);
+  } finally { ctx.cleanup(); }
+});
+
+// ── 扩展版本过旧分类（2026-08-21）：未知 action 的失败回执 ≠ 普通采集失败 ──
+
+test('扩展回执 unknown action：任务 error 写「扩展版本过旧」（旧扩展形态：error 字符串）', async () => {
+  const ctx = await setup();
+  let ws: WebSocket | null = null;
+  try {
+    ws = new WebSocket(`ws://127.0.0.1:${ctx.port}/ext`);
+    await new Promise((r) => { ws!.once('open', r); });
+    ws!.send(JSON.stringify({ type: 'hello', ext_version: '0.0.1', token: 'test-token', client_id: 'ext-old', reporting_enabled: true }));
+    ws!.on('message', (d) => {
+      const m = JSON.parse(d.toString());
+      // 模拟旧扩展不认识 server 新增的 action
+      if (m.action) ws!.send(JSON.stringify({ type: 'result', id: m.id, ok: false, error: `unknown action: ${m.action}` }));
+    });
+    await wait(100);
+
+    const r = await httpReq(ctx.port, 'POST', '/api/collect-tasks', { text: 'https://www.bilibili.com/video/BV1xx411c7mD' });
+    await wait(300);
+    const t = getTask(ctx.db, r.json.task.id)!;
+    assert.equal(t.status, 'failed');
+    assert.equal(t.error, '扩展版本过旧，请更新扩展后重试'); // 区分于普通采集失败
+  } finally { ws?.close(); ctx.cleanup(); }
+});
+
+test('扩展回执 needs_update:true：同样归类「扩展版本过旧」（新扩展显式标记形态）', async () => {
+  const ctx = await setup();
+  let ws: WebSocket | null = null;
+  try {
+    ws = new WebSocket(`ws://127.0.0.1:${ctx.port}/ext`);
+    await new Promise((r) => { ws!.once('open', r); });
+    ws!.send(JSON.stringify({ type: 'hello', ext_version: '0.1.0', token: 'test-token', client_id: 'ext-new', reporting_enabled: true }));
+    ws!.on('message', (d) => {
+      const m = JSON.parse(d.toString());
+      if (m.action) ws!.send(JSON.stringify({ type: 'result', id: m.id, ok: false, error: 'action not supported by this version', needs_update: true }));
+    });
+    await wait(100);
+
+    const r = await httpReq(ctx.port, 'POST', '/api/collect-tasks', { text: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ' });
+    await wait(300);
+    const t = getTask(ctx.db, r.json.task.id)!;
+    assert.equal(t.status, 'failed');
+    assert.equal(t.error, '扩展版本过旧，请更新扩展后重试');
+  } finally { ws?.close(); ctx.cleanup(); }
+});

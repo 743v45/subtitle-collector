@@ -24,6 +24,19 @@ import type {
 
 // —— 连接状态 + 模式：每 2s 向 background 查 WS_STATUS（含 mode）——
 // mode=server 时 connected 反映 WS 客观连通性；mode=standalone（纯扩展）时 connected 恒 false。
+
+// popup → server HTTP 请求统一带 Bearer：激活 server 的 token（URL ?token= 解析所得，
+// useServerConfig 读 storage 时同步更新）。暴露部署（非 loopback）的 server 强制校验；
+// loopback server 不校验，多带一个头也无影响。
+let activeServerToken: string | null = null;
+export function authInit(init?: RequestInit): RequestInit {
+  if (!activeServerToken) return init ?? {};
+  return {
+    ...init,
+    headers: { ...(init?.headers as Record<string, string> | undefined), Authorization: `Bearer ${activeServerToken}` },
+  };
+}
+
 export type ConnectionMode = 'server' | 'standalone';
 export interface ConnectionStatus {
   loading: boolean; // 首帧未拿到 WS_STATUS 时 true，避免闪烁
@@ -90,6 +103,8 @@ export function useServerConfig(): ServerConfig {
       const s = normalizeServers(items[SERVERS_KEY]) as ServerEntry[];
       const storedActive = (items[ACTIVE_SERVER_KEY] as string | undefined) ?? null;
       const activeEntry = resolveActiveServer(s, storedActive);
+      // 同步 Bearer token 缓存（authInit 消费）：激活 server 变化即刷新
+      activeServerToken = activeEntry ? (parseServerUrl(activeEntry.url)?.token ?? null) : null;
       setServers(s);
       setActiveId(activeEntry?.id ?? null);
       setLoading(false);
@@ -247,7 +262,7 @@ export function useCollected(httpBase: string): {
       if (platform.id === 'bilibili' || platform.id === 'youtube') {
         // B 站 / YouTube：fetch server（server /api/videos/:source/:vid 通用，source = platform.id）
         // 不清 loading：保留上次数据，避免刷新（手动补采 / INGEST_RESULT）时"数据→查询中→数据"闪烁
-        fetch(`${httpBase}/api/videos/${platform.id}/${vid}`, { cache: 'no-cache' })
+        fetch(`${httpBase}/api/videos/${platform.id}/${vid}`, authInit({ cache: 'no-cache' }))
           .then((r) => r.json())
           .then((d: CollectedResponse) => {
             if (!d.ok) {
@@ -336,7 +351,7 @@ export function useCreator(creatorId: number | null | undefined, httpBase: strin
       return;
     }
     setCreator({ state: 'loading' });
-    fetch(`${httpBase}/api/creators/${creatorId}`, { cache: 'no-cache' })
+    fetch(`${httpBase}/api/creators/${creatorId}`, authInit({ cache: 'no-cache' }))
       .then((r) => r.json())
       .then((d: { ok: boolean; creator?: CreatorDetail }) => {
         if (d?.ok && d.creator) setCreator({ state: 'ok', creator: d.creator });
@@ -545,6 +560,7 @@ export interface YtChannelVideoItem {
   vid: string;
   title: string | null;
   created: number | null; // unix 秒（publishedTimeText 相对时间估算）
+  agoText?: string | null; // 原始相对时间文本（"7 months ago"；档位过滤口径，旧缓存缺省）
   play: number | null;
   length: string | null;  // "MM:SS" / "HH:MM:SS"
   pic?: string | null;    // i.ytimg.com 稳定缩略图 URL
@@ -633,7 +649,7 @@ export function useCreatorCollected(
         for (let page = 1; page <= 10; page++) {
           const r = await fetch(
             `${httpBase}/api/videos?source=${source}&creator_uid=${encodeURIComponent(mid)}&page=${page}&size=${size}`,
-            { cache: 'no-cache' },
+            authInit({ cache: 'no-cache' }),
           );
           const d = await r.json();
           if (!d?.ok) break;

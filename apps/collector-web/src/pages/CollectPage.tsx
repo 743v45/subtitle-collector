@@ -57,11 +57,11 @@ function LibrarySummary({ refreshKey }: { refreshKey: number }) {
       className="flex w-full items-center justify-between rounded-md border bg-muted/30 px-3 py-2 text-sm text-muted-foreground transition-colors hover:bg-muted/60"
     >
       <span>
-        库内 <span className="font-medium tabular-nums text-foreground">{data.videos.toLocaleString()}</span> 视频
-        · <span className="font-medium tabular-nums text-foreground">{data.tracks.toLocaleString()}</span> 字幕轨
+        库内 <span className="font-medium tabular-nums text-foreground">{data.videos.toLocaleString('zh-CN')}</span> 视频
+        · <span className="font-medium tabular-nums text-foreground">{data.tracks.toLocaleString('zh-CN')}</span> 字幕轨
       </span>
       <span>
-        今日 +<span className="font-medium tabular-nums text-foreground">{data.today_videos.toLocaleString()}</span>
+        今日 +<span className="font-medium tabular-nums text-foreground">{data.today_videos.toLocaleString('zh-CN')}</span>
       </span>
     </button>
   );
@@ -192,16 +192,30 @@ function UpperBatchSection({ onTasksChanged }: { onTasksChanged: () => void }) {
 
   const collectedCount = data ? data.items.filter((it) => it.collected).length : null;
 
-  const filtered = useMemo(() => {
-    if (!data) return [];
+  // missingCount：时间/播放档位开启时因数据缺失（created/play null）被排除的条数 ——
+  // 解析失败对用户可见，不再表现为「条目无声消失」。
+  const { filtered, missingCount } = useMemo(() => {
+    if (!data) return { filtered: [] as UpperVideoItem[], missingCount: 0 };
     const sinceMs = timeDays > 0 ? Date.now() - timeDays * 86400_000 : 0;
-    return data.items.filter((it) => {
-      if (statusFilter === 'collected' && !it.collected) return false;
-      if (statusFilter === 'uncollected' && it.collected) return false;
-      if (sinceMs > 0 && (it.created == null || it.created * 1000 < sinceMs)) return false;
-      if (viewMin > 0 && (it.play == null || it.play < viewMin)) return false;
-      return true;
-    });
+    const out: UpperVideoItem[] = [];
+    let missing = 0;
+    for (const it of data.items) {
+      if (statusFilter === 'collected' && !it.collected) continue;
+      if (statusFilter === 'uncollected' && it.collected) continue;
+      let pass = true;
+      let missingData = false;
+      if (sinceMs > 0) {
+        if (it.created == null) { pass = false; missingData = true; }
+        else if (it.created * 1000 < sinceMs) pass = false;
+      }
+      if (viewMin > 0) {
+        if (it.play == null) { pass = false; missingData = true; }
+        else if (it.play < viewMin) pass = false;
+      }
+      if (pass) out.push(it);
+      else if (missingData) missing++;
+    }
+    return { filtered: out, missingCount: missing };
   }, [data, statusFilter, timeDays, viewMin]);
 
   const load = async () => {
@@ -237,7 +251,7 @@ function UpperBatchSection({ onTasksChanged }: { onTasksChanged: () => void }) {
     setSubmitting(true);
     setSubmitMsg(null);
     try {
-      const r = await createCollectTasksBatch([...selected]);
+      const r = await createCollectTasksBatch([...selected], 'bilibili');
       setSubmitMsg({ ok: true, text: `已创建 ${r.created} 个任务${r.skipped ? `，跳过 ${r.skipped} 个（已在队列）` : ''}` });
       setSelected(new Set());
       onTasksChanged();
@@ -325,13 +339,20 @@ function UpperBatchSection({ onTasksChanged }: { onTasksChanged: () => void }) {
                     />
                     <span className="min-w-0 flex-1 truncate" title={it.title}>{it.title}</span>
                     <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
-                      {it.length ?? ''}{it.play != null ? ` · ${it.play.toLocaleString()}` : ''}{it.created ? ` · ${fmtUpperDate(it.created)}` : ''}
+                      {it.length ?? ''}{it.play != null ? ` · ${it.play.toLocaleString('zh-CN')}` : ''}{it.created ? ` · ${fmtUpperDate(it.created)}` : ''}
                     </span>
                   </label>
                 );
               })}
               {filtered.length === 0 && (
-                <div className="py-4 text-center text-sm text-muted-foreground">无匹配视频（调整过滤条件）</div>
+                <div className="py-4 text-center text-sm text-muted-foreground">
+                  无匹配视频（调整过滤条件{missingCount > 0 ? `；另有 ${missingCount} 条缺播放量/日期未纳入` : ''}）
+                </div>
+              )}
+              {filtered.length > 0 && missingCount > 0 && (
+                <div className="py-1 text-center text-xs text-muted-foreground/70">
+                  另有 {missingCount} 条缺播放量/日期未纳入过滤
+                </div>
               )}
             </div>
 
