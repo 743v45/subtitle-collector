@@ -5,6 +5,7 @@ import {
   parseYoutubeXml,
   normalizeYoutubeTimedtext,
   parseStatCount,
+  parseYtPublishDateMs,
 } from '../youtube-format.mjs';
 
 // ---------------- parseStatCount ----------------
@@ -38,6 +39,31 @@ test('parseStatCount：null/空/无数字 → null', () => {
   assert.equal(parseStatCount(null), null);
   assert.equal(parseStatCount(''), null);
   assert.equal(parseStatCount('顶此视频'), null);
+});
+
+// ---------------- parseYtPublishDateMs ----------------
+// 回归 2026-08-22②：inject-yt extractMeta 此前不抽发布时间，content-yt 传的 publishedAt
+// 恒 undefined、落库 published_at 恒 NULL。现从 microformat.playerMicroformatRenderer.publishDate
+// （ISO 串）转毫秒（对齐 B 站 ingest-payload.js 的 pubdate×1000 口径）。
+
+test('parseYtPublishDateMs：microformat publishDate ISO 串 → 毫秒纪元', () => {
+  // 带时区偏移的完整 ISO（publishDate 常见形态）
+  assert.equal(parseYtPublishDateMs('2009-10-25T06:57:33-07:00'), Date.parse('2009-10-25T06:57:33-07:00'));
+  // 纯日期段（uploadDate 常见形态，按 UTC 零点）
+  assert.equal(parseYtPublishDateMs('2009-10-25'), Date.parse('2009-10-25'));
+  // Z 后缀
+  assert.equal(parseYtPublishDateMs('2024-02-29T00:00:00Z'), Date.parse('2024-02-29T00:00:00Z'));
+});
+
+test('回归 2026-08-22②：parseYtPublishDateMs 缺失/非串/不可解析 → null（不发明值）', () => {
+  assert.equal(parseYtPublishDateMs(null), null);
+  assert.equal(parseYtPublishDateMs(undefined), null);
+  assert.equal(parseYtPublishDateMs(''), null);
+  assert.equal(parseYtPublishDateMs('   '), null);
+  assert.equal(parseYtPublishDateMs(1700000000000), null); // 非字符串（防误传毫秒值直通）
+  assert.equal(parseYtPublishDateMs('not a date'), null);
+  // dateText 类本地化人读串（中文界面）不可靠解析 → null；inject-yt 也不采集 dateText（只取 ISO 的 publishDate/uploadDate）
+  assert.equal(parseYtPublishDateMs('2009年10月25日'), null);
 });
 
 // ---------------- parseYoutubeJson3 ----------------

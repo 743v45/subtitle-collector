@@ -12,6 +12,9 @@
 //     kind === null   → 2（人工字幕，与 B 站 CC 同义）
 //   不采用 spec §5.4 注释里「null→0」的字面建议：0 在全代码库无使用、trackPriority 不识别、
 //   且会让人工字幕失去 CC 优先级。此处按 spec 明确的「看 B 站语义」指引取 2。
+//   2026-08-22 增补：3=机翻/翻译轨。翻译轨（URL 带 tlang=）的源轨若是人工 CC，URL 不带 kind，
+//   仅按 kind 映射会被误标 2（机翻与人工 CC 同型，落库后不可区分）；翻译轨由 content-yt
+//   构造时打 isTranslation:true 标记，trackTypeOf 优先按该标记取 3，kind 映射维持现状。
 
 /**
  * YouTube captionTrack.kind → server track_type (INTEGER) 映射。
@@ -28,12 +31,26 @@ export function kindToTrackType(kind) {
 }
 
 /**
+ * 单条 captionTrack → server track_type (INTEGER)。
+ * 翻译轨（tlang= 机翻，content-yt 构造时打 isTranslation:true）→ 3（机翻/翻译轨）；
+ * 其余按 kind 映射（asr→1、人工→2，见 kindToTrackType）。翻译轨不改 kind 字段本身
+ * （保留源轨 asr/CC 语义供追溯），仅靠 isTranslation 区分——server/UI 据 3 识别机翻轨。
+ *
+ * @param {{kind?: string|null, isTranslation?: boolean}} t captionTrack（inject-yt 抽取或 content-yt 构造）
+ * @returns {number} 1=asr(自动生成) / 2=人工 / 3=机翻(翻译轨)
+ */
+export function trackTypeOf(t) {
+  if (t?.isTranslation === true) return 3;
+  return kindToTrackType(t?.kind);
+}
+
+/**
  * 组装 source='youtube' 的 ingest payload（与 buildIngestPayload 同构）。
  *
  * @param {object} args
  * @param {string} args.videoId 11 位 YouTube videoId（落 video.source_vid）
  * @param {string|null} [args.title] 视频标题
- * @param {string|null} [args.channelId] 频道 ID（落 creator.source_uid；缺失→'unknown'）
+ * @param {string|null} [args.channelId] 频道 ID（落 creator.source_uid；缺失→字段不出现，server 侧置 video.creator_id=null）
  * @param {string|null} [args.channelName] 频道名（落 creator.name）
  * @param {string|null} [args.avatar] 频道头像 URL
  * @param {number|null} [args.duration] 视频时长（秒）
@@ -67,7 +84,9 @@ export function buildYoutubePayload({
     video: {
       source_vid: videoId,
       creator: {
-        source_uid: String(channelId ?? 'unknown'),
+        // creator 标识缺失 → 不携带 source_uid 字段（server 契约：由 server 决定 video.creator_id 置 null）。
+        // 禁 'unknown' 兜底：归属不明的视频会全部合并进同一虚构 UP 行，是不可逆脏数据（2026-08-22 修复）。
+        ...(channelId != null && channelId !== '' ? { source_uid: String(channelId) } : {}),
         name: channelName ?? null,
         avatar: avatar ?? null,
       },
@@ -86,7 +105,7 @@ export function buildYoutubePayload({
     tracks: (captionTracks ?? []).map((t) => ({
       lan: t.languageCode,
       lan_doc: t.name,
-      track_type: kindToTrackType(t.kind),
+      track_type: trackTypeOf(t),
       versions: [{
         origin: 'external',
         payload: bodies?.[t.baseUrl] ?? null, // 保留 {body:[...]} 外层，与 B 站 buildIngestPayload 的 subtitleBodies 形状一致（下游 collector-web/CLI/subtitleFormat 零特殊处理）；缺失轨→null

@@ -32,7 +32,7 @@ import { fmtNum } from './format';
 import { cn } from '@/lib/utils';
 import type { CollectTask, ConsistencyIssue } from './types';
 import { formatSubtitle, SUBTITLE_FORMATS, type SubtitleFormat } from '../../subtitleFormat.mjs';
-import { isAiSubtitle, subtitleTrackLabel } from '../../subtitleLabel.mjs';
+import { isAiSubtitle, subtitleTrackLabel, trackTypeBadge } from '../../subtitleLabel.mjs';
 import { relativeMonths } from '../../yt-channel.mjs';
 import { Badge } from '@/components/ui/badge';
 import { Switch } from '@/components/ui/switch';
@@ -1610,6 +1610,11 @@ function SubtitleCard({ local }: { local: LocalCollectedState }) {
                           {isAi && (
                             <Badge variant="secondary" className="shrink-0 px-1.5 py-0 text-[10px] leading-tight font-normal">
                               AI
+                            </Badge>
+                          )}
+                          {trackTypeBadge(s.track_type) && (
+                            <Badge variant="secondary" className="shrink-0 px-1.5 py-0 text-[10px] leading-tight font-normal">
+                              {trackTypeBadge(s.track_type)}
                             </Badge>
                           )}
                         </span>

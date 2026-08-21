@@ -61,12 +61,21 @@
     const vd = pr.videoDetails;
     const tracksRaw = pr?.captions?.playerCaptionsTracklistRenderer?.captionTracks;
     const tracks = Array.isArray(tracksRaw) ? tracksRaw : [];
+    // 发布时间：microformat.playerMicroformatRenderer.publishDate（ISO 字符串，如
+    // "2009-10-25T06:57:33-07:00" 或日期段 "2009-10-25"；uploadDate 同构兜底）。原始串透传，
+    // 由 content-yt 用 parseYtPublishDateMs 转毫秒（对齐 B 站 pubdate×1000 口径）；缺失传 null。
+    // dateText 是本地化人读串（如 "Oct 25, 2009"）非 ISO，不可靠解析，不用。
+    const mf = pr?.microformat?.playerMicroformatRenderer;
+    const publishDateRaw = typeof mf?.publishDate === "string" && mf.publishDate
+      ? mf.publishDate
+      : (typeof mf?.uploadDate === "string" && mf.uploadDate ? mf.uploadDate : null);
     return {
       videoId: urlVid || vd.videoId || "",
       title: vd.title ?? null,
       channelId: vd.channelId ?? null,
       channelName: vd.author ?? null,
       duration: vd.lengthSeconds ? Number(vd.lengthSeconds) : null, // 秒（videoDetails.lengthSeconds 是字符串）
+      publishDate: publishDateRaw, // ISO 串；content-yt 转毫秒入 payload（published_at）
       viewCount: vd.viewCount ?? null,   // videoDetails.viewCount（字符串），popup 统计展示
       likeCount: vd.likeCount ?? null,   // videoDetails.likeCount（字符串）
       shortDescription: vd.shortDescription ?? null, // 简介（popup extra.desc 展示）

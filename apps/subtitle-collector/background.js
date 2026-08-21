@@ -648,7 +648,8 @@ async function connect() {
         }
         inFlightCollects.add(ytKey);
         try {
-          const data = await collectYoutubeViaNavigate(msg.videoId);
+          // msg.id（server 命令 id）透传作 taskId，供 [yt-navigate] 日志与 server 任务关联
+          const data = await collectYoutubeViaNavigate(msg.videoId, 45000, msg.id);
           ws.send(JSON.stringify({ type: "result", id: msg.id, ok: true, data }));
         } catch (err) {
           ws.send(JSON.stringify({ type: "result", id: msg.id, ok: false, error: String(err.message || err) }));
@@ -1006,18 +1007,34 @@ async function collectViaNavigate(bvid, timeoutMs = 20000) {
   }
 }
 
+// 扩展侧关键节点日志 → server WS 透传（collector-server ws/server.ts 的 [ext] log 管道，§9 可观察性）。
+// 仅在已握手连接上发送：不为日志新建/重连，断线丢弃（本地 console 仍有 background 自身日志）。
+function extLog(msg, level = "info") {
+  try {
+    if (authenticated && ws?.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ type: "log", level, msg }));
+    }
+  } catch { /* 半开/竞态断线：日志发送失败不影响主流程 */ }
+}
+
 // YouTube 主动采集（fetch-youtube-subtitle action）：后台开 tab 到 watch?v=<id>,
 // 等 content-yt 就绪并采集（CAPTION_TRACKS + FETCH_SUBTITLE 兜底/菜单触发）,
 // 通过 GET_LOCAL_STATE 轮询判定采集完成（has-subtitle + 所有轨定居,或 no-subtitle）,
 // INGEST 由 content-yt 自行走被动链路上报（复用现有链路,编排层不重复上报）。
 // 与 B 站 collectViaNavigate 的差异:YouTube 字幕 URL 带签名不能后台拼,必须靠页面运行时;
 // 且 content-yt 不需要 NAV_TRIGGER 通知——页面加载即自动采集。
-async function collectYoutubeViaNavigate(videoId, timeoutMs = 45000) {
+// §9 可观察性：start/content-ready/done(+pot_limited)/error 关键节点经 WS type:'log' 透传
+// server（每任务 3-6 条,禁止逐轮询周期刷屏）;captured/tracks 计数由轮询响应汇总上报。
+async function collectYoutubeViaNavigate(videoId, timeoutMs = 45000, taskId = null) {
   while (navCollectBusy) await new Promise((r) => setTimeout(r, 500)); // 等锁（同时只 1 个 navigate）
   navCollectBusy = true;
   let reused = false;
   let tabId = null;
   const watchUrl = `https://www.youtube.com/watch?v=${videoId}`;
+  const t0 = Date.now();
+  const elapsedS = () => `${Math.round((Date.now() - t0) / 1000)}s`;
+  const tag = `${taskId ? `taskId=${taskId} ` : ""}vid=${videoId} `;
+  let lastObserved = "no-response"; // 最近一次轮询观察值（超时诊断：content 未注入/未就绪/未定居）
   try {
     activeYtCollects.add(videoId); // 登记进行中的 YouTube 主动采集（INGEST 处理器据此放行 force）
     // 复用已打开的同视频 tab（reload 刷新页面状态）——但用户正在看的（active）不 reload，
@@ -1031,13 +1048,14 @@ async function collectYoutubeViaNavigate(videoId, timeoutMs = 45000) {
       const tab = await chrome.tabs.create({ url: watchUrl, active: false });
       tabId = tab.id;
     }
+    extLog(`[yt-navigate] start ${tag}tab=${reused ? `reuse#${tabId}(reload)` : `new#${tabId}`} timeout=${Math.round(timeoutMs / 1000)}s`);
     // 轮询 GET_LOCAL_STATE 直到终态。判定依据（content-yt GET_LOCAL_STATE 响应）：
     //   state=no-subtitle           captionTracks 已读且为空 → 成功 0 轨
     //   state=has-subtitle+settled  所有轨定居（body 到齐或已尝试）→ 等 INGEST 宽限后汇总
     //   state=has-subtitle 未定居    body 还在抓（FETCH_SUBTITLE / 菜单触发翻译轨）→ 继续等
     //   not-loaded / null           页面未就绪 → 继续等
-    const t0 = Date.now();
     let firstSettledAt = 0; // 首次 settled 的时刻（宽限期起算点）
+    let readyLogged = false; // content-yt 首个轮询响应只记一次（防逐周期刷屏）
     for (;;) {
       if (Date.now() - t0 > timeoutMs) throw new Error(`YouTube 采集超时（${Math.round(timeoutMs / 1000)}s）`);
       const state = await new Promise((resolve) => {
@@ -1046,8 +1064,18 @@ async function collectYoutubeViaNavigate(videoId, timeoutMs = 45000) {
           else resolve(resp);
         });
       });
+      lastObserved = !state
+        ? "no-response"
+        : state.state === "has-subtitle"
+          ? `has-subtitle${state.settled ? "+settled" : ""}`
+          : (state.state ?? (state.ok ? "ok" : "!ok"));
+      if (!readyLogged && state) {
+        readyLogged = true;
+        extLog(`[yt-navigate] content-ready ${tag}state=${lastObserved} tracks=${state.subs?.length ?? 0} elapsed=${elapsedS()}`);
+      }
       if (state?.ok && state.state === "no-subtitle") {
         // captionTracks 已读且为空（纯音乐/直播/真无字幕）——任务成功但 0 轨
+        extLog(`[yt-navigate] done ${tag}state=no_subtitle tracks=0 captured=0 elapsed=${elapsedS()} reused=${reused}`);
         return { videoId, captured: 0, tracks: 0, reason: "no_subtitle", navigated: true, reused };
       }
       if (state?.ok && state.state === "has-subtitle" && state.settled) {
@@ -1065,6 +1093,12 @@ async function collectYoutubeViaNavigate(videoId, timeoutMs = 45000) {
         await new Promise((r) => setTimeout(r, 1500)); // 等 INGEST 经 WS 落库
         const subs = final?.subs ?? state.subs ?? [];
         const captured = subs.filter((s) => s.has_body).length;
+        extLog(`[yt-navigate] done ${tag}state=settled tracks=${subs.length} captured=${captured} elapsed=${elapsedS()} reused=${reused}`);
+        if (captured === 0) {
+          // pot_limited 关键上下文：轨元数据到手（CAPTION_TRACKS 非空）但全轨 body 空——
+          // timedtext 拦截与 FETCH_SUBTITLE 均未命中，此前该终态零日志无从诊断
+          extLog(`[yt-navigate] pot_limited ${tag}tracks=${subs.length} captured=0（轨元数据到手但 body 全空：timedtext 拦截与 FETCH_SUBTITLE 均未命中，pot 受限）`, "warn");
+        }
         return {
           videoId, captured, tracks: subs.length, navigated: true, reused,
           ...(captured === 0 ? { reason: "pot_limited" } : {}),
@@ -1073,6 +1107,9 @@ async function collectYoutubeViaNavigate(videoId, timeoutMs = 45000) {
       // 未就绪/未定居：500ms 后重试
       await new Promise((r) => setTimeout(r, 500));
     }
+  } catch (e) {
+    extLog(`[yt-navigate] error ${tag}last=${lastObserved} elapsed=${elapsedS()} err=${String(e?.message ?? e)}`, "warn");
+    throw e;
   } finally {
     activeYtCollects.delete(videoId);
     if (tabId != null && !reused) { try { await chrome.tabs.remove(tabId); } catch {} } // 复用的 tab 不关

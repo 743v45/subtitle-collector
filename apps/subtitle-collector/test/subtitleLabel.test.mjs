@@ -1,7 +1,7 @@
 // test/subtitleLabel.test.mjs
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { isAiSubtitle, subtitleTrackLabel } from '../subtitleLabel.mjs';
+import { isAiSubtitle, subtitleTrackLabel, trackTypeBadge } from '../subtitleLabel.mjs';
 
 test('subtitleTrackLabel：lan_doc 优先于 lan', () => {
   assert.equal(
@@ -48,4 +48,19 @@ test('isAiSubtitle：url 缺失 / 非串 → false（安全兜底）', () => {
   assert.equal(isAiSubtitle({}), false);
   assert.equal(isAiSubtitle({ subtitle_url: undefined }), false);
   assert.equal(isAiSubtitle(null), false);
+});
+
+// 回归 2026-08-22③：YouTube tlang 翻译轨落库 track_type=3（机翻/翻译轨）后，
+// popup 需有对应的类型徽标文案（此前 3 无任何展示语义，机翻轨与人工 CC 在 UI 不可区分）。
+test('trackTypeBadge：track_type=3（机翻/翻译轨）→ 「机翻」', () => {
+  assert.equal(trackTypeBadge(3), '机翻');
+  assert.equal(trackTypeBadge('3'), '机翻'); // popup types 里 track_type 声明为 string | null，兼容字符串
+});
+
+test('trackTypeBadge：1/2/缺失/非数值 → null（无徽标，不与 AI 徽标重复）', () => {
+  assert.equal(trackTypeBadge(1), null, 'AI/asr 轨走 isAiSubtitle 徽标（B 站）或轨名自带（自动生成）后缀');
+  assert.equal(trackTypeBadge(2), null, '人工 CC 无徽标');
+  assert.equal(trackTypeBadge(null), null);
+  assert.equal(trackTypeBadge(undefined), null);
+  assert.equal(trackTypeBadge('not-a-number'), null);
 });

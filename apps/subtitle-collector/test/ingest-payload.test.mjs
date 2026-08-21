@@ -80,3 +80,20 @@ test('buildIngestPayload tags 为空/缺省 → 不覆盖 extractExtraFromView �
   const viewNoTags = { ...view, tags: undefined };
   assert.ok(!('tags' in buildIngestPayload(viewNoTags, [], {}).video.extra));
 });
+
+test('回归 2026-08-22①：owner.mid 缺失 → creator 不携带 source_uid 字段（禁 unknown 兜底）', () => {
+  // 失败形态（旧）：String(view.owner?.mid ?? 'unknown') → 'unknown'，归属不明的视频全部
+  // 合并进同一虚构 UP 行（不可逆脏数据）。通过形态（新）：缺失 → 字段不出现在 payload JSON 里，
+  // 由 server 侧决定 video.creator_id 置 null（与 server 侧修复的双端契约）。
+  const noMid = { ...view, owner: { name: 'up主', face: 'https://face' } }; // owner 在但无 mid
+  const p1 = buildIngestPayload(noMid, [], {});
+  assert.ok(!('source_uid' in p1.video.creator), 'source_uid 字段不得出现');
+  assert.ok(!JSON.stringify(p1.video.creator).includes('source_uid'), 'payload JSON 里不得出现该字段');
+  assert.equal(p1.video.creator.name, 'up主'); // name/avatar 不受影响
+  const noOwner = { ...view, owner: undefined }; // owner 整体缺失
+  const p2 = buildIngestPayload(noOwner, [], {});
+  assert.ok(!('source_uid' in p2.video.creator));
+  assert.equal(p2.video.creator.name, null);
+  // 正常 mid 仍携带且 String 化（mid 为数字）
+  assert.equal(buildIngestPayload(view, [], {}).video.creator.source_uid, '99');
+});

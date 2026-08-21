@@ -5,8 +5,8 @@
 //
 // crxjs 把本文件作 Rollup 入口打包（vite.config.ts），故可直接 import youtube-format.mjs / youtube-payload.js。
 
-import { normalizeYoutubeTimedtext, parseStatCount } from "./youtube-format.mjs";
-import { buildYoutubePayload, kindToTrackType } from "./youtube-payload.js";
+import { normalizeYoutubeTimedtext, parseStatCount, parseYtPublishDateMs } from "./youtube-format.mjs";
+import { buildYoutubePayload, trackTypeOf } from "./youtube-payload.js";
 
 // vid -> { meta: CAPTION_TRACKS.data, bodies: Map<baseUrl, {body:[...]}>, fetched: Set<baseUrl>, ccTriggered: boolean }
 const collected = new Map();
@@ -217,6 +217,9 @@ window.addEventListener("message", (event) => {
         baseUrl: data.url, // 完整请求 url（含 pot 签名）作 bodies key + source_url，保证 buildYoutubePayload 的 bodies[t.baseUrl] 命中
         languageCode: finalLang,
         kind: kind ?? null,
+        // 翻译轨标记：tlang 机翻轨的源轨若是人工 CC，URL 不带 kind，仅按 kind 映射会误标
+        // track_type=2（与人工 CC 同型）。isTranslation 让 trackTypeOf 取 3（机翻/翻译轨）。
+        isTranslation,
         name: isTranslation
           ? `${tlang === "zh-Hans" ? "中文" : tlang === "en" ? "英文" : tlang}（自动翻译）`
           : kind === "asr"
@@ -227,7 +230,7 @@ window.addEventListener("message", (event) => {
       };
       if (!tracks.some((t) => t.baseUrl === track.baseUrl)) {
         cur.meta.captionTracks = [...tracks, track]; // 动态增长源轨表，让 flushIfReady/getLocalState 见到该轨
-        console.log(`[content-yt] TIMEDTEXT_BODY 兜底构造轨 vid=${vid} lang=${track.languageCode} kind=${track.kind ?? "null"}`);
+        console.log(`[content-yt] TIMEDTEXT_BODY 兜底构造轨 vid=${vid} lang=${track.languageCode} kind=${track.kind ?? "null"}${isTranslation ? " 翻译轨(track_type=3)" : ""}`);
       }
     }
     const normalized = normalizeYoutubeTimedtext(data.body, data.fmt);
@@ -251,8 +254,10 @@ function findTrackForUrl(tracks, url) {
   const tlang = u.searchParams.get("tlang"); // 翻译目标语言（有=翻译轨请求）
   const kind = u.searchParams.get("kind"); // 'asr' 或 null
   if (tlang) {
-    // 翻译轨：fetchSubtitleBodiesViaBg 构造的 translation 轨 languageCode=tlang、kind=null
-    return tracks.find((t) => t.languageCode === tlang && (t.kind ?? null) === null) ?? null;
+    // 翻译轨：只匹配已标记为翻译轨的轨（兜底构造的 tlang 轨 isTranslation=true、languageCode=tlang）。
+    // 不能按「languageCode===tlang && kind===null」宽匹配——视频原生就有 tlang 语言的 CC 轨时
+    // （如原生中文 CC + tlang=zh-Hans 翻译请求），翻译体会错存进原生轨的 baseUrl（覆盖原轨内容）。
+    return tracks.find((t) => t.isTranslation === true && t.languageCode === tlang) ?? null;
   }
   const lang = u.searchParams.get("lang");
   if (!lang) return null;
@@ -361,7 +366,9 @@ function flushIfReady(vid, force = false) {
     channelName: cur.meta.channelName,
     avatar: cur.meta.avatar,
     duration: cur.meta.duration,
-    publishedAt: cur.meta.publishedAt,
+    // 发布时间：inject-yt 抽的 microformat.publishDate（ISO 串）转毫秒（对齐 B 站 pubdate×1000）；
+    // 缺失/不可解析 → undefined → payload published_at=null（不发明值）。2026-08-22 前恒 NULL 的修复。
+    publishedAt: parseYtPublishDateMs(cur.meta.publishDate),
     viewCount: cur.meta.viewCount,
     likeCount: cur.meta.likeCount,
     shortDescription: cur.meta.shortDescription,
@@ -379,7 +386,7 @@ function flushIfReady(vid, force = false) {
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   // popup「已收集」直取 content-yt 内存（chrome.tabs.sendMessage → 当前 tab，不经 background）。
   // 回复结构对齐 content.js:191-205（bvid/extra/subs/bodies），popup useLocalCollected（hooks.ts:327-333）无需改解析。
-  // track_type 用 kindToTrackType 映射成 1(asr)/2(人工)，与 INGEST 路径及 B 站 popup 展示一致。
+  // track_type 用 trackTypeOf 映射成 1(asr)/2(人工)/3(机翻翻译轨)，与 INGEST 路径及 B 站 popup 展示一致。
   if (msg?.type === "RE_AGG") {
     // popup「手动上报」（MANUAL_CAPTURE → background RE_AGG）：force 重发当前页已采集的 YouTube 字幕。
     // 对齐 content.js RE_AGG 语义。vid 从 URL 取（watch?v=）；collected 已有该 vid 才 flush（否则不上报，让 popup 兜底超时）。
@@ -420,7 +427,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       subs: tracks.map((t) => ({
         lan: t.languageCode,
         lan_doc: t.name,
-        track_type: kindToTrackType(t.kind),
+        track_type: trackTypeOf(t),
         subtitle_url: t.baseUrl, // 对齐 content.js 的 subtitle_url
         url_missing: false,
         has_body: cur.bodies.has(t.baseUrl),

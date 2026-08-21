@@ -50,7 +50,9 @@ export function buildIngestPayload(view, subs, subtitleBodies, tags, paidInfo = 
     video: {
       source_vid: view.bvid,
       creator: {
-        source_uid: String(view.owner?.mid ?? 'unknown'),
+        // creator 标识缺失 → 不携带 source_uid 字段（server 契约：由 server 决定 video.creator_id 置 null）。
+        // 禁 'unknown' 兜底：归属不明的视频会全部合并进同一虚构 UP 行，是不可逆脏数据（2026-08-22 修复）。
+        ...(view.owner?.mid != null ? { source_uid: String(view.owner.mid) } : {}),
         name: view.owner?.name ?? null,
         avatar: view.owner?.face ?? null,
       },

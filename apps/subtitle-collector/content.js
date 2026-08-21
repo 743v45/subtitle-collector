@@ -123,7 +123,13 @@ function flushIfReady(bvid, force = false) {
     source: "bilibili",
     video: {
       source_vid: cur.meta.bvid,
-      creator: { source_uid: String(cur.meta.up_mid ?? "unknown"), name: cur.meta.up_name },
+      // creator 标识缺失 → 不携带 source_uid 字段（server 契约：由 server 决定 video.creator_id 置 null）。
+      // 禁 "unknown" 兜底：归属不明的视频会全部合并进同一虚构 UP 行，是不可逆脏数据（2026-08-22 修复，
+      // 对齐 ingest-payload.js buildIngestPayload / youtube-payload.js buildYoutubePayload 的同款修复）。
+      creator: {
+        ...(cur.meta.up_mid != null && cur.meta.up_mid !== "" ? { source_uid: String(cur.meta.up_mid) } : {}),
+        name: cur.meta.up_name,
+      },
       title: cur.meta.title,
       extra: cur.meta.extra ?? { aid: cur.meta.aid, cid: cur.meta.cid, pic: cur.meta.pic },
       duration: cur.meta.duration,

@@ -200,3 +200,19 @@ export function parseStatCount(text) {
   else if (unit === 'b') num *= 1e9;
   return Math.round(num);
 }
+
+/**
+ * YouTube microformat 发布时间（ISO 串）→ 毫秒纪元。
+ * 来源：ytInitialPlayerResponse.microformat.playerMicroformatRenderer.publishDate
+ * （或 uploadDate），形如 "2009-10-25T06:57:33-07:00" / "2009-10-25"（日期段按 UTC 零点）。
+ * 输出毫秒对齐 B 站 ingest-payload.js 的 pubdate×1000 口径（server published_at 列）。
+ * null/空串/非串/不可解析 → null（缺失时字段不出现，不发明值；microformat 的 dateText
+ * 是本地化人读串非 ISO，不在此处理）。
+ * @param {string | null | undefined} raw
+ * @returns {number | null}
+ */
+export function parseYtPublishDateMs(raw) {
+  if (typeof raw !== 'string' || raw.trim() === '') return null;
+  const t = Date.parse(raw);
+  return Number.isFinite(t) ? t : null;
+}

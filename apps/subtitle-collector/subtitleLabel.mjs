@@ -25,3 +25,16 @@ export function isAiSubtitle(sub) {
 export function subtitleTrackLabel(sub) {
   return sub?.lan_doc ?? sub?.lan ?? '未知';
 }
+
+/**
+ * 字幕轨类型徽标文案（叠加在语言名旁，不霸占语言位，对齐 isAiSubtitle 的 badge 模式）。
+ * track_type=3 → '机翻'：YouTube tlang 翻译轨（服务端机翻字幕，非人工 CC 也非源语言），
+ * 落库 track_type=3 后 popup 据 type 识别；轨名可能已带「（自动翻译）」后缀，badge 作数据驱动的兜底信号。
+ * 1（AI/自动生成）不在此叠徽标——B 站 AI 走 isAiSubtitle 的 URL 特征徽标，
+ * YouTube asr 轨名自带「（自动生成）」；2（人工 CC）无徽标。
+ * @param {number | string | null | undefined} track_type
+ * @returns {string | null} 徽标文案；无徽标返回 null
+ */
+export function trackTypeBadge(track_type) {
+  return Number(track_type) === 3 ? '机翻' : null;
+}
