@@ -30,7 +30,7 @@ import {
 import { LOGOS, type Platform, type StatIconName } from './platforms';
 import { fmtNum } from './format';
 import { cn } from '@/lib/utils';
-import type { CollectTask, ConsistencyIssue, LocalSub, SubtitleBody } from './types';
+import type { CollectTask, ConsistencyIssue } from './types';
 import { formatSubtitle, SUBTITLE_FORMATS, type SubtitleFormat } from '../../subtitleFormat.mjs';
 import { isAiSubtitle, subtitleTrackLabel } from '../../subtitleLabel.mjs';
 import { relativeMonths } from '../../yt-channel.mjs';
@@ -103,6 +103,22 @@ function useSubtitleFormat(): [SubtitleFormat, (f: SubtitleFormat) => void] {
     chrome.storage.local.set({ [SUBTITLE_FORMAT_KEY]: f });
   }, []);
   return [fmt, set];
+}
+
+// 折叠状态记忆（视频信息卡/字幕卡共用）：启动从 storage 读（无记录用 defaultCollapsed），
+// 切换时回写 —— popup 每次打开都是新窗口，靠 storage 跨次记忆「上次折叠方式」。
+function useCollapseMemory(key: string, defaultCollapsed: boolean): [boolean, (v: boolean) => void] {
+  const [collapsed, setCollapsed] = useState(defaultCollapsed);
+  useEffect(() => {
+    chrome.storage.local.get([key], (items) => {
+      if (typeof items[key] === 'boolean') setCollapsed(items[key]);
+    });
+  }, [key]);
+  const set = useCallback((v: boolean) => {
+    setCollapsed(v);
+    chrome.storage.local.set({ [key]: v });
+  }, [key]);
+  return [collapsed, set];
 }
 
 export function Popup() {
@@ -234,6 +250,9 @@ export function Popup() {
             server={serverCollected}
             consistency={consistency}
           />
+          {/* 字幕独立卡（2026-08-22 从视频信息卡内拆出）：视频信息卡正下方；
+              无字幕→极简卡、无可复制轨→不渲染（态分支见组件内注释） */}
+          <SubtitleCard local={local} />
           {/* CreatorCard 依赖 server API：纯扩展下隐藏；
               YouTube server 态为 not-collected（无 creator_id）→ CreatorCard 自然返回 null，不展示 */}
           {!standalone && <CreatorCard creator={creatorState} />}
@@ -751,7 +770,9 @@ function NotLoadedCard() {
   );
 }
 
-// 视频信息卡：标题 + 同步/一致性 badge + bvid + 统计（数据驱动 platform.statFields）+ 复制 + tags。
+// 视频信息卡：可折叠（折叠态=标题行「视频信息」+ 同步/一致性 badge + bvid；
+// 展开态=元信息 + 统计（数据驱动 platform.statFields）+ 简介 + tags），折叠状态跨次记忆。
+// 字幕已拆为独立 SubtitleCard（本卡正下方）。
 function CollectedBlock({
   platform,
   bvid,
@@ -765,6 +786,9 @@ function CollectedBlock({
   server: CollectedState;
   consistency: ConsistencyIssue[];
 }) {
+  // 折叠记忆须在早退前调用（Rules of Hooks）；首次无记忆默认展开。
+  const [collapsed, setCollapsed] = useCollapseMemory('videoInfoCollapsed', false);
+
   // 非视频页判定走 server（useCollected 的 tabs.query 本地解析 URL）：
   // useLocalCollected 在 currentVid 未就绪时保持 loading，不再判 non-video，避免 loading→空→loading 闪烁。
   if (server.state === 'non-video') return null;
@@ -781,12 +805,10 @@ function CollectedBlock({
   // 主信息 + 叹号圈图标（点击展开原因），细节默认折叠 → 见 NotLoadedCard。
   if (local.state === 'not-loaded') return <NotLoadedCard />;
 
-  // no-subtitle 与 has-subtitle 都带 extra（视频元数据），统一渲染视频卡；区别只在字幕区。
+  // no-subtitle 与 has-subtitle 都带 extra（视频元数据），统一渲染视频卡；区别在字幕卡（SubtitleCard）。
   // 没字幕不代表没视频数据（统计/tags 仍展示）；上报是上报字幕，没字幕→同步未达 + 上报按钮置灰。
   const hasSubtitle = local.state === 'has-subtitle';
   const { extra } = local;
-  const subs = local.state === 'has-subtitle' ? local.subs : [];
-  const bodies = local.state === 'has-subtitle' ? local.bodies : {};
   const stat = extra.stat ?? {};
   const tags = Array.isArray(extra.tags) ? extra.tags : [];
   const pages = Array.isArray(extra.pages) ? extra.pages : [];
@@ -798,96 +820,92 @@ function CollectedBlock({
 
   return (
     <Card>
-      <CardContent className="space-y-3 p-3">
-        <div className="space-y-0.5">
-          <div className="flex flex-wrap items-center gap-2">
-            <div className="text-sm font-semibold">视频信息</div>
+      <CardContent className="p-3">
+        <Collapsible open={!collapsed} onOpenChange={(o) => setCollapsed(!o)}>
+          {/* 标题行（始终可见）：chevron + 标题 + 同步/一致性 badge + bvid（折叠时仍可核对视频标识） */}
+          <CollapsibleTrigger className="flex w-full items-center gap-2 text-left">
+            <ChevronIcon className={cn('h-3 w-3 shrink-0 transition-transform', !collapsed && 'rotate-90')} />
+            <span className="shrink-0 text-sm font-semibold">视频信息</span>
             <SyncStatusBadge server={server} hasSubtitle={hasSubtitle} />
             {consistency.map((c) => (
               <Badge
                 key={c.field}
                 variant="destructive"
-                className="font-normal"
+                className="shrink-0 font-normal"
                 title={`本地 ${c.local} / 服务端 ${c.server}`}
               >
                 ⚠ {c.field}不一致
               </Badge>
             ))}
-          </div>
-          <div className="text-xs text-muted-foreground tabular-nums">{bvid}</div>
-        </div>
-
-        {(pages.length > 1 || extra.tname || duration != null || publishedAt != null) && (
-          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
-            {pages.length > 1 && (
-              <span className="inline-flex items-center gap-1">
-                <PagesIcon className="h-3.5 w-3.5" />
-                <span className="tabular-nums">{pages.length}</span>
-                <span>P</span>
-              </span>
-            )}
-            {extra.tname && (
-              <span className="inline-flex items-center gap-1">
-                <CategoryIcon className="h-3.5 w-3.5" />
-                <span>{extra.tname}</span>
-              </span>
-            )}
-            {duration != null && (
-              <span className="inline-flex items-center gap-1 tabular-nums">
-                <ClockIcon className="h-3.5 w-3.5" />
-                <span>{fmtDuration(duration)}</span>
-              </span>
-            )}
-            {publishedAt != null && (
-              <span className="inline-flex items-center gap-1 tabular-nums">
-                <CalendarIcon className="h-3.5 w-3.5" />
-                <span>{new Date(publishedAt).toLocaleDateString('zh-CN')}</span>
-              </span>
-            )}
-          </div>
-        )}
-
-        {/* 统计：platform.statFields 数据驱动。大数值（font-bold）+ 图标小 label。 */}
-        <div className="grid grid-cols-3 gap-x-2 gap-y-3">
-          {platform.statFields.map((f) => {
-            const Icon = STAT_ICONS[f.icon];
-            return (
-              <div key={f.key} className="space-y-0.5">
-                <div className="text-base font-bold tabular-nums">{fmtNum(stat[f.key])}</div>
-                <div className="flex items-center gap-1 text-[10px] text-muted-foreground">
-                  <Icon className="h-3 w-3" />
-                  <span>{f.label}</span>
-                </div>
+            <span className="ml-auto min-w-0 truncate text-xs text-muted-foreground tabular-nums">{bvid}</span>
+          </CollapsibleTrigger>
+          <CollapsibleContent className="space-y-3 pt-3">
+            {(pages.length > 1 || extra.tname || duration != null || publishedAt != null) && (
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
+                {pages.length > 1 && (
+                  <span className="inline-flex items-center gap-1">
+                    <PagesIcon className="h-3.5 w-3.5" />
+                    <span className="tabular-nums">{pages.length}</span>
+                    <span>P</span>
+                  </span>
+                )}
+                {extra.tname && (
+                  <span className="inline-flex items-center gap-1">
+                    <CategoryIcon className="h-3.5 w-3.5" />
+                    <span>{extra.tname}</span>
+                  </span>
+                )}
+                {duration != null && (
+                  <span className="inline-flex items-center gap-1 tabular-nums">
+                    <ClockIcon className="h-3.5 w-3.5" />
+                    <span>{fmtDuration(duration)}</span>
+                  </span>
+                )}
+                {publishedAt != null && (
+                  <span className="inline-flex items-center gap-1 tabular-nums">
+                    <CalendarIcon className="h-3.5 w-3.5" />
+                    <span>{new Date(publishedAt).toLocaleDateString('zh-CN')}</span>
+                  </span>
+                )}
               </div>
-            );
-          })}
-        </div>
-
-        {/* 简介：extra.desc，截断 2 行；空则不渲染 */}
-        {desc && (
-          <div className="line-clamp-2 text-xs text-muted-foreground">{desc}</div>
-        )}
-
-        {/* 字幕区：有字幕→复制区；无字幕→提示留在字幕位置（视频数据仍展示） */}
-        {hasSubtitle ? (
-          <SubtitleCopySection subs={subs} bodies={bodies} />
-        ) : (
-          <div className="text-xs text-muted-foreground">无字幕</div>
-        )}
-
-        {/* stat.danmaku = 该视频收到的弹幕条数（B 站公开统计字段），非本项目采集的弹幕内容 */}
-        {tags.length > 0 && (
-          <div className="flex flex-wrap items-center gap-1">
-            {tags.slice(0, 8).map((t, i) => (
-              <Badge key={`${t.tag_name}-${i}`} variant="secondary" className="font-normal">
-                {t.tag_name}
-              </Badge>
-            ))}
-            {tags.length > 8 && (
-              <span className="text-xs text-muted-foreground">+{tags.length - 8}</span>
             )}
-          </div>
-        )}
+
+            {/* 统计：platform.statFields 数据驱动。大数值（font-bold）+ 图标小 label。 */}
+            <div className="grid grid-cols-3 gap-x-2 gap-y-3">
+              {platform.statFields.map((f) => {
+                const Icon = STAT_ICONS[f.icon];
+                return (
+                  <div key={f.key} className="space-y-0.5">
+                    <div className="text-base font-bold tabular-nums">{fmtNum(stat[f.key])}</div>
+                    <div className="flex items-center gap-1 text-[10px] text-muted-foreground">
+                      <Icon className="h-3 w-3" />
+                      <span>{f.label}</span>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* 简介：extra.desc，截断 2 行；空则不渲染 */}
+            {desc && (
+              <div className="line-clamp-2 text-xs text-muted-foreground">{desc}</div>
+            )}
+
+            {/* stat.danmaku = 该视频收到的弹幕条数（B 站公开统计字段），非本项目采集的弹幕内容 */}
+            {tags.length > 0 && (
+              <div className="flex flex-wrap items-center gap-1">
+                {tags.slice(0, 8).map((t, i) => (
+                  <Badge key={`${t.tag_name}-${i}`} variant="secondary" className="font-normal">
+                    {t.tag_name}
+                  </Badge>
+                ))}
+                {tags.length > 8 && (
+                  <span className="text-xs text-muted-foreground">+{tags.length - 8}</span>
+                )}
+              </div>
+            )}
+          </CollapsibleContent>
+        </Collapsible>
       </CardContent>
     </Card>
   );
@@ -1477,24 +1495,35 @@ function fmtDuration(sec: number): string {
   return h > 0 ? `${h}:${String(m).padStart(2, '0')}:${ss}` : `${m}:${ss}`;
 }
 
-// 默认折叠；展开后选格式（横向抽屉，记忆）+ 每轨右侧复制按钮，点即复制「该轨 × 当前格式」。
-function SubtitleCopySection({
-  subs,
-  bodies,
-}: {
-  subs: LocalSub[];
-  bodies: Record<string, SubtitleBody>;
-}) {
+// 字幕独立卡（2026-08-22 从视频信息卡内拆出，渲染在视频信息卡正下方）：
+//   loading / not-loaded → 不渲染（视频信息卡已给出「查询中 / 未获取到」提示）
+//   no-subtitle → 极简卡「无字幕」（不可折叠；底部上报按钮同态置灰已有提示，卡固定位置比时有时无可预期）
+//   has-subtitle 且无可复制轨（正文均未抓到）→ 不渲染（url_missing / 仍在加载）
+//   has-subtitle → 折叠态标题行「字幕 · N 轨」（N=总轨数，与展开行数一致）；
+//     展开态 = 格式抽屉（横向，格式记忆）+ 每轨复制/预览。折叠状态跨次记忆（首次默认折叠）。
+function SubtitleCard({ local }: { local: LocalCollectedState }) {
+  const [collapsed, setCollapsed] = useCollapseMemory('subtitleCardCollapsed', true);
   const [format, setFormat] = useSubtitleFormat();
-  const [open, setOpen] = useState(false);
   // 格式横向抽屉：收缩态只显示当前格式（点击展开），展开态横排三个，点选其一折叠并记忆。
   const [fmtOpen, setFmtOpen] = useState(false);
   const [copiedUrl, setCopiedUrl] = useState<string | null>(null);
   const [failedUrl, setFailedUrl] = useState<string | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null); // 展开预览字幕内容的轨 url（点「预览」toggle）
 
-  const copyableSubs = subs.filter((s) => s.has_body);
+  if (local.state !== 'has-subtitle') {
+    // loading / not-loaded：视频信息卡已给对应提示，字幕卡不渲染
+    if (local.state === 'loading' || local.state === 'not-loaded') return null;
+    // no-subtitle：极简卡
+    return (
+      <Card>
+        <CardContent className="p-3 text-xs text-muted-foreground">无字幕</CardContent>
+      </Card>
+    );
+  }
 
+  const subs = local.subs;
+  const bodies = local.bodies;
+  const copyableSubs = subs.filter((s) => s.has_body);
   if (copyableSubs.length === 0) {
     // 字幕体均未抓到（如 url_missing / 仍在加载），不渲染复制区
     return null;
@@ -1517,119 +1546,124 @@ function SubtitleCopySection({
   const fmtShown = fmtOpen ? FORMAT_OPTIONS : FORMAT_OPTIONS.filter((o) => o.value === format);
 
   return (
-    <Collapsible open={open} onOpenChange={setOpen}>
-      <CollapsibleTrigger className="flex w-full items-center gap-1 text-xs text-muted-foreground hover:text-foreground">
-        <ChevronIcon className={cn('h-3 w-3 transition-transform', open && 'rotate-90')} />
-        <span>字幕</span>
-      </CollapsibleTrigger>
-      <CollapsibleContent className="space-y-2 pt-2">
-        <div className="flex flex-wrap gap-1">
-          {fmtShown.map((o) => {
-            const isCurrent = o.value === format;
-            return (
-              <button
-                key={o.value}
-                type="button"
-                onClick={() => {
-                  if (fmtOpen) {
-                    setFormat(o.value);
-                    setFmtOpen(false);
-                  } else {
-                    setFmtOpen(true);
-                  }
-                }}
-                className={cn(
-                  'rounded border px-2 py-0.5 text-xs transition-colors',
-                  isCurrent
-                    ? 'border-brand bg-brand text-brand-foreground'
-                    : 'border-input bg-background hover:bg-accent hover:text-accent-foreground'
-                )}
-              >
-                {o.label}
-                {!fmtOpen && ' ▸'}
-              </button>
-            );
-          })}
-        </div>
+    <Card>
+      <CardContent className="p-3">
+        <Collapsible open={!collapsed} onOpenChange={(o) => setCollapsed(!o)}>
+          <CollapsibleTrigger className="flex w-full items-center gap-1 text-xs text-muted-foreground hover:text-foreground">
+            <ChevronIcon className={cn('h-3 w-3 shrink-0 transition-transform', !collapsed && 'rotate-90')} />
+            <span className="font-medium text-foreground">字幕</span>
+            <span className="tabular-nums">{subs.length} 轨</span>
+          </CollapsibleTrigger>
+          <CollapsibleContent className="space-y-2 pt-2">
+            <div className="flex flex-wrap gap-1">
+              {fmtShown.map((o) => {
+                const isCurrent = o.value === format;
+                return (
+                  <button
+                    key={o.value}
+                    type="button"
+                    onClick={() => {
+                      if (fmtOpen) {
+                        setFormat(o.value);
+                        setFmtOpen(false);
+                      } else {
+                        setFmtOpen(true);
+                      }
+                    }}
+                    className={cn(
+                      'rounded border px-2 py-0.5 text-xs transition-colors',
+                      isCurrent
+                        ? 'border-brand bg-brand text-brand-foreground'
+                        : 'border-input bg-background hover:bg-accent hover:text-accent-foreground'
+                    )}
+                  >
+                    {o.label}
+                    {!fmtOpen && ' ▸'}
+                  </button>
+                );
+              })}
+            </div>
 
-        <div className="space-y-1">
-          {subs.map((s, i) => {
-            const url = s.subtitle_url;
-            const selectable = !!s.has_body && !!url;
-            // B 站 AI 字幕走 aisubtitle.hdslb.com；识别用 URL 特征最稳（见 subtitleLabel.mjs）。
-            const isAi = isAiSubtitle(s);
-            // 语言名始终取 lan_doc/lan；AI 不再霸占语言位，改作下方 badge 叠加（BUG-2）。
-            const label = subtitleTrackLabel(s);
-            const justCopied = !!url && copiedUrl === url;
-            const justFailed = !!url && failedUrl === url;
-            // 字幕规模预览：有效字数（去空白字符，避免 YouTube asr 词间空格导致虚高）
-            const ytCues = url ? (bodies[url]?.body ?? []) : [];
-            const totalChars = ytCues.reduce((n, c) => n + (c?.content?.replace(/\s/g, '').length ?? 0), 0);
-            const previewText = ytCues.length > 0 ? `${fmtNum(totalChars)} 字` : '';
-            return (
-              <div key={url ?? i} className="space-y-1">
-                <div className="flex items-center justify-between rounded border border-input px-2 py-1 text-xs">
-                  <div className="flex min-w-0 flex-col gap-0.5">
-                    <span className="flex min-w-0 items-center gap-2">
-                      <span className="font-medium">{label}</span>
-                      {s.lan && s.lan_doc && (
-                        <span className="text-muted-foreground">{s.lan}</span>
-                      )}
-                      {isAi && (
-                        <Badge variant="secondary" className="shrink-0 px-1.5 py-0 text-[10px] leading-tight font-normal">
-                          AI
-                        </Badge>
-                      )}
-                    </span>
-                    {selectable && previewText && (
-                      <span className="text-[10px] text-muted-foreground/70">{previewText}</span>
+            <div className="space-y-1">
+              {subs.map((s, i) => {
+                const url = s.subtitle_url;
+                const selectable = !!s.has_body && !!url;
+                // B 站 AI 字幕走 aisubtitle.hdslb.com；识别用 URL 特征最稳（见 subtitleLabel.mjs）。
+                const isAi = isAiSubtitle(s);
+                // 语言名始终取 lan_doc/lan；AI 不再霸占语言位，改作下方 badge 叠加（BUG-2）。
+                const label = subtitleTrackLabel(s);
+                const justCopied = !!url && copiedUrl === url;
+                const justFailed = !!url && failedUrl === url;
+                // 字幕规模预览：有效字数（去空白字符，避免 YouTube asr 词间空格导致虚高）
+                const ytCues = url ? (bodies[url]?.body ?? []) : [];
+                const totalChars = ytCues.reduce((n, c) => n + (c?.content?.replace(/\s/g, '').length ?? 0), 0);
+                const previewText = ytCues.length > 0 ? `${fmtNum(totalChars)} 字` : '';
+                return (
+                  <div key={url ?? i} className="space-y-1">
+                    <div className="flex items-center justify-between rounded border border-input px-2 py-1 text-xs">
+                      <div className="flex min-w-0 flex-col gap-0.5">
+                        <span className="flex min-w-0 items-center gap-2">
+                          <span className="font-medium">{label}</span>
+                          {s.lan && s.lan_doc && (
+                            <span className="text-muted-foreground">{s.lan}</span>
+                          )}
+                          {isAi && (
+                            <Badge variant="secondary" className="shrink-0 px-1.5 py-0 text-[10px] leading-tight font-normal">
+                              AI
+                            </Badge>
+                          )}
+                        </span>
+                        {selectable && previewText && (
+                          <span className="text-[10px] text-muted-foreground/70">{previewText}</span>
+                        )}
+                      </div>
+                      <div className="flex shrink-0 items-center gap-1">
+                        {selectable && (
+                          <button
+                            type="button"
+                            onClick={() => setPreviewUrl((p) => (p === url ? null : url))}
+                            className="shrink-0 rounded bg-secondary px-2 py-0.5 text-xs text-secondary-foreground transition-colors hover:bg-secondary/80"
+                          >
+                            {previewUrl === url ? '收起' : '预览'}
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          disabled={!selectable}
+                          onClick={() => url && onCopy(url)}
+                          className={cn(
+                            'shrink-0 rounded px-2 py-0.5 text-xs transition-colors',
+                            justFailed
+                              ? 'bg-destructive text-destructive-foreground'
+                              : justCopied
+                                ? 'bg-secondary text-secondary-foreground'
+                                : 'bg-brand text-brand-foreground hover:bg-brand/90',
+                            !selectable && 'cursor-not-allowed opacity-50'
+                          )}
+                        >
+                          {!selectable
+                            ? '未获取'
+                            : justCopied
+                              ? '已复制'
+                              : justFailed
+                                ? '失败'
+                                : '复制'}
+                        </button>
+                      </div>
+                    </div>
+                    {previewUrl === url && selectable && bodies[url] && (
+                      <pre className="max-h-48 overflow-auto rounded border border-input bg-muted/40 p-2 font-mono text-[10px] leading-relaxed whitespace-pre-wrap break-words">
+                        {formatSubtitle(bodies[url], format)}
+                      </pre>
                     )}
                   </div>
-                  <div className="flex shrink-0 items-center gap-1">
-                    {selectable && (
-                      <button
-                        type="button"
-                        onClick={() => setPreviewUrl((p) => (p === url ? null : url))}
-                        className="shrink-0 rounded bg-secondary px-2 py-0.5 text-xs text-secondary-foreground transition-colors hover:bg-secondary/80"
-                      >
-                        {previewUrl === url ? '收起' : '预览'}
-                      </button>
-                    )}
-                    <button
-                      type="button"
-                      disabled={!selectable}
-                      onClick={() => url && onCopy(url)}
-                      className={cn(
-                        'shrink-0 rounded px-2 py-0.5 text-xs transition-colors',
-                        justFailed
-                          ? 'bg-destructive text-destructive-foreground'
-                          : justCopied
-                            ? 'bg-secondary text-secondary-foreground'
-                            : 'bg-brand text-brand-foreground hover:bg-brand/90',
-                        !selectable && 'cursor-not-allowed opacity-50'
-                      )}
-                    >
-                      {!selectable
-                        ? '未获取'
-                        : justCopied
-                          ? '已复制'
-                          : justFailed
-                            ? '失败'
-                            : '复制'}
-                    </button>
-                  </div>
-                </div>
-                {previewUrl === url && selectable && bodies[url] && (
-                  <pre className="max-h-48 overflow-auto rounded border border-input bg-muted/40 p-2 font-mono text-[10px] leading-relaxed whitespace-pre-wrap break-words">
-                    {formatSubtitle(bodies[url], format)}
-                  </pre>
-                )}
-              </div>
-            );
-          })}
-        </div>
-      </CollapsibleContent>
-    </Collapsible>
+                );
+              })}
+            </div>
+          </CollapsibleContent>
+        </Collapsible>
+      </CardContent>
+    </Card>
   );
 }
 
