@@ -4,6 +4,9 @@ import { resolveConnectionMode, isStandalone, CONNECTION_MODE_KEY, MODE_SERVER, 
 import { extractKeysFromNav } from "./wbi.js";
 import { biliFetch, formatSearchResult, fetchSubtitleView } from "./bili-fetch.js";
 import { buildIngestPayload, normalizeUrl, normalizeTags } from "./ingest-payload.js";
+import {
+  parseYtChannelHtml, parseYtBrowseResponse, channelVideosUrl,
+} from "./yt-channel.mjs";
 const EXT_VERSION = chrome.runtime.getManifest().version;
 
 let ws = null;
@@ -205,6 +208,100 @@ function fmtLength(sec) {
   const s = t % 60;
   const ss = String(s).padStart(2, '0');
   return h > 0 ? `${h}:${String(m).padStart(2, '0')}:${ss}` : `${m}:${ss}`;
+}
+
+// ── YouTube 频道（UP 主页）视频：全量分页拉取（2026-08-21）──
+// 对齐 fetchAllUpperVideos 模式：storage 唯一真相 + 页间节流 + 去重 + 中断保部分结果。
+// 数据源：频道 /videos tab SSR HTML（ytInitialData，首页 ~30 条 + continuation token）
+//   + InnerTube POST /youtubei/v1/browse（续页）。2026-08 实测条目为 lockupViewModel（非旧 videoRenderer）。
+// ident 三选一：{handle:'@xxx'} | {channelId:'UCxxx'} | {custom:'xxx'}（/c/、/user/ 旧式）。
+// 解析全部宽容降级（yt-channel.mjs），结构变化时 error 透传 UI。
+const ytChannelInflight = new Map(); // storage key → true（重复触发复用同一任务）
+const YT_CHANNEL_TTL_MS = 3600 * 1000;
+const YT_CHANNEL_PAGE_GAP_MS = 500; // 页间节流防风控
+// InnerTube WEB 客户端公开默认（页面抠不到 clientVersion 时兜底；key 是长期稳定的公开 WEB key）
+const YT_INNERTUBE_KEY_FALLBACK = 'AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8';
+const YT_CLIENT_VERSION_FALLBACK = '2.20240101.00.00';
+
+function ytChannelKey(ident) {
+  return `ytChannelVideos:${ident.channelId ?? ident.handle ?? ident.custom}`;
+}
+
+// 续页：POST /youtubei/v1/browse（context + continuation token）
+async function ytBrowseContinuation(inntertubeKey, clientVersion, token) {
+  const body = JSON.stringify({
+    context: { client: { clientName: 'WEB', clientVersion, hl: 'en', gl: 'US' } },
+    continuation: token,
+  });
+  const res = await fetch(`https://www.youtube.com/youtubei/v1/browse?key=${inntertubeKey}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'User-Agent': navigator.userAgent },
+    body,
+  });
+  if (!res.ok) throw new Error(`browse HTTP ${res.status}`);
+  return res.json();
+}
+
+async function fetchAllYtChannelVideos(ident, refresh = false) {
+  const key = ytChannelKey(ident);
+  if (!refresh) {
+    const { [key]: cached } = await chrome.storage.local.get(key);
+    if (cached?.fetchedAt && cached.done && !cached.error && Date.now() - cached.fetchedAt < YT_CHANNEL_TTL_MS) {
+      return { status: 'cached' };
+    }
+  }
+  if (ytChannelInflight.has(key)) return { status: 'inflight' };
+  ytChannelInflight.set(key, true);
+  const url = channelVideosUrl(ident);
+  const items = [];
+  const seen = new Set(); // vid 去重
+  let channelId = null;
+  let channelName = null;
+  let total = null;
+  let error = null;
+  let noNewStreak = 0;
+  const persist = (done, err) => chrome.storage.local.set({
+    [key]: { channelId, channelName, items, total, done, error: err, fetchedAt: Date.now() },
+  });
+  try {
+    if (!url) throw new Error('ident 需 handle/channelId/custom 至少其一');
+    // 首页：SSR HTML 解析
+    const htmlRes = await fetch(url, {
+      headers: { 'User-Agent': navigator.userAgent, 'Accept-Language': 'en-US,en;q=0.9' },
+    });
+    if (!htmlRes.ok) throw new Error(`channel page HTTP ${htmlRes.status}`);
+    const first = parseYtChannelHtml(await htmlRes.text());
+    channelId = first.channelId;
+    channelName = first.channelName;
+    total = first.total;
+    const inntertubeKey = first.inntertubeKey || YT_INNERTUBE_KEY_FALLBACK;
+    const clientVersion = first.clientVersion || YT_CLIENT_VERSION_FALLBACK;
+    for (const it of first.items) {
+      if (!seen.has(it.vid)) { seen.add(it.vid); items.push(it); }
+    }
+    await persist(false, null);
+    // 续页：InnerTube browse + continuation token，直到无 token
+    let token = first.continuation;
+    while (token) {
+      const json = await ytBrowseContinuation(inntertubeKey, clientVersion, token);
+      const page = parseYtBrowseResponse(json);
+      let added = 0;
+      for (const it of page.items) {
+        if (!seen.has(it.vid)) { seen.add(it.vid); items.push(it); added++; }
+      }
+      await persist(false, null);
+      token = page.continuation;
+      if (total > 0 && items.length >= total) break;
+      noNewStreak = added > 0 ? 0 : noNewStreak + 1;
+      if (noNewStreak >= 3) break;
+      await new Promise((r) => setTimeout(r, YT_CHANNEL_PAGE_GAP_MS));
+    }
+  } catch (e) {
+    error = String(e?.message ?? e);
+  }
+  await persist(true, error);
+  ytChannelInflight.delete(key);
+  return { status: 'done', error };
 }
 
 // MV3 SW 保活兜底：周期 alarm 唤醒 SW，若 ws 未 OPEN 则触发重连（C1）
@@ -512,6 +609,38 @@ async function connect() {
         } catch (err) {
           ws.send(JSON.stringify({ type: "result", id: msg.id, ok: false, error: String(err.message || err) }));
         }
+      } else if (msg.action === "list-yt-channel-videos") {
+        // YouTube 频道视频全量列表（CLI collect yt-videos 用）：拉完（或命中 inflight/缓存）从
+        // storage 读出全量数据回执。全量分页含页间节流，大频道（几百条）约十几秒——CLI 侧
+        // 需配大 --timeout（建议 ≥120000）。refresh=true 绕过 1h 缓存。
+        try {
+          const ident = typeof msg.ident === 'object' && msg.ident
+            ? msg.ident
+            : (typeof msg.channelId === 'string' && /^UC[\w-]{22}$/.test(msg.channelId)
+                ? { channelId: msg.channelId }
+                : (typeof msg.handle === 'string' && msg.handle ? { handle: msg.handle } : null));
+          if (!ident) throw new Error('ident（{handle|channelId}）required');
+          const r = await fetchAllYtChannelVideos(ident, msg.refresh === true);
+          if (r.status === 'inflight') throw new Error('该频道拉取进行中，请稍后重试');
+          const key = ytChannelKey(ident);
+          const { [key]: data } = await chrome.storage.local.get(key);
+          ws.send(JSON.stringify({
+            type: "result", id: msg.id, ok: true,
+            data: {
+              channel_id: data?.channelId ?? null,
+              channel_name: data?.channelName ?? null,
+              total: data?.total ?? data?.items?.length ?? 0,
+              items: (data?.items ?? []).map((it) => ({
+                vid: it.vid, title: it.title, created: it.created ?? null,
+                play: it.play ?? null, length: it.length ?? null, pic: it.pic ?? null,
+              })),
+              error: data?.error ?? null,
+              cache_status: r.status,
+            },
+          }));
+        } catch (err) {
+          ws.send(JSON.stringify({ type: "result", id: msg.id, ok: false, error: String(err.message || err) }));
+        }
       } else if (msg.action === "set-reporting") {
         const newEnabled = await applyReporting(msg.enabled === true);
         ws.send(JSON.stringify({ type: "result", id: msg.id, ok: true, data: { reporting_enabled: newEnabled } }));
@@ -606,6 +735,13 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     // 合集视频全量拉取：异步长任务（页间节流），立即回执状态；数据经 storage 增量流出。
     // refresh=true 绕过缓存强制重拉（popup ↻ 按钮；inflight 进行中则忽略）。
     fetchAllSeasonVideos(Number(msg.seasonId), msg.refresh === true).then(
+      (r) => sendResponse({ ok: true, ...r }),
+      (e) => sendResponse({ ok: false, error: String(e?.message ?? e) })
+    );
+    return true;
+  } else if (msg?.type === "FETCH_YT_CHANNEL_ALL" && msg.ident) {
+    // YouTube 频道视频全量拉取：异步长任务，数据经 storage 增量流出（同上两分支模式）。
+    fetchAllYtChannelVideos(msg.ident, msg.refresh === true).then(
       (r) => sendResponse({ ok: true, ...r }),
       (e) => sendResponse({ ok: false, error: String(e?.message ?? e) })
     );

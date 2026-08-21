@@ -6,7 +6,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import Database from 'better-sqlite3';
 import { migrate, runMigrations } from '../../db/migrate.js';
-import { collectSearch, collectSubtitle, collectDedupe, collectUpperInfo, collectUpperVideos, collectUpperVideosAll, collectNewVideos, collectDiscover, resolveClientId, collectNosub, filterByPubdate, filterByFans, parseSince, parseDateToUnix, resolveFans, collectFindSearch, collectFind, type CollectClient, type SearchItem, type FindItem, type FansSource } from './collect.js';
+import { collectSearch, collectSubtitle, collectDedupe, collectUpperInfo, collectUpperVideos, collectUpperVideosAll, collectNewVideos, collectDiscover, resolveClientId, collectNosub, filterByPubdate, filterByFans, parseSince, parseDateToUnix, resolveFans, collectFindSearch, collectFind, parseYtChannelArg, collectYtChannelVideos, type CollectClient, type SearchItem, type FindItem, type FansSource } from './collect.js';
 
 function mockClient(sendCommandResult: unknown, listClientsResult: unknown[] = [{ client_id: 'c1' }]) {
   const calls: Array<{ clientId: string; action: string; params: unknown; timeout: number }> = [];
@@ -447,3 +447,44 @@ test('collectFind fans 部分缓存命中 + 部分实时补充', async () => {
 // | 轮次 | 日期       | 范围                                              | 结果 |
 // |------|------------|---------------------------------------------------|------|
 // | 1    | 2026-07-05 | collect find 纯函数单测首增（16 个用例）          | PASS |
+
+// ── YouTube 频道（2026-08-21）──
+
+test('parseYtChannelArg：@handle / UCxxx / 频道页 URL 三类标识', () => {
+  assert.deepEqual(parseYtChannelArg('@mattpocockuk'), { handle: '@mattpocockuk' });
+  assert.deepEqual(parseYtChannelArg('UCswG6FSbgZjbWtdf_hMLaow'), { channelId: 'UCswG6FSbgZjbWtdf_hMLaow' });
+  assert.deepEqual(parseYtChannelArg('https://www.youtube.com/@mattpocockuk/videos'), { handle: '@mattpocockuk' });
+  assert.deepEqual(parseYtChannelArg('https://www.youtube.com/channel/UCswG6FSbgZjbWtdf_hMLaow/featured'), { channelId: 'UCswG6FSbgZjbWtdf_hMLaow' });
+  assert.deepEqual(parseYtChannelArg('https://www.youtube.com/c/mattcpocock'), { custom: 'mattcpocock' });
+  assert.deepEqual(parseYtChannelArg('https://www.youtube.com/user/mattpocockuk/videos'), { custom: 'mattpocockuk' });
+  // 非频道参数 → 抛错（视频 URL / 搜索页 / 纯名字）
+  assert.throws(() => parseYtChannelArg('https://www.youtube.com/watch?v=gaDdrDdczO4'));
+  assert.throws(() => parseYtChannelArg('mattpocockuk'));
+  assert.throws(() => parseYtChannelArg('https://space.bilibili.com/123'));
+});
+
+test('parseYtChannelArg 边界：前后空白 / UC 长度不对', () => {
+  assert.deepEqual(parseYtChannelArg('  @handle  '), { handle: '@handle' });
+  assert.throws(() => parseYtChannelArg('UCswG6FSbgZjbWtdf_hMLa')); // 21 位
+});
+
+test('collectDedupe source=youtube：按 youtube 域判库（bili 域同名不串）', () => {
+  const db = makeDb();
+  db.prepare("INSERT INTO videos (source, source_vid, title, first_seen_at) VALUES ('youtube','gaDdrDdczO4','t',1)").run();
+  const out = collectDedupe(db, ['gaDdrDdczO4', 'F3lL98Pj90o'], 'youtube');
+  assert.deepEqual(out.collected, ['gaDdrDdczO4']);
+  assert.deepEqual(out.missing, ['F3lL98Pj90o']);
+  // 同 vid 在 bilibili 域不判 collected（复合 (source, source_vid) 判重）
+  const outBili = collectDedupe(db, ['gaDdrDdczO4'], 'bilibili');
+  assert.deepEqual(outBili.missing, ['gaDdrDdczO4']);
+});
+
+test('collectYtChannelVideos 下发 list-yt-channel-videos（ident + refresh 透传）', async () => {
+  const resp = { ok: true, result: { ok: true, data: { total: 299, items: [] } } };
+  const client = mockClient(resp);
+  const out = await collectYtChannelVideos(client as unknown as CollectClient, 'c1', { handle: '@x' }, { refresh: true }, 5000);
+  assert.equal(out, resp); // 透传返回值
+  const c = (client as unknown as { calls: Array<{ action: string; params: Record<string, unknown> }> }).calls[0];
+  assert.equal(c.action, 'list-yt-channel-videos');
+  assert.deepEqual(c.params, { ident: { handle: '@x' }, refresh: true });
+});

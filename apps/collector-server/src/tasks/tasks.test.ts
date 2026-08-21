@@ -155,6 +155,26 @@ test('createTasksBatch：空数组 / 非数组输入零任务', () => {
   } finally { cleanup(); }
 });
 
+test('createTasksBatch：source=youtube（11 位 vid 校验 + watch URL + 独立去重域）', () => {
+  const { db, cleanup } = setupDb();
+  try {
+    const r = createTasksBatch(db, [
+      'gaDdrDdczO4',   // 合法 11 位 → created
+      'gaDdrDdczO4',   // 重复 → 忽略
+      'short',         // 非 11 位 → 忽略
+      'BV1aa411c7mD',  // B 站 BV 串在 youtube 域非法（12 位）→ 忽略
+    ], 'youtube');
+    assert.equal(r.created.length, 1);
+    assert.equal(r.created[0].source, 'youtube');
+    assert.equal(r.created[0].source_vid, 'gaDdrDdczO4');
+    assert.equal(r.created[0].url, 'https://www.youtube.com/watch?v=gaDdrDdczO4');
+    // youtube 侧再次提交同 vid（pending 未终态）→ skipped
+    const r3 = createTasksBatch(db, ['gaDdrDdczO4'], 'youtube');
+    assert.equal(r3.created.length, 0);
+    assert.deepEqual(r3.skipped, ['gaDdrDdczO4']);
+  } finally { cleanup(); }
+});
+
 // ── expandUpperVideos：经扩展 WS 代理拉 UP 全量列表 + 标注已采 ──
 
 // fake requestCommand：模拟真实扩展契约（background.js list-upper-videos action 读

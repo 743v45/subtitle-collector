@@ -382,24 +382,36 @@ export function useUpperVideos(mid: string | null | undefined): UpperVideosState
   return state;
 }
 
-// —— 空间页 mid：tabs.query 解析 space.bilibili.com/{mid}（UP 全量列表空间页入口）——
-// 纯数字首段路径（/upload/video 等子页不干扰）。非空间页返回 null。
-export function useSpaceMid(): string | null {
-  const [mid, setMid] = useState<string | null>(null);
+// —— UP 主页入口：tabs.query 解析当前 URL ——
+// B 站：space.bilibili.com/{mid}（纯数字首段路径，/upload/video 等子页不干扰）。
+// YouTube：频道页（/@handle、/channel/UCxxx、/c/、/user/ 及任意子页，见 yt-channel.mjs 识别规则）。
+// 非两类 UP 主页（视频页/首页等）返回 null。
+export interface UpperEntry {
+  source: 'bilibili' | 'youtube';
+  kind: 'mid' | 'handle' | 'channel' | 'custom'; // B 站 mid / YouTube 三类标识
+  key: string;                                    // mid | @handle | UCxxx | custom 名
+}
+export function useUpperEntry(): UpperEntry | null {
+  const [entry, setEntry] = useState<UpperEntry | null>(null);
   useEffect(() => {
     chrome.tabs.query({ active: true, currentWindow: true }, ([tab]) => {
-      let m: string | null = null;
+      let e: UpperEntry | null = null;
       try {
         const u = tab?.url ? new URL(tab.url) : null;
         if (u && u.hostname === 'space.bilibili.com') {
           const seg = u.pathname.split('/').filter(Boolean)[0];
-          if (seg && /^\d+$/.test(seg)) m = seg;
+          if (seg && /^\d+$/.test(seg)) e = { source: 'bilibili', kind: 'mid', key: seg };
+        } else if (u && u.hostname.replace(/^(www|m|music)\./, '') === 'youtube.com') {
+          const seg = u.pathname.split('/').filter(Boolean);
+          if (seg[0] && /^@[\w.-]{3,30}$/.test(seg[0])) e = { source: 'youtube', kind: 'handle', key: seg[0] };
+          else if (seg[0] === 'channel' && seg[1] && /^UC[\w-]{22}$/.test(seg[1])) e = { source: 'youtube', kind: 'channel', key: seg[1] };
+          else if ((seg[0] === 'c' || seg[0] === 'user') && seg[1] && /^[\w.-]+$/.test(seg[1])) e = { source: 'youtube', kind: 'custom', key: seg[1] };
         }
       } catch { /* 非法 URL 忽略 */ }
-      setMid(m);
+      setEntry(e);
     });
   }, []);
-  return mid;
+  return entry;
 }
 
 // —— UP 全部视频（background 全量分页拉取，storage 唯一数据真相，2026-08-19）——
@@ -525,13 +537,87 @@ export function useSeasonVideos(season: { id: number; title: string } | null): S
   return state;
 }
 
-// —— UP 已采集合：server /api/videos?creator_uid 分页拉已采 bvid 集合（采集状态标注用）——
+// —— YouTube 频道（UP 主页）视频列表（background 全量分页拉取，storage 唯一真相，2026-08-21）——
+// 挂载即触发 FETCH_YT_CHANNEL_ALL（fresh 缓存命中直接读；否则 background 起任务/复用 inflight），
+// background 每页写 chrome.storage.local[`ytChannelVideos:${key}`] → storage.onChanged 增量渲染进度。
+// ident 三类标识（handle/channel/custom）；channelId 在首页解析后随 storage 流出（已采标注等它就绪）。
+export interface YtChannelVideoItem {
+  vid: string;
+  title: string | null;
+  created: number | null; // unix 秒（publishedTimeText 相对时间估算）
+  play: number | null;
+  length: string | null;  // "MM:SS" / "HH:MM:SS"
+  pic?: string | null;    // i.ytimg.com 稳定缩略图 URL
+}
+export interface YtChannelIdent {
+  handle?: string;
+  channelId?: string;
+  custom?: string;
+}
+export type YtChannelState =
+  | { state: 'loading' }
+  | {
+      state: 'ok';
+      channelId: string | null;  // 首页解析后到位（已采标注用；解析失败 null 不阻断列表）
+      channelName: string | null;
+      items: YtChannelVideoItem[];
+      total: number | null;      // 频道 header 视频总数（解析失败 null → 进度行用 items.length）
+      done: boolean;
+      error: string | null;
+      fetchedAt: number;
+    };
+
+export function useYoutubeChannelVideos(ident: YtChannelIdent | null, key: string | null): YtChannelState {
+  const [state, setState] = useState<YtChannelState>({ state: 'loading' });
+  const read = useCallback((k: string) => {
+    const storageKey = `ytChannelVideos:${k}`;
+    chrome.storage.local.get([storageKey], (items) => {
+      const cached = items[storageKey] as
+        | (Omit<Extract<YtChannelState, { state: 'ok' }>, 'state'> & { channelId?: string | null })
+        | undefined;
+      if (cached && Array.isArray(cached.items)) {
+        setState({
+          state: 'ok',
+          channelId: cached.channelId ?? null,
+          channelName: cached.channelName ?? null,
+          items: cached.items,
+          total: cached.total ?? null,
+          done: !!cached.done,
+          error: cached.error ?? null,
+          fetchedAt: cached.fetchedAt ?? 0,
+        });
+      } else {
+        setState({ state: 'loading' });
+      }
+    });
+  }, []);
+  useEffect(() => {
+    if (!ident || !key) {
+      setState({ state: 'loading' });
+      return;
+    }
+    setState({ state: 'loading' });
+    read(key);
+    chrome.runtime.sendMessage({ type: 'FETCH_YT_CHANNEL_ALL', ident }, () => void chrome.runtime.lastError);
+    const handler = (changes: Record<string, chrome.storage.StorageChange>, area: string) => {
+      if (area !== 'local') return;
+      if (`ytChannelVideos:${key}` in changes) read(key);
+    };
+    chrome.storage.onChanged.addListener(handler);
+    return () => chrome.storage.onChanged.removeListener(handler);
+  }, [ident, key, read]);
+  return state;
+}
+
+// —— UP 已采集合：server /api/videos?creator_uid 分页拉已采 vid 集合（采集状态标注用）——
 // server-down / standalone → null（列表照常展示，采集状态与批量按钮隐藏）。
+// source 参数化（2026-08-21，YouTube 频道卡用；uid 语义=bilibili mid / youtube channelId）。
 // 分页上限 10 页（×100 条）：万级视频的 UP 极罕见，防失控足够。
 export function useCreatorCollected(
   mid: string | null | undefined,
   httpBase: string,
   enabled: boolean,
+  source: 'bilibili' | 'youtube' = 'bilibili',
 ): Set<string> | null {
   const [set, setSet] = useState<Set<string> | null>(null);
   useEffect(() => {
@@ -546,7 +632,7 @@ export function useCreatorCollected(
         const size = 100;
         for (let page = 1; page <= 10; page++) {
           const r = await fetch(
-            `${httpBase}/api/videos?source=bilibili&creator_uid=${encodeURIComponent(mid)}&page=${page}&size=${size}`,
+            `${httpBase}/api/videos?source=${source}&creator_uid=${encodeURIComponent(mid)}&page=${page}&size=${size}`,
             { cache: 'no-cache' },
           );
           const d = await r.json();
@@ -561,7 +647,7 @@ export function useCreatorCollected(
       }
     })();
     return () => { alive = false; };
-  }, [mid, httpBase, enabled]);
+  }, [mid, httpBase, enabled, source]);
   return set;
 }
 

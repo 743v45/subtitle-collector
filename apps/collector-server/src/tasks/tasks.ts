@@ -122,22 +122,31 @@ export function createTask(db: Database.Database, target: ParsedTarget): Collect
 
 // ── 批量建任务（popup/web 按 UP 批量采集）──
 // 去重：同 (source, source_vid) 已有未终态任务（pending/dispatched）跳过；终态（succeeded/failed）允许重采。
-// 入参 bvid 非法（非 BV 格式）或重复直接忽略，不进 skipped 也不建任务。
+// 入参 vid 非法（bilibili 非 BV 格式 / youtube 非 11 位）或重复直接忽略，不进 skipped 也不建任务。
+// source 参数化（2026-08-21，YouTube 频道批量）：默认 bilibili 兼容旧调用。
+const VID_RE: Record<string, RegExp> = {
+  bilibili: /^BV[0-9A-Za-z]{10}$/,
+  youtube: /^[\w-]{11}$/,
+};
 export function createTasksBatch(
   db: Database.Database,
-  bvids: unknown,
+  vids: unknown,
+  source: 'bilibili' | 'youtube' = 'bilibili',
 ): { created: CollectTask[]; skipped: string[] } {
+  const re = VID_RE[source];
+  const urlFor = (vid: string) =>
+    source === 'youtube' ? `https://www.youtube.com/watch?v=${vid}` : `https://www.bilibili.com/video/${vid}`;
   const created: CollectTask[] = [];
   const skipped: string[] = [];
   const seen = new Set<string>();
-  for (const bvid of Array.isArray(bvids) ? bvids : []) {
-    if (typeof bvid !== 'string' || !/^BV[0-9A-Za-z]{10}$/.test(bvid) || seen.has(bvid)) continue;
-    seen.add(bvid);
+  for (const vid of Array.isArray(vids) ? vids : []) {
+    if (typeof vid !== 'string' || !re.test(vid) || seen.has(vid)) continue;
+    seen.add(vid);
     const active = db.prepare(
-      "SELECT 1 FROM collect_tasks WHERE source = 'bilibili' AND source_vid = ? AND status IN ('pending', 'dispatched')",
-    ).get(bvid);
-    if (active) { skipped.push(bvid); continue; }
-    created.push(createTask(db, { source: 'bilibili', source_vid: bvid, url: `https://www.bilibili.com/video/${bvid}` }));
+      'SELECT 1 FROM collect_tasks WHERE source = ? AND source_vid = ? AND status IN (?, ?)',
+    ).get(source, vid, 'pending', 'dispatched');
+    if (active) { skipped.push(vid); continue; }
+    created.push(createTask(db, { source, source_vid: vid, url: urlFor(vid) }));
   }
   return { created, skipped };
 }

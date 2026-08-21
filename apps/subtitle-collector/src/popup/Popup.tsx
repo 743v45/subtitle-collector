@@ -10,8 +10,9 @@ import {
   useReporting,
   useSeasonVideos,
   useServerConfig,
-  useSpaceMid,
   useUpperAllVideos,
+  useUpperEntry,
+  useYoutubeChannelVideos,
   diffConsistency,
   type CollectedState,
   type ConnectionStatus,
@@ -21,6 +22,8 @@ import {
   type LoginState,
   type SeasonAllState,
   type UpperAllState,
+  type YtChannelIdent,
+  type YtChannelState,
 } from './hooks';
 import { LOGOS, type Platform, type StatIconName } from './platforms';
 import { fmtNum } from './format';
@@ -129,10 +132,36 @@ export function Popup() {
   const upMid = creatorState.state === 'ok' ? creatorState.creator.source_uid : null;
   // UP 全部视频列表入口（2026-08-19）：空间页（URL 解析 mid）优先，视频页回落 server creator mid。
   // 纯扩展模式空间页仍可用（B 站数据不经 server），视频页 standalone 无 creator mid 自然不渲染。
-  const spaceMid = useSpaceMid();
-  const upperMid = spaceMid ?? upMid;
+  // UP 主页入口（2026-08-21 泛化）：B 站空间页 / YouTube 频道页（@handle、/channel/、/c/ 及任意子页）。
+  const upperEntry = useUpperEntry();
+  const isBili = currentPlatform?.id === 'bilibili';
+  const isYt = currentPlatform?.id === 'youtube';
+  // B 站 UP 列表入口：空间页（URL 解析 mid）优先，视频页回落 server creator mid。
+  // 仅 bili 平台（修复：YouTube 视频页 upMid=channelId 误喂 B 站卡发错误 arc/search）。
+  const biliSpaceMid = upperEntry?.source === 'bilibili' ? upperEntry.key : null;
+  const upperMid = isBili ? (biliSpaceMid ?? upMid) : null;
   const upperAll = useUpperAllVideos(upperMid);
   const upperCollected = useCreatorCollected(upperMid, serverCfg.httpBase, !standalone);
+
+  // YouTube 频道列表入口（2026-08-21）：频道页用 URL 标识（handle/channel/custom），
+  // 视频页回落 server creator channelId（upMid 在 youtube 平台即 UCxxx）。
+  // ident 用 useMemo 稳定引用（useYoutubeChannelVideos 的 effect 依赖它，防每帧重触发）。
+  const ytIdent = useMemo<YtChannelIdent | null>(() => {
+    const e = upperEntry?.source === 'youtube' ? upperEntry : null;
+    if (e) {
+      if (e.kind === 'handle') return { handle: e.key };
+      if (e.kind === 'channel') return { channelId: e.key };
+      return { custom: e.key };
+    }
+    return isYt && upMid ? { channelId: upMid } : null;
+  }, [upperEntry, isYt, upMid]);
+  const ytKey = upperEntry?.source === 'youtube' ? upperEntry.key : (ytIdent?.channelId ?? null);
+  const ytChannel = useYoutubeChannelVideos(ytIdent, ytKey);
+  // 已采标注 uid：视频页 = upMid（channelId）；频道页 = storage 数据解析出的 channelId（异步就绪）。
+  const ytCollectedUid = upperEntry?.source === 'youtube'
+    ? (ytChannel.state === 'ok' ? ytChannel.channelId : null)
+    : upMid;
+  const ytCollected = useCreatorCollected(ytCollectedUid, serverCfg.httpBase, !standalone, 'youtube');
 
   // 合集卡入口（2026-08-19）：B 站视频页且当前视频属于合集（local extra.ugc_season）时展示。
   // 只依赖本地数据源（content.js GET_LOCAL_STATE）——纯扩展模式也能拉合集列表（B 站 API 直连），
@@ -207,6 +236,18 @@ export function Popup() {
           season={season}
           state={seasonAll}
           collected={upperCollected}
+          httpBase={serverCfg.httpBase}
+          standalone={standalone}
+        />
+      )}
+      {/* YouTube 频道卡（2026-08-21）：频道页（@handle/** 等任意子页）或 YouTube 视频页（creator 回落）；
+          勾选批量采集走 /api/collect-tasks/batch {vids, source:youtube} → navigate 采集 */}
+      {ytIdent && (
+        <YoutubeChannelCard
+          ident={ytIdent}
+          title={ytChannel.state === 'ok' && ytChannel.channelName ? `频道 ${ytChannel.channelName}` : '频道全部视频'}
+          state={ytChannel}
+          collected={ytCollected}
           httpBase={serverCfg.httpBase}
           standalone={standalone}
         />
@@ -740,12 +781,16 @@ function CreatorCard({ creator }: { creator: CreatorState }) {
   );
 }
 
-// 通用「勾选批量采集卡」主体（2026-08-19）：UP 全部视频卡 / 合集卡共用的列表体——
+// item 的视频标识字段：B 站系（UP/合集卡）为 bvid、YouTube 为 vid——统一取值（存量 storage 兼容）。
+const vidOf = (it: { bvid?: string; vid?: string }): string => it.bvid ?? it.vid ?? '';
+
+// 通用「勾选批量采集卡」主体（2026-08-19）：UP 全部视频卡 / 合集卡 / YouTube 频道卡共用的列表体——
 // 折叠态 = 标题行（title + 总数 + 已采 + 拉取进度 + ↻）；展开 = 过滤条（状态/时间/播放量档位）
 // + 勾选列表（封面缩略图 + 已采点 + 标题链接 + 时长/播放/日期小字）+ 批量采集。
 // 数据：state 由各自 hook 提供（background 全量分页，storage 唯一真相）；
-// 已采标注：collected 为已采 bvid 集合（null=不可用 → 状态列隐藏）。
-// 批量采集：勾选 bvids → POST /api/collect-tasks/batch → server 调度器串行派发 fetch-subtitle（免导航）。
+// 已采标注：collected 为已采 vid 集合（null=不可用 → 状态列隐藏）。
+// linkFor/source：平台差异（B 站 video/BV 链接 / YouTube watch?v= 链接 + 批量端点 source）。
+// 批量采集：勾选 vids → POST /api/collect-tasks/batch → server 调度器串行派发（免导航/navigate 采集）。
 function BatchCollectCard({
   title,
   titleText,
@@ -755,15 +800,19 @@ function BatchCollectCard({
   collected,
   httpBase,
   standalone,
+  linkFor,
+  source,
 }: {
   title: ReactNode;               // 折叠态标题（含色块的富文本）
   titleText: string;              // 纯文本标题（loading 提示用）
-  footer: ReactNode;              // 展开态底部极小灰字（UP 卡 UID / 合集卡 season_id）
+  footer: ReactNode;              // 展开态底部极小灰字（UP 卡 UID / 合集卡 season_id / YouTube 卡 channelId）
   onRefresh: () => void;          // ↻ 清缓存重拉（包装组件各自发对应消息）
-  state: UpperAllState | SeasonAllState;
+  state: UpperAllState | SeasonAllState | YtChannelState;
   collected: Set<string> | null;
   httpBase: string;
   standalone: boolean;
+  linkFor: (vid: string) => string;
+  source: 'bilibili' | 'youtube';
 }) {
   const [open, setOpen] = useState(false);
   // 过滤条件（档位化，适配 popup 窄空间）：状态 tab / 时间范围 / 播放量下限
@@ -781,8 +830,9 @@ function BatchCollectCard({
     if (state.state !== 'ok') return [];
     const sinceMs = timeDays > 0 ? Date.now() - timeDays * 86400_000 : 0;
     return state.items.filter((it) => {
+      const vid = vidOf(it);
       if (statusFilter !== 'all' && collected) {
-        const isCollected = collected.has(it.bvid);
+        const isCollected = collected.has(vid);
         if (statusFilter === 'collected' ? !isCollected : isCollected) return false;
       }
       if (sinceMs > 0 && (it.created == null || it.created * 1000 < sinceMs)) return false;
@@ -802,21 +852,22 @@ function BatchCollectCard({
       </Card>
     );
   }
-  const { items, total, done, error } = state;
+  const { items, done, error } = state;
+  const total = state.total ?? items.length; // YouTube 频道 header 总数解析失败 → 已拉条数
 
-  const collectedCount = collected ? items.filter((it) => collected.has(it.bvid)).length : null;
+  const collectedCount = collected ? items.filter((it) => collected.has(vidOf(it))).length : null;
 
-  const toggle = (bvid: string) => {
+  const toggle = (vid: string) => {
     setSelected((prev) => {
       const next = new Set(prev);
-      if (next.has(bvid)) next.delete(bvid);
-      else next.add(bvid);
+      if (next.has(vid)) next.delete(vid);
+      else next.add(vid);
       return next;
     });
   };
   // 全选未采（对当前过滤后的视图；勾选过已采的也一并清掉，语义=「采集这批」）
   const selectUncollected = () => {
-    setSelected(new Set(filtered.filter((it) => !collected?.has(it.bvid)).map((it) => it.bvid)));
+    setSelected(new Set(filtered.filter((it) => !collected?.has(vidOf(it))).map(vidOf)));
   };
 
   const submitBatch = async () => {
@@ -827,10 +878,14 @@ function BatchCollectCard({
     }
     setBatch({ state: 'submitting', msg: '' });
     try {
+      // bilibili 沿用旧 body {bvids}；youtube 走 {vids, source}（2026-08-21 server 端点双格式）
+      const body = source === 'youtube'
+        ? { vids: [...selected], source: 'youtube' }
+        : { bvids: [...selected] };
       const r = await fetch(`${httpBase}/api/collect-tasks/batch`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ bvids: [...selected] }),
+        body: JSON.stringify(body),
       });
       const d = await r.json();
       if (!d?.ok) throw new Error(d?.error ?? `HTTP ${r.status}`);
@@ -917,11 +972,12 @@ function BatchCollectCard({
             {/* 列表：可滚动；每条 checkbox + 已采点 + 标题链接 + 时长/播放/日期小字 */}
             <div className="max-h-80 space-y-0.5 overflow-y-auto pr-0.5">
               {filtered.map((it) => {
-                const isCollected = collected?.has(it.bvid) ?? null;
-                const isSelected = selected.has(it.bvid);
+                const vid = vidOf(it);
+                const isCollected = collected?.has(vid) ?? null;
+                const isSelected = selected.has(vid);
                 return (
                   <div
-                    key={it.bvid}
+                    key={vid}
                     className={cn(
                       'flex items-center gap-1.5 rounded px-1 py-0.5 text-xs transition-colors',
                       isSelected ? 'bg-brand/10' : 'hover:bg-muted/60'
@@ -930,9 +986,9 @@ function BatchCollectCard({
                     <input
                       type="checkbox"
                       checked={isSelected}
-                      onChange={() => toggle(it.bvid)}
+                      onChange={() => toggle(vid)}
                       className="h-3 w-3 shrink-0 accent-brand"
-                      aria-label={`选择 ${it.title}`}
+                      aria-label={`选择 ${it.title ?? ''}`}
                     />
                     {/* 封面缩略图（16:9，无 pic/旧缓存占位灰块；no-referrer 防 CDN 防盗链） */}
                     {it.pic ? (
@@ -953,11 +1009,11 @@ function BatchCollectCard({
                       />
                     )}
                     <a
-                      href={`https://www.bilibili.com/video/${it.bvid}`}
+                      href={linkFor(vid)}
                       target="_blank"
                       rel="noreferrer"
                       className="min-w-0 flex-1 truncate hover:text-primary"
-                      title={it.title}
+                      title={it.title ?? ''}
                     >
                       {it.title}
                     </a>
@@ -1059,6 +1115,8 @@ function UpperAllVideosCard({
       collected={collected}
       httpBase={httpBase}
       standalone={standalone}
+      linkFor={(vid) => `https://www.bilibili.com/video/${vid}`}
+      source="bilibili"
     />
   );
 }
@@ -1091,6 +1149,50 @@ function SeasonVideosCard({
       collected={collected}
       httpBase={httpBase}
       standalone={standalone}
+      linkFor={(vid) => `https://www.bilibili.com/video/${vid}`}
+      source="bilibili"
+    />
+  );
+}
+
+// YouTube 频道卡（2026-08-21）：频道页（@handle/** 等任意子页）或 YouTube 视频页（creator 回落）入口，
+// 列出频道 /videos tab 全部视频。数据：background fetchAllYtChannelVideos
+//（频道页 HTML ytInitialData + InnerTube browse 续页全量分页，storage 唯一真相）；
+// 已采标注：server /api/videos?source=youtube&creator_uid=channelId（频道页等 storage 解析出 channelId）。
+// 批量：{vids, source:youtube} → server 调度 fetch-youtube-subtitle（navigate 采集，~1 分钟/条）。
+function YoutubeChannelCard({
+  ident,
+  title,
+  state,
+  collected,
+  httpBase,
+  standalone,
+}: {
+  ident: YtChannelIdent;
+  title: string;
+  state: YtChannelState;
+  collected: Set<string> | null;
+  httpBase: string;
+  standalone: boolean;
+}) {
+  return (
+    <BatchCollectCard
+      title={title}
+      titleText="频道全部视频"
+      footer={
+        <div className="text-[10px] text-muted-foreground/50">
+          YouTube {state.state === 'ok' ? (state.channelId ?? ident.handle ?? ident.custom ?? '') : ''}
+        </div>
+      }
+      onRefresh={() =>
+        chrome.runtime.sendMessage({ type: 'FETCH_YT_CHANNEL_ALL', ident, refresh: true }, () => void chrome.runtime.lastError)
+      }
+      state={state}
+      collected={collected}
+      httpBase={httpBase}
+      standalone={standalone}
+      linkFor={(vid) => `https://www.youtube.com/watch?v=${vid}`}
+      source="youtube"
     />
   );
 }

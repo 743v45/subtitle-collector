@@ -58,16 +58,18 @@ export async function collectSubtitle(
   return client.sendCommand(clientId, 'fetch-subtitle', { bvid }, timeout);
 }
 
-/** `collect dedupe <bvid...>`：直读 SQLite，判据=video 是否存在（无字幕视频采过后也入 videos）。 */
+/** `collect dedupe <bvid...>`：直读 SQLite，判据=video 是否存在（无字幕视频采过后也入 videos）。
+ *  source 参数化（2026-08-21，YouTube 频道批量用）。 */
 export function collectDedupe(
   db: Database.Database,
   bvids: string[],
+  source: 'bilibili' | 'youtube' = 'bilibili',
 ): { collected: string[]; missing: string[] } {
   if (bvids.length === 0) return { collected: [], missing: [] };
   const placeholders = bvids.map(() => '?').join(',');
   const rows = db.prepare(
-    `SELECT source_vid FROM videos WHERE source = 'bilibili' AND source_vid IN (${placeholders})`,
-  ).all(...bvids) as Array<{ source_vid: string }>;
+    `SELECT source_vid FROM videos WHERE source = ? AND source_vid IN (${placeholders})`,
+  ).all(source, ...bvids) as Array<{ source_vid: string }>;
   const set = new Set(rows.map((r) => r.source_vid));
   const collected: string[] = [];
   const missing: string[] = [];
@@ -90,6 +92,78 @@ export function collectNosub(
      WHERE v.source = 'bilibili' AND v.source_vid IN (${placeholders}) AND t.id IS NULL`,
   ).all(...bvids) as Array<{ source_vid: string }>;
   return rows.map((r) => r.source_vid);
+}
+
+// ── YouTube 频道（2026-08-21）：CLI 参数解析 + 全量列表 + 逐条采集 ──
+
+/** 频道标识（扩展 list-yt-channel-videos action 的 ident 参数）。 */
+export interface YtChannelIdent { handle?: string; channelId?: string; custom?: string; }
+
+/** CLI 参数（@handle / UCxxx / 频道页 URL）→ ident。非法抛错（命令注册层转 ARGS）。 */
+export function parseYtChannelArg(arg: string): YtChannelIdent {
+  const a = arg.trim();
+  if (/^@[\w.-]{3,30}$/.test(a)) return { handle: a };
+  if (/^UC[\w-]{22}$/.test(a)) return { channelId: a };
+  try {
+    const u = new URL(a);
+    if (u.hostname === 'youtube.com' || u.hostname.endsWith('.youtube.com')) {
+      const seg = u.pathname.split('/').filter(Boolean);
+      if (seg[0] && /^@[\w.-]{3,30}$/.test(seg[0])) return { handle: seg[0] };
+      if (seg[0] === 'channel' && seg[1] && /^UC[\w-]{22}$/.test(seg[1])) return { channelId: seg[1] };
+      if ((seg[0] === 'c' || seg[0] === 'user') && seg[1] && /^[\w.-]+$/.test(seg[1])) return { custom: seg[1] };
+    }
+  } catch { /* 非 URL → 落到下面统一报错 */ }
+  throw new Error(`无法识别的频道参数：${arg}（支持 @handle / UC 开头 channelId / 频道页 URL）`);
+}
+
+/** 单条 YouTube 频道视频（list-yt-channel-videos 扩展回执 data.items 形状）。 */
+export interface YtChannelVideoItem {
+  vid: string;
+  title?: string | null;
+  created?: number | null; // unix 秒（publishedTimeText 相对时间估算）
+  play?: number | null;
+  length?: string | null;
+}
+
+/** `collect yt-videos`：下发 list-yt-channel-videos，扩展全量分页拉完回执（refresh 绕过扩展侧 1h 缓存）。 */
+export async function collectYtChannelVideos(
+  client: CollectClient,
+  clientId: string,
+  ident: YtChannelIdent,
+  opts: { refresh?: boolean },
+  timeout: number,
+): Promise<unknown> {
+  return client.sendCommand(clientId, 'list-yt-channel-videos', { ident, refresh: opts.refresh === true }, timeout);
+}
+
+/** `collect yt-videos <key> --collect`：逐条采集未入库视频（fetch-youtube-subtitle navigate，串行 + sleep 防风控）。
+ *  已入库（videos 表命中）跳过——判据对齐 collectDedupe（无字幕也入 videos）。返回逐条结果。 */
+export async function collectYtVideosRun(
+  client: CollectClient,
+  clientId: string,
+  db: Database.Database,
+  vids: string[],
+  sleepMs: number,
+  timeout: number,
+): Promise<Array<{ vid: string; ok: boolean; reason?: string }>> {
+  const { missing } = collectDedupe(db, vids, 'youtube');
+  const out: Array<{ vid: string; ok: boolean; reason?: string }> = [];
+  for (const vid of missing) {
+    const resp = await client.sendCommand(clientId, 'fetch-youtube-subtitle', { videoId: vid }, timeout) as {
+      result?: { error?: string; data?: { reason?: string; captured?: number } };
+    };
+    const err = resp.result?.error;
+    if (err === 'need_login' || err === 'risk_control') {
+      throw new Error(`collect ${vid} STOP: ${err}（请处理后重跑）`);
+    }
+    out.push({
+      vid,
+      ok: !err && (resp.result?.data?.captured ?? 0) > 0,
+      reason: err ?? resp.result?.data?.reason,
+    });
+    await new Promise((r) => setTimeout(r, Math.max(sleepMs, 1000)));
+  }
+  return out;
 }
 
 /** `collect upper-info <mid>`：下发 get-upper-info，扩展 fetch acc/info+stat → ingest-upper 入库。 */
@@ -545,6 +619,58 @@ export function buildCollectCommand(): Command {
           ? await collectUpperVideosAll(client as CollectClient, clientId, mid, opts.size, opts.timeout, opts.sinceCreated)
           : await collectUpperVideos(client as CollectClient, clientId, mid, { page: opts.page, size: opts.size }, opts.timeout);
         emitResult(data, ctx.format);
+      } catch (err) {
+        handleHttpError(err);
+      }
+    });
+
+  collect
+    .command('yt-videos <key>')
+    .description('拉 YouTube 频道视频列表（@handle/UCxxx/频道页 URL；--collect 逐个采集未入库的字幕）')
+    .option('--since-days <n>', '只保留近 N 天发布的视频（相对时间估算过滤；null 保留）', (v) => Number.parseInt(v, 10))
+    .option('--collect', '对未入库视频逐个采集字幕（串行 navigate 采集，每条约 1 分钟，慢但稳）')
+    .option('--refresh', '绕过扩展侧 1h 缓存强制重拉列表')
+    .option('--sleep <ms>', '--collect 逐条采集间隔毫秒（默认 1500）', (v) => Number.parseInt(v, 10), 1500)
+    .option('--client <id>', '扩展 client_id（缺省取第一个在线）')
+    .option('--timeout <ms>', '等扩展回执的超时毫秒（默认 180000，全量分页含节流需较久）', (v) => Number.parseInt(v, 10), 180000)
+    .action(async (key: string, opts: { sinceDays?: number; collect?: boolean; refresh?: boolean; sleep: number; client?: string; timeout: number }) => {
+      if (!Number.isFinite(opts.timeout) || opts.timeout <= 0) emitError(`invalid --timeout: ${opts.timeout}`, 'ARGS');
+      if (opts.sinceDays != null && opts.sinceDays < 0) emitError(`invalid --since-days: ${opts.sinceDays}`, 'ARGS');
+      let ident: YtChannelIdent;
+      try {
+        ident = parseYtChannelArg(key);
+      } catch (err) {
+        emitError(err instanceof Error ? err.message : String(err), 'ARGS');
+      }
+      const ctx = getCliContext();
+      const client = new ServerClient(ctx.serverUrl, ctx.token);
+      try {
+        const clientId = await resolveClientId(client as CollectClient, opts.client);
+        const data = await collectYtChannelVideos(client as CollectClient, clientId, ident, { refresh: opts.refresh }, opts.timeout) as {
+          ok: boolean; result?: { ok: boolean; error?: string; data?: { channel_id?: string; channel_name?: string; total?: number; items?: YtChannelVideoItem[]; error?: string | null } };
+        };
+        if (!data.ok || !data.result?.ok) {
+          emitError(`list-yt-channel-videos failed: ${data.result?.error ?? 'server error'}`, 'RUNTIME');
+        }
+        const d = data.result?.data ?? {};
+        // since-days 过滤：null created 保留（YouTube 相对时间解析失败时防漏采）
+        const sinceUnix = opts.sinceDays != null ? Math.floor(Date.now() / 1000) - opts.sinceDays * 86400 : null;
+        const items = sinceUnix != null
+          ? (d.items ?? []).filter((it) => it.created == null || it.created >= sinceUnix)
+          : (d.items ?? []);
+        const collectedSummary = { channel_id: d.channel_id, channel_name: d.channel_name, total: d.total ?? null, count: items.length };
+        if (!opts.collect) {
+          emitResult({ ...collectedSummary, items }, ctx.format);
+        } else {
+          const vids = items.map((it) => it.vid).filter(Boolean);
+          let db: Database.Database;
+          try { db = openReadonlyDb(ctx.dbPath); } catch (err) {
+            emitError(err instanceof Error ? err.message : String(err), 'DB_UNREADABLE');
+          }
+          const collected = await collectYtVideosRun(client as CollectClient, clientId, db, vids, opts.sleep, opts.timeout);
+          const { collected: already } = collectDedupe(db, vids, 'youtube');
+          emitResult({ ...collectedSummary, collected_now: collected.length, already_in_db: already.length, results: collected }, ctx.format);
+        }
       } catch (err) {
         handleHttpError(err);
       }

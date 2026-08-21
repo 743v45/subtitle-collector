@@ -54,9 +54,12 @@ export async function handleTasksHttp(req: IncomingMessage, res: ServerResponse,
   if (pathname === '/api/collect-tasks/batch') {
     if (req.method !== 'POST') { json(res, 405, { ok: false, error: 'method not allowed' }); return; }
     const body = await readJsonBody(req);
-    const bvids = Array.isArray(body?.bvids) ? body.bvids : [];
-    if (bvids.length === 0) { json(res, 400, { ok: false, error: 'bvids: string[] required（至少一个 BV 号）' }); return; }
-    const r = createTasksBatch(db, bvids);
+    // 兼容两种 body：{bvids[]}（bilibili，旧）与 {vids[], source}（source=bilibili|youtube，2026-08-21）
+    const source = body?.source === 'youtube' ? 'youtube' : 'bilibili';
+    const vids = Array.isArray(body?.vids) ? body.vids : (Array.isArray(body?.bvids) ? body.bvids : []);
+    const label = source === 'youtube' ? 'YouTube 视频 ID（11 位）' : 'BV 号';
+    if (vids.length === 0) { json(res, 400, { ok: false, error: `vids: string[] required（至少一个${label}）` }); return; }
+    const r = createTasksBatch(db, vids, source);
     if (r.created.length > 0) kickTaskScheduler(); // 事件驱动：建任务立即尝试派发
     json(res, 200, { ok: true, created: r.created.length, skipped: r.skipped.length, tasks: r.created });
     return;
