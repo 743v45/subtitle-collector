@@ -363,3 +363,159 @@ test('版本去重：同 body 不同签名 URL → 跳过；body 变化 → 新�
     assert.equal(c.c, 2);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
+
+// ── creator 缺失契约（与扩展侧共同约定：缺失不发字段；'unknown' 为旧扩展窗口期防御）──
+
+test('creator 缺失（不发 creator 字段）：不建 creators 行，video.creator_id=null', () => {
+  const { db, dir } = freshDb();
+  try {
+    ingestVideo(db, {
+      source: 'youtube',
+      video: { source_vid: 'yt1', title: '受限元信息', extra: {}, duration: 60, published_at: 1 },
+      tracks: [],
+    });
+    assert.equal((db.prepare('SELECT COUNT(*) AS c FROM creators').get() as { c: number }).c, 0,
+      '不得 upsert 任何 creator 行');
+    const v = db.prepare('SELECT creator_id FROM videos WHERE source_vid = ?').get('yt1') as { creator_id: number | null };
+    assert.equal(v.creator_id, null, 'video.creator_id 应写 null（schema 允许）');
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("creator.source_uid 字面 'unknown' 视同缺失：不同频道的视频不吸进同一虚构 UP 行", () => {
+  const { db, dir } = freshDb();
+  try {
+    const mk = (vid: string) => ingestVideo(db, {
+      source: 'youtube',
+      video: { source_vid: vid, title: 't', creator: { source_uid: 'unknown' }, extra: {}, duration: 1, published_at: 1 },
+      tracks: [],
+    });
+    mk('ytA');
+    mk('ytB'); // 旧逻辑：UNIQUE(source,'unknown') 使两条视频吸进同一行（1 个 creator、2 条挂靠）
+    assert.equal((db.prepare('SELECT COUNT(*) AS c FROM creators').get() as { c: number }).c, 0,
+      "不得落 'unknown' 虚构 creator 行");
+    const rows = db.prepare('SELECT source_vid, creator_id FROM videos ORDER BY source_vid').all() as Array<{ source_vid: string; creator_id: number | null }>;
+    assert.deepEqual(rows.map((r) => r.creator_id), [null, null], '两条视频 creator_id 均应为 null');
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('creator.source_uid null / 空串 同样视同缺失', () => {
+  const { db, dir } = freshDb();
+  try {
+    ingestVideo(db, {
+      source: 'youtube',
+      video: { source_vid: 'ytN', title: 't', creator: { source_uid: null }, extra: {}, duration: 1, published_at: 1 },
+      tracks: [],
+    });
+    ingestVideo(db, {
+      source: 'youtube',
+      video: { source_vid: 'ytE', title: 't', creator: { source_uid: '' }, extra: {}, duration: 1, published_at: 1 },
+      tracks: [],
+    });
+    assert.equal((db.prepare('SELECT COUNT(*) AS c FROM creators').get() as { c: number }).c, 0);
+    const rows = db.prepare('SELECT creator_id FROM videos').all() as Array<{ creator_id: number | null }>;
+    assert.deepEqual(rows.map((r) => r.creator_id), [null, null]);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('重采缺 creator：已有 creator_id 保留旧归属（COALESCE 语义，与 duration/published_at 一致）', () => {
+  const { db, dir } = freshDb();
+  try {
+    ingestVideo(db, {
+      source: 'youtube',
+      video: { source_vid: 'ytR', title: 't', creator: { source_uid: 'UC1', name: 'ch' }, extra: {}, duration: 1, published_at: 1 },
+      tracks: [],
+    });
+    const before = db.prepare('SELECT creator_id FROM videos WHERE source_vid = ?').get('ytR') as { creator_id: number | null };
+    ingestVideo(db, {
+      source: 'youtube',
+      video: { source_vid: 'ytR', title: 't2', extra: {}, duration: 1, published_at: 1 }, // 本次不带 creator
+      tracks: [],
+    });
+    const v = db.prepare('SELECT creator_id FROM videos WHERE source_vid = ?').get('ytR') as { creator_id: number | null };
+    assert.equal(v.creator_id, before.creator_id, 'UPDATE 路径缺 creator_uid 保留旧归属（防合法视频被不带 creator 的路径误清）');
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+// ── 重采 UPDATE 合并语义（「非空才覆盖」+ paid 只升不降 + tags 保底）──
+
+test('重采 duration/published_at 缺失：保留旧值（COALESCE(new, old)）；带新值则覆盖', () => {
+  const { db, dir } = freshDb();
+  try {
+    const full = (duration?: number, published_at?: number) => ingestVideo(db, {
+      source: 'bilibili',
+      video: { source_vid: 'BVM', title: 't', creator: { source_uid: '1', name: 'up' }, extra: {}, duration, published_at },
+      tracks: [],
+    });
+    full(600, 1700000000000);
+    full(undefined, undefined); // 浏览路径重采：payload 不带 → 旧逻辑 ?? null 会清掉
+    let v = db.prepare('SELECT duration, published_at FROM videos WHERE source_vid = ?').get('BVM') as { duration: number; published_at: number };
+    assert.equal(v.duration, 600, 'duration 新值缺失应保留旧值');
+    assert.equal(v.published_at, 1700000000000, 'published_at 新值缺失应保留旧值');
+    full(700, 1700000001000); // 带新值 → 正常覆盖
+    v = db.prepare('SELECT duration, published_at FROM videos WHERE source_vid = ?').get('BVM') as { duration: number; published_at: number };
+    assert.equal(v.duration, 700);
+    assert.equal(v.published_at, 1700000001000);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('paid 只升不降：旧 1 时新 payload 无 paid 键 / paid=false 均保持 1；旧 0 新 1 正常升级', () => {
+  const { db, dir } = freshDb();
+  try {
+    const rec = (extra: Record<string, unknown>, vid = 'BVP') => ingestVideo(db, {
+      source: 'bilibili',
+      video: { source_vid: vid, title: 't', creator: { source_uid: '1', name: 'up' }, extra },
+      tracks: [],
+    });
+    rec({ paid: true });                 // 首次：paid=1
+    rec({ aid: 1 });                     // 重采无 paid 键（浏览路径）→ 旧逻辑 Number(undefined)→NaN→0 清掉
+    let v = db.prepare('SELECT paid FROM videos WHERE source_vid = ?').get('BVP') as { paid: number };
+    assert.equal(v.paid, 1, '新值缺失应保留旧值 1');
+    rec({ paid: false });                // 显式 false → 只升不降
+    v = db.prepare('SELECT paid FROM videos WHERE source_vid = ?').get('BVP') as { paid: number };
+    assert.equal(v.paid, 1, 'paid 只升不降：1 不得回落为 0');
+    rec({ paid: false }, 'BV0');         // 新视频首次 paid=false → 0
+    rec({ paid: true }, 'BV0');          // 重采升级 0→1
+    const up = db.prepare('SELECT paid FROM videos WHERE source_vid = ?').get('BV0') as { paid: number };
+    assert.equal(up.paid, 1, '旧 0 新 1 应覆盖（正常升级）');
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('title 新值 null 不覆盖（新值非 null 时正常更新）', () => {
+  const { db, dir } = freshDb();
+  try {
+    const rec = (title: string | null) => ingestVideo(db, {
+      source: 'bilibili',
+      video: { source_vid: 'BVT', title: title as unknown as string, creator: { source_uid: '1', name: 'up' }, extra: {}, duration: 1, published_at: 1 },
+      tracks: [],
+    });
+    rec('旧标题');
+    rec(null); // 新值 null → 不覆盖
+    let v = db.prepare('SELECT title FROM videos WHERE source_vid = ?').get('BVT') as { title: string };
+    assert.equal(v.title, '旧标题', 'title 新值 null 应保留旧值');
+    rec('新标题'); // 正常改版更新
+    v = db.prepare('SELECT title FROM videos WHERE source_vid = ?').get('BVT') as { title: string };
+    assert.equal(v.title, '新标题');
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('extra.tags 保底：重采 extra 无 tags / 空 tags 保留旧 tags；带非空 tags 时正常替换', () => {
+  const { db, dir } = freshDb();
+  try {
+    const rec = (extra: Record<string, unknown>) => ingestVideo(db, {
+      source: 'bilibili',
+      video: { source_vid: 'BVG', title: 't', creator: { source_uid: '1', name: 'up' }, extra, duration: 1, published_at: 1 },
+      tracks: [],
+    });
+    rec({ tags: [{ tag_id: 1, tag_name: '游戏' }], stat: { view: 100 } });
+    rec({ stat: { view: 200 } }); // tag 接口失败的重采：extra 无 tags → 旧逻辑整体替换冲掉
+    let tags = db.prepare("SELECT json_extract(extra, '$.tags') AS t FROM videos WHERE source_vid = ?").get('BVG') as { t: string };
+    assert.equal(JSON.parse(tags.t)[0].tag_name, '游戏', '新 extra 无 tags 字段应保留旧 extra.tags');
+    rec({ tags: [], stat: { view: 300 } }); // 空 tags 数组同样保底
+    tags = db.prepare("SELECT json_extract(extra, '$.tags') AS t FROM videos WHERE source_vid = ?").get('BVG') as { t: string };
+    assert.equal(JSON.parse(tags.t)[0].tag_name, '游戏', '新 extra tags 为空数组应保留旧 extra.tags');
+    assert.equal((db.prepare("SELECT json_extract(extra, '$.stat.view') AS v FROM videos WHERE source_vid = ?").get('BVG') as { v: number }).v, 300, 'extra 其余字段仍整体替换为最新');
+    rec({ tags: [{ tag_id: 2, tag_name: '新标签' }] }); // 非空新 tags → 正常替换
+    tags = db.prepare("SELECT json_extract(extra, '$.tags') AS t FROM videos WHERE source_vid = ?").get('BVG') as { t: string };
+    assert.equal(JSON.parse(tags.t)[0].tag_name, '新标签', '新 extra 带非空 tags 应整体替换');
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});

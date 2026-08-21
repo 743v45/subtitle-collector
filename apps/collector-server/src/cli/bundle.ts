@@ -6,6 +6,7 @@ import { extractBody } from './subtitleFormat.js';
 import type Database from 'better-sqlite3';
 import { videosList, type VideosListOpts } from './commands/videos.js';
 import { resolveSubtitle } from './commands/export.js';
+import { latestTaskStatusByVideoIds } from '../db/advanced.js';
 
 // ── 时间格式化 ──
 
@@ -41,17 +42,19 @@ export const ANALYZE_MD = `# 分析指引（bundle 自述）
 
 本目录是**分析原料包**：\`manifest.json\`（视频清单与导出条件）+ \`videos/*.txt\`（每视频字幕正文，行格式 \`[分:秒] 字幕\`）。
 
-**分析产物写回本目录**（与原料同级）。按用途选模板，产物文件名固定：
+**分析产物写到 \`analysis/<主题>/\`**（相对 bundle 根；与 README「分析产物规范」一致）。bundle 目录是可再生原料，重导出会整体覆盖——产物与原料分开存放，互不混杂。按用途选模板，产物文件名固定：
 
 | 用途 | 产物文件 |
 |---|---|
-| 某话题多 UP 观点聚合 | \`观点汇总.md\` |
-| 面试题整理 | \`面试题库.md\` |
-| 单 UP 理念提炼 | \`理念整理.md\` |
+| 某话题多 UP 观点聚合 | \`analysis/<主题>/观点汇总.md\` |
+| 面试题整理 | \`analysis/<主题>/面试题库.md\` |
+| 单 UP 理念提炼 | \`analysis/<主题>/理念整理.md\` |
 
 **硬性要求**：
 1. 每条观点/题目/金句必须附出处：\`> 来源: <视频标题> [分:秒]\`，时间戳取自 \`videos/<BV号>.txt\` 行首，可回溯。
-2. \`manifest.json\` 中 \`subtitle: null\` 的视频无正文（采集盲区），在「覆盖盲区」如实列出，勿假装看过。
+2. \`manifest.json\` 中 \`subtitle: null\` 的视频无正文（采集盲区），分两类在「覆盖盲区」如实列出，勿假装看过：
+   - 真无字幕（\`pot_limited: false\`）：视频本身无字幕轨，不可挽回；
+   - 受限待重采（\`pot_limited: true\`）：采集时字幕受限（如 YouTube pot 门槛），重试重采可能补回，不算永久盲区。
 3. 结论只用原料支持的说法，区分「视频里明说」与「分析者推断」。
 
 ---
@@ -78,7 +81,10 @@ export const ANALYZE_MD = `# 分析指引（bundle 自述）
 - <待验证 / 延伸阅读>
 
 ## 覆盖盲区
-- <subtitle:null 视频 / 主题未覆盖的流派>
+### 真无字幕（不可挽回）
+- <subtitle:null 且 pot_limited=false 的视频 / 主题未覆盖的流派>
+### 受限待重采（pot_limited=true，可重试）
+- <subtitle:null 且 pot_limited=true 的视频；重采成功后下次导出自动移出此栏>
 \`\`\`
 
 ## 模板二：面试题库.md（面试内容整理）
@@ -123,7 +129,7 @@ export interface BundleSubtitleMeta {
   file: string;                 // 相对 bundle 根
   lan: string | null;
   lan_doc: string | null;
-  track_type: number | null;    // 1=AI 2=CC
+  track_type: number | null;    // 1=AI 2=CC 3=翻译轨
   version_id: number;
   origin: string;               // external | manual | asr
 }
@@ -134,6 +140,10 @@ export interface BundleVideoEntry {
   duration: number | null; published_at: number | null; first_seen_at: number;
   track_count: number;
   subtitle: BundleSubtitleMeta | null;  // null = 无字幕/轨缺失/payload 损坏
+  // 受限标记：该视频最近一次 collect_tasks 任务 status='limited'（半入库：元信息在、0 轨，
+  // 如 YouTube pot 门槛）。与「真无字幕」的区分字段——重采成功后最新任务不再是 limited，
+  // 标记自然消失（从任务表派生而非 videos 加列，免去回清维护，见 latestTaskStatusByVideoIds）。
+  pot_limited: boolean;
 }
 
 export interface BundleManifest {
@@ -161,7 +171,7 @@ export interface BuildBundleOpts {
 function videoHeader(v: BundleVideoEntry, sub: BundleSubtitleMeta): string {
   const dur = v.duration != null ? secsToClock(v.duration) : '未知';
   const pub = v.published_at != null ? new Date(v.published_at).toISOString().slice(0, 10) : '未知';
-  const trackTypeLabel = sub.track_type === 2 ? 'CC' : sub.track_type === 1 ? 'AI' : '?';
+  const trackTypeLabel = sub.track_type === 2 ? 'CC' : sub.track_type === 1 ? 'AI' : sub.track_type === 3 ? '翻译' : '?';
   const trackLabel = sub.lan_doc && sub.lan ? `${sub.lan_doc}(${sub.lan}, ${trackTypeLabel})` : `${sub.lan ?? '(无lan)'}`;
   return [
     `# ${v.title}`,
@@ -175,6 +185,8 @@ function videoHeader(v: BundleVideoEntry, sub: BundleSubtitleMeta): string {
 
 export function buildBundle(db: Database.Database, opts: BuildBundleOpts): BundleResult {
   const page = videosList(db, { ...opts.filters, page: 1, size: opts.limit });
+  // 受限标记：一次批量取本页视频的最近任务状态（latestTaskStatusByVideoIds，见 advanced.ts 注释）
+  const latestStatus = latestTaskStatusByVideoIds(db, page.items.map((v) => v.id));
   const videos: BundleVideoEntry[] = [];
   const files: BundleFile[] = [{ path: 'ANALYZE.md', content: ANALYZE_MD }];
   const errors: Array<{ source_vid: string; message: string }> = [];
@@ -185,6 +197,7 @@ export function buildBundle(db: Database.Database, opts: BuildBundleOpts): Bundl
       title: v.title, creator_name: v.creator_name, creator_source_uid: v.creator_source_uid,
       duration: v.duration, published_at: v.published_at, first_seen_at: v.first_seen_at,
       track_count: v.track_count, subtitle: null,
+      pot_limited: latestStatus.get(v.id) === 'limited',
     };
     const r = resolveSubtitle(db, { source: v.source, sourceVid: v.source_vid, track: opts.track, format: 'json' });
     if (r.kind === 'ok') {

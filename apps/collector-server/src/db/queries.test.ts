@@ -66,6 +66,54 @@ test('getVideo: 默认轨优先级 CC中文 > AI中文 > 英文', () => {
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
+test('getVideo: 翻译轨(type=3) 排在原文 CC/ASR 之后——YouTube 默认轨不再落机翻中文', () => {
+  const { db, dir } = freshDb();
+  try {
+    ingestVideo(db, sampleReq('英文视频', [
+      // 旧数据形态：翻译轨落 type=2 时 zh-Hans 会顶成默认（优先级 0）——v10 迁移与扩展侧改发 type=3 后：
+      { lan: 'zh-Hans', lan_doc: '中文(机翻)', track_type: 3, versions: [{ origin: 'external', payload: { body: [] }, source_url: 'https://tt?tlang=zh-Hans' }] },
+      { lan: 'en', lan_doc: 'English CC', track_type: 2, versions: [{ origin: 'external', payload: { body: [] }, source_url: 'https://tt?lang=en' }] },
+      { lan: 'en', lan_doc: 'English ASR', track_type: 1, versions: [{ origin: 'external', payload: { body: [] }, source_url: 'https://tt?lang=en&asr' }] },
+    ]));
+    const d = getVideo(db, 'bilibili', 'BV1');
+    if (!d) throw new Error('no detail');
+    assert.equal(d.tracks.length, 3);
+    assert.equal(d.tracks[0].lan_doc, 'English CC', '原文人工 CC 应为默认轨');
+    assert.equal(d.tracks[1].lan_doc, 'English ASR', '原文 ASR 次之');
+    assert.equal(d.tracks[2].lan_doc, '中文(机翻)', '翻译轨(type=3) 应排在所有原文轨之后');
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('getVideo: 仅有 ASR + 翻译轨时默认 = 原文 ASR；翻译轨排在其他语言轨之前', () => {
+  const { db, dir } = freshDb();
+  try {
+    ingestVideo(db, sampleReq('无CC英文视频', [
+      { lan: 'ja', lan_doc: 'Japanese', track_type: null, versions: [{ origin: 'external', payload: { body: [] }, source_url: 'https://ja' }] },
+      { lan: 'zh-Hans', lan_doc: '中文(机翻)', track_type: 3, versions: [{ origin: 'external', payload: { body: [] }, source_url: 'https://tt?tlang=zh-Hans' }] },
+      { lan: 'en', lan_doc: 'English ASR', track_type: 1, versions: [{ origin: 'external', payload: { body: [] }, source_url: 'https://tt?lang=en' }] },
+    ]));
+    const d = getVideo(db, 'bilibili', 'BV1');
+    if (!d) throw new Error('no detail');
+    assert.equal(d.tracks[0].lan_doc, 'English ASR', '原文 ASR 优先于翻译轨');
+    assert.equal(d.tracks[1].lan_doc, '中文(机翻)', '翻译轨优先于无 type 的其他语言轨');
+    assert.equal(d.tracks[2].lan_doc, 'Japanese');
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('getVideo: B 站默认行为不变——zh CC > zh AI > en', () => {
+  const { db, dir } = freshDb();
+  try {
+    ingestVideo(db, sampleReq('B站多轨', [
+      { lan: 'en', lan_doc: 'English', track_type: 2, versions: [{ origin: 'external', payload: { body: [] }, source_url: 'https://e' }] },
+      { lan: 'zh-Hans', lan_doc: 'AI中文', track_type: 1, versions: [{ origin: 'external', payload: { body: [] }, source_url: 'https://ai' }] },
+      { lan: 'zh-Hans', lan_doc: 'CC中文', track_type: 2, versions: [{ origin: 'external', payload: { body: [] }, source_url: 'https://cc' }] },
+    ]));
+    const d = getVideo(db, 'bilibili', 'BV1');
+    if (!d) throw new Error('no detail');
+    assert.deepEqual(d.tracks.map((t) => t.lan_doc), ['CC中文', 'AI中文', 'English'], 'zh CC > zh AI > en 的 B 站默认序保持不变');
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
 test('getVideo: 每个 track 内各自有 default version（不跨轨串台）— Critical C1', () => {
   const { db, dir } = freshDb();
   try {

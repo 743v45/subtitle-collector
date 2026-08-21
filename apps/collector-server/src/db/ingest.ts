@@ -4,10 +4,15 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
+// creator 契约（与扩展侧共同约定）：payload 不携带 creator（或 source_uid 为 null/undefined/空串）时，
+// server 不 upsert creator 行——新视频 creator_id 写 null（schema 允许）；重采 UPDATE 保留旧归属
+// （COALESCE 语义，合法视频经不带 creator 的路径重采不误清）。
+// 扩展侧旧版本会把缺失 uid 填字面 'unknown' 发来——UNIQUE(source, source_uid) 会把不同频道的
+// 视频吸进同一虚构 UP 行，故 'unknown' 一律视同缺失（两端改动落地窗口期的脏数据防御）。
 export interface IngestVideo {
   source_vid: string;
   title: string;
-  creator: { source_uid: string; name?: string; avatar?: string };
+  creator?: { source_uid?: string | null; name?: string; avatar?: string } | null;
   extra?: Record<string, unknown>;
   duration?: number;
   published_at?: number;
@@ -53,6 +58,26 @@ function structuralExtra(v: unknown): string {
   } catch { return v; }
 }
 
+// 重采 extra 合并（UPDATE 路径）：整体替换保持现状，唯 tags 保底——
+// 新 extra 无 tags 字段或空数组时保留旧 extra.tags。tag 接口失败的重采会把已入库的
+// B 站档标签整体冲掉（bili 档标签只存 extra.tags，无独立表），此处兜底。
+function mergeExtraTags(newExtra: Record<string, unknown>, oldExtraJson: unknown): Record<string, unknown> {
+  const merged = { ...newExtra };
+  const newTags = merged.tags;
+  // 新值带非空 tags（或非数组的原样值）→ 正常整体替换，不保底
+  if (newTags != null && (!Array.isArray(newTags) || newTags.length > 0)) return merged;
+  let oldTags: unknown[] | null = null;
+  if (typeof oldExtraJson === 'string') {
+    try {
+      const o: unknown = JSON.parse(oldExtraJson);
+      const t = (o as Record<string, unknown> | null)?.tags;
+      if (Array.isArray(t) && t.length > 0) oldTags = t;
+    } catch { /* 旧 extra 非合法 JSON → 无 tags 可保 */ }
+  }
+  if (oldTags != null) merged.tags = oldTags;
+  return merged;
+}
+
 // 分区字典（data/zones-v1.json，{ tid: { name, code, parent, main } }），模块级懒加载只读一次；读失败降级空字典。
 const ZONES: Record<number, { name: string }> = (() => {
   try {
@@ -73,25 +98,32 @@ export function ingestVideo(db: Database.Database, req: IngestRequest): IngestRe
 
     // paid 标志：扩展在 extra.paid 算好（综合 is_upower_exclusive/is_ugc_pay_preview/elec_high_level/rights），
     // 可能是 boolean/number，统一 Number() 转 0/1 落独立列；extra.paid 原值随 JSON 整列存（双写）。
-    const paidInt = Number(r.video.extra?.paid) ? 1 : 0;
+    // extra 无 paid 键 → null = 本次未知：新建行落默认 0；重采 UPDATE 遵循「paid 只升不降」保留旧值。
+    const paidRaw = r.video.extra?.paid;
+    const paidNew = paidRaw == null ? null : (Number(paidRaw) ? 1 : 0);
 
-    // 1. creator upsert + change_log
+    // 1. creator upsert + change_log（缺失契约见 IngestVideo 注释：不发/空串/'unknown' 一律视同缺失）
+    const creator = r.video.creator;
+    const creatorUid = creator?.source_uid;
+    const hasCreator = typeof creatorUid === 'string' && creatorUid !== '' && creatorUid !== 'unknown';
     const creatorSel = db.prepare('SELECT id, name FROM creators WHERE source = ? AND source_uid = ?');
     const creatorIns = db.prepare('INSERT INTO creators (source, source_uid, name, avatar, first_seen_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)');
     const creatorUpd = db.prepare('UPDATE creators SET name = ?, avatar = ?, updated_at = ? WHERE id = ?');
     const changeIns = db.prepare('INSERT INTO change_log (entity, entity_id, field, old_value, new_value, changed_at) VALUES (?, ?, ?, ?, ?, ?)');
 
-    const existingCreator = creatorSel.get(r.source, r.video.creator.source_uid) as { id: number; name: string | null } | undefined;
-    let creatorId: number;
-    if (!existingCreator) {
-      const info = creatorIns.run(r.source, r.video.creator.source_uid, r.video.creator.name ?? null, r.video.creator.avatar ?? null, now, now);
-      creatorId = Number(info.lastInsertRowid);
-      changeIns.run('creator', creatorId, 'created', null, r.video.creator.name ?? null, now);
-    } else {
-      creatorId = existingCreator.id;
-      if (r.video.creator.name != null && r.video.creator.name !== existingCreator.name) {
-        changeIns.run('creator', creatorId, 'name', existingCreator.name, r.video.creator.name, now);
-        creatorUpd.run(r.video.creator.name, r.video.creator.avatar ?? null, now, creatorId);
+    let creatorId: number | null = null;
+    if (creator && hasCreator) {
+      const existingCreator = creatorSel.get(r.source, creatorUid) as { id: number; name: string | null } | undefined;
+      if (!existingCreator) {
+        const info = creatorIns.run(r.source, creatorUid, creator.name ?? null, creator.avatar ?? null, now, now);
+        creatorId = Number(info.lastInsertRowid);
+        changeIns.run('creator', creatorId, 'created', null, creator.name ?? null, now);
+      } else {
+        creatorId = existingCreator.id;
+        if (creator.name != null && creator.name !== existingCreator.name) {
+          changeIns.run('creator', creatorId, 'name', existingCreator.name, creator.name, now);
+          creatorUpd.run(creator.name, creator.avatar ?? null, now, creatorId);
+        }
       }
     }
 
@@ -103,17 +135,26 @@ export function ingestVideo(db: Database.Database, req: IngestRequest): IngestRe
     const existingVideo = videoSel.get(r.source, r.video.source_vid) as Record<string, unknown> | undefined;
     let videoId: number;
     if (!existingVideo) {
-      const info = videoIns.run(r.source, r.video.source_vid, creatorId, r.video.title, JSON.stringify(r.video.extra ?? {}), r.video.duration ?? null, r.video.published_at ?? null, paidInt, now, now);
+      const info = videoIns.run(r.source, r.video.source_vid, creatorId, r.video.title, JSON.stringify(r.video.extra ?? {}), r.video.duration ?? null, r.video.published_at ?? null, paidNew ?? 0, now, now);
       videoId = Number(info.lastInsertRowid);
       changeIns.run('video', videoId, 'created', null, r.video.title, now);
     } else {
       videoId = existingVideo.id as number;
+      // 重采 UPDATE 合并语义（防浏览路径/受限重采把已有元信息冲掉；change_log 按合并后的终值比对）：
+      //   duration/published_at：新值非空才覆盖（COALESCE(new, old)——浏览路径 payload 可能不带）；
+      //   paid：新值非空且 > 旧值才覆盖（只升不降——付费片重采 payload 不带 paid 标志时防 1→0 回落；
+      //         extra JSON 整列替换仍存本次原值，列与 JSON 可能短暂不一致，查询以独立列为准）；
+      //   title：新值优先（标题会改版，属正常更新），但新值 null 不覆盖；
+      //   creator_id：同 COALESCE 语义——本次缺 creator_uid 保留旧归属（合法视频经一条不带
+      //   creator 的采集路径重采不应误清；'unknown' 挂靠清理由订正脚本/重采带真值时覆盖）；
+      //   extra：整体替换 + tags 保底（见 mergeExtraTags）。
+      const oldPaid = (existingVideo.paid as number | null) ?? 0;
       const fields: Record<string, unknown> = {
-        title: r.video.title,
-        extra: JSON.stringify(r.video.extra ?? {}),
-        duration: r.video.duration ?? null,
-        published_at: r.video.published_at ?? null,
-        paid: paidInt,
+        title: r.video.title ?? existingVideo.title,
+        duration: r.video.duration ?? existingVideo.duration,
+        published_at: r.video.published_at ?? existingVideo.published_at,
+        paid: paidNew != null && paidNew > oldPaid ? paidNew : oldPaid,
+        extra: JSON.stringify(mergeExtraTags(r.video.extra ?? {}, existingVideo.extra)),
       };
       for (const f of VIDEO_FIELDS) {
         const oldVal = existingVideo[f];
@@ -126,7 +167,7 @@ export function ingestVideo(db: Database.Database, req: IngestRequest): IngestRe
           changeIns.run('video', videoId, f, oldVal == null ? null : oldCmp, newVal == null ? null : newCmp, now);
         }
       }
-      videoUpd.run(creatorId, fields.title, fields.extra, fields.duration, fields.published_at, fields.paid, now, videoId);
+      videoUpd.run(creatorId ?? existingVideo.creator_id, fields.title, fields.extra, fields.duration, fields.published_at, fields.paid, now, videoId);
     }
 
     // 3. track upsert

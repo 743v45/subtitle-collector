@@ -205,7 +205,10 @@ test('v7：新库（schema.sql 已无 status 列）重放迁移不报错（DROP 
 test('v9 迁移：旧 CHECK(4 值)库重建后可写 limited；重放幂等', () => {
   const db = new Database(':memory:');
   try {
-    // 手工建 v8 形态旧表(CHECK 不含 limited)+ 存量行——模拟迁移前旧库
+    // 模拟 v8 形态旧库：完整 schema 建库后把 collect_tasks 重建为旧 CHECK（不含 limited）+ 存量行。
+    // （须先 migrate 建全表——后续 v10 步骤引用 subtitle_tracks/videos，极简库会 no such table）
+    migrate(db);
+    db.exec('DROP TABLE collect_tasks');
     db.exec(`CREATE TABLE collect_tasks (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       source TEXT NOT NULL CHECK(source IN ('bilibili','youtube')),
@@ -227,5 +230,77 @@ test('v9 迁移：旧 CHECK(4 值)库重建后可写 limited；重放幂等', ()
     // 重放幂等
     runMigrations(db);
     assert.equal(db.pragma('user_version', { simple: true }), MIGRATIONS[MIGRATIONS.length - 1].version);
+  } finally { db.close(); }
+});
+
+// ── v10：YouTube 翻译轨 track_type 2→3（判据：type2 + video.source=youtube + 版本 source_url 含 tlang=）──
+
+/** 模拟 v9 形态存量库：手工插 youtube/bilibili 视频与各类轨（source_url 带/不带 tlang=），账本停在 v9 */
+function dbWithLegacyYoutubeTracks(): Database.Database {
+  const db = new Database(':memory:');
+  migrate(db);
+  const insV = db.prepare("INSERT INTO videos (source, source_vid, title, first_seen_at, updated_at) VALUES (?, ?, ?, 1, 1)");
+  const yt = Number(insV.run('youtube', 'yt1', 'T').lastInsertRowid);
+  const bl = Number(insV.run('bilibili', 'BV1', 'T').lastInsertRowid);
+  const insT = db.prepare('INSERT INTO subtitle_tracks (video_id, lan, lan_doc, track_type) VALUES (?, ?, ?, ?)');
+  const insVer = db.prepare("INSERT INTO subtitle_versions (track_id, origin, payload, captured_at, source_url) VALUES (?, 'external', '{}', 1, ?)");
+  // 命中迁移：youtube + type2 + 版本 source_url 含 tlang=（机翻翻译轨）
+  const ytTlang = Number(insT.run(yt, 'zh-Hans', '中文(机翻)', 2).lastInsertRowid);
+  insVer.run(ytTlang, 'https://www.youtube.com/api/timedtext?lang=en&tlang=zh-Hans&signature=x');
+  // 不命中：youtube 原文人工 CC（source_url 无 tlang=）
+  const ytCc = Number(insT.run(yt, 'en', 'English CC', 2).lastInsertRowid);
+  insVer.run(ytCc, 'https://www.youtube.com/api/timedtext?lang=en&signature=x');
+  // 不命中：youtube type2 但无版本行（无 tlang 证据）
+  const ytNoVer = Number(insT.run(yt, 'ja', 'Japanese', 2).lastInsertRowid);
+  // 不命中：bilibili + type2（source_url 即使含 tlang= 也不迁——判据须 youtube）
+  const blTlang = Number(insT.run(bl, 'zh-Hans', 'CC中文', 2).lastInsertRowid);
+  insVer.run(blTlang, 'https://example.com/sub?tlang=zh');
+  // 不命中：youtube type1（ASR 轨，本就不是翻译轨形态）
+  const ytAsr = Number(insT.run(yt, 'en', 'English ASR', 1).lastInsertRowid);
+  insVer.run(ytAsr, 'https://www.youtube.com/api/timedtext?lang=en&tlang=zh-Hans&asr');
+  db.pragma('user_version = 9');
+  return db;
+}
+
+const trackTypeOf = (db: Database.Database, videoSource: string, lan: string): number | null =>
+  (db.prepare(`
+    SELECT st.track_type AS tt FROM subtitle_tracks st
+    JOIN videos v ON v.id = st.video_id
+    WHERE v.source = ? AND st.lan = ?`).get(videoSource, lan) as { tt: number | null }).tt;
+
+test('v10：youtube 翻译轨(type2+tlang=) 改 type=3；bilibili/无tlang/无版本/ASR 轨不动', () => {
+  const db = dbWithLegacyYoutubeTracks();
+  try {
+    runMigrations(db);
+    assert.equal(db.pragma('user_version', { simple: true }), MIGRATIONS[MIGRATIONS.length - 1].version, '账本应写到最新');
+    assert.equal(trackTypeOf(db, 'youtube', 'zh-Hans'), 3, 'youtube 翻译轨应改为 3');
+    assert.equal(trackTypeOf(db, 'youtube', 'ja'), 2, 'youtube type2 无版本行不动（无 tlang 证据）');
+    assert.equal(trackTypeOf(db, 'bilibili', 'zh-Hans'), 2, 'bilibili 轨即使 source_url 含 tlang= 也不迁（判据须 source=youtube）');
+    // youtube en 有两条轨（CC=2 / ASR=1），分别断言：
+    const enTypes = (db.prepare(`
+      SELECT st.track_type AS tt FROM subtitle_tracks st JOIN videos v ON v.id = st.video_id
+      WHERE v.source = 'youtube' AND st.lan = 'en' ORDER BY st.track_type`).all() as Array<{ tt: number }>).map((r) => r.tt);
+    assert.deepEqual(enTypes, [1, 2], 'youtube en 的 ASR(1) 与 CC(2) 轨均不受迁移影响');
+    // 重放幂等：再跑一次不改任何行（已是 3 的不命中 type=2 条件）
+    runMigrations(db);
+    assert.equal(trackTypeOf(db, 'youtube', 'zh-Hans'), 3);
+  } finally { db.close(); }
+});
+
+test('v10：同 (video_id, lan) 已有 type=3 轨时跳过旧 type=2 行（防 UNIQUE 冲突，过渡期双写防御）', () => {
+  const db = new Database(':memory:');
+  try {
+    migrate(db);
+    const yt = Number(db.prepare("INSERT INTO videos (source, source_vid, title, first_seen_at, updated_at) VALUES ('youtube', 'ytD', 'T', 1, 1)").run().lastInsertRowid);
+    // 新扩展已写 (yt, zh-Hans, 3)，旧扩展又留下 (yt, zh-Hans, 2)（tlang URL）
+    const t3 = Number(db.prepare("INSERT INTO subtitle_tracks (video_id, lan, lan_doc, track_type) VALUES (?, 'zh-Hans', '中文(机翻)', 3)").run(yt).lastInsertRowid);
+    const t2 = Number(db.prepare("INSERT INTO subtitle_tracks (video_id, lan, lan_doc, track_type) VALUES (?, 'zh-Hans', '中文(机翻)', 2)").run(yt).lastInsertRowid);
+    db.prepare("INSERT INTO subtitle_versions (track_id, origin, payload, captured_at, source_url) VALUES (?, 'external', '{}', 1, 'https://tt?lang=en&tlang=zh-Hans')").run(t2);
+    db.pragma('user_version = 9');
+    assert.doesNotThrow(() => runMigrations(db), '已有 type3 孪生轨时 UPDATE 不得撞 UNIQUE(video_id, lan, track_type)');
+    const tt = db.prepare('SELECT track_type FROM subtitle_tracks WHERE id = ?').get(t2) as { track_type: number };
+    assert.equal(tt.track_type, 2, '冲突行跳过不改（留待重采自然去留）');
+    const t3row = db.prepare('SELECT track_type FROM subtitle_tracks WHERE id = ?').get(t3) as { track_type: number };
+    assert.equal(t3row.track_type, 3, '既有 type=3 轨不受影响');
   } finally { db.close(); }
 });

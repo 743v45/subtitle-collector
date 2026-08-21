@@ -18,7 +18,7 @@ export interface VideoFilter {
   tag_source?: string[];     // 档位过滤（manual/batch/ai/bili/season 子集；省略=五档全查）
   subtitle_q?: string;       // 字幕正文关键词模糊（命中 subtitle_versions.payload）
   lang?: string;             // subtitle_tracks.lan 模糊（zh 命中 zh-Hans）
-  track_type?: number;       // subtitle_tracks.track_type 精确（1=AI 2=CC）
+  track_type?: number;       // subtitle_tracks.track_type 精确（1=AI 2=CC 3=翻译轨）
   has_subtitle?: boolean;    // 至少有一条 subtitle_versions
   paid?: boolean;            // 仅付费视频（v.paid = 1）
   since?: number;            // 毫秒，比对 date_field（默认 first_seen_at）
@@ -258,14 +258,19 @@ export function listVideosFiltered(db: Database.Database, filter: ListFilter): P
   return { total: totalRow.c, page, size, items };
 }
 
-// 优先级 / is_default 逻辑镜像 queries.ts getVideo，保持一致（queries.ts 的私有 helper 不导出，这里原地复刻一份）
+// 优先级 / is_default 逻辑镜像 queries.ts getVideo，保持一致（queries.ts 的私有 helper 不导出，这里原地复刻一份）。
+// 默认轨优先级：原文人工 CC > 原文 ASR > 翻译轨(type=3) > 其他——翻译轨（YouTube tlang 机翻）
+// 排在所有原文轨之后，典型英文视频默认正文不再落机翻中文；zh CC / zh AI 细分保持 B 站行为不变。
 const trackPriority = (lan: string | null, track_type: number | null): number => {
   const isZh = !!lan && lan.toLowerCase().includes('zh');
   const isEn = !!lan && lan.toLowerCase().includes('en');
-  if (isZh && track_type === 2) return 0; // CC中文
-  if (isZh && track_type === 1) return 1; // AI中文
-  if (isEn) return 2;
-  return 3;
+  if (isZh && track_type === 2) return 0; // CC中文（原文人工 CC）
+  if (isZh && track_type === 1) return 1; // AI中文（原文 ASR）
+  if (isEn && track_type === 2) return 2; // 英文人工 CC（YouTube 原文 CC）
+  if (isEn && track_type === 1) return 3; // 英文 ASR（YouTube 原文自动轨）
+  if (track_type === 3) return 4;         // 翻译轨（tlang 机翻）：所有原文轨之后、其他语言轨之前
+  if (isEn) return 2;                     // 英文无 type（B 站旧数据）：维持原序
+  return 5;                               // 其他
 };
 const versionPriority = (origin: string): number => {
   if (origin === 'external') return 0;
@@ -422,6 +427,25 @@ export function aggregateStats(
   }
   const rows = db.prepare(sql).all(...params, topN) as Array<{ key: string | number | null; count: number }>;
   return rows.map((r) => ({ key: r.key == null ? '(unknown)' : String(r.key), count: r.count }));
+}
+
+// 每视频最近一次采集任务状态（collect_tasks 按 (source, source_vid) 取 id 最大一条；无任务 → null）。
+// 受限标记（pot_limited）的唯一派生源：latest='limited' 即半入库（元信息在、0 轨，如 YouTube pot 门槛），
+// 与「真无字幕」库内无法区分的三态缺口由此补上。选从任务表派生而非给 videos 加列：
+// 重采成功后最新任务不再是 limited，标记自然消失——加列则要维护「何时回清」逻辑，派生零维护。
+export function latestTaskStatusByVideoIds(db: Database.Database, ids: number[]): Map<number, string | null> {
+  const map = new Map<number, string | null>();
+  if (ids.length === 0) return map;
+  const placeholders = ids.map(() => '?').join(',');
+  const rows = db.prepare(`
+    SELECT v.id AS vid,
+           (SELECT ct.status FROM collect_tasks ct
+             WHERE ct.source = v.source AND ct.source_vid = v.source_vid
+             ORDER BY ct.id DESC LIMIT 1) AS latest_status
+    FROM videos v WHERE v.id IN (${placeholders})
+  `).all(...ids) as Array<{ vid: number; latest_status: string | null }>;
+  for (const row of rows) map.set(row.vid, row.latest_status);
+  return map;
 }
 
 // 总览计数：视频/轨/版本/UP/语言/分区数 + first_seen 时间范围。

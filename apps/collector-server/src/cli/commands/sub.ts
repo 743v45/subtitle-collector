@@ -374,7 +374,7 @@ export function buildSubCommand(): Command {
     .option('--tname <name>', '分区名模糊匹配（视频预筛）')
     .option('--tag <tag>', '标签名模糊匹配（视频预筛）')
     .option('--lang <lang>', '字幕语言模糊匹配（视频预筛，如 zh）')
-    .option('--track-type <type>', '字幕轨类型 1=AI 2=CC（视频预筛）')
+    .option('--track-type <type>', '字幕轨类型 1=AI 2=CC 3=翻译轨（视频预筛）')
     .option('--has-subtitle', '仅含字幕的视频（视频预筛）')
     .option('--since <ts>', '起始时间（视频预筛，Unix 秒/毫秒 或 ISO8601）')
     .option('--until <ts>', '结束时间（视频预筛）')

@@ -129,6 +129,20 @@ export const MIGRATIONS: readonly MigrationStep[] = [
        COMMIT;`,
     ],
   },
+  {
+    version: 10,
+    note: 'YouTube 翻译轨 track_type 2→3（区分人工 CC 与 tlang 机翻；判据=track_type=2 且关联 video source=youtube 且版本 source_url 含 tlang=）。同 (video_id, lan) 已存在 type=3 轨时跳过该行——新旧扩展过渡期可能对同轨双写，防 UNIQUE(video_id, lan, track_type) 冲突；被跳过的旧 type=2 行留待重采自然去留。UPDATE 单语句自带原子性，重放幂等（type 已是 3 不再命中）',
+    statements: [
+      `UPDATE subtitle_tracks SET track_type = 3
+       WHERE track_type = 2
+         AND EXISTS (SELECT 1 FROM videos v WHERE v.id = subtitle_tracks.video_id AND v.source = 'youtube')
+         AND EXISTS (SELECT 1 FROM subtitle_versions sv WHERE sv.track_id = subtitle_tracks.id AND sv.source_url LIKE '%tlang=%')
+         AND NOT EXISTS (SELECT 1 FROM subtitle_tracks t3
+                         WHERE t3.video_id = subtitle_tracks.video_id
+                           AND t3.lan IS subtitle_tracks.lan
+                           AND t3.track_type = 3)`,
+    ],
+  },
 ];
 
 export function runMigrations(db: Database.Database): void {
@@ -144,10 +158,12 @@ export function runMigrations(db: Database.Database): void {
         db.exec(stmt);
       } catch (err) {
         const msg = (err as Error).message;
-        // 容忍两类幂等性报错（双保险，见账本规则）：
+        // 容忍三类幂等性/部分库报错（双保险，见账本规则）：
         //   duplicate column name —— ADD COLUMN 在列已存在的库上重放；
-        //   no such column        —— DROP COLUMN 在新 schema（列本就不存在）建的库上重放。
-        if (!msg.includes('duplicate column name') && !msg.includes('no such column')) throw err;
+        //   no such column        —— DROP COLUMN 在新 schema（列本就不存在）建的库上重放；
+        //   no such table         —— UPDATE/SELECT 类步骤（如 v10 翻译轨订正）在缺表的部分
+        //                             schema 库上重放（正规库必建全表，仅防御手工/损坏库）。
+        if (!msg.includes('duplicate column name') && !msg.includes('no such column') && !msg.includes('no such table')) throw err;
       }
     }
     db.pragma(`user_version = ${step.version}`);

@@ -35,13 +35,20 @@ export interface VersionRow { id: number; origin: string; source_url: string | n
 export interface TrackRow { id: number; lan: string | null; lan_doc: string | null; track_type: number | null; versions: VersionRow[]; }
 export interface VideoDetail { video: Record<string, unknown>; tracks: TrackRow[]; }
 
+// 默认轨优先级：原文人工 CC > 原文 ASR > 翻译轨(type=3) > 其他。
+// 翻译轨（YouTube tlang 机翻，扩展侧 track_type=3）排在所有原文轨之后——典型英文视频的
+// 默认正文不再落机翻中文；zh CC / zh AI 两档细分保持 B 站默认行为不变。
+// advanced.ts 有同名镜像实现，两处需同步改。
 const trackPriority = (lan: string | null, track_type: number | null): number => {
   const isZh = !!lan && lan.toLowerCase().includes('zh');
   const isEn = !!lan && lan.toLowerCase().includes('en');
-  if (isZh && track_type === 2) return 0; // CC中文
-  if (isZh && track_type === 1) return 1; // AI中文
-  if (isEn) return 2;
-  return 3;
+  if (isZh && track_type === 2) return 0; // CC中文（原文人工 CC）
+  if (isZh && track_type === 1) return 1; // AI中文（原文 ASR）
+  if (isEn && track_type === 2) return 2; // 英文人工 CC（YouTube 原文 CC）
+  if (isEn && track_type === 1) return 3; // 英文 ASR（YouTube 原文自动轨）
+  if (track_type === 3) return 4;         // 翻译轨（tlang 机翻）：所有原文轨之后、其他语言轨之前
+  if (isEn) return 2;                     // 英文无 type（B 站旧数据）：维持原序
+  return 5;                               // 其他
 };
 
 const versionPriority = (origin: string): number => {

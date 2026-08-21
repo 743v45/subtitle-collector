@@ -1,7 +1,7 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type Database from 'better-sqlite3';
 import { getVideo, getVersionPayload } from '../db/queries.js';
-import { listVideosFiltered, getChanges, type VideoSortKey, type VideoListItemAdvanced, type ChangeFilter } from '../db/advanced.js';
+import { listVideosFiltered, getChanges, latestTaskStatusByVideoIds, type VideoSortKey, type VideoListItemAdvanced, type ChangeFilter } from '../db/advanced.js';
 import { parseVideoFilter, parseBool } from './filter.js';
 import { applyVideoTags, removeVideoTags, isTagSource, getVideoTagsByVideoIds, getVideoTagsForDetail, type TagSource } from '../db/tags.js';
 import { getTagPriority, type TagPrioritySource } from '../db/settings.js';
@@ -43,12 +43,15 @@ const SORT_KEYS: readonly VideoSortKey[] = ['first_seen', 'published_at', 'title
 
 // 列表项富化：用 json_extract 从 extra 取 tid/tname/tags/view/season_title，并合并关系档标签按优先级 dedupe。
 // tags（兼容旧字段）= winner 标签名数组；tag_details = [{name, source}]（同名只保留优先级最高档）。
+// 另附 pot_limited：最近一次采集任务 status='limited'（半入库：元信息在、0 轨）的派生标记，
+// 与「真无字幕」区分；重采成功后自然消失（web UI 本次未消费，字段先备好）。
 function enrichItems(
   db: Database.Database,
   items: VideoListItemAdvanced[],
-): Array<VideoListItemAdvanced & { tid: number | null; tname: string | null; tags: string[]; view: number | null; tag_details: Array<{ name: string; source: TagPrioritySource }> }> {
+): Array<VideoListItemAdvanced & { tid: number | null; tname: string | null; tags: string[]; view: number | null; tag_details: Array<{ name: string; source: TagPrioritySource }>; pot_limited: boolean }> {
   if (items.length === 0) return [];
   const ids = items.map((i) => i.id);
+  const latestStatus = latestTaskStatusByVideoIds(db, ids);
   const placeholders = ids.map(() => '?').join(',');
   const rows = db.prepare(
     `SELECT id,
@@ -78,7 +81,7 @@ function enrichItems(
       }
     }
     const tag_details = mergeTagDetails(biliNames, relTags.get(it.id) ?? [], priority, false, r?.season_title ? [r.season_title] : []);
-    return { ...it, tid: r?.tid ?? null, tname: r?.tname ?? null, tags: tag_details.map((t) => t.name), view: r?.view ?? null, tag_details };
+    return { ...it, tid: r?.tid ?? null, tname: r?.tname ?? null, tags: tag_details.map((t) => t.name), view: r?.view ?? null, tag_details, pot_limited: latestStatus.get(it.id) === 'limited' };
   });
 }
 

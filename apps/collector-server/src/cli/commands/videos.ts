@@ -194,7 +194,7 @@ export function buildVideosCommand(): Command {
     .option('--tag <tag>', '标签名模糊匹配（extra.tags[].tag_name）')
     .option('--subtitle-q <text>', '字幕正文关键词模糊匹配（命中 subtitle_versions.payload）')
     .option('--lang <lang>', '字幕语言模糊匹配（如 zh 命中 zh-Hans）')
-    .option('--track-type <type>', '字幕轨类型（1=AI 2=CC），精确')
+    .option('--track-type <type>', '字幕轨类型（1=AI 2=CC 3=翻译轨），精确')
     .option('--has-subtitle', '仅含至少一条字幕版本的视频')
     .option('--paid', '仅付费视频（v.paid = 1）')
     .option('--since <ts>', '起始时间（Unix 秒/毫秒 或 ISO8601），比对 first_seen_at')

@@ -34,10 +34,12 @@ test('stampedTxt: payload 结构不符时抛错', () => {
   assert.throws(() => stampedTxt({ noBody: true }), /结构不符/);
 });
 
-test('ANALYZE_MD: 含三类产物模板锚点 + 产物写回约定', () => {
-  for (const anchor of ['观点汇总.md', '面试题库.md', '理念整理.md', 'manifest.json', 'videos/', '来源:']) {
+test('ANALYZE_MD: 含三类产物模板锚点 + analysis/<主题>/ 落盘路径 + 盲区两栏', () => {
+  for (const anchor of ['观点汇总.md', '面试题库.md', '理念整理.md', 'manifest.json', 'videos/', '来源:',
+    'analysis/<主题>/', 'pot_limited', '真无字幕', '受限待重采']) {
     assert.ok(ANALYZE_MD.includes(anchor), `ANALYZE_MD 缺锚点: ${anchor}`);
   }
+  assert.ok(!ANALYZE_MD.includes('写回本目录'), '产物落盘位置应统一定稿为 analysis/<主题>/，不得再出现「写回本目录」');
 });
 
 // ── buildBundle（内存库 fixture，参照 export.test.ts setup() 的 ingestVideo 模式）──
@@ -157,5 +159,34 @@ test('buildBundle: 空命中正常产出（exported=0，仍含 manifest+ANALYZE�
     assert.equal(r.manifest.total_matched, 0);
     assert.equal(r.manifest.exported, 0);
     assert.deepEqual(r.files.map((f) => f.path).sort(), ['ANALYZE.md', 'manifest.json']);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+// ── pot_limited 受限标记（最近一次 collect_tasks 任务 status='limited' 即标记；重采成功后自然消失）──
+
+test('buildBundle: 最近任务 limited 的视频标 pot_limited=true，真无字幕/有字幕为 false；重采成功后标记消失', () => {
+  const { db, dir } = setupDb();
+  try {
+    // BV2 无字幕（setupDb 造的「真无字幕」形态）；给它补一条 limited 任务 → 半入库形态
+    db.prepare("INSERT INTO collect_tasks (source, source_vid, url, status, created_at, finished_at) VALUES ('bilibili', 'BV2', 'https://b23.tv/BV2', 'limited', 100, 200)").run();
+    let r = buildBundle(db, { filters: {}, limit: 100, now: 0 });
+    const bv1 = r.manifest.videos.find((v) => v.source_vid === 'BV1')!;
+    const bv2 = r.manifest.videos.find((v) => v.source_vid === 'BV2')!;
+    assert.equal(bv1.pot_limited, false, '有字幕且无任务记录 → false');
+    assert.equal(bv2.pot_limited, true, '最近任务 limited → true（半入库，与真无字幕区分）');
+    assert.equal(bv2.subtitle, null);
+    // 重采成功（id 更大的 succeeded 任务成为「最近一条」）→ 标记自然消失（选任务表派生而非 videos 加列的原因）
+    db.prepare("INSERT INTO collect_tasks (source, source_vid, url, status, created_at, finished_at) VALUES ('bilibili', 'BV2', 'https://b23.tv/BV2', 'succeeded', 300, 400)").run();
+    r = buildBundle(db, { filters: {}, limit: 100, now: 0 });
+    assert.equal(r.manifest.videos.find((v) => v.source_vid === 'BV2')!.pot_limited, false, '重采成功后标记应消失');
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('buildBundle: 失败任务不算受限（仅 limited 终态标记）；无任何任务的真无字幕视频为 false', () => {
+  const { db, dir } = setupDb();
+  try {
+    db.prepare("INSERT INTO collect_tasks (source, source_vid, url, status, created_at, finished_at) VALUES ('bilibili', 'BV2', 'https://b23.tv/BV2', 'failed', 100, 200)").run();
+    const r = buildBundle(db, { filters: {}, limit: 100, now: 0 });
+    assert.equal(r.manifest.videos.find((v) => v.source_vid === 'BV2')!.pot_limited, false, 'failed ≠ limited，不标受限');
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });

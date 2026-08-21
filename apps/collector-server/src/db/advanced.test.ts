@@ -212,6 +212,27 @@ test('getVideoByDbId: 不存在返回 null', () => {
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
+test('getVideoByDbId: 翻译轨(type=3) 排在原文 CC/ASR 之后（与 queries.getVideo 镜像一致）', () => {
+  const { db, dir } = freshDb();
+  try {
+    ingestVideo(db, {
+      source: 'youtube',
+      video: { source_vid: 'yt1', title: '英文视频', creator: { source_uid: 'UC1', name: 'ch' }, extra: {}, duration: 60, published_at: 1 },
+      tracks: [
+        { lan: 'zh-Hans', lan_doc: '中文(机翻)', track_type: 3, versions: [{ origin: 'external', payload: { body: [] }, source_url: 'https://tt?tlang=zh-Hans' }] },
+        { lan: 'en', lan_doc: 'English ASR', track_type: 1, versions: [{ origin: 'external', payload: { body: [] }, source_url: 'https://tt?lang=en' }] },
+        { lan: 'en', lan_doc: 'English CC', track_type: 2, versions: [{ origin: 'external', payload: { body: [] }, source_url: 'https://tt?lang=en&cc' }] },
+      ],
+    });
+    const vid = (db.prepare("SELECT id FROM videos WHERE source_vid = 'yt1'").get() as { id: number }).id;
+    const d = getVideoByDbId(db, vid);
+    if (!d) throw new Error('no detail');
+    assert.deepEqual(d.tracks.map((t) => t.lan_doc), ['English CC', 'English ASR', '中文(机翻)'],
+      '默认轨优先级：原文人工 CC > 原文 ASR > 翻译轨(type=3)');
+    assert.equal((d.tracks[0] as { is_default?: boolean }).is_default, true);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
 test('getChanges: entity / entity_id / field 过滤 + 分页', () => {
   const { db, dir, ids } = setup();
   try {

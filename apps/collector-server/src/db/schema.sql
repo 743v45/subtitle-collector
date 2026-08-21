@@ -63,6 +63,9 @@ CREATE INDEX IF NOT EXISTS idx_videos_first_seen ON videos(first_seen_at DESC);
 CREATE INDEX IF NOT EXISTS idx_videos_extra_tid ON videos(json_extract(extra, '$.tid'));
 CREATE INDEX IF NOT EXISTS idx_videos_extra_view ON videos(CAST(json_extract(extra, '$.stat.view') AS INTEGER));
 
+-- track_type 语义：1=AI/ASR 自动轨，2=人工 CC 轨，3=翻译轨（YouTube tlang 机翻）。
+-- 3 是 v10 迁移引入：存量 YouTube 翻译轨原落 2 与人工 CC 同型（默认轨优先级会把机翻中文顶成
+-- 默认正文），迁移判据=track_type=2 且关联 video source='youtube' 且版本 source_url 含 'tlang='。
 CREATE TABLE IF NOT EXISTS subtitle_tracks (
   id          INTEGER PRIMARY KEY AUTOINCREMENT,
   video_id    INTEGER NOT NULL REFERENCES videos(id),

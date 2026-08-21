@@ -246,7 +246,7 @@ export function buildExportCommand(): Command {
     .option('--tname <name>', '分区名模糊匹配')
     .option('--tag <tag>', '标签名模糊匹配')
     .option('--lang <lang>', '字幕语言模糊匹配')
-    .option('--track-type <type>', '字幕轨类型（1=AI 2=CC），精确')
+    .option('--track-type <type>', '字幕轨类型（1=AI 2=CC 3=翻译轨），精确')
     .option('--has-subtitle', '仅含至少一条字幕版本的视频')
     .option('--since <ts>', '起始时间（Unix 秒/毫秒 或 ISO8601），比对 first_seen_at')
     .option('--until <ts>', '结束时间，比对 first_seen_at')
@@ -298,7 +298,7 @@ export function buildExportCommand(): Command {
       }
     });
 
-  // export bundle（分析原料包：manifest.json + videos/*.txt + ANALYZE.md；分析在会话完成，产物写回 --out 目录）
+  // export bundle（分析原料包：manifest.json + videos/*.txt + ANALYZE.md；分析在会话完成，产物落盘 analysis/<主题>/）
   exp
     .command('bundle')
     .description('按条件批量导出分析原料包（manifest.json + videos/*.txt + ANALYZE.md）；过滤器同 videos list（无分页）')
@@ -315,7 +315,7 @@ export function buildExportCommand(): Command {
     .option('--tag <tag>', '标签名模糊匹配')
     .option('--subtitle-q <text>', '字幕正文关键词模糊匹配')
     .option('--lang <lang>', '字幕语言模糊匹配')
-    .option('--track-type <type>', '字幕轨类型（1=AI 2=CC），精确')
+    .option('--track-type <type>', '字幕轨类型（1=AI 2=CC 3=翻译轨），精确')
     .option('--has-subtitle', '仅含至少一条字幕版本的视频')
     .option('--paid', '仅付费视频')
     .option('--since <ts>', '起始时间（Unix 秒/毫秒 或 ISO8601），比对 first_seen_at')

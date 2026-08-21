@@ -91,7 +91,7 @@ export function buildStatsCommand(): Command {
     .option('--tname <name>', '分区名模糊匹配')
     .option('--tag <tag>', '标签名模糊匹配')
     .option('--lang <lang>', '字幕语言模糊匹配')
-    .option('--track-type <type>', '字幕轨类型（1=AI 2=CC），精确')
+    .option('--track-type <type>', '字幕轨类型（1=AI 2=CC 3=翻译轨），精确')
     .option('--has-subtitle', '仅含至少一条字幕版本的视频')
     .option('--since <ts>', '起始时间（Unix 秒/毫秒 或 ISO8601），比对 first_seen_at')
     .option('--until <ts>', '结束时间，比对 first_seen_at')
