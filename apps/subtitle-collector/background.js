@@ -227,19 +227,39 @@ function ytChannelKey(ident) {
   return `ytChannelVideos:${ident.channelId ?? ident.handle ?? ident.custom}`;
 }
 
-// 续页：POST /youtubei/v1/browse（context + continuation token）
-async function ytBrowseContinuation(inntertubeKey, clientVersion, token) {
-  const body = JSON.stringify({
-    context: { client: { clientName: 'WEB', clientVersion, hl: 'en', gl: 'US' } },
-    continuation: token,
+// 续页经页面运行时（2026-08-21 修 browse 403）：MV3 SW 跨源 POST 自动带
+// Origin: chrome-extension://…（浏览器强制，header 盖不掉），YouTube InnerTube 对该 Origin 403；
+// 页面 tab 上下文 fetch 的 Origin 是 youtube.com → 200。对齐 collectYoutubeViaNavigate 先例
+//（YouTube 字幕 URL 同理必须靠页面运行时）。func 经 executeScript 序列化注入，args 传参，不能引外部闭包。
+async function ytBrowseViaTab(tabId, inntertubeKey, clientVersion, token) {
+  const [res] = await chrome.scripting.executeScript({
+    target: { tabId },
+    func: async (key, ver, tok) => {
+      const r = await fetch(`https://www.youtube.com/youtubei/v1/browse?key=${key}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          context: { client: { clientName: 'WEB', clientVersion: ver, hl: 'en', gl: 'US' } },
+          continuation: tok,
+        }),
+      });
+      const json = await r.json().catch(() => null);
+      return { status: r.status, json };
+    },
+    args: [inntertubeKey, clientVersion, token],
   });
-  const res = await fetch(`https://www.youtube.com/youtubei/v1/browse?key=${inntertubeKey}`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'User-Agent': navigator.userAgent },
-    body,
-  });
-  if (!res.ok) throw new Error(`browse HTTP ${res.status}`);
-  return res.json();
+  return res?.result ?? { status: 0, json: null };
+}
+
+// 拉取期间确保有一个 youtube.com tab：优先复用已开的（用户就在频道页/看 YouTube 时零感知）；
+// 没有则后台开一个（active:false），由调用方在拉完后关闭（返回 opened 标记）。
+async function ensureYoutubeTab(url) {
+  const [existing] = await chrome.tabs.query({ url: '*://*.youtube.com/*' });
+  if (existing?.id) return { tabId: existing.id, opened: false };
+  const tab = await chrome.tabs.create({ url: url ?? 'https://www.youtube.com/', active: false });
+  // 等页面基本就绪（首个 executeScript 太早可能撞导航中——executeScript 自带等待，留 300ms 缓冲）
+  await new Promise((r) => setTimeout(r, 300));
+  return { tabId: tab.id, opened: true };
 }
 
 async function fetchAllYtChannelVideos(ident, refresh = false) {
@@ -263,9 +283,10 @@ async function fetchAllYtChannelVideos(ident, refresh = false) {
   const persist = (done, err) => chrome.storage.local.set({
     [key]: { channelId, channelName, items, total, done, error: err, fetchedAt: Date.now() },
   });
+  let ytTab = null; // 自建的后台 tab（拉完关；复用用户 tab 不关）
   try {
     if (!url) throw new Error('ident 需 handle/channelId/custom 至少其一');
-    // 首页：SSR HTML 解析
+    // 首页：SSR HTML 解析（HTML 请求不受 InnerTube Origin 校验，仍走 background fetch）
     const htmlRes = await fetch(url, {
       headers: { 'User-Agent': navigator.userAgent, 'Accept-Language': 'en-US,en;q=0.9' },
     });
@@ -280,17 +301,19 @@ async function fetchAllYtChannelVideos(ident, refresh = false) {
       if (!seen.has(it.vid)) { seen.add(it.vid); items.push(it); }
     }
     await persist(false, null);
-    // 续页：InnerTube browse + continuation token，直到无 token
+    // 续页：InnerTube browse 经页面 tab 执行（见 ytBrowseViaTab 注释），直到无 token
     let token = first.continuation;
     while (token) {
-      const json = await ytBrowseContinuation(inntertubeKey, clientVersion, token);
-      const page = parseYtBrowseResponse(json);
+      if (!ytTab) ytTab = await ensureYoutubeTab(url);
+      const page = await ytBrowseViaTab(ytTab.tabId, inntertubeKey, clientVersion, token);
+      if (page.status !== 200 || !page.json) throw new Error(`browse HTTP ${page.status || 'parse'}`);
+      const parsed = parseYtBrowseResponse(page.json);
       let added = 0;
-      for (const it of page.items) {
+      for (const it of parsed.items) {
         if (!seen.has(it.vid)) { seen.add(it.vid); items.push(it); added++; }
       }
       await persist(false, null);
-      token = page.continuation;
+      token = parsed.continuation;
       if (total > 0 && items.length >= total) break;
       noNewStreak = added > 0 ? 0 : noNewStreak + 1;
       if (noNewStreak >= 3) break;
@@ -299,6 +322,7 @@ async function fetchAllYtChannelVideos(ident, refresh = false) {
   } catch (e) {
     error = String(e?.message ?? e);
   }
+  if (ytTab?.opened) { try { await chrome.tabs.remove(ytTab.tabId); } catch {} }
   await persist(true, error);
   ytChannelInflight.delete(key);
   return { status: 'done', error };

@@ -51,3 +51,8 @@ B 站**字幕（subtitle）**相关浏览器扩展的 monorepo（pnpm + turbo，
 ## 7. 扩展版本号纪律
 
 `apps/subtitle-collector/manifest.json` 的 `version` 在**每次涉及扩展改动的提交里必须 bump**（补丁位 +1，如 0.1.1 → 0.1.2）。popup 品牌头直出 `manifest.version`，用户据此对照本地扩展是否为最新构建（chrome://extensions 刷新后核对）。collector-server / collector-web 走 docker rebuild 自带最新，无需手动版本。
+
+## 8. 实现路线纪律（不绕路）
+
+- **只走项目自己的方向**：遇到问题时优先沿既定架构先例修复（对齐本仓库已有模式），不引入替代方案/绕路变通（如换数据源、换协议、加旁路通道）。
+- **外部方案必须先询问**：明显偏离项目方向的方案选择（换库/换协议/换数据源/新增外部依赖等"外部方案"）必须先向用户提出并确认，禁止直接尝试。内部开发（项目方向内的实现细节、bug 修复、对齐先例的重构）无需询问。

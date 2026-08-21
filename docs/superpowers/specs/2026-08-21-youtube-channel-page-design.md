@@ -77,3 +77,11 @@ B 站侧已有「UP 全部视频卡」（空间页/视频页入口，全量分�
 | 2 | server `npm test` | ✅ 299/299 | 新增：createTasksBatch youtube（11 位校验/watch URL/复合去重域）+ parseYtChannelArg ×2 + collectDedupe source + collectYtChannelVideos 透传 |
 | 3 | 扩展 `npm test` + `vite build` + server `tsc` + puppeteer 回归 | ✅ 132/132 + 构建过 + 主链路 ✅ | |
 | 4 | 真机验收（Chrome 151 + dist v0.1.4，@mattpocockuk/videos + popup 截图×2） | ✅ | 折叠态「频道全部视频 共 300 条 已采 0」拉取完成；展开态列表行（缩略图/标题链接/时长/播放/日期/勾选/过滤 pill/channelId footer）全渲染；YouTube 视频页误出 B 站 UP 卡的存量 bug 顺带修复 |
+
+### 补充轮次（2026-08-21 用户反馈两 bug：过滤不生效 + 拉取「⚠ 中断」）
+
+| 轮次 | 验证 | 结果 | 备注 |
+|---|---|---|---|
+| 5 | 根因调查：测试 Chrome 读 storage + SW 上下文 A/B 头组合实验 + 页面上下文对照 | 定位 | **根因**：MV3 SW 跨源 POST 自动带 `Origin: chrome-extension://…`（浏览器强制、header 盖不掉）→ InnerTube browse 403（无头/Referer/X-Origin/延迟 四组合全 403；页面上下文 200）。首页 HTML 不受影响（仍走 background）。过滤不生效为次生症状：403 截断后仅剩 30 条最新视频，时间/播放量档位命中全部条目无视觉区分 |
+| 6 | 修复（v0.1.5）：续页改经 YouTube 页面 tab 执行（`chrome.scripting.executeScript`，对齐 collectYoutubeViaNavigate「页面运行时」先例）；复用已开 YouTube tab / 无则后台开一个拉完即关；manifest + `scripting` 权限 | ✅ | 修后测试 Chrome：`error:null`、143 条拉完无中断（143≠299 为该测试 profile 未登录 YouTube 的数据源限制，用户登录态不受影响）；数据区分度恢复：近半年 25/143、1万+ 133/143 |
+| 7 | 回归：扩展 `npm test` 132/132 + `vite build` + puppeteer 主链路 | ✅ | 用户真机验收：重装 v0.1.5 → 频道页 popup ↻ 重拉 → 过滤 pill 生效确认 |
