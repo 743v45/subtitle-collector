@@ -18,7 +18,7 @@ B 站**字幕（subtitle）**相关浏览器扩展与配套服务的 monorepo（
 - ✅ **合集批量**：popup 合集卡（视频属合集时列出全集 `seasons_archives_list` 全量分页，勾选批量采集上报）
 - ✅ **搜索批量**：`collect search <keyword>` / `collect find <keyword>`（粉丝数/发布时间/播放量等条件过滤）
 - ✅ 充电专属视频采集 + 付费标记（`videos list --paid`）
-- ✅ 无字幕视频兜底：subtitle-extractor 浏览器本地 Whisper 转写
+- 🚧 无字幕视频兜底：subtitle-extractor 浏览器本地 Whisper 转写（旁挂手动工具，未集成入库链路——转写产物暂无回流 bundle 的桥）
 
 ### 查询与导出（✅）
 
@@ -46,7 +46,7 @@ B 站**字幕（subtitle）**相关浏览器扩展与配套服务的 monorepo（
 | [apps/collector-web](apps/collector-web) | 前端（React + Vite） | 字幕库浏览/详情 UI；`vite build` 产物直接写入 `apps/collector-server/public/`，由 server 托管 |
 | [apps/subtitle-extractor](apps/subtitle-extractor) | 浏览器扩展（MV3，Vite + transformers.js） | B站音轨提取 → 浏览器本地 Whisper 转写 → SRT/VTT 导出（无字幕视频兜底，零后端、数据不出本机） |
 
-数据流（本地闭环，全部跑在 `127.0.0.1`）：
+数据流（默认部署为本地闭环，`127.0.0.1`；暴露部署见「环境变量」）：
 
 ```
 浏览器(B站页面) ──MV3扩展──WS──▶ collector-server(21527) ◀──HTTP── 浏览器(collector-web UI)
@@ -88,16 +88,18 @@ server 端**可选**设置 `COLLECTOR_TOKEN`：设置后扩展的 server URL 必
 
 ## 环境变量
 
-只有 collector-server 读取环境变量，详见 [apps/collector-server/.env.example](apps/collector-server/.env.example)。三项：
+只有 collector-server 读取环境变量，详见 [apps/collector-server/.env.example](apps/collector-server/.env.example)。五项：
 
 | 变量 | 默认值 | 说明 |
 |---|---|---|
 | `COLLECTOR_PORT` | `21527` | HTTP + WS 监听端口 |
 | `COLLECTOR_DB_PATH` | `./bilibili-collector.db` | SQLite 路径 |
 | `COLLECTOR_TOKEN` | 空（无 token 模式） | 可选鉴权 token；设置后扩展 server URL 须带 `?token=xxx`、CLI 须带 Bearer，暴露部署必须设置 |
+| `COLLECTOR_HOST` | `127.0.0.1` | 监听地址，默认仅 loopback（防 DNS rebinding）。Docker / 暴露部署设 `0.0.0.0`，此时必须设置 `COLLECTOR_TOKEN`（启动强校验） |
+| `COLLECTOR_ALLOWED_HOSTS` | 空（仅 loopback） | 显式放行非 loopback 的 Host/Origin，逗号分隔（如 `192.168.1.5,collector.local`）；配合 `COLLECTOR_HOST=0.0.0.0` 暴露部署，设置后必须设 `COLLECTOR_TOKEN`（`/api/*` 强制 Bearer） |
 
 关键约束：
-- 服务端固定监听 `127.0.0.1`（防 DNS rebinding，不可改 bind host）。
+- 服务端默认监听 `127.0.0.1`（防 DNS rebinding），并非固定不可改：需暴露部署（局域网 IP / caddy 域名）时用 `COLLECTOR_HOST=0.0.0.0` + `COLLECTOR_ALLOWED_HOSTS` 显式放行访问 Host，且此时必须设置 `COLLECTOR_TOKEN`（启动强校验，见 [apps/collector-server/src/main.ts](apps/collector-server/src/main.ts)）。
 - **改 `COLLECTOR_PORT` 时**，须同步修改扩展 popup 里配置的 server URL；**设了 `COLLECTOR_TOKEN` 时**，扩展的 server URL 须带 `?token=xxx`、CLI 须带 Bearer（扩展侧不再有 config.js 常量，server 列表存扩展 storage，popup 可改）。
 - 当前代码直接读 `process.env`（未集成 dotenv）。开发期可 `COLLECTOR_TOKEN=xxx pnpm dev` 注入；生产可 `node --env-file=.env dist/main.js`。
 

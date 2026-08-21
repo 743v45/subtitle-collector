@@ -1,3 +1,3 @@
 packages:
   - "apps/*"
-  - "!apps/subtitle-extractor" # 临时排除:其依赖的 voicetxt 仓库缺失,导致整 workspace 装依赖失败。勿提交,用完 git restore 撤销
+  - "!apps/subtitle-extractor" # 正式排除:其依赖的 voicetxt 在仓库外且当前缺失,参与安装会拖垮整个 workspace pnpm install;依赖缺失期间正式排除出 workspace,测试冻结(见 CLAUDE.md §3)
