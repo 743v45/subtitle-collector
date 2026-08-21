@@ -522,8 +522,8 @@ function FooterActions({
 // 采集任务进度卡（2026-08-21）：useCollectTasks 快照 + TASK_UPDATE 推送驱动。
 // 有在途（pending/dispatched）才显示；全终态后保留 30s（用户看到最终结果再收起）。
 // 批量任务按 batch_id 聚成一行「n/m」（成员由 server 列表返回；批次被 >limit 新任务遮蔽出
-// 列表窗口时可能不全，分母以 TASK_UPDATE 推送携带的 batch_total 为准），单任务独占一行；
-// 在途组置顶（创建序），终态按完成序跟随；最多 10 行，超出折叠计数。
+// 列表窗口时可能不全，分母取该批最大 batch_total——创建期推送携带递增实时值，见 BatchOrTaskRow），
+// 单任务独占一行；在途组置顶（创建序），终态按完成序跟随；最多 10 行，超出折叠计数。
 function CollectTasksCard({ tasks }: { tasks: CollectTask[] | null }) {
   const hasActive = !!tasks?.some((t) => t.status === 'pending' || t.status === 'dispatched');
   const [lastActiveAt, setLastActiveAt] = useState(0); // 最后「有在途」时刻（30s 保留窗口起算点）
@@ -588,14 +588,16 @@ function CollectTasksCard({ tasks }: { tasks: CollectTask[] | null }) {
 // 批次聚合成一行进度：items.length>1 才算批次——单成员批次（用户只勾 1 个视频批量提交）
 // 走单任务形态（链接/标题/状态徽标），否则丢标题丢链接。
 // 进行中「n/m」天蓝脉冲；全终态「✓ m/m」绿（有失败追加红字 x 失败）。
-// 分母 head.batch_total ?? items.length：批次被列表窗口遮蔽（成员不全）时用推送携带的总数。
+// 分母 = max(成员数, 最大 batch_total)：批次被列表窗口遮蔽（成员不全）时用推送携带的总数；
+// 且创建期推送（createTasksBatch 逐条插入）携带的是递增实时值——首条 pending 时 batch_total=1、
+// 第 2 条=2…建齐后才是成员总数，取单个成员（如 head）可能是创建期小值。
 function BatchOrTaskRow({ items, active }: { items: CollectTask[]; active: boolean }) {
   const batch = items.length > 1;
   const ok = items.filter((t) => t.status === 'succeeded').length;
   const fail = items.filter((t) => t.status === 'failed').length;
   const head = items[0];
-  const total = head.batch_total ?? items.length;
-  const title = batch ? `批量采集 ${items.length} 个视频` : head.title || head.source_vid;
+  const total = Math.max(items.length, ...items.map((t) => t.batch_total ?? 0));
+  const title = batch ? `批量采集 ${total} 个视频` : head.title || head.source_vid;
   const errTip = items.map((t) => (t.error ? `${t.source_vid}: ${t.error}` : null)).filter(Boolean).join('\n');
   return (
     <div className="flex items-center gap-1.5 text-[11px]">
