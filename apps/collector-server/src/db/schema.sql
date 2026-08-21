@@ -153,6 +153,7 @@ CREATE TABLE IF NOT EXISTS collect_tasks (
   error       TEXT,
   result      TEXT,
   batch_id    TEXT, -- 展示侧聚合标签：批量提交的同批任务共享同一 UUID；单条任务 NULL。无批次实体，UI 按此分组
+  creator_uid TEXT, -- UP 归属冗余列（2026-08-22 历史页按 UP 筛未入库任务）：批量提交时调用方已知 / 建任务时查库回填 / ingest 后回填。列值 = creators.source_uid
   created_at  INTEGER NOT NULL,
   finished_at INTEGER
 );

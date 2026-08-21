@@ -81,6 +81,7 @@ export interface CollectTask {
   error: string | null;
   result: string | null; // JSON 字符串（扩展回执 data：captured/tracks/reason…）
   title: string | null;  // 库内视频标题（server LEFT JOIN videos；任务卡直接展示,未入库 null）
+  creator_name?: string | null; // 库内 UP 名（server LEFT JOIN creators；历史页按 UP 筛选后回显,未入库 null）
   created_at: number;
   finished_at: number | null;
 }

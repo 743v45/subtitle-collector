@@ -170,6 +170,16 @@ export function ingestVideo(db: Database.Database, req: IngestRequest): IngestRe
       videoUpd.run(creatorId ?? existingVideo.creator_id, fields.title, fields.extra, fields.duration, fields.published_at, fields.paid, now, videoId);
     }
 
+    // 2.5 任务行 UP 归属回填（collect_tasks.creator_uid，2026-08-22 历史页按 UP 筛未入库任务）：
+    // 该视频的任务行（pending/failed 尚未入库的）在此拿到归属。归属取该视频当前库内归属
+    // （本次 upsert 已生效，同事务可见）；只补 NULL 行，不覆盖调用方显式落的值。
+    db.prepare(
+      `UPDATE collect_tasks
+       SET creator_uid = (SELECT c.source_uid FROM videos v JOIN creators c ON c.id = v.creator_id
+                          WHERE v.source = collect_tasks.source AND v.source_vid = collect_tasks.source_vid)
+       WHERE source = ? AND source_vid = ? AND creator_uid IS NULL`,
+    ).run(r.source, r.video.source_vid);
+
     // 3. track upsert
     const trackSel = db.prepare('SELECT id FROM subtitle_tracks WHERE video_id = ? AND lan IS ? AND track_type IS ?');
     const trackIns = db.prepare('INSERT INTO subtitle_tracks (video_id, lan, lan_doc, track_type) VALUES (?, ?, ?, ?)');

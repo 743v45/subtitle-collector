@@ -3,7 +3,8 @@
 import type { VideoFilter } from '../db/advanced.js';
 
 // 字符串 → 整数；空串/非有限数 → undefined（调用方据此跳过该过滤项）。
-function toInt(raw: string | null): number | undefined {
+// 导出供 tasks.ts 复用（collect-tasks 的 since/until 毫秒解析，同款口径）。
+export function toInt(raw: string | null): number | undefined {
   if (raw === null || raw === '') return undefined;
   const n = Number(raw);
   return Number.isFinite(n) ? n : undefined;

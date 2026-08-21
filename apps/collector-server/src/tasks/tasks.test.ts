@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type Database from 'better-sqlite3';
 import { openDb, migrate } from '../db/migrate.js';
+import { ingestVideo } from '../db/ingest.js';
 import { extractVideoUrl, expandShortLink, parseVideoUrl, createTask, createTasksBatch, findActiveTask, pickClientForTask, commandTimeoutMs, expandUpperVideos, getTask, listTasks, resetDispatched, type FetchLike, type UpperExpandDeps } from './tasks.js';
 
 function setupDb(): { db: Database.Database; cleanup: () => void } {
@@ -348,4 +349,251 @@ test('createTasksBatch：creator_client_id 透传到任务行；不传为 null',
 test('commandTimeoutMs：youtube 长预算（后台 tab+自限+宽限）、bilibili 短预算', () => {
   assert.equal(commandTimeoutMs('youtube'), 180_000);
   assert.equal(commandTimeoutMs('bilibili'), 90_000);
+});
+
+// ── listTasks 多维筛选（2026-08-22 历史页）：creator/q 是入库元数据维度 ──
+// 契约：未入库任务（无 videos 行）无 UP/标题归属，creator/q 筛不中；status/source/since/
+// until/batchId 走 t.* 列覆盖未入库任务。批次补全：筛选只作用种子，种子涉及的批次成员
+// 全量带出（「n/m 完成」分母完整，与 status 跨状态拉齐语义一致）。
+
+// 样本：2 UP（Alpha uid=1 / Beta uid=11，防 uid '1' LIKE 误匹配 '11'），2 已入库视频 +
+// 4 未入库任务（含 3 条批次 B）。created_at 全部 INSERT 直写为确定值（T 基准毫秒）。
+function setupFilterDb(): {
+  db: Database.Database; cleanup: () => void;
+  ids: { alphaBatch: number; nobat1: number; nobat2: number; beta: number; nolib: number; yt: number };
+} {
+  const { db, cleanup } = setupDb();
+  const T = 1_700_000_000_000;
+  const ing = (sv: string, title: string, uid: string, name: string) =>
+    ingestVideo(db, {
+      source: 'bilibili',
+      video: { source_vid: sv, title, creator: { source_uid: uid, name }, extra: {}, duration: 100, published_at: T },
+      tracks: [],
+    });
+  ing('BV1ALPHA0001', 'Alpha 视频一', '1', 'Alpha UP');   // uid '1'
+  ing('BV1BETA00001', 'Beta 视频标题', '11', 'Beta UP');  // uid '11'（防误匹配回归样本）
+
+  // 任务行直插（绕开 createTask 的 Date.now()；created_at 确定性）
+  const ins = db.prepare(
+    'INSERT INTO collect_tasks (source, source_vid, url, status, created_at, batch_id, finished_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
+  );
+  const run = (source: string, sv: string, status: string, createdAt: number, batchId: string | null) => {
+    const url = source === 'youtube' ? `https://www.youtube.com/watch?v=${sv}` : `https://www.bilibili.com/video/${sv}`;
+    const fin = status === 'succeeded' || status === 'failed' ? createdAt + 10_000 : null;
+    return Number(ins.run(source, sv, url, status, createdAt, batchId, fin).lastInsertRowid);
+  };
+  const ids = {
+    alphaBatch: run('bilibili', 'BV1ALPHA0001', 'succeeded', T + 4000, 'batch-test-1'), // 已入库（Alpha）批次成员
+    nobat1: run('bilibili', 'BV1NOBAT001x', 'pending', T + 5000, 'batch-test-1'),       // 未入库批次成员
+    nobat2: run('bilibili', 'BV1NOBAT002x', 'failed', T + 6000, 'batch-test-1'),        // 未入库批次成员
+    beta: run('bilibili', 'BV1BETA00001', 'succeeded', T + 2000, null),                 // 已入库（Beta）单任务
+    nolib: run('bilibili', 'BV1NOLIB0001', 'pending', T + 3000, null),                  // 未入库单任务
+    yt: run('youtube', 'dQw4w9WgXcQ', 'failed', T + 7000, null),                        // 未入库 youtube 任务
+  };
+  return { db, cleanup, ids };
+}
+
+const vids = (items: Array<{ source_vid: string }>) => items.map((i) => i.source_vid);
+
+test('listTasks 多维：creator 名字模糊（LIKE 命中/不命中）', () => {
+  const { db, cleanup, ids } = setupFilterDb();
+  try {
+    const alpha = listTasks(db, 50, 0, { creator: 'Alpha' });
+    assert.equal(alpha.total, 1);                          // 种子：只有已入库的 alpha 批次成员
+    assert.ok(alpha.items.some((t) => t.id === ids.alphaBatch));       // 种子在结果里（items 按id desc,补全成员可能在前）
+    assert.deepEqual(vids(alpha.items).sort(), ['BV1ALPHA0001', 'BV1NOBAT001x', 'BV1NOBAT002x'].sort()); // 批次补全拉齐整批
+
+    const beta = listTasks(db, 50, 0, { creator: 'Beta' });
+    assert.equal(beta.total, 1);
+    assert.equal(beta.items[0].id, ids.beta);              // 单任务无批次,无补全
+
+    assert.equal(listTasks(db, 50, 0, { creator: '不存在' }).total, 0);
+  } finally { cleanup(); }
+});
+
+test('listTasks 多维：creator_uid 精确（uid "1" 不误匹配 "11"）', () => {
+  const { db, cleanup, ids } = setupFilterDb();
+  try {
+    const by1 = listTasks(db, 50, 0, { creatorUid: '1' });
+    assert.equal(by1.total, 1);
+    assert.equal(by1.items.find((t) => t.id === ids.alphaBatch)!.source_vid, 'BV1ALPHA0001'); // 精确 uid=1，不命中 Beta(uid=11)
+
+    const by11 = listTasks(db, 50, 0, { creatorUid: '11' });
+    assert.equal(by11.total, 1);
+    assert.equal(by11.items[0].source_vid, 'BV1BETA00001');
+  } finally { cleanup(); }
+});
+
+test('listTasks 多维：未入库任务契约——标题维度筛不中/UP 归属列筛得中，t.* 列维度覆盖', () => {
+  const { db, cleanup, ids } = setupFilterDb();
+  try {
+    // q 按库内标题：命中 alpha 视频标题
+    assert.equal(listTasks(db, 50, 0, { q: 'Alpha 视频' }).total, 1);
+    // q 的 vid 段匹配 t.source_vid：未入库任务按 BV 号/vid 搜得中（2026-08-22 补：按 BV 号找任务）
+    assert.equal(listTasks(db, 50, 0, { q: 'NOLIB' }).total, 1);
+    assert.equal(listTasks(db, 50, 0, { q: 'dQw4w9WgXcQ' }).total, 1);
+    // q 的标题维度不含未入库任务：无归属无标题的任务用「词不在任何标题里」验证
+    assert.equal(listTasks(db, 50, 0, { q: '根本不存在的标题词' }).total, 0);
+    // creator 筛选不含未入库任务（setupFilterDb 直插的任务行 creator_uid 为 NULL，无 UP 归属）
+    const alpha = listTasks(db, 50, 0, { creator: 'Alpha' });
+    assert.ok(!alpha.items.some((t) => t.id === ids.nolib || t.id === ids.yt));
+
+    // t.* 列维度覆盖未入库任务
+    const pend = listTasks(db, 50, 0, { status: ['pending'] });
+    assert.equal(pend.total, 2);                                 // nolib + nobat1（批次成员）
+    assert.deepEqual(vids(pend.items).sort(), ['BV1NOLIB0001', 'BV1NOBAT001x', 'BV1ALPHA0001', 'BV1NOBAT002x'].sort()); // 补全带出批次其余成员
+    const yt = listTasks(db, 50, 0, { source: 'youtube' });
+    assert.equal(yt.total, 1);
+    assert.equal(yt.items[0].id, ids.yt);                        // 未入库 youtube 任务按平台筛得中
+    assert.equal(listTasks(db, 50, 0, { source: 'bilibili' }).total, 5);
+  } finally { cleanup(); }
+});
+
+test('listTasks 多维：任务行 creator_uid 冗余列——未入库/失败任务按 UP 筛得中（盲区修复）', () => {
+  const { db, cleanup } = setupFilterDb();
+  try {
+    // 模拟「popup 按 UP 批量」：显式 creator_uid 建批次（视频未入库，任务直接带归属）
+    const batch = createTasksBatch(db, ['BV1NEWBAT01x', 'BV1NEWBAT02x'], 'bilibili', null, '1');
+    assert.equal(batch.created.length, 2);
+    for (const t of batch.created) assert.equal(t.creator_uid, '1'); // 建任务即带归属
+
+    // 未入库任务（creator_uid=1）经冗余列筛得中：creator 精确 + 名字模糊（经 ct 关联资料行）
+    const byUid = listTasks(db, 50, 0, { creatorUid: '1' });
+    assert.ok(byUid.items.some((t) => t.source_vid === 'BV1NEWBAT01x'));
+    assert.ok(byUid.items.some((t) => t.source_vid === 'BV1ALPHA0001')); // 已入库 alpha 同归属也命中
+    const byName = listTasks(db, 50, 0, { creator: 'Alpha' });
+    assert.ok(byName.items.some((t) => t.source_vid === 'BV1NEWBAT01x')); // 名字模糊经 ct.name 命中未入库行
+    // 回显：未入库但资料行在库（P2 采过）→ creator_name 有值
+    const row = byName.items.find((t) => t.source_vid === 'BV1NEWBAT01x')!;
+    assert.equal(row.creator_name, 'Alpha UP');
+    assert.equal(row.title, null); // 未入库 title 仍 null
+
+    // uid '1' 不误匹配 '11'（冗余列精确等值）
+    const by11 = listTasks(db, 50, 0, { creatorUid: '11' });
+    assert.ok(!by11.items.some((t) => t.source_vid === 'BV1NEWBAT01x'));
+  } finally { cleanup(); }
+});
+
+test('createTask 建任务查库回填 creator_uid（重采场景：视频已入库，新任务立即可按 UP 筛）', () => {
+  const { db, cleanup } = setupFilterDb();
+  try {
+    // BV1BETA00001 已入库（uid '11'）→ 重采建任务自动带归属（失败重试场景的关键路径）
+    const t = createTask(db, { source: 'bilibili', source_vid: 'BV1BETA00001', url: 'https://x' });
+    assert.equal(t.creator_uid, '11');
+    // 未入库视频建任务：无归属可查 → null
+    const t2 = createTask(db, { source: 'bilibili', source_vid: 'BV1NEVERSEEN', url: 'https://x' });
+    assert.equal(t2.creator_uid, null);
+    // 显式 creatorUid 优先于查库（合集视频属于别人合集但提交方已知 UP 的场景由调用方保证）
+    const t3 = createTask(db, { source: 'bilibili', source_vid: 'BV1ALPHA0001', url: 'https://x' }, null, null, '999');
+    assert.equal(t3.creator_uid, '999');
+  } finally { cleanup(); }
+});
+
+test('ingestVideo 回填任务行 creator_uid（先建任务后入库：pending 行获得归属）', () => {
+  const { db, cleanup } = setupFilterDb();
+  try {
+    // 未入库视频先建任务（无归属），再 ingest → 任务行回填归属
+    createTask(db, { source: 'bilibili', source_vid: 'BV1LATEING001', url: 'https://x' });
+    ingestVideo(db, {
+      source: 'bilibili',
+      video: { source_vid: 'BV1LATEING001', title: '迟到入库', creator: { source_uid: '11', name: 'Beta UP' }, extra: {}, duration: 60, published_at: 1 },
+      tracks: [],
+    });
+    const row = db.prepare("SELECT creator_uid FROM collect_tasks WHERE source_vid = 'BV1LATEING001'").get() as { creator_uid: string | null };
+    assert.equal(row.creator_uid, '11');
+    // 已有显式归属的行不被覆盖（COALESCE 语义：只补 NULL）
+    createTask(db, { source: 'bilibili', source_vid: 'BV1KEEPUID001', url: 'https://x' }, null, null, '999');
+    ingestVideo(db, {
+      source: 'bilibili',
+      video: { source_vid: 'BV1KEEPUID001', title: '保持显式', creator: { source_uid: '11', name: 'Beta UP' }, extra: {}, duration: 60, published_at: 1 },
+      tracks: [],
+    });
+    const row2 = db.prepare("SELECT creator_uid FROM collect_tasks WHERE source_vid = 'BV1KEEPUID001'").get() as { creator_uid: string | null };
+    assert.equal(row2.creator_uid, '999');
+  } finally { cleanup(); }
+});
+
+test('迁移 v11：存量任务行按库内归属回填 creator_uid', () => {
+  const { db, cleanup } = setupFilterDb();
+  try {
+    // setupFilterDb 用 migrate() 建库（新 schema 自带列），回填 UPDATE 会在 runMigrations 之外——
+    // 手动重放 v11 回填语句验证语义（幂等：再跑一次不改变已有值）
+    db.prepare(`UPDATE collect_tasks
+       SET creator_uid = (SELECT c.source_uid FROM videos v JOIN creators c ON c.id = v.creator_id
+                          WHERE v.source = collect_tasks.source AND v.source_vid = collect_tasks.source_vid)
+       WHERE creator_uid IS NULL`).run();
+    const alphaRow = db.prepare("SELECT creator_uid FROM collect_tasks WHERE source_vid = 'BV1ALPHA0001'").get() as { creator_uid: string | null };
+    const nolibRow = db.prepare("SELECT creator_uid FROM collect_tasks WHERE source_vid = 'BV1NOLIB0001'").get() as { creator_uid: string | null };
+    assert.equal(alphaRow.creator_uid, '1');     // 已入库 → 回填归属
+    assert.equal(nolibRow.creator_uid, null);    // 未入库 → 无归属可补
+  } finally { cleanup(); }
+});
+
+test('listTasks 多维：since/until 边界（毫秒，含边界值）', () => {
+  const { db, cleanup } = setupFilterDb();
+  try {
+    const T = 1_700_000_000_000;
+    const mid = listTasks(db, 50, 0, { since: T + 2500, until: T + 3500 }); // 窗口不沾批次（4000+）
+    assert.equal(mid.total, 1);
+    assert.equal(mid.items[0].source_vid, 'BV1NOLIB0001');
+
+    assert.equal(listTasks(db, 50, 0, { since: T + 3000 }).total, 5); // 含边界：nolib(3000)+alphaBatch(4000)+nobat1(5000)+nobat2(6000)+yt(7000)
+    assert.equal(listTasks(db, 50, 0, { until: T + 2000 }).total, 1); // 含边界：beta(2000)
+  } finally { cleanup(); }
+});
+
+test('listTasks 多维：batchId 聚焦（total=批成员数，单批分页补全语义）', () => {
+  const { db, cleanup } = setupFilterDb();
+  try {
+    const all = listTasks(db, 50, 0, { batchId: 'batch-test-1' });
+    assert.equal(all.total, 3);                                  // WHERE 计数 = 批成员数
+    assert.equal(all.items.length, 3);                           // 种子=整批，补全 no-op
+
+    // 单批分页：limit=2 切种子，补全仍拉齐整批（跨页重复展示是既定语义，与 status 筛选一致）
+    const p1 = listTasks(db, 2, 0, { batchId: 'batch-test-1' });
+    assert.equal(p1.total, 3);
+    assert.equal(p1.items.length, 3);
+    const p2 = listTasks(db, 2, 2, { batchId: 'batch-test-1' });
+    assert.equal(p2.items.length, 3);
+    assert.deepEqual(new Set(vids(p1.items)), new Set(vids(p2.items))); // 两页批成员集合一致
+  } finally { cleanup(); }
+});
+
+test('listTasks 多维：组合筛选（creator+status / creator+since）', () => {
+  const { db, cleanup, ids } = setupFilterDb();
+  try {
+    const combo = listTasks(db, 50, 0, { creator: 'Alpha', status: ['succeeded'] });
+    assert.equal(combo.total, 1);
+    assert.equal(combo.items.find((t) => t.id === ids.alphaBatch)!.source_vid, 'BV1ALPHA0001');
+
+    const T = 1_700_000_000_000;
+    assert.equal(listTasks(db, 50, 0, { creator: 'Alpha', since: T + 4500 }).total, 0); // alpha 任务 4000 < 4500
+  } finally { cleanup(); }
+});
+
+test('listTasks 多维：批次补全跨筛选拉齐（种子命中即整批带出，锁定现状语义）', () => {
+  const { db, cleanup } = setupFilterDb();
+  try {
+    // creator:'Alpha' 种子只有 alphaBatch（succeeded），同批 pending/failed 成员不满足筛选仍被补全带出
+    const r = listTasks(db, 50, 0, { creator: 'Alpha', status: ['pending'] });
+    assert.equal(r.total, 0);                                    // WHERE 计数：无「Alpha 且 pending」的种子
+    // 换 status:succeeded 种子命中 → 整批带出（跨状态拉齐）
+    const r2 = listTasks(db, 50, 0, { creator: 'Alpha', status: ['succeeded'] });
+    assert.equal(r2.total, 1);
+    assert.equal(r2.items.length, 3);
+    assert.deepEqual(vids(r2.items).sort(), ['BV1ALPHA0001', 'BV1NOBAT001x', 'BV1NOBAT002x'].sort());
+  } finally { cleanup(); }
+});
+
+test('listTasks 多维：items 带 creator_name（已入库有名，未入库 null）', () => {
+  const { db, cleanup, ids } = setupFilterDb();
+  try {
+    const all = listTasks(db, 50, 0);
+    assert.equal(all.items.find((t) => t.id === ids.alphaBatch)!.creator_name, 'Alpha UP');
+    assert.equal(all.items.find((t) => t.id === ids.beta)!.creator_name, 'Beta UP');
+    assert.equal(all.items.find((t) => t.id === ids.nolib)!.creator_name, null);
+    assert.equal(all.items.find((t) => t.id === ids.yt)!.creator_name, null);
+    // 单查/getTask 同形状
+    assert.equal(getTask(db, ids.alphaBatch)!.creator_name, 'Alpha UP');
+  } finally { cleanup(); }
 });

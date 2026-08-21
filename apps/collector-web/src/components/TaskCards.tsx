@@ -10,7 +10,7 @@ import { navigate } from '../router';
 import { getVideo, getVersion } from '../api';
 import { useAsync } from '@/lib/useAsync';
 import type { SubtitleLine } from '@/components/SubtitleView';
-import { ChevronDown, ChevronUp, Eye, RotateCcw, Trash2 } from 'lucide-react';
+import { ChevronDown, ChevronUp, Eye, Focus, RotateCcw, Trash2 } from 'lucide-react';
 import type { CollectTask, VideoDetail } from '../types';
 
 // 任务状态徽章文案与配色（pending 细分「等待扩展上线/排队中」由客户端数区分,这里统一显示）
@@ -121,9 +121,12 @@ export function TaskRow({ task, onDelete, onRetry }: {
           </Button>
         </div>
         <div className={cn('text-sm', task.status === 'failed' ? 'text-destructive' : task.status === 'limited' ? 'text-amber-600 dark:text-amber-400' : 'text-muted-foreground')}>
-          {/* 有标题时次行给 平台·BV号 + 摘要;无标题保持摘要 */}
+          {/* 有标题时次行给 平台·BV号·UP名 + 摘要;无标题保持摘要（UP 名来自 LEFT JOIN creators,未入库 null） */}
           {task.title && (
-            <span className="text-xs">{PLATFORM_LABEL[task.source] ?? task.source} · {task.source_vid} · </span>
+            <span className="text-xs">
+              {PLATFORM_LABEL[task.source] ?? task.source} · {task.source_vid}
+              {task.creator_name ? <> · {task.creator_name}</> : null} ·{' '}
+            </span>
           )}
           {resultSummary(task)}
         </div>
@@ -270,6 +273,17 @@ export function BatchTaskCard({ items, onDelete, onDeleteBatch, onRetry, onRetry
             {ok}/{items.length}
           </span>
           <span className="shrink-0 text-xs text-muted-foreground">{formatTs(createdAt)}</span>
+          {/* 批次聚焦入口：跳历史页按 batch_id 只看这一批（采集页只留最近 30 条,批次被挤出后唯一回看入口） */}
+          <Button
+            variant="ghost"
+            size="icon"
+            className="size-7 text-muted-foreground hover:text-primary"
+            aria-label="在历史页查看整批"
+            title="在历史页查看整批"
+            onClick={() => navigate(`/history?batch_id=${encodeURIComponent(batchId)}`)}
+          >
+            <Focus className="size-4" />
+          </Button>
           {canRetry && (
             <Button
               variant="ghost"

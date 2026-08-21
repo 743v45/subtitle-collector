@@ -980,6 +980,7 @@ function BatchCollectCard({
   standalone,
   linkFor,
   source,
+  creatorUid,
 }: {
   title: ReactNode;               // 折叠态标题（含色块的富文本）
   titleText: string;              // 纯文本标题（loading 提示用）
@@ -991,6 +992,8 @@ function BatchCollectCard({
   standalone: boolean;
   linkFor: (vid: string) => string;
   source: 'bilibili' | 'youtube';
+  creatorUid?: string;            // UP 归属（UP 卡 mid / 频道卡 channelId；合集卡无 UP 信息不传）——
+                                  // 落任务行冗余列，历史页按 UP 筛未入库/失败任务的依据
 }) {
   const [open, setOpen] = useState(false);
   const clientId = useClientId(); // 批量提交自带创建者标识（server sticky 派发）
@@ -1088,10 +1091,12 @@ function BatchCollectCard({
     }
     setBatch({ state: 'submitting', msg: '' });
     try {
-      // 两平台统一 body：{vids, source, client_id}（2026-08-21 server 删除 bvids 旧键、
+      // 两平台统一 body：{vids, source, client_id, creator_uid}（2026-08-21 server 删除 bvids 旧键、
       // clientId 改 snake_case 对齐 API 其余字段 source_vid/creator_client_id）。
-      // client_id：创建者标识 —— sticky 派发（任务跟随创建者，离线才降级别的客户端）
-      const body = { vids: [...selected], source, client_id: clientId ?? undefined };
+      // client_id：创建者标识 —— sticky 派发（任务跟随创建者，离线才降级别的客户端）。
+      // creator_uid（2026-08-22）：UP 归属（UP 卡 mid / 频道卡 channelId，合集卡不传）——
+      // 落任务行冗余列，历史页按 UP 筛未入库/失败任务的依据；不传则 server 靠查库/ingest 回填兜底。
+      const body = { vids: [...selected], source, client_id: clientId ?? undefined, creator_uid: creatorUid ?? undefined };
       const r = await fetch(`${httpBase}/api/collect-tasks/batch`, authInit({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -1334,6 +1339,7 @@ function UpperAllVideosCard({
       standalone={standalone}
       linkFor={(vid) => `https://www.bilibili.com/video/${vid}`}
       source="bilibili"
+      creatorUid={mid}
     />
   );
 }
@@ -1341,6 +1347,7 @@ function UpperAllVideosCard({
 // 合集卡（2026-08-19）：当前视频属于合集（local extra.ugc_season）时展示，列出合集内全部视频。
 // 数据：background fetchAllSeasonVideos（seasons_archives_list 全量分页，storage 唯一真相）；
 // 已采标注：复用 upperCollected（合集内视频同属一个 UP）；批量采集走通用卡主体。
+// creatorUid 不传：合集卡只有 season_id 无 UP 归属，靠 server 建任务查库/ingest 回填兜底。
 function SeasonVideosCard({
   season,
   state,
@@ -1410,6 +1417,7 @@ function YoutubeChannelCard({
       standalone={standalone}
       linkFor={(vid) => `https://www.youtube.com/watch?v=${vid}`}
       source="youtube"
+      creatorUid={state.state === 'ok' ? state.channelId ?? undefined : undefined}
     />
   );
 }

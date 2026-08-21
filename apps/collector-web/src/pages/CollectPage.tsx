@@ -129,7 +129,8 @@ function UpperBatchSection({ onTasksChanged }: { onTasksChanged: () => void }) {
     setSubmitting(true);
     setSubmitMsg(null);
     try {
-      const r = await createCollectTasksBatch([...selected], 'bilibili');
+      // mid 随批落任务行（2026-08-22）：当前拉取的 UP 归属——未入库/失败任务也能在历史页按 UP 筛
+      const r = await createCollectTasksBatch([...selected], 'bilibili', parseUpperMid(input) ?? undefined);
       setSubmitMsg({ ok: true, text: `已创建 ${r.created} 个任务${r.skipped ? `，跳过 ${r.skipped} 个（已在队列）` : ''}` });
       setSelected(new Set());
       onTasksChanged();

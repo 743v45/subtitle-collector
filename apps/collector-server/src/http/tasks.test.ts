@@ -332,6 +332,27 @@ test('POST /api/collect-tasks/batch：bvids 旧键 / camelCase clientId 均不�
   } finally { ctx.cleanup(); }
 });
 
+test('POST /api/collect-tasks/batch：可选 creator_uid 落任务行（未入库任务按 UP 筛的归属来源）', async () => {
+  const ctx = await setup();
+  try {
+    const r = await httpReq(ctx.port, 'POST', '/api/collect-tasks/batch', {
+      vids: ['BV1xx411c7mD', 'BV1yy411c7mD'],
+      source: 'bilibili',
+      creator_uid: '296399504',
+    });
+    assert.equal(r.status, 200);
+    for (const t of r.json.tasks) {
+      assert.equal(t.creator_uid, '296399504'); // 任务行带归属，pending 未入库也能按 UP 筛
+    }
+    // 不传 creator_uid：靠查库/ingest 回填兜底，此处未入库 → null
+    const r2 = await httpReq(ctx.port, 'POST', '/api/collect-tasks/batch', { vids: ['BV1zz411c7mD'], source: 'bilibili' });
+    assert.equal(r2.json.tasks[0].creator_uid, null);
+    // 历史页按 mid 筛：未入库任务经冗余列命中
+    const list = await httpReq(ctx.port, 'GET', '/api/collect-tasks?page=1&page_size=50&creator_uid=296399504');
+    assert.equal(list.json.total, 2);
+  } finally { ctx.cleanup(); }
+});
+
 // ── 扩展版本过旧分类（2026-08-21）：未知 action 的失败回执 ≠ 普通采集失败 ──
 
 test('扩展回执 unknown action：任务 error 写「扩展版本过旧」（旧扩展形态：error 字符串）', async () => {
@@ -549,5 +570,98 @@ test('列表分页 + 状态筛选：page/page_size/status 查询（历史页数�
     assert.equal(lim.json.total, 1);            // 筛选计数 = 筛选后总数
     assert.equal(lim.json.items[0].status, 'limited');
     assert.equal(lim.json.items[0].source_vid, 'BV1xx411c7mD');
+  } finally { ctx.cleanup(); }
+});
+
+// ── 多维筛选（2026-08-22 历史页）：creator/creator_uid/q/source/since/until/batch_id ──
+
+// 样本：2 已入库视频（Alpha uid=1 / Beta uid=11）+ 4 任务（alpha 批次 / beta 单 / 未入库单 / youtube）
+function seedMultiFilter(ctx: { db: Database.Database }): void {
+  const T = 1_700_000_000_000;
+  const ing = (sv: string, title: string, uid: string, name: string) =>
+    ingestVideo(ctx.db, {
+      source: 'bilibili',
+      video: { source_vid: sv, title, creator: { source_uid: uid, name }, extra: {}, duration: 100, published_at: T },
+      tracks: [],
+    });
+  ing('BV1ALPHA0001', 'Alpha 视频一', '1', 'Alpha UP');
+  ing('BV1BETA00001', 'Beta 视频标题', '11', 'Beta UP');
+  const ins = ctx.db.prepare(
+    'INSERT INTO collect_tasks (source, source_vid, url, status, created_at, batch_id, finished_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
+  );
+  const run = (source: string, sv: string, status: string, createdAt: number, batchId: string | null) => {
+    const url = source === 'youtube' ? `https://www.youtube.com/watch?v=${sv}` : `https://www.bilibili.com/video/${sv}`;
+    const fin = status === 'succeeded' || status === 'failed' ? createdAt + 10_000 : null;
+    return Number(ins.run(source, sv, url, status, createdAt, batchId, fin).lastInsertRowid);
+  };
+  run('bilibili', 'BV1ALPHA0001', 'succeeded', T + 4000, 'batch-http-1'); // 已入库（Alpha）批次成员
+  run('bilibili', 'BV1NOBAT001x', 'pending', T + 5000, 'batch-http-1');
+  run('bilibili', 'BV1NOBAT002x', 'failed', T + 6000, 'batch-http-1');
+  run('bilibili', 'BV1BETA00001', 'succeeded', T + 2000, null);           // 已入库（Beta）单任务
+  run('bilibili', 'BV1NOLIB0001', 'pending', T + 3000, null);             // 未入库单任务
+  run('youtube', 'dQw4w9WgXcQ', 'failed', T + 7000, null);                // 未入库 youtube 任务
+}
+
+test('GET 多维筛选：creator / creator_uid / q 过滤（入库元数据维度）', async () => {
+  const ctx = await setup();
+  try {
+    seedMultiFilter(ctx);
+    const base = '/api/collect-tasks?page=1&page_size=50';
+
+    const byName = await httpReq(ctx.port, 'GET', `${base}&creator=Alpha`);
+    assert.equal(byName.json.total, 1);
+    assert.equal(byName.json.items.filter((i: any) => i.source_vid === 'BV1ALPHA0001').length, 1); // 种子命中（批次补全另带 2 条）
+
+    const byUid = await httpReq(ctx.port, 'GET', `${base}&creator_uid=11`);
+    assert.equal(byUid.json.total, 1);
+    assert.equal(byUid.json.items[0].source_vid, 'BV1BETA00001'); // uid=11 精确；&creator_uid=1 不会误匹配
+
+    const byQ = await httpReq(ctx.port, 'GET', `${base}&q=${encodeURIComponent('Alpha 视频')}`);
+    assert.equal(byQ.json.total, 1);
+    assert.equal(byQ.json.items.some((i: any) => i.source_vid === 'BV1ALPHA0001'), true);
+  } finally { ctx.cleanup(); }
+});
+
+test('GET 多维筛选：source / since / until / batch_id 生效（t.* 列维度）', async () => {
+  const ctx = await setup();
+  try {
+    seedMultiFilter(ctx);
+    const base = '/api/collect-tasks?page=1&page_size=50';
+    const T = 1_700_000_000_000;
+
+    const yt = await httpReq(ctx.port, 'GET', `${base}&source=youtube`);
+    assert.equal(yt.json.total, 1);
+    assert.equal(yt.json.items[0].source_vid, 'dQw4w9WgXcQ');      // 未入库 youtube 任务也按平台筛得中
+
+    const since = await httpReq(ctx.port, 'GET', `${base}&since=${T + 7000}`);
+    assert.equal(since.json.total, 1);                              // 只有 yt(7000)
+
+    const until = await httpReq(ctx.port, 'GET', `${base}&until=${T + 2000}`);
+    assert.equal(until.json.total, 1);                              // 只有 beta(2000)
+
+    const batch = await httpReq(ctx.port, 'GET', `${base}&batch_id=batch-http-1`);
+    assert.equal(batch.json.total, 3);                              // 批成员数
+    assert.ok(batch.json.items.every((i: any) => i.batch_id === 'batch-http-1'));
+  } finally { ctx.cleanup(); }
+});
+
+test('GET 多维筛选：非法参数忽略不抛错（等同未传）', async () => {
+  const ctx = await setup();
+  try {
+    seedMultiFilter(ctx);
+    const bad = await httpReq(ctx.port, 'GET', '/api/collect-tasks?page=1&page_size=50&since=abc&until=xyz&source=bogus&creator_uid=&q=');
+    assert.equal(bad.status, 200);
+    assert.equal(bad.json.total, 6);                                // 全部忽略 = 无筛选全量
+  } finally { ctx.cleanup(); }
+});
+
+test('GET 多维筛选：items 行带 creator_name（已入库有名，未入库 null）', async () => {
+  const ctx = await setup();
+  try {
+    seedMultiFilter(ctx);
+    const list = await httpReq(ctx.port, 'GET', '/api/collect-tasks?page=1&page_size=50');
+    assert.equal(list.json.items.find((i: any) => i.source_vid === 'BV1ALPHA0001').creator_name, 'Alpha UP');
+    assert.equal(list.json.items.find((i: any) => i.source_vid === 'BV1BETA00001').creator_name, 'Beta UP');
+    assert.equal(list.json.items.find((i: any) => i.source_vid === 'BV1NOLIB0001').creator_name, null);
   } finally { ctx.cleanup(); }
 });

@@ -23,17 +23,25 @@ export interface CollectTask {
   error: string | null;
   result: string | null;
   title: string | null; // 库内视频标题（LEFT JOIN videos；采集页直接展示,未入库为 null）
+  creator_name?: string | null; // UP 名（入库经 creators、未入库经任务行 creator_uid 关联资料行；两处都无则 null）
+  creator_uid?: string | null; // 任务行 UP 归属冗余列（批量提交已知 / 建任务查库 / ingest 回填；历史页筛未入库任务）
   created_at: number;
   finished_at: number | null;
 }
 
-// 任务行 + 库内视频标题（videos 有 UNIQUE(source, source_vid),JOIN 不扇出）
-const TASK_WITH_TITLE = `
-  SELECT t.*, v.title AS title
+// 任务行查询的公共 FROM/JOIN（标题与 UP 名经 join 带出；videos 有 UNIQUE(source, source_vid)、
+// creators 单行，JOIN 不扇出）。ct = 任务行 creator_uid 关联的资料行（未入库但已知 UP 的任务，
+// P2 通道采过资料的库里有名字可回显）；c 与 ct 理论上同源同行（视频入库后归属一致），COALESCE 兜底。
+const TASK_JOINS = `
   FROM collect_tasks t
   LEFT JOIN videos v ON v.source = t.source AND v.source_vid = t.source_vid
-  WHERE t.id = ?
+  LEFT JOIN creators c ON c.id = v.creator_id
+  LEFT JOIN creators ct ON ct.source = t.source AND ct.source_uid = t.creator_uid
 `;
+const TASK_SELECT = `SELECT t.*, v.title AS title, COALESCE(c.name, ct.name) AS creator_name ${TASK_JOINS}`;
+
+// 任务行 + 库内视频标题（videos 有 UNIQUE(source, source_vid),JOIN 不扇出）
+const TASK_WITH_TITLE = `${TASK_SELECT} WHERE t.id = ?`;
 
 // 单任务在扩展侧的执行预算（按平台分档）——须覆盖扩展全链路（导航加载 + 多请求 + 宽限 + 关 tab 间隔），
 // 超时早于扩展实际完成会落假失败（扩展仍在跑并落库，任务页却显示失败，用户重试 = 重复采集）。
@@ -126,13 +134,20 @@ export function createTask(
   target: ParsedTarget,
   creatorClientId: string | null = null,
   batchId: string | null = null,
+  creatorUid: string | null = null, // UP 归属（批量提交时调用方已知）；缺省查库回填（重采：视频已入库）
 ): CollectTask {
   const now = Date.now();
   const info = db.prepare(
     'INSERT INTO collect_tasks (source, source_vid, url, status, created_at, creator_client_id, batch_id) VALUES (?, ?, ?, ?, ?, ?, ?)',
   ).run(target.source, target.source_vid, target.url, 'pending', now, creatorClientId, batchId);
-  pushTask(db, Number(info.lastInsertRowid));
-  return getTask(db, Number(info.lastInsertRowid))!;
+  const id = Number(info.lastInsertRowid);
+  // UP 归属冗余：显式值优先，否则从库内归属回填（该视频采过 → 任务行立即可按 UP 筛，失败重试场景的关键路径）
+  db.prepare(
+    `UPDATE collect_tasks SET creator_uid = COALESCE(?, (SELECT c.source_uid FROM videos v JOIN creators c ON c.id = v.creator_id
+       WHERE v.source = collect_tasks.source AND v.source_vid = collect_tasks.source_vid)) WHERE id = ?`,
+  ).run(creatorUid, id);
+  pushTask(db, id);
+  return getTask(db, id)!;
 }
 
 // 未终态判据：pending/dispatched 视为在途（创建去重跳过）；succeeded/failed 为终态（允许重采）
@@ -146,9 +161,7 @@ export function findActiveTask(
   sourceVid: string,
 ): CollectTask | null {
   const row = db.prepare(`
-    SELECT t.*, v.title AS title
-    FROM collect_tasks t
-    LEFT JOIN videos v ON v.source = t.source AND v.source_vid = t.source_vid
+    ${TASK_SELECT}
     WHERE t.source = ? AND t.source_vid = ? AND ${ACTIVE_TASK_WHERE}
     ORDER BY t.id DESC LIMIT 1
   `).get(source, sourceVid) as CollectTask | undefined;
@@ -168,6 +181,7 @@ export function createTasksBatch(
   vids: unknown,
   source: 'bilibili' | 'youtube' = 'bilibili',
   creatorClientId: string | null = null,
+  creatorUid: string | null = null, // UP 归属（B 站 mid / YouTube channelId；批量提交入口已知）
 ): { created: CollectTask[]; skipped: string[] } {
   const re = VID_RE[source];
   const urlFor = (vid: string) =>
@@ -181,7 +195,7 @@ export function createTasksBatch(
     if (typeof vid !== 'string' || !re.test(vid) || seen.has(vid)) continue;
     seen.add(vid);
     if (findActiveTask(db, source, vid)) { skipped.push(vid); continue; }
-    created.push(createTask(db, { source, source_vid: vid, url: urlFor(vid) }, creatorClientId, batchId));
+    created.push(createTask(db, { source, source_vid: vid, url: urlFor(vid) }, creatorClientId, batchId, creatorUid));
   }
   return { created, skipped };
 }
@@ -312,36 +326,67 @@ export function deleteTask(db: Database.Database, id: number): boolean {
   return deleted;
 }
 
-// 任务列表(采集页最近 N 条 / 历史页分页+状态筛选共用)。
-// 批次补全:limit/offset 只限制种子行,种子涉及的批次成员全量带出——展示侧聚合要完整成员
-// 才算得出「n/m 完成」进度;状态筛选同样只作用于种子(补全跨状态拉齐整批,分组完整)。
+// 任务列表筛选（2026-08-22 历史页多维查询）。UP 归属双来源：任务行冗余列 t.creator_uid
+// （批量提交已知 / 建任务查库回填 / ingest 回填——未入库任务也能筛）+ 入库后 v→creators；
+// q 是入库元数据维度（标题），但 vid 段匹配 t.source_vid 覆盖未入库任务（按 BV 号找任务）；
+// status/source/since/until/batchId 全走 t.* 列，覆盖全部任务。
+export interface TaskListFilter {
+  status?: readonly TaskStatus[];
+  source?: 'bilibili' | 'youtube';
+  batchId?: string;
+  creator?: string;    // UP 名模糊（归属关联的 creators.name LIKE）
+  creatorUid?: string; // UP mid/channelId 精确（t.creator_uid 冗余列或入库归属）
+  q?: string;          // 库内标题模糊（videos.title LIKE）+ vid 段匹配（t.source_vid LIKE，搜 BV 号）
+  since?: number;      // created_at 毫秒下界（含）
+  until?: number;      // created_at 毫秒上界（含）
+}
+
+// 任务列表(采集页最近 N 条 / 历史页分页+多维筛选共用)。
+// 批次补全:limit/offset 与全部筛选只限制种子行,种子涉及的批次成员全量带出——展示侧聚合要完整成员
+// 才算得出「n/m 完成」进度;筛选同样只作用于种子(补全跨筛选/跨状态拉齐整批,分组完整)。
 export function listTasks(
   db: Database.Database,
   limit = 20,
   offset = 0,
-  statusFilter?: readonly TaskStatus[],
+  filter: TaskListFilter = {},
 ): { total: number; items: CollectTask[] } {
-  const where = statusFilter?.length
-    ? `WHERE t.status IN (${statusFilter.map(() => '?').join(',')})`
-    : '';
-  const filterArgs = statusFilter?.length ? (statusFilter as unknown as Array<string>) : [];
+  const conds: string[] = [];
+  const params: unknown[] = [];
+  if (filter.status?.length) {
+    conds.push(`t.status IN (${filter.status.map(() => '?').join(',')})`);
+    params.push(...filter.status);
+  }
+  if (filter.source) { conds.push('t.source = ?'); params.push(filter.source); }
+  if (filter.batchId) { conds.push('t.batch_id = ?'); params.push(filter.batchId); }
+  if (filter.creator) {
+    conds.push('(ct.name LIKE ? OR c.name LIKE ?)');
+    params.push(`%${filter.creator}%`, `%${filter.creator}%`);
+  }
+  if (filter.creatorUid) {
+    conds.push('(t.creator_uid = ? OR v.creator_id IN (SELECT id FROM creators WHERE source_uid = ?))');
+    params.push(filter.creatorUid, filter.creatorUid);
+  }
+  if (filter.q) {
+    conds.push('(v.title LIKE ? OR t.source_vid LIKE ?)');
+    params.push(`%${filter.q}%`, `%${filter.q}%`);
+  }
+  if (filter.since != null) { conds.push('t.created_at >= ?'); params.push(filter.since); }
+  if (filter.until != null) { conds.push('t.created_at <= ?'); params.push(filter.until); }
+  const where = conds.length ? `WHERE ${conds.join(' AND ')}` : '';
+  // total 与 seed 同 FROM/WHERE（筛选条件引用 v./c. 列时 total 也必须 join；LEFT JOIN 单行不扇出,COUNT 语义不变）
   const total = (db.prepare(
-    `SELECT COUNT(*) AS n FROM collect_tasks t ${where}`,
-  ).get(...filterArgs) as { n: number }).n;
+    `SELECT COUNT(*) AS n ${TASK_JOINS} ${where}`,
+  ).get(...params) as { n: number }).n;
   const seed = db.prepare(`
-    SELECT t.*, v.title AS title
-    FROM collect_tasks t
-    LEFT JOIN videos v ON v.source = t.source AND v.source_vid = t.source_vid
+    ${TASK_SELECT}
     ${where}
     ORDER BY t.id DESC LIMIT ? OFFSET ?
-  `).all(...filterArgs, limit, offset) as CollectTask[];
+  `).all(...params, limit, offset) as CollectTask[];
   const batchIds = [...new Set(seed.map((r) => r.batch_id).filter((b): b is string => b != null))];
   let items = seed;
   if (batchIds.length > 0) {
     const members = db.prepare(`
-      SELECT t.*, v.title AS title
-      FROM collect_tasks t
-      LEFT JOIN videos v ON v.source = t.source AND v.source_vid = t.source_vid
+      ${TASK_SELECT}
       WHERE t.batch_id IN (${batchIds.map(() => '?').join(',')})
     `).all(...batchIds) as CollectTask[];
     const seen = new Set(seed.map((r) => r.id));

@@ -1,14 +1,20 @@
 import { type IncomingMessage, type ServerResponse } from 'node:http';
 import type Database from 'better-sqlite3';
-import { extractVideoUrl, expandShortLink, parseVideoUrl, createTask, createTasksBatch, findActiveTask, expandUpperVideos, getTask, deleteTask, listTasks, kickTaskScheduler, type FetchLike, type TaskStatus } from '../tasks/tasks.js';
+import { extractVideoUrl, expandShortLink, parseVideoUrl, createTask, createTasksBatch, findActiveTask, expandUpperVideos, getTask, deleteTask, listTasks, kickTaskScheduler, type FetchLike, type TaskListFilter, type TaskStatus } from '../tasks/tasks.js';
 import { json, readJsonBody } from './http-util.js';
+import { toInt } from './filter.js';
 
 // ── 采集任务 HTTP 接口（手机/网页提交入口）──
 // POST   /api/collect-tasks        { text } → 从粘贴文本提取 URL → 建 pending 任务并尝试派发
 //                                  （同视频已有未终态任务则返回既有任务，created:false）
-// POST   /api/collect-tasks/batch  { vids[], source?, client_id? } → 批量建任务（popup/web 按 UP 勾选批量采集）并尝试派发
-// GET    /api/collect-tasks        任务列表:limit(默认20)或 page+page_size 分页 + status 逗号筛选
-//                                  (采集页 limit=30 最近列表;历史页 page/page_size+status 全量分页)
+// POST   /api/collect-tasks/batch  { vids[], source?, client_id?, creator_uid? } → 批量建任务
+//                                  （popup/web 按 UP 勾选批量采集）并尝试派发；creator_uid 可选，
+//                                  批量入口已知的 UP 归属（历史页按 UP 筛未入库任务用）
+// GET    /api/collect-tasks        任务列表:limit(默认20)或 page+page_size 分页 + 多维筛选
+//                                  (采集页 limit=30 最近列表;历史页 page/page_size+筛选全量分页)
+//                                  筛选参数:status(CSV) / source / batch_id / creator(UP名模糊) /
+//                                  creator_uid(mid 精确) / q(库内标题) / since / until(毫秒,created_at)
+//                                  creator/q 只覆盖已入库视频的任务(join 元数据);非法值忽略不抛错
 // GET    /api/collect-tasks/:id    单任务状态（手机每 2s 轮询直到终态）
 // DELETE /api/collect-tasks/:id    删除任务（采集页删除按钮,任意状态可删）
 // POST   /api/upper-videos/expand  { mid } → 经扩展 WS 代理拉 UP 全部视频 + 标注已采（web「按 UP 批量」用）
@@ -36,7 +42,7 @@ export async function handleTasksHttp(req: IncomingMessage, res: ServerResponse,
       return;
     }
     if (req.method === 'GET') {
-      // 两种形态:采集页 ?limit=N(最近列表,无分页);历史页 ?page=N&page_size=M&status=a,b(全量分页+筛选)
+      // 两种形态:采集页 ?limit=N(最近列表,无分页);历史页 ?page=N&page_size=M&筛选(全量分页+多维查询)
       const STATUSES: readonly TaskStatus[] = ['pending', 'dispatched', 'succeeded', 'failed', 'limited'];
       const statusParam = url.searchParams.get('status');
       const statusFilter = statusParam
@@ -52,7 +58,24 @@ export async function handleTasksHttp(req: IncomingMessage, res: ServerResponse,
         offset = (page - 1) * limit;
         paged = true;
       }
-      json(res, 200, { ok: true, ...(paged ? { page, page_size: limit } : {}), ...listTasks(db, limit, offset, statusFilter) });
+      // 多维筛选（2026-08-22 历史页）：非法值一律忽略该过滤项（不抛错，对齐 parseVideoFilter）
+      const filter: TaskListFilter = {};
+      if (statusFilter?.length) filter.status = statusFilter;
+      const sourceParam = url.searchParams.get('source');
+      if (sourceParam === 'bilibili' || sourceParam === 'youtube') filter.source = sourceParam;
+      const batchId = url.searchParams.get('batch_id');
+      if (batchId) filter.batchId = batchId;
+      const creator = url.searchParams.get('creator');
+      if (creator) filter.creator = creator;
+      const creatorUid = url.searchParams.get('creator_uid');
+      if (creatorUid) filter.creatorUid = creatorUid;
+      const qParam = url.searchParams.get('q');
+      if (qParam) filter.q = qParam;
+      const since = toInt(url.searchParams.get('since'));
+      if (since !== undefined) filter.since = since;
+      const until = toInt(url.searchParams.get('until'));
+      if (until !== undefined) filter.until = until;
+      json(res, 200, { ok: true, ...(paged ? { page, page_size: limit } : {}), ...listTasks(db, limit, offset, filter) });
       return;
     }
     json(res, 405, { ok: false, error: 'method not allowed' });
@@ -70,9 +93,12 @@ export async function handleTasksHttp(req: IncomingMessage, res: ServerResponse,
     const source = body?.source === 'youtube' ? 'youtube' : 'bilibili';
     const vids = Array.isArray(body?.vids) ? body.vids : null;
     const clientId = typeof body?.client_id === 'string' && body.client_id ? body.client_id : null;
+    // creator_uid（可选）：批量提交入口已知的 UP 归属（B 站 mid / YouTube channelId）——
+    // 落任务行冗余列，未入库/失败任务也能在历史页按 UP 筛（不传则靠建任务查库/ingest 回填兜底）
+    const creatorUid = typeof body?.creator_uid === 'string' && body.creator_uid ? body.creator_uid : null;
     const label = source === 'youtube' ? 'YouTube 视频 ID（11 位）' : 'BV 号';
     if (!vids || vids.length === 0) { json(res, 400, { ok: false, error: `vids: string[] required（至少一个${label}）` }); return; }
-    const r = createTasksBatch(db, vids, source, clientId);
+    const r = createTasksBatch(db, vids, source, clientId, creatorUid);
     if (r.created.length > 0) kickTaskScheduler(); // 事件驱动：建任务立即尝试派发
     json(res, 200, { ok: true, created: r.created.length, skipped: r.skipped.length, tasks: r.created });
     return;

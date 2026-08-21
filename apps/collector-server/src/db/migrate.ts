@@ -143,6 +143,17 @@ export const MIGRATIONS: readonly MigrationStep[] = [
                            AND t3.track_type = 3)`,
     ],
   },
+  {
+    version: 11,
+    note: 'collect_tasks 补 creator_uid 冗余列（历史页按 UP 筛未入库任务：批量提交/重采/ingest 时落 UP 归属）+ 存量回填（已入库视频的任务行按 videos→creators 补 uid，重放幂等：有值行不再命中）',
+    statements: [
+      'ALTER TABLE collect_tasks ADD COLUMN creator_uid TEXT',
+      `UPDATE collect_tasks
+       SET creator_uid = (SELECT c.source_uid FROM videos v JOIN creators c ON c.id = v.creator_id
+                          WHERE v.source = collect_tasks.source AND v.source_vid = collect_tasks.source_vid)
+       WHERE creator_uid IS NULL`,
+    ],
+  },
 ];
 
 export function runMigrations(db: Database.Database): void {
