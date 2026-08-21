@@ -107,3 +107,20 @@ export interface ConsistencyIssue {
   local: string;
   server: string;
 }
+
+// —— 采集任务（server collect_tasks 行,GET /api/collect-tasks 响应与 TASK_UPDATE 推送共用）——
+// result 是 JSON 字符串（succeeded 时含 captured/tracks 等）;title 为库内视频标题,未入库 null。
+export interface CollectTask {
+  id: number;
+  source: 'bilibili' | 'youtube';
+  source_vid: string;
+  url: string;
+  status: 'pending' | 'dispatched' | 'succeeded' | 'failed';
+  client_id: string | null;
+  creator_client_id?: string | null;
+  error: string | null;
+  result: string | null;
+  title: string | null;
+  created_at: number;
+  finished_at: number | null;
+}

@@ -15,6 +15,7 @@ import type {
   CollectedExtra,
   CollectedResponse,
   CollectedVideo,
+  CollectTask,
   ConsistencyIssue,
   CreatorDetail,
   LocalStateResponse,
@@ -694,6 +695,56 @@ export function useClientId(): string | null {
     });
   }, []);
   return id;
+}
+
+// —— 采集任务列表：快照 + TASK_UPDATE 推送 + 低频兜底轮询 ——
+// 打开时 GET /api/collect-tasks 全量；之后 background 转发的 server 推送按 id upsert/移除。
+// 10s 兜底重拉覆盖两类盲区：旧 server 无推送（慢实时）、popup 关闭/断线期间错过的推送。
+// null=未拉到（loading/server 不可达，保留 null 让调用方隐藏）；[]=已拉到且无任务。
+export function useCollectTasks(httpBase: string, enabled: boolean): CollectTask[] | null {
+  const [tasks, setTasks] = useState<CollectTask[] | null>(null);
+  useEffect(() => {
+    if (!enabled) {
+      setTasks(null);
+      return;
+    }
+    let alive = true;
+    const pull = async () => {
+      try {
+        const r = await fetch(`${httpBase}/api/collect-tasks?limit=50`, authInit({ cache: 'no-cache' }));
+        const d = await r.json();
+        if (alive && d?.ok) setTasks((d.items ?? []) as CollectTask[]);
+      } catch {
+        // server 不可达：保留上次数据（推送断流与拉取失败同表现,不额外提示）
+      }
+    };
+    void pull();
+    const timer = setInterval(() => { void pull(); }, 10_000);
+    const handler = (msg: unknown) => {
+      const m = msg as { type?: string; task?: CollectTask; id?: number };
+      if (m?.type === 'TASK_UPDATE' && m.task && typeof m.task.id === 'number') {
+        const incoming = m.task;
+        setTasks((prev) => {
+          const list = prev ?? [];
+          const i = list.findIndex((t) => t.id === incoming.id);
+          if (i === -1) return [incoming, ...list];
+          const next = [...list];
+          next[i] = incoming;
+          return next;
+        });
+      } else if (m?.type === 'TASK_DELETE' && typeof m.id === 'number') {
+        const removed = m.id;
+        setTasks((prev) => (prev ? prev.filter((t) => t.id !== removed) : prev));
+      }
+    };
+    chrome.runtime.onMessage.addListener(handler);
+    return () => {
+      alive = false;
+      clearInterval(timer);
+      chrome.runtime.onMessage.removeListener(handler);
+    };
+  }, [httpBase, enabled]);
+  return tasks;
 }
 
 // —— 本地数据源：popup 经 chrome.tabs.sendMessage 直取 content.js 的 collected ——

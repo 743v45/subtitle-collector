@@ -28,7 +28,7 @@ test('amendLateResult：ok 迟到回执 → 超时 failed 改判 succeeded 并�
   try {
     const id = seedTask(db, 'youtube', 'gaDdrDdczO4', 'failed', '扩展执行超时');
     const amended = amendLateResult(db, { videoId: 'gaDdrDdczO4' }, { ok: true, data: { captured: 2 } });
-    assert.equal(amended, true);
+    assert.equal(amended, id); // 返回改判任务 id（调用方据此推送 task-update）
     const t = db.prepare('SELECT status, result, error FROM collect_tasks WHERE id = ?').get(id) as any;
     assert.equal(t.status, 'succeeded');
     assert.equal(t.error, null);
@@ -41,7 +41,7 @@ test('amendLateResult：B 站 bvid 定位；仅匹配最近一条超时失败', 
   try {
     seedTask(db, 'bilibili', 'BV1aa411c7mD', 'failed', '扩展离线');
     const recent = seedTask(db, 'bilibili', 'BV1aa411c7mD', 'failed', '扩展执行超时');
-    assert.equal(amendLateResult(db, { bvid: 'BV1aa411c7mD' }, { ok: true, data: {} }), true);
+    assert.equal(amendLateResult(db, { bvid: 'BV1aa411c7mD' }, { ok: true, data: {} }), recent);
     const rows = db.prepare('SELECT id, status FROM collect_tasks ORDER BY id').all() as Array<{ id: number; status: string }>;
     const old = rows.find((r) => r.id !== recent)!;
     assert.equal(old.status, 'failed'); // 非超时失败（离线）不改判
@@ -53,9 +53,9 @@ test('amendLateResult：迟到失败回执 / 无匹配任务 / 无定位参数 �
   const { db, dir } = freshDb();
   try {
     const id = seedTask(db, 'youtube', 'gaDdrDdczO4', 'failed', '扩展执行超时');
-    assert.equal(amendLateResult(db, { videoId: 'gaDdrDdczO4' }, { ok: false, error: 'x' }), false); // 迟到失败
-    assert.equal(amendLateResult(db, { videoId: 'zzzzzzzzzzz' }, { ok: true }), false); // 无匹配
-    assert.equal(amendLateResult(db, {}, { ok: true }), false); // 无法定位
+    assert.equal(amendLateResult(db, { videoId: 'gaDdrDdczO4' }, { ok: false, error: 'x' }), null); // 迟到失败
+    assert.equal(amendLateResult(db, { videoId: 'zzzzzzzzzzz' }, { ok: true }), null); // 无匹配
+    assert.equal(amendLateResult(db, {}, { ok: true }), null); // 无法定位
     const t = db.prepare('SELECT status FROM collect_tasks WHERE id = ?').get(id) as any;
     assert.equal(t.status, 'failed');
   } finally { rmSync(dir, { recursive: true, force: true }); }

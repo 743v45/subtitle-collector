@@ -1,6 +1,7 @@
 import { type ComponentType, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   useBiliLogin,
+  useCollectTasks,
   useCollected,
   useConnectionStatus,
   useCreator,
@@ -29,7 +30,7 @@ import {
 import { LOGOS, type Platform, type StatIconName } from './platforms';
 import { fmtNum } from './format';
 import { cn } from '@/lib/utils';
-import type { ConsistencyIssue, LocalSub, SubtitleBody } from './types';
+import type { CollectTask, ConsistencyIssue, LocalSub, SubtitleBody } from './types';
 import { formatSubtitle, SUBTITLE_FORMATS, type SubtitleFormat } from '../../subtitleFormat.mjs';
 import { isAiSubtitle, subtitleTrackLabel } from '../../subtitleLabel.mjs';
 import { relativeMonths } from '../../yt-channel.mjs';
@@ -183,6 +184,10 @@ export function Popup() {
   const [reportStatus, setReportStatus] = useState<'idle' | 'reporting' | 'success' | 'failed'>('idle');
   const reportRef = useRef(false);
 
+  // 采集任务进度卡（2026-08-21）：快照 + TASK_UPDATE 推送 + 兜底轮询（useCollectTasks）。
+  // 纯扩展模式不拉（卡内自判有在途才显示，非视频页也可见——批量进度不依赖当前页面）。
+  const collectTasks = useCollectTasks(serverCfg.httpBase, !standalone);
+
   const onReport = () => {
     setReportStatus('reporting');
     reportRef.current = true;
@@ -216,6 +221,8 @@ export function Popup() {
   return (
     <div className="space-y-3 p-3">
       <BrandHeader />
+      {/* 采集任务进度卡：全局信息（含手机端提交的任务），有在途才显示，非视频页也可见 */}
+      {!standalone && <CollectTasksCard tasks={collectTasks} />}
       {/* 无关页 currentPlatform=null：不渲染平台头，自然只剩 BrandHeader + FooterActions（空状态） */}
       {currentPlatform && <PlatformHead platform={currentPlatform} conn={conn} login={login} serverName={activeServerName} />}
       {currentVid && currentPlatform && (
@@ -510,6 +517,92 @@ function FooterActions({
       )}
     </div>
   );
+}
+
+// 采集任务进度卡（2026-08-21）：useCollectTasks 快照 + TASK_UPDATE 推送驱动。
+// 有在途（pending/dispatched）才显示；全终态后保留 30s（用户看到最终结果再收起）。
+// 在途置顶（创建序），终态按完成序跟随；最多 10 行，超出折叠计数。
+function CollectTasksCard({ tasks }: { tasks: CollectTask[] | null }) {
+  const hasActive = !!tasks?.some((t) => t.status === 'pending' || t.status === 'dispatched');
+  const [lastActiveAt, setLastActiveAt] = useState(0); // 最后「有在途」时刻（30s 保留窗口起算点）
+  const [visible, setVisible] = useState(false);
+  useEffect(() => {
+    if (hasActive) setLastActiveAt(Date.now());
+  }, [hasActive]);
+  useEffect(() => {
+    if (hasActive) { setVisible(true); return; }
+    if (!visible) return; // 打开时即无在途：不显示（不凭空弹出历史列表）
+    const t = setTimeout(() => setVisible(false), Math.max(0, lastActiveAt + 30_000 - Date.now()));
+    return () => clearTimeout(t);
+  }, [hasActive, visible, lastActiveAt, tasks]);
+  if (!visible || !tasks) return null;
+
+  const MAX_ROWS = 10;
+  const active = tasks.filter((t) => t.status === 'pending' || t.status === 'dispatched').sort((a, b) => a.id - b.id);
+  const done = tasks
+    .filter((t) => t.status === 'succeeded' || t.status === 'failed')
+    .sort((a, b) => (b.finished_at ?? b.id) - (a.finished_at ?? a.id));
+  const rows = [...active, ...done];
+  const shown = rows.slice(0, MAX_ROWS);
+  const hidden = rows.length - shown.length;
+  const okCount = tasks.filter((t) => t.status === 'succeeded').length;
+  const failCount = tasks.filter((t) => t.status === 'failed').length;
+
+  return (
+    <Card>
+      <CardContent className="space-y-1.5 p-3">
+        <div className="flex items-center justify-between text-xs">
+          <span className="font-medium">采集任务</span>
+          <span className="text-[10px] tabular-nums text-muted-foreground">
+            {active.length > 0 && <span className="text-sky-600">{active.length} 进行 </span>}
+            <span>{okCount} 成功</span>
+            {failCount > 0 && <span className="text-destructive"> {failCount} 失败</span>}
+          </span>
+        </div>
+        {shown.map((t) => (
+          <div key={t.id} className="flex items-center gap-1.5 text-[11px]">
+            <span
+              className={cn(
+                'shrink-0 rounded px-1 text-[9px] font-medium leading-4 text-white',
+                t.source === 'bilibili' ? 'bg-[#FB7299]' : 'bg-[#FF0000]',
+              )}
+            >
+              {t.source === 'bilibili' ? 'B' : 'YT'}
+            </span>
+            <a
+              href={t.url}
+              target="_blank"
+              rel="noreferrer"
+              title={t.error ?? t.title ?? t.source_vid}
+              className="min-w-0 flex-1 truncate text-foreground/80 hover:underline"
+            >
+              {t.title || t.source_vid}
+            </a>
+            {t.status === 'pending' && <span className="shrink-0 text-[10px] text-muted-foreground">排队</span>}
+            {t.status === 'dispatched' && <span className="shrink-0 animate-pulse text-[10px] text-sky-600">采集中</span>}
+            {t.status === 'succeeded' && <span className="shrink-0 text-[10px] text-emerald-600">✓ {capturedLabel(t)}</span>}
+            {t.status === 'failed' && (
+              <span className="max-w-[140px] shrink-0 truncate text-[10px] text-destructive" title={t.error ?? undefined}>
+                失败 · {t.error}
+              </span>
+            )}
+          </div>
+        ))}
+        {hidden > 0 && <div className="text-[10px] text-muted-foreground">还有 {hidden} 条未展开</div>}
+      </CardContent>
+    </Card>
+  );
+}
+
+// succeeded 任务的采集轨数（result JSON 的 captured；解析不出则只打 ✓）。
+function capturedLabel(t: CollectTask): string {
+  if (!t.result) return '';
+  try {
+    const r = JSON.parse(t.result) as { captured?: unknown };
+    return typeof r.captured === 'number' ? `${r.captured} 轨` : '';
+  } catch {
+    return '';
+  }
 }
 
 // 底部客户端 ID：极小灰字（不抢视线），点击复制 —— CLI 用此 id 寻址本机。

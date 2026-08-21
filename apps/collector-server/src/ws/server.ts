@@ -3,7 +3,7 @@ import { WebSocketServer, WebSocket, type RawData } from 'ws';
 import type { IncomingMessage, Server } from 'node:http';
 import type Database from 'better-sqlite3';
 import { ingestVideo, ingestUpper, type IngestRequest, type IngestUpperRequest } from '../db/ingest.js';
-import { notifyClientOnline } from '../tasks/tasks.js';
+import { notifyClientOnline, pushTask } from '../tasks/tasks.js';
 import { amendLateResult } from '../tasks/amend.js';
 import { releaseClient } from '../tasks/inflight.js';
 
@@ -119,7 +119,8 @@ export function attachWsServer(httpServer: Server, _db: Database.Database, expec
           const params = timedOutParams.get(msg.id)!;
           timedOutParams.delete(msg.id);
           const amended = amendLateResult(_db, params, { ok: msg.ok === true, data: msg.data });
-          console.log(`[ext] 迟到 result id=${msg.id} ok=${msg.ok}${amended ? ' → 已改判超时任务为 succeeded' : ''}`);
+          console.log(`[ext] 迟到 result id=${msg.id} ok=${msg.ok}${amended != null ? ' → 已改判超时任务为 succeeded' : ''}`);
+          if (amended != null) pushTask(_db, amended); // 改判后推送（popup 进度卡由失败翻绿）
         } else {
           console.log(`[ext] result id=${msg.id} ok=${msg.ok}`);
         }
@@ -160,6 +161,15 @@ export function broadcastCommand(_port: number, cmd: { id: string; action: strin
     if (c.ws.readyState === WebSocket.OPEN) {
       c.ws.send(payload);
     }
+  }
+}
+
+// 服务端主动事件广播（task-update / task-delete 等无 id 推送）：所有已握手连接。
+// 无连接时 no-op。旧扩展对未知 type 的无 id 消息静默忽略（background 的 !msg.id 守卫）。
+export function broadcastEvent(msg: Record<string, unknown>): void {
+  const payload = JSON.stringify(msg);
+  for (const c of connections.values()) {
+    if (c.ws.readyState === WebSocket.OPEN) c.ws.send(payload);
   }
 }
 

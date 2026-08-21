@@ -1,5 +1,5 @@
 import type Database from 'better-sqlite3';
-import { listClients, requestCommand } from '../ws/server.js';
+import { listClients, requestCommand, broadcastEvent } from '../ws/server.js';
 import { inFlight } from './inflight.js';
 
 // ── 采集任务系统：手机/网页提交 → server 派发给桌面扩展 → 扩展采集回执 ──
@@ -127,6 +127,7 @@ export function createTask(
   const info = db.prepare(
     'INSERT INTO collect_tasks (source, source_vid, url, status, created_at, creator_client_id) VALUES (?, ?, ?, ?, ?, ?)',
   ).run(target.source, target.source_vid, target.url, 'pending', now, creatorClientId);
+  pushTask(db, Number(info.lastInsertRowid));
   return getTask(db, Number(info.lastInsertRowid))!;
 }
 
@@ -280,9 +281,19 @@ export function getTask(db: Database.Database, id: number): CollectTask | null {
   return row ?? null;
 }
 
+// 任务状态推送：各落库点（createTask / dispatchTask / amend 改判）之后广播整行（含 title）。
+// popup 快照 + 兜底轮询补推送盲区（旧 server / popup 关闭期间），此处只管把变化及时发出去。
+export function pushTask(db: Database.Database, id: number): void {
+  const task = getTask(db, id);
+  if (task) broadcastEvent({ type: 'task-update', task });
+}
+
 // 删除任务（采集页删除按钮）。任意状态可删：dispatched 删除后扩展回执的 UPDATE 不命中行,no-op 无副作用。
+// 删除后广播 task-delete（popup 列表移除该行）。
 export function deleteTask(db: Database.Database, id: number): boolean {
-  return db.prepare('DELETE FROM collect_tasks WHERE id = ?').run(id).changes > 0;
+  const deleted = db.prepare('DELETE FROM collect_tasks WHERE id = ?').run(id).changes > 0;
+  if (deleted) broadcastEvent({ type: 'task-delete', id });
+  return deleted;
 }
 
 export function listTasks(db: Database.Database, limit = 20): { total: number; items: CollectTask[] } {
@@ -362,6 +373,7 @@ export function attachTaskScheduler(db: Database.Database): void {
     if (!task || task.status !== 'pending') return;
     inFlight.set(clientId, taskId);
     db2.prepare("UPDATE collect_tasks SET status = 'dispatched', client_id = ? WHERE id = ? AND status = 'pending'").run(clientId, taskId);
+    pushTask(db2, taskId);
     const action = task.source === 'bilibili' ? 'fetch-subtitle' : 'fetch-youtube-subtitle';
     const params = task.source === 'bilibili' ? { bvid: task.source_vid } : { videoId: task.source_vid };
     const r = await requestCommand(clientId, action, params, commandTimeoutMs(task.source));
@@ -369,6 +381,7 @@ export function attachTaskScheduler(db: Database.Database): void {
       const data = r.result.data ?? {};
       db2.prepare("UPDATE collect_tasks SET status = 'succeeded', result = ?, finished_at = ? WHERE id = ?")
         .run(JSON.stringify(data), Date.now(), taskId);
+      pushTask(db2, taskId);
     } else {
       // 失败分类：未收到回执（offline/timeout）→ 连接层文案；收到失败回执 →
       // 扩展版本过旧（needs_update 分类，提示更新而非重试）/ 普通失败（扩展 error 原文）
@@ -378,6 +391,7 @@ export function attachTaskScheduler(db: Database.Database): void {
         : String(r.result?.error ?? '采集失败');
       db2.prepare("UPDATE collect_tasks SET status = 'failed', error = ?, finished_at = ? WHERE id = ?")
         .run(error, Date.now(), taskId);
+      pushTask(db2, taskId);
     }
     inFlight.delete(clientId);
     dispatch(); // 派完一个立即尝试下一个（串行链式）

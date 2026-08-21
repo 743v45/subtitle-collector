@@ -6,6 +6,7 @@ import type Database from 'better-sqlite3';
 //
 // 定位方式：命令 params 携带 (bvid | videoId) → (source, source_vid)，匹配该视频最近一条
 // 「超时失败」任务（error 含「超时」）；只有 ok 的迟到回执才改判（迟到失败不改变已落的 failed）。
+// 改判成功后的 task-update 推送由调用方（ws/server）做——本模块保持无 ws 依赖。
 
 export interface LateResultParams {
   bvid?: unknown;
@@ -17,19 +18,19 @@ export interface LateResultPayload {
   error?: unknown; // 迟到失败回执携带（当前不改判，保留形状与真实回执一致）
 }
 
-// @returns 是否发生改判（供调用方打日志）
-export function amendLateResult(db: Database.Database, params: LateResultParams, result: LateResultPayload): boolean {
+// @returns 改判的任务 id（未改判为 null）；调用方据此推送 task-update 并打日志
+export function amendLateResult(db: Database.Database, params: LateResultParams, result: LateResultPayload): number | null {
   const source = params.videoId != null ? 'youtube' : params.bvid != null ? 'bilibili' : null;
-  if (!source) return false;
+  if (!source) return null;
   const vid = String(source === 'youtube' ? params.videoId : params.bvid);
-  if (!vid) return false;
-  if (!result.ok) return false; // 迟到失败回执：failed 已落，不改判
+  if (!vid) return null;
+  if (!result.ok) return null; // 迟到失败回执：failed 已落，不改判
   const row = db.prepare(
     "SELECT id FROM collect_tasks WHERE source = ? AND source_vid = ? AND status = 'failed' AND error LIKE '%超时%' ORDER BY id DESC LIMIT 1",
   ).get(source, vid) as { id: number } | undefined;
-  if (!row) return false;
+  if (!row) return null;
   db.prepare(
     "UPDATE collect_tasks SET status = 'succeeded', result = ?, error = NULL, finished_at = ? WHERE id = ? AND status = 'failed'",
   ).run(JSON.stringify(result.data ?? {}), Date.now(), row.id);
-  return true;
+  return row.id;
 }

@@ -438,6 +438,12 @@ function scheduleReconnect() {
   setTimeout(connect, delay);
 }
 
+// server 推送/本地事件 → 扩展页面（popup/options）广播。popup 关闭是常态：
+// callback 形态 + 读取 lastError 吞掉「无接收端」报错，避免 unchecked send。
+function notifyUI(msg) {
+  chrome.runtime.sendMessage(msg, () => { void chrome.runtime.lastError; });
+}
+
 async function connect() {
   if (isStandalone(connectionMode)) return; // 纯扩展模式：不连 server
   if (!activeServer?.wsUrl) return;          // 无 server 配置：不连（SET_ACTIVE_SERVER 切到空列表时停连）
@@ -459,14 +465,24 @@ async function connect() {
   };
   ws.onmessage = async (event) => {
     let msg; try { msg = JSON.parse(event.data); } catch { return; }
-    // 无 id 的服务端推送（ingest-ack / hello-ack / hello-nack）须在 id 守卫前消费
+    // 无 id 的服务端推送（ingest-ack / hello-ack / hello-nack / task-update / task-delete）须在 id 守卫前消费
     if (msg.type === "ingest-ack") {
       if (msg.ok === false) {
         console.log(`[background] 上报失败 source_vid=${msg.source_vid}`);
       } else {
         console.log(`[background] 上报完成 source_vid=${msg.source_vid} 新增 ${msg.inserted_tracks} 条版本 / 跳过 ${msg.skipped_tracks} 条（已存在）`);
       }
-      chrome.runtime.sendMessage({ type: "INGEST_RESULT", ok: msg.ok !== false, source_vid: msg.source_vid, inserted: msg.inserted_tracks, skipped: msg.skipped_tracks });
+      notifyUI({ type: "INGEST_RESULT", ok: msg.ok !== false, source_vid: msg.source_vid, inserted: msg.inserted_tracks, skipped: msg.skipped_tracks });
+      return;
+    }
+    // 任务状态推送（server 落库后广播）：原样转发给 popup 进度卡（TASK_UPDATE upsert / TASK_DELETE 移除）。
+    // 旧 server 不发这两类消息，新分支静默待命；popup 关闭时 notifyUI 自吞无接收端。
+    if (msg.type === "task-update") {
+      notifyUI({ type: "TASK_UPDATE", task: msg.task });
+      return;
+    }
+    if (msg.type === "task-delete") {
+      notifyUI({ type: "TASK_DELETE", id: msg.id });
       return;
     }
     if (msg.type === "hello-ack") {

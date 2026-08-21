@@ -376,3 +376,86 @@ test('扩展回执 needs_update:true：同样归类「扩展版本过旧」（�
     assert.equal(t.error, '扩展版本过旧，请更新扩展后重试');
   } finally { ws?.close(); ctx.cleanup(); }
 });
+
+// ── task-update / task-delete 推送（2026-08-21）：任务状态落库后广播给已握手连接 ──
+
+// 挂一个只收集推送的 message listener（connectExt 内部已挂的 listener 负责回 result，多 listener 共存）
+function collectPushes(ws: WebSocket): Array<{ type: string; task?: any; id?: number }> {
+  const events: Array<{ type: string; task?: any; id?: number }> = [];
+  ws.on('message', (d) => {
+    const m = JSON.parse(d.toString());
+    if (m.type === 'task-update' || m.type === 'task-delete') events.push(m);
+  });
+  return events;
+}
+
+test('task-update 推送：建任务→派发→终态，WS 收到 pending→dispatched→succeeded 序列', async () => {
+  const ctx = await setup();
+  let ws: WebSocket | null = null;
+  try {
+    ws = await connectExt(ctx.port, 'ext-A');
+    const events = collectPushes(ws);
+    const r = await httpReq(ctx.port, 'POST', '/api/collect-tasks', { text: 'https://www.bilibili.com/video/BV1xx411c7mD' });
+    await wait(400);
+    const mine = events.filter((e) => e.task?.id === r.json.task.id);
+    assert.deepEqual(mine.map((e) => e.task.status), ['pending', 'dispatched', 'succeeded']); // 单连接 FIFO，发送序即到达序
+    const final = mine.at(-1)!.task;
+    assert.ok(final.finished_at);                      // 终态行带完成时刻
+    assert.ok(String(final.result).includes('"tracks":2')); // result 整行可回放
+  } finally { ws?.close(); ctx.cleanup(); }
+});
+
+test('task-update 推送：失败回执 → failed 行带 error 原文', async () => {
+  const ctx = await setup();
+  let ws: WebSocket | null = null;
+  try {
+    ws = new WebSocket(`ws://127.0.0.1:${ctx.port}/ext`);
+    await new Promise((r) => { ws!.once('open', r); });
+    ws!.send(JSON.stringify({ type: 'hello', ext_version: '0.1.0', token: 'test-token', client_id: 'ext-B', reporting_enabled: true }));
+    const events = collectPushes(ws);
+    ws!.on('message', (d) => {
+      const m = JSON.parse(d.toString());
+      if (m.action === 'fetch-subtitle') ws!.send(JSON.stringify({ type: 'result', id: m.id, ok: false, error: 'need_login' }));
+    });
+    await wait(100);
+
+    const r = await httpReq(ctx.port, 'POST', '/api/collect-tasks', { text: 'https://www.bilibili.com/video/BV1xx411c7mD' });
+    await wait(300);
+    const mine = events.filter((e) => e.task?.id === r.json.task.id);
+    assert.deepEqual(mine.map((e) => e.task.status), ['pending', 'dispatched', 'failed']);
+    assert.equal(mine.at(-1)!.task.error, 'need_login');
+  } finally { ws?.close(); ctx.cleanup(); }
+});
+
+test('task-delete 推送：DELETE 后广播 {type:"task-delete",id}', async () => {
+  const ctx = await setup();
+  let ws: WebSocket | null = null;
+  try {
+    ws = await connectExt(ctx.port, 'ext-A');
+    const events = collectPushes(ws);
+    const r = await httpReq(ctx.port, 'POST', '/api/collect-tasks', { text: 'https://www.bilibili.com/video/BV1xx411c7mD' });
+    await wait(300); // 等任务走完（终态行删除不影响推送断言）
+    await httpReq(ctx.port, 'DELETE', `/api/collect-tasks/${r.json.task.id}`);
+    await wait(200);
+    const dels = events.filter((e) => e.type === 'task-delete');
+    assert.equal(dels.length, 1);
+    assert.equal(dels[0].id, r.json.task.id);
+  } finally { ws?.close(); ctx.cleanup(); }
+});
+
+test('task-update 推送：批量建任务逐条广播（两条串行执行，各走完整序列）', async () => {
+  const ctx = await setup();
+  let ws: WebSocket | null = null;
+  try {
+    ws = await connectExt(ctx.port, 'ext-A');
+    const events = collectPushes(ws);
+    const r = await httpReq(ctx.port, 'POST', '/api/collect-tasks/batch', { vids: ['BV1xx411c7mD', 'BV1yy411c7mD'], source: 'bilibili' });
+    await wait(300);
+    const ids = r.json.tasks.map((t: any) => t.id);
+    for (const id of ids) {
+      const seq = events.filter((e) => e.task?.id === id).map((e) => e.task.status);
+      assert.deepEqual(seq, ['pending', 'dispatched', 'succeeded']);
+    }
+    assert.equal(new Set(ids).size, 2); // 批量每个任务 id 都有推送
+  } finally { ws?.close(); ctx.cleanup(); }
+});
