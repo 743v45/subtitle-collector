@@ -1,4 +1,5 @@
 import type Database from 'better-sqlite3';
+import { randomUUID } from 'node:crypto';
 import { listClients, requestCommand, broadcastEvent } from '../ws/server.js';
 import { inFlight } from './inflight.js';
 
@@ -17,6 +18,7 @@ export interface CollectTask {
   status: TaskStatus;
   client_id: string | null;
   creator_client_id?: string | null; // 创建者客户端（popup 提交自带；CLI/旧任务 null），sticky 派发用
+  batch_id?: string | null;          // 展示侧聚合标签（批量提交同批共享；单条/旧任务 null）
   error: string | null;
   result: string | null;
   title: string | null; // 库内视频标题（LEFT JOIN videos；采集页直接展示,未入库为 null）
@@ -122,11 +124,12 @@ export function createTask(
   db: Database.Database,
   target: ParsedTarget,
   creatorClientId: string | null = null,
+  batchId: string | null = null,
 ): CollectTask {
   const now = Date.now();
   const info = db.prepare(
-    'INSERT INTO collect_tasks (source, source_vid, url, status, created_at, creator_client_id) VALUES (?, ?, ?, ?, ?, ?)',
-  ).run(target.source, target.source_vid, target.url, 'pending', now, creatorClientId);
+    'INSERT INTO collect_tasks (source, source_vid, url, status, created_at, creator_client_id, batch_id) VALUES (?, ?, ?, ?, ?, ?, ?)',
+  ).run(target.source, target.source_vid, target.url, 'pending', now, creatorClientId, batchId);
   pushTask(db, Number(info.lastInsertRowid));
   return getTask(db, Number(info.lastInsertRowid))!;
 }
@@ -168,6 +171,8 @@ export function createTasksBatch(
   const re = VID_RE[source];
   const urlFor = (vid: string) =>
     source === 'youtube' ? `https://www.youtube.com/watch?v=${vid}` : `https://www.bilibili.com/video/${vid}`;
+  // 同批共享一个 batch_id：纯展示侧聚合标签（UI 分组成一个批量任务），无批次实体/状态
+  const batchId = randomUUID();
   const created: CollectTask[] = [];
   const skipped: string[] = [];
   const seen = new Set<string>();
@@ -175,7 +180,7 @@ export function createTasksBatch(
     if (typeof vid !== 'string' || !re.test(vid) || seen.has(vid)) continue;
     seen.add(vid);
     if (findActiveTask(db, source, vid)) { skipped.push(vid); continue; }
-    created.push(createTask(db, { source, source_vid: vid, url: urlFor(vid) }, creatorClientId));
+    created.push(createTask(db, { source, source_vid: vid, url: urlFor(vid) }, creatorClientId, batchId));
   }
   return { created, skipped };
 }
@@ -298,12 +303,26 @@ export function deleteTask(db: Database.Database, id: number): boolean {
 
 export function listTasks(db: Database.Database, limit = 20): { total: number; items: CollectTask[] } {
   const total = (db.prepare('SELECT COUNT(*) AS n FROM collect_tasks').get() as { n: number }).n;
-  const items = db.prepare(`
+  const seed = db.prepare(`
     SELECT t.*, v.title AS title
     FROM collect_tasks t
     LEFT JOIN videos v ON v.source = t.source AND v.source_vid = t.source_vid
     ORDER BY t.id DESC LIMIT ?
   `).all(limit) as CollectTask[];
+  // 批次补全：limit 只限制种子行数,种子涉及的批次成员全量带出——展示侧聚合要完整成员才算得出
+  // 「n/m 完成」进度（截断会把 50 个视频的批次算成 20 个）。
+  const batchIds = [...new Set(seed.map((r) => r.batch_id).filter((b): b is string => b != null))];
+  let items = seed;
+  if (batchIds.length > 0) {
+    const members = db.prepare(`
+      SELECT t.*, v.title AS title
+      FROM collect_tasks t
+      LEFT JOIN videos v ON v.source = t.source AND v.source_vid = t.source_vid
+      WHERE t.batch_id IN (${batchIds.map(() => '?').join(',')})
+    `).all(...batchIds) as CollectTask[];
+    const seen = new Set(seed.map((r) => r.id));
+    items = [...seed, ...members.filter((r) => !seen.has(r.id))].sort((a, b) => b.id - a.id);
+  }
   return { total, items };
 }
 

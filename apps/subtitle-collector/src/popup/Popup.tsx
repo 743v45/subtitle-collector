@@ -521,7 +521,8 @@ function FooterActions({
 
 // 采集任务进度卡（2026-08-21）：useCollectTasks 快照 + TASK_UPDATE 推送驱动。
 // 有在途（pending/dispatched）才显示；全终态后保留 30s（用户看到最终结果再收起）。
-// 在途置顶（创建序），终态按完成序跟随；最多 10 行，超出折叠计数。
+// 批量任务按 batch_id 聚成一行「n/m」（批次成员由 server 列表完整返回），单任务独占一行；
+// 在途组置顶（创建序），终态按完成序跟随；最多 10 行，超出折叠计数。
 function CollectTasksCard({ tasks }: { tasks: CollectTask[] | null }) {
   const hasActive = !!tasks?.some((t) => t.status === 'pending' || t.status === 'dispatched');
   const [lastActiveAt, setLastActiveAt] = useState(0); // 最后「有在途」时刻（30s 保留窗口起算点）
@@ -537,16 +538,28 @@ function CollectTasksCard({ tasks }: { tasks: CollectTask[] | null }) {
   }, [hasActive, visible, lastActiveAt, tasks]);
   if (!visible || !tasks) return null;
 
+  // 分组：batch_id 相同聚成批次；null 各自成行。组序键 = 组内最小 id（批次创建位）。
+  const groups = new Map<string, CollectTask[]>();
+  for (const t of tasks) {
+    const key = t.batch_id ?? `#single:${t.id}`;
+    const g = groups.get(key);
+    if (g) g.push(t);
+    else groups.set(key, [t]);
+  }
+  const rows = [...groups.values()].map((items) => ({
+    items,
+    active: items.some((t) => t.status === 'pending' || t.status === 'dispatched'),
+    firstId: Math.min(...items.map((t) => t.id)),
+    lastDoneAt: Math.max(...items.map((t) => t.finished_at ?? t.id)),
+  }));
+  rows.sort((a, b) =>
+    a.active !== b.active ? (a.active ? -1 : 1) : a.active ? a.firstId - b.firstId : b.lastDoneAt - a.lastDoneAt);
   const MAX_ROWS = 10;
-  const active = tasks.filter((t) => t.status === 'pending' || t.status === 'dispatched').sort((a, b) => a.id - b.id);
-  const done = tasks
-    .filter((t) => t.status === 'succeeded' || t.status === 'failed')
-    .sort((a, b) => (b.finished_at ?? b.id) - (a.finished_at ?? a.id));
-  const rows = [...active, ...done];
   const shown = rows.slice(0, MAX_ROWS);
   const hidden = rows.length - shown.length;
   const okCount = tasks.filter((t) => t.status === 'succeeded').length;
   const failCount = tasks.filter((t) => t.status === 'failed').length;
+  const activeCount = tasks.filter((t) => t.status === 'pending' || t.status === 'dispatched').length;
 
   return (
     <Card>
@@ -554,43 +567,84 @@ function CollectTasksCard({ tasks }: { tasks: CollectTask[] | null }) {
         <div className="flex items-center justify-between text-xs">
           <span className="font-medium">采集任务</span>
           <span className="text-[10px] tabular-nums text-muted-foreground">
-            {active.length > 0 && <span className="text-sky-600">{active.length} 进行 </span>}
+            {activeCount > 0 && <span className="text-sky-600">{activeCount} 进行 </span>}
             <span>{okCount} 成功</span>
             {failCount > 0 && <span className="text-destructive"> {failCount} 失败</span>}
           </span>
         </div>
-        {shown.map((t) => (
-          <div key={t.id} className="flex items-center gap-1.5 text-[11px]">
-            <span
-              className={cn(
-                'shrink-0 rounded px-1 text-[9px] font-medium leading-4 text-white',
-                t.source === 'bilibili' ? 'bg-[#FB7299]' : 'bg-[#FF0000]',
-              )}
-            >
-              {t.source === 'bilibili' ? 'B' : 'YT'}
-            </span>
-            <a
-              href={t.url}
-              target="_blank"
-              rel="noreferrer"
-              title={t.error ?? t.title ?? t.source_vid}
-              className="min-w-0 flex-1 truncate text-foreground/80 hover:underline"
-            >
-              {t.title || t.source_vid}
-            </a>
-            {t.status === 'pending' && <span className="shrink-0 text-[10px] text-muted-foreground">排队</span>}
-            {t.status === 'dispatched' && <span className="shrink-0 animate-pulse text-[10px] text-sky-600">采集中</span>}
-            {t.status === 'succeeded' && <span className="shrink-0 text-[10px] text-emerald-600">✓ {capturedLabel(t)}</span>}
-            {t.status === 'failed' && (
-              <span className="max-w-[140px] shrink-0 truncate text-[10px] text-destructive" title={t.error ?? undefined}>
-                失败 · {t.error}
-              </span>
-            )}
-          </div>
+        {shown.map((row) => (
+          <BatchOrTaskRow key={row.items[0].batch_id ?? row.items[0].id} items={row.items} active={row.active} />
         ))}
         {hidden > 0 && <div className="text-[10px] text-muted-foreground">还有 {hidden} 条未展开</div>}
       </CardContent>
     </Card>
+  );
+}
+
+// 批次聚合成一行进度（单任务 items.length=1,渲染同一形态）：
+// 进行中「n/m」天蓝脉冲；全终态「✓ m/m」绿（有失败追加红字 x 失败）。
+function BatchOrTaskRow({ items, active }: { items: CollectTask[]; active: boolean }) {
+  const batch = items.length > 1 || items[0].batch_id != null;
+  const ok = items.filter((t) => t.status === 'succeeded').length;
+  const fail = items.filter((t) => t.status === 'failed').length;
+  const head = items[0];
+  const title = batch
+    ? `批量采集${items.length > 1 ? ` ${items.length} 个视频` : ''}`
+    : head.title || head.source_vid;
+  const errTip = items.map((t) => (t.error ? `${t.source_vid}: ${t.error}` : null)).filter(Boolean).join('\n');
+  return (
+    <div className="flex items-center gap-1.5 text-[11px]">
+      <span
+        className={cn(
+          'shrink-0 rounded px-1 text-[9px] font-medium leading-4 text-white',
+          head.source === 'bilibili' ? 'bg-[#FB7299]' : 'bg-[#FF0000]',
+        )}
+      >
+        {head.source === 'bilibili' ? 'B' : 'YT'}
+      </span>
+      {batch ? (
+        // 批次行不展开子项（popup 速览,细节看 web 采集页）;tooltip 带失败明细
+        <span className="min-w-0 flex-1 truncate text-foreground/80" title={errTip || undefined}>
+          {title}
+        </span>
+      ) : (
+        <a
+          href={head.url}
+          target="_blank"
+          rel="noreferrer"
+          title={head.error ?? head.title ?? head.source_vid}
+          className="min-w-0 flex-1 truncate text-foreground/80 hover:underline"
+        >
+          {title}
+        </a>
+      )}
+      {batch ? (
+        // 批次行：n/m 进度（进行中脉冲天蓝,全终态绿）;不展开子项（popup 速览,细节看 web 采集页）
+        active ? (
+          <span className="shrink-0 animate-pulse text-[10px] tabular-nums text-sky-600">
+            {ok}/{items.length}
+            {fail > 0 && <span className="text-destructive"> · {fail} 败</span>}
+          </span>
+        ) : (
+          <span className="shrink-0 text-[10px] tabular-nums text-emerald-600">
+            ✓ {ok}/{items.length}
+            {fail > 0 && <span className="text-destructive"> · {fail} 败</span>}
+          </span>
+        )
+      ) : (
+        // 单任务行：状态徽标形态
+        <>
+          {head.status === 'pending' && <span className="shrink-0 text-[10px] text-muted-foreground">排队</span>}
+          {head.status === 'dispatched' && <span className="shrink-0 animate-pulse text-[10px] text-sky-600">采集中</span>}
+          {head.status === 'succeeded' && <span className="shrink-0 text-[10px] text-emerald-600">✓ {capturedLabel(head)}</span>}
+          {head.status === 'failed' && (
+            <span className="max-w-[140px] shrink-0 truncate text-[10px] text-destructive" title={head.error ?? undefined}>
+              失败 · {head.error}
+            </span>
+          )}
+        </>
+      )}
+    </div>
   );
 }
 

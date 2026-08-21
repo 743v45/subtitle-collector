@@ -149,6 +149,7 @@ CREATE TABLE IF NOT EXISTS collect_tasks (
   creator_client_id TEXT, -- 创建者客户端（popup 提交自带；CLI/旧任务 null），sticky 派发用
   error       TEXT,
   result      TEXT,
+  batch_id    TEXT, -- 展示侧聚合标签：批量提交的同批任务共享同一 UUID；单条任务 NULL。无批次实体，UI 按此分组
   created_at  INTEGER NOT NULL,
   finished_at INTEGER
 );

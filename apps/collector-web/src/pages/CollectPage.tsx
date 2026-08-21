@@ -474,6 +474,101 @@ function TaskRow({ task, onDelete }: { task: CollectTask; onDelete: (id: number)
   );
 }
 
+// ── 批次聚合卡（2026-08-21）：同 batch_id 的批量任务聚成一张卡 ──
+// 批次无实体/状态——徽章与进度全部从子任务派生（任一在途=进行中；全终态=完成/失败计数）。
+// 展开看子任务轻行（状态 + 标题/vid + 摘要 + 单删）；卡头删除 = 级联删全部成员。
+function BatchTaskCard({
+  items,
+  onDelete,
+  onDeleteBatch,
+}: {
+  items: CollectTask[];
+  onDelete: (id: number) => void;
+  onDeleteBatch: (batchId: string) => void;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const active = items.some((t) => t.status === 'pending' || t.status === 'dispatched');
+  const ok = items.filter((t) => t.status === 'succeeded').length;
+  const fail = items.filter((t) => t.status === 'failed').length;
+  // 批次徽章派生：进行中（有 dispatched=采集中,否则排队）/ 全失败 / 部分失败 / 全成功
+  const meta = active
+    ? items.some((t) => t.status === 'dispatched') ? STATUS_META.dispatched : STATUS_META.pending
+    : fail > 0 ? STATUS_META.failed : STATUS_META.succeeded;
+  const label = active ? meta.label : fail > 0 ? (ok > 0 ? `完成 ${ok} 失败 ${fail}` : `失败 ${fail}`) : `已完成 ${ok}`;
+  const sources = [...new Set(items.map((t) => t.source))];
+  const createdAt = Math.min(...items.map((t) => t.created_at));
+  const batchId = items[0].batch_id!;
+
+  return (
+    <Card>
+      <CardContent className="p-3 space-y-1.5">
+        <div className="flex items-center gap-2">
+          <span className={cn('shrink-0 rounded px-1.5 py-0.5 text-xs font-medium', meta.className)}>{label}</span>
+          <span className="min-w-0 flex-1 truncate text-sm font-medium">
+            批量采集 · {items.length} 个视频
+            <span className="ml-1.5 text-xs font-normal text-muted-foreground">
+              {sources.map((s) => PLATFORM_LABEL[s] ?? s).join('/')}
+            </span>
+          </span>
+          <span className="ml-auto shrink-0 text-xs tabular-nums text-muted-foreground">
+            {ok}/{items.length}
+          </span>
+          <span className="shrink-0 text-xs text-muted-foreground">{formatTs(createdAt)}</span>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="size-7 text-muted-foreground"
+            aria-label={expanded ? '收起子任务' : '展开子任务'}
+            onClick={() => setExpanded((e) => !e)}
+          >
+            {expanded ? <ChevronUp className="size-4" /> : <ChevronDown className="size-4" />}
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="size-7 text-muted-foreground hover:text-destructive"
+            aria-label="删除整个批次"
+            title="删除整个批次（含未完成子任务）"
+            onClick={() => onDeleteBatch(batchId)}
+          >
+            <Trash2 className="size-4" />
+          </Button>
+        </div>
+        {expanded && (
+          <div className="space-y-1 rounded-md bg-muted/30 p-2">
+            {items.map((t) => {
+              const m = STATUS_META[t.status] ?? STATUS_META.pending;
+              return (
+                <div key={t.id} className="flex items-center gap-2 text-sm">
+                  <span className={cn('shrink-0 rounded px-1.5 py-0.5 text-xs', m.className)}>{m.label}</span>
+                  <span
+                    className="min-w-0 flex-1 truncate text-xs"
+                    title={t.title ?? `${PLATFORM_LABEL[t.source] ?? t.source} · ${t.source_vid}`}
+                  >
+                    {t.title || `${PLATFORM_LABEL[t.source] ?? t.source} · ${t.source_vid}`}
+                  </span>
+                  <span className={cn('shrink-0 text-xs', t.status === 'failed' ? 'text-destructive' : 'text-muted-foreground')}>
+                    {resultSummary(t)}
+                  </span>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="size-6 text-muted-foreground hover:text-destructive"
+                    aria-label="删除子任务"
+                    onClick={() => onDelete(t.id)}
+                  >
+                    <Trash2 className="size-3.5" />
+                  </Button>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
 export function CollectPage() {
   const [text, setText] = useState('');
   const [submitting, setSubmitting] = useState(false);
@@ -530,7 +625,39 @@ export function CollectPage() {
     }
   };
 
+  // 删除整个批次：级联删全部成员（含在途——与单删「任意状态可删」语义一致）
+  const removeBatch = async (batchId: string) => {
+    const ids = tasks.filter((t) => t.batch_id === batchId).map((t) => t.id);
+    setTasks((prev) => prev.filter((t) => t.batch_id !== batchId));
+    try {
+      for (const id of ids) await deleteCollectTask(id);
+    } catch {
+      refresh(); // 中途失败：回滚为 server 真值
+    }
+  };
+
   const hasActive = tasks.some((t) => t.status === 'pending' || t.status === 'dispatched');
+
+  // 展示侧聚合（2026-08-21）：同 batch_id 聚成 BatchTaskCard,单任务独立 TaskRow;
+  // 顺序跟随 server 返回序（id desc）,批次卡位置 = 组内最新成员位置。
+  const listNodes: Array<ReactNode> = [];
+  const batched = new Set<string>();
+  for (const t of tasks) {
+    if (t.batch_id) {
+      if (batched.has(t.batch_id)) continue; // 同批只渲染一次（该批全部成员）
+      batched.add(t.batch_id);
+      listNodes.push(
+        <BatchTaskCard
+          key={`batch:${t.batch_id}`}
+          items={tasks.filter((x) => x.batch_id === t.batch_id)}
+          onDelete={(id) => { void remove(id); }}
+          onDeleteBatch={(bid) => { void removeBatch(bid); }}
+        />,
+      );
+    } else {
+      listNodes.push(<TaskRow key={t.id} task={t} onDelete={(id) => { void remove(id); }} />);
+    }
+  }
 
   return (
     <div className="space-y-4">
@@ -563,14 +690,14 @@ export function CollectPage() {
       {/* 按 UP 批量：输入 UID/空间链接 → 全量列表 → 过滤+勾选 → 批量建任务 */}
       <UpperBatchSection onTasksChanged={refresh} />
 
-      {/* 任务列表（2s 轮询,有进行中任务时提示） */}
+      {/* 任务列表（2s 轮询,有进行中任务时提示）；批次聚合为一卡,单任务独立一卡 */}
       <div className="space-y-2">
         {hasActive && (
           <div className="text-xs text-muted-foreground animate-pulse">
             有任务进行中,每 {REFRESH_MS / 1000}s 自动刷新…
           </div>
         )}
-        {tasks.map((t) => <TaskRow key={t.id} task={t} onDelete={(id) => { void remove(id); }} />)}
+        {listNodes}
         {tasks.length === 0 && (
           <Card>
             <CardContent className="p-6 text-center text-sm text-muted-foreground">

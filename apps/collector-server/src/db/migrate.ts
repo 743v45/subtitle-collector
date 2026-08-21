@@ -94,6 +94,13 @@ export const MIGRATIONS: readonly MigrationStep[] = [
       'ALTER TABLE videos DROP COLUMN status',
     ],
   },
+  {
+    version: 8,
+    note: 'collect_tasks 补 batch_id（展示侧聚合标签：同批任务打同一 UUID，单条任务 NULL；无批次实体/状态，全从子任务派生）',
+    statements: [
+      'ALTER TABLE collect_tasks ADD COLUMN batch_id TEXT',
+    ],
+  },
 ];
 
 export function runMigrations(db: Database.Database): void {

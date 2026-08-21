@@ -459,3 +459,35 @@ test('task-update 推送：批量建任务逐条广播（两条串行执行，�
     assert.equal(new Set(ids).size, 2); // 批量每个任务 id 都有推送
   } finally { ws?.close(); ctx.cleanup(); }
 });
+
+// ── 批次聚合标签（2026-08-21，展示侧）：同批任务共享 batch_id，列表批次成员完整返回 ──
+
+test('批量端点：同批任务共享 batch_id；单条任务 batch_id 为 null', async () => {
+  const ctx = await setup();
+  try {
+    const batch = await httpReq(ctx.port, 'POST', '/api/collect-tasks/batch', { vids: ['BV1xx411c7mD', 'BV1yy411c7mD'] });
+    assert.equal(batch.json.created, 2);
+    const batchIds = new Set(batch.json.tasks.map((t: any) => t.batch_id));
+    assert.equal(batchIds.size, 1);          // 同批同一标签
+    assert.ok([...batchIds][0]);             // 非 null/空
+
+    const single = await httpReq(ctx.port, 'POST', '/api/collect-tasks', { text: 'https://www.bilibili.com/video/BV1zz411c7mD' });
+    assert.equal(single.json.task.batch_id, null); // 单条不聚合
+  } finally { ctx.cleanup(); }
+});
+
+test('列表批次补全：limit 截断后批次成员仍全量返回（聚合进度可算全）', async () => {
+  const ctx = await setup();
+  try {
+    // 批量 3 条（同批）+ 之后 1 条单任务（id 更大,挤占 limit 种子）
+    const batch = await httpReq(ctx.port, 'POST', '/api/collect-tasks/batch', { vids: ['BV1xx411c7mD', 'BV1yy411c7mD', 'BV1zz411c7mD'] });
+    await httpReq(ctx.port, 'POST', '/api/collect-tasks', { text: 'https://www.bilibili.com/video/BV1qq411c7mD' });
+    const batchId = batch.json.tasks[0].batch_id;
+
+    // limit=2 种子只含单任务 + 批次最新一条,补全后批次 3 条全在
+    const list = await httpReq(ctx.port, 'GET', '/api/collect-tasks?limit=2');
+    const members = list.json.items.filter((i: any) => i.batch_id === batchId);
+    assert.equal(members.length, 3);
+    assert.equal(list.json.total, 4); // total 仍是表总行数
+  } finally { ctx.cleanup(); }
+});

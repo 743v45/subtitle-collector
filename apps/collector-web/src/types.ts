@@ -76,6 +76,7 @@ export interface CollectTask {
   url: string;
   status: CollectTaskStatus;
   client_id: string | null;
+  batch_id?: string | null; // 展示侧聚合标签：批量提交同批共享；单条/旧任务 null
   error: string | null;
   result: string | null; // JSON 字符串（扩展回执 data：captured/tracks/reason…）
   title: string | null;  // 库内视频标题（server LEFT JOIN videos；任务卡直接展示,未入库 null）

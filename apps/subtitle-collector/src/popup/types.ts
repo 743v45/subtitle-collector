@@ -118,6 +118,7 @@ export interface CollectTask {
   status: 'pending' | 'dispatched' | 'succeeded' | 'failed';
   client_id: string | null;
   creator_client_id?: string | null;
+  batch_id?: string | null; // 展示侧聚合标签：同批共享；单条/旧任务 null
   error: string | null;
   result: string | null;
   title: string | null;
