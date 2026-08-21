@@ -1025,6 +1025,8 @@ function extLog(msg, level = "info") {
 // 且 content-yt 不需要 NAV_TRIGGER 通知——页面加载即自动采集。
 // §9 可观察性：start/content-ready/done(+pot_limited)/error 关键节点经 WS type:'log' 透传
 // server（每任务 3-6 条,禁止逐轮询周期刷屏）;captured/tracks 计数由轮询响应汇总上报。
+// 超时语义：无进展超时（timeoutMs 是「无进展窗口」而非绝对时长）——长视频轨/正文加载慢但
+// 持续出数据不该被一刀切杀掉;总时长由 server 侧命令预算兜底（迟到回执/迟到 INGEST 改判）。
 async function collectYoutubeViaNavigate(videoId, timeoutMs = 45000, taskId = null) {
   while (navCollectBusy) await new Promise((r) => setTimeout(r, 500)); // 等锁（同时只 1 个 navigate）
   navCollectBusy = true;
@@ -1035,6 +1037,11 @@ async function collectYoutubeViaNavigate(videoId, timeoutMs = 45000, taskId = nu
   const elapsedS = () => `${Math.round((Date.now() - t0) / 1000)}s`;
   const tag = `${taskId ? `taskId=${taskId} ` : ""}vid=${videoId} `;
   let lastObserved = "no-response"; // 最近一次轮询观察值（超时诊断：content 未注入/未就绪/未定居）
+  // 无进展超时：progressKey 把「观察状态 + 轨数 + 已到正文轨数」组成进展指纹，任一前进即重置
+  // 窗口起点;44min 长视频（hX7yG1KVYhI 实测连续 5 轮 45s 绝对超时但字幕全部入库）只要持续
+  // 出数据就不会被杀。正常视频不应 timeoutMs 无任何进展——未注入/卡死/定居后停滞照旧触发。
+  let lastProgressKey = "";
+  let lastProgressAt = Date.now();
   try {
     activeYtCollects.add(videoId); // 登记进行中的 YouTube 主动采集（INGEST 处理器据此放行 force）
     // 复用已打开的同视频 tab（reload 刷新页面状态）——但用户正在看的（active）不 reload，
@@ -1048,7 +1055,7 @@ async function collectYoutubeViaNavigate(videoId, timeoutMs = 45000, taskId = nu
       const tab = await chrome.tabs.create({ url: watchUrl, active: false });
       tabId = tab.id;
     }
-    extLog(`[yt-navigate] start ${tag}tab=${reused ? `reuse#${tabId}(reload)` : `new#${tabId}`} timeout=${Math.round(timeoutMs / 1000)}s`);
+    extLog(`[yt-navigate] start ${tag}tab=${reused ? `reuse#${tabId}(reload)` : `new#${tabId}`} timeout=${Math.round(timeoutMs / 1000)}s（无进展窗口）`);
     // 轮询 GET_LOCAL_STATE 直到终态。判定依据（content-yt GET_LOCAL_STATE 响应）：
     //   state=no-subtitle           captionTracks 已读且为空 → 成功 0 轨
     //   state=has-subtitle+settled  所有轨定居（body 到齐或已尝试）→ 等 INGEST 宽限后汇总
@@ -1057,7 +1064,6 @@ async function collectYoutubeViaNavigate(videoId, timeoutMs = 45000, taskId = nu
     let firstSettledAt = 0; // 首次 settled 的时刻（宽限期起算点）
     let readyLogged = false; // content-yt 首个轮询响应只记一次（防逐周期刷屏）
     for (;;) {
-      if (Date.now() - t0 > timeoutMs) throw new Error(`YouTube 采集超时（${Math.round(timeoutMs / 1000)}s）`);
       const state = await new Promise((resolve) => {
         chrome.tabs.sendMessage(tabId, { type: "GET_LOCAL_STATE", vid: videoId }, (resp) => {
           if (chrome.runtime.lastError) resolve(null); // content-yt 未注入/未就绪
@@ -1069,6 +1075,16 @@ async function collectYoutubeViaNavigate(videoId, timeoutMs = 45000, taskId = nu
         : state.state === "has-subtitle"
           ? `has-subtitle${state.settled ? "+settled" : ""}`
           : (state.state ?? (state.ok ? "ok" : "!ok"));
+      // 无进展超时判定（取代绝对时长）：指纹变化 = 有进展（就绪/定居/轨数/正文数任一前进）→
+      // 重置窗口起点;持续 timeoutMs 指纹不变才判超时。文案格式保持稳定（server 侧按前缀
+      // 「YouTube 采集超时（」识别此类失败做迟到 INGEST 改判）。
+      const progressKey = `${lastObserved}/${state?.subs?.length ?? 0}轨/${(state?.subs ?? []).filter((s) => s.has_body).length}体`;
+      if (progressKey !== lastProgressKey) {
+        lastProgressKey = progressKey;
+        lastProgressAt = Date.now();
+      } else if (Date.now() - lastProgressAt > timeoutMs) {
+        throw new Error(`YouTube 采集超时（${Math.round(timeoutMs / 1000)}s）`);
+      }
       if (!readyLogged && state) {
         readyLogged = true;
         extLog(`[yt-navigate] content-ready ${tag}state=${lastObserved} tracks=${state.subs?.length ?? 0} elapsed=${elapsedS()}`);

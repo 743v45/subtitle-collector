@@ -4,7 +4,7 @@ import type { IncomingMessage, Server } from 'node:http';
 import type Database from 'better-sqlite3';
 import { ingestVideo, ingestUpper, type IngestRequest, type IngestUpperRequest } from '../db/ingest.js';
 import { notifyClientOnline, pushTask } from '../tasks/tasks.js';
-import { amendLateResult } from '../tasks/amend.js';
+import { amendLateResult, amendLateIngest } from '../tasks/amend.js';
 import { releaseClient } from '../tasks/inflight.js';
 
 // 超时命令的 params 暂存：result 迟到时 pending 已删，靠它定位任务做改判（amendLateResult）。
@@ -90,6 +90,13 @@ export function attachWsServer(httpServer: Server, _db: Database.Database, expec
           const result = ingestVideo(_db, msg.payload as IngestRequest);
           ws.send(JSON.stringify({ type: 'ingest-ack', ok: true, ...result }));
           console.log(`[server] ingest source=${result.source} source_vid=${result.source_vid} 新增 ${result.inserted_tracks} 条版本 / 跳过 ${result.skipped_tracks} 条（已存在）`);
+          // 迟到 INGEST 改判：超时落 failed 的任务，字幕轨稍后经被动链路实际入库 → 改判 succeeded
+          //（与迟到 result 改判互补：扩展自限超时后无回执可等，只有 INGEST 证明数据落了）
+          const amended = amendLateIngest(_db, result);
+          if (amended != null) {
+            pushTask(_db, amended); // 改判后推送（与 amendLateResult 改判后的推送一致）
+            console.log(`[server] 迟到 ingest 改判超时任务 id=${amended} source=${result.source} source_vid=${result.source_vid} → succeeded`);
+          }
         } catch (err) {
           ws.send(JSON.stringify({ type: 'ingest-ack', ok: false, error: (err as Error).message }));
           console.log(`[server] ingest 失败 source=${msg.payload?.source} source_vid=${msg.payload?.video?.source_vid} error=${(err as Error).message}`);
