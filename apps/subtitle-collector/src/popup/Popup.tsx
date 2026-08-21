@@ -521,15 +521,19 @@ function FooterActions({
 
 // 采集任务进度卡（2026-08-21）：useCollectTasks 快照 + TASK_UPDATE 推送驱动。
 // 有在途（pending/dispatched）才显示；全终态后保留 30s（用户看到最终结果再收起）。
-// 批量任务按 batch_id 聚成一行「n/m」（批次成员由 server 列表完整返回），单任务独占一行；
+// 批量任务按 batch_id 聚成一行「n/m」（成员由 server 列表返回；批次被 >limit 新任务遮蔽出
+// 列表窗口时可能不全，分母以 TASK_UPDATE 推送携带的 batch_total 为准），单任务独占一行；
 // 在途组置顶（创建序），终态按完成序跟随；最多 10 行，超出折叠计数。
 function CollectTasksCard({ tasks }: { tasks: CollectTask[] | null }) {
   const hasActive = !!tasks?.some((t) => t.status === 'pending' || t.status === 'dispatched');
   const [lastActiveAt, setLastActiveAt] = useState(0); // 最后「有在途」时刻（30s 保留窗口起算点）
   const [visible, setVisible] = useState(false);
   useEffect(() => {
+    // 依赖 tasks：hasActive 期间每次任务数据变化（推送/10s 轮询）都刷新——批量采集历时分钟级，
+    // 只依赖 hasActive 会让时刻冻结在批次开始，最后一个成员转终态时保留窗口算出 0、卡片立即消失；
+    // 全终态翻转的那次变化不再刷新，但上一次刷新距最终时刻 ≤10s（轮询周期），窗口足够看到终态
     if (hasActive) setLastActiveAt(Date.now());
-  }, [hasActive]);
+  }, [hasActive, tasks]);
   useEffect(() => {
     if (hasActive) { setVisible(true); return; }
     if (!visible) return; // 打开时即无在途：不显示（不凭空弹出历史列表）
@@ -581,16 +585,17 @@ function CollectTasksCard({ tasks }: { tasks: CollectTask[] | null }) {
   );
 }
 
-// 批次聚合成一行进度（单任务 items.length=1,渲染同一形态）：
+// 批次聚合成一行进度：items.length>1 才算批次——单成员批次（用户只勾 1 个视频批量提交）
+// 走单任务形态（链接/标题/状态徽标），否则丢标题丢链接。
 // 进行中「n/m」天蓝脉冲；全终态「✓ m/m」绿（有失败追加红字 x 失败）。
+// 分母 head.batch_total ?? items.length：批次被列表窗口遮蔽（成员不全）时用推送携带的总数。
 function BatchOrTaskRow({ items, active }: { items: CollectTask[]; active: boolean }) {
-  const batch = items.length > 1 || items[0].batch_id != null;
+  const batch = items.length > 1;
   const ok = items.filter((t) => t.status === 'succeeded').length;
   const fail = items.filter((t) => t.status === 'failed').length;
   const head = items[0];
-  const title = batch
-    ? `批量采集${items.length > 1 ? ` ${items.length} 个视频` : ''}`
-    : head.title || head.source_vid;
+  const total = head.batch_total ?? items.length;
+  const title = batch ? `批量采集 ${items.length} 个视频` : head.title || head.source_vid;
   const errTip = items.map((t) => (t.error ? `${t.source_vid}: ${t.error}` : null)).filter(Boolean).join('\n');
   return (
     <div className="flex items-center gap-1.5 text-[11px]">
@@ -622,12 +627,12 @@ function BatchOrTaskRow({ items, active }: { items: CollectTask[]; active: boole
         // 批次行：n/m 进度（进行中脉冲天蓝,全终态绿）;不展开子项（popup 速览,细节看 web 采集页）
         active ? (
           <span className="shrink-0 animate-pulse text-[10px] tabular-nums text-sky-600">
-            {ok}/{items.length}
+            {ok}/{total}
             {fail > 0 && <span className="text-destructive"> · {fail} 败</span>}
           </span>
         ) : (
           <span className="shrink-0 text-[10px] tabular-nums text-emerald-600">
-            ✓ {ok}/{items.length}
+            ✓ {ok}/{total}
             {fail > 0 && <span className="text-destructive"> · {fail} 败</span>}
           </span>
         )

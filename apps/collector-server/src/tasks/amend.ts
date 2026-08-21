@@ -5,7 +5,9 @@ import type Database from 'better-sqlite3';
 // 放 tasks.ts 会与 tasks → ws/server 的 import 构成循环。
 //
 // 定位方式：命令 params 携带 (bvid | videoId) → (source, source_vid)，匹配该视频最近一条
-// 「超时失败」任务（error 含「超时」）；只有 ok 的迟到回执才改判（迟到失败不改变已落的 failed）。
+// 「超时失败」任务（error 精确等于 dispatchTask 超时落库的固定文案「扩展执行超时」；普通失败
+// 是扩展 error 原文，可能恰含「超时」二字，子串匹配会把别人的失败行误改判成功）；只有 ok 的
+// 迟到回执才改判（迟到失败不改变已落的 failed）。
 // 改判成功后的 task-update 推送由调用方（ws/server）做——本模块保持无 ws 依赖。
 
 export interface LateResultParams {
@@ -26,7 +28,7 @@ export function amendLateResult(db: Database.Database, params: LateResultParams,
   if (!vid) return null;
   if (!result.ok) return null; // 迟到失败回执：failed 已落，不改判
   const row = db.prepare(
-    "SELECT id FROM collect_tasks WHERE source = ? AND source_vid = ? AND status = 'failed' AND error LIKE '%超时%' ORDER BY id DESC LIMIT 1",
+    "SELECT id FROM collect_tasks WHERE source = ? AND source_vid = ? AND status = 'failed' AND error = '扩展执行超时' ORDER BY id DESC LIMIT 1",
   ).get(source, vid) as { id: number } | undefined;
   if (!row) return null;
   db.prepare(

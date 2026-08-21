@@ -482,7 +482,8 @@ async function connect() {
       return;
     }
     if (msg.type === "task-delete") {
-      notifyUI({ type: "TASK_DELETE", id: msg.id });
+      // server 载荷为 {type:'task-delete', taskId}（2026-08-21 去掉顶层 id；旧 server 无此推送）
+      notifyUI({ type: "TASK_DELETE", taskId: msg.taskId });
       return;
     }
     if (msg.type === "hello-ack") {

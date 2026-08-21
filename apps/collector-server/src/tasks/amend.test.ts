@@ -49,6 +49,18 @@ test('amendLateResult：B 站 bvid 定位；仅匹配最近一条超时失败', 
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
+test('amendLateResult：error 含「超时」子串但非超时失败文案 → 不改判', () => {
+  const { db, dir } = freshDb();
+  try {
+    // 普通失败回执的扩展原文（如「请求超时」）恰含「超时」二字，不得被子串匹配误改判成功
+    const id = seedTask(db, 'youtube', 'gaDdrDdczO4', 'failed', '请求超时');
+    assert.equal(amendLateResult(db, { videoId: 'gaDdrDdczO4' }, { ok: true, data: { captured: 1 } }), null);
+    const t = db.prepare('SELECT status, result FROM collect_tasks WHERE id = ?').get(id) as any;
+    assert.equal(t.status, 'failed'); // 别人的失败行保持 failed
+    assert.equal(t.result, null);     // 也不写入他人的 result
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
 test('amendLateResult：迟到失败回执 / 无匹配任务 / 无定位参数 → 不改判', () => {
   const { db, dir } = freshDb();
   try {

@@ -575,6 +575,9 @@ export function CollectPage() {
   const [err, setErr] = useState<string | null>(null);
   const [tasks, setTasks] = useState<CollectTask[]>([]);
   const aliveRef = useRef(true);
+  // 在途待删任务 id:乐观移除后、DELETE 往返期间,轮询响应带回的这些 id 不写回列表
+  // (否则批次卡以半删状态随轮询复活闪烁);删完或失败收尾时移除登记并 refresh 对齐真值。
+  const deletingRef = useRef(new Set<number>());
 
   // 摘要行刷新信号：挂载 1 次 + succeeded 数变化（新任务完成）时 +1
   const [statsTick, setStatsTick] = useState(0);
@@ -589,7 +592,10 @@ export function CollectPage() {
 
   const refresh = () => {
     listCollectTasks(30)
-      .then(({ items }) => { if (aliveRef.current) setTasks(items); })
+      .then(({ items }) => {
+        if (!aliveRef.current) return;
+        setTasks(items.filter((t) => !deletingRef.current.has(t.id)));
+      })
       .catch(() => { /* 轮询失败静默,下次再试 */ });
   };
 
@@ -615,45 +621,61 @@ export function CollectPage() {
     }
   };
 
-  // 删除任务：成功后本地立即移除（不等 2s 轮询）;失败静默（行还在,轮询自然恢复）
+  // 删除任务:成功后本地立即移除(不等 2s 轮询);失败时登记已撤销,refresh 拉回真值(行恢复可见)
   const remove = async (id: number) => {
+    deletingRef.current.add(id);
     setTasks((prev) => prev.filter((t) => t.id !== id));
     try {
       await deleteCollectTask(id);
     } catch {
       refresh();
+    } finally {
+      deletingRef.current.delete(id);
     }
   };
 
-  // 删除整个批次：级联删全部成员（含在途——与单删「任意状态可删」语义一致）
+  // 删除整个批次:级联删全部成员(含在途——与单删「任意状态可删」语义一致)。
+  // 逐条容错:404=成员已被别处删视为已达成,其他失败也不中止,尽量删完;
+  // 收尾移除登记并统一 refresh,失败成员经此恢复可见(不做错误弹窗)。
   const removeBatch = async (batchId: string) => {
     const ids = tasks.filter((t) => t.batch_id === batchId).map((t) => t.id);
+    for (const id of ids) deletingRef.current.add(id);
     setTasks((prev) => prev.filter((t) => t.batch_id !== batchId));
-    try {
-      for (const id of ids) await deleteCollectTask(id);
-    } catch {
-      refresh(); // 中途失败：回滚为 server 真值
+    for (const id of ids) {
+      try {
+        await deleteCollectTask(id);
+      } catch {
+        /* 单条失败继续下一个;真值以收尾 refresh 为准 */
+      }
     }
+    for (const id of ids) deletingRef.current.delete(id);
+    refresh();
   };
 
   const hasActive = tasks.some((t) => t.status === 'pending' || t.status === 'dispatched');
 
   // 展示侧聚合（2026-08-21）：同 batch_id 聚成 BatchTaskCard,单任务独立 TaskRow;
   // 顺序跟随 server 返回序（id desc）,批次卡位置 = 组内最新成员位置。
+  // 批次只剩 1 个成员（建批即 1 个或级联删剩 1 个）时子行信息量与单任务卡无异,直接渲染 TaskRow。
   const listNodes: Array<ReactNode> = [];
   const batched = new Set<string>();
   for (const t of tasks) {
     if (t.batch_id) {
       if (batched.has(t.batch_id)) continue; // 同批只渲染一次（该批全部成员）
       batched.add(t.batch_id);
-      listNodes.push(
-        <BatchTaskCard
-          key={`batch:${t.batch_id}`}
-          items={tasks.filter((x) => x.batch_id === t.batch_id)}
-          onDelete={(id) => { void remove(id); }}
-          onDeleteBatch={(bid) => { void removeBatch(bid); }}
-        />,
-      );
+      const members = tasks.filter((x) => x.batch_id === t.batch_id);
+      if (members.length === 1) {
+        listNodes.push(<TaskRow key={t.id} task={t} onDelete={(id) => { void remove(id); }} />);
+      } else {
+        listNodes.push(
+          <BatchTaskCard
+            key={`batch:${t.batch_id}`}
+            items={members}
+            onDelete={(id) => { void remove(id); }}
+            onDeleteBatch={(bid) => { void removeBatch(bid); }}
+          />,
+        );
+      }
     } else {
       listNodes.push(<TaskRow key={t.id} task={t} onDelete={(id) => { void remove(id); }} />);
     }

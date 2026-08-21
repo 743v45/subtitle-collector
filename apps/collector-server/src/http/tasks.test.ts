@@ -380,8 +380,8 @@ test('扩展回执 needs_update:true：同样归类「扩展版本过旧」（�
 // ── task-update / task-delete 推送（2026-08-21）：任务状态落库后广播给已握手连接 ──
 
 // 挂一个只收集推送的 message listener（connectExt 内部已挂的 listener 负责回 result，多 listener 共存）
-function collectPushes(ws: WebSocket): Array<{ type: string; task?: any; id?: number }> {
-  const events: Array<{ type: string; task?: any; id?: number }> = [];
+function collectPushes(ws: WebSocket): Array<{ type: string; task?: any; taskId?: number }> {
+  const events: Array<{ type: string; task?: any; taskId?: number }> = [];
   ws.on('message', (d) => {
     const m = JSON.parse(d.toString());
     if (m.type === 'task-update' || m.type === 'task-delete') events.push(m);
@@ -399,6 +399,7 @@ test('task-update 推送：建任务→派发→终态，WS 收到 pending→dis
     await wait(400);
     const mine = events.filter((e) => e.task?.id === r.json.task.id);
     assert.deepEqual(mine.map((e) => e.task.status), ['pending', 'dispatched', 'succeeded']); // 单连接 FIFO，发送序即到达序
+    assert.ok(!('batch_total' in mine.at(-1)!.task)); // 单条任务（batch_id null）不附加批次分母
     const final = mine.at(-1)!.task;
     assert.ok(final.finished_at);                      // 终态行带完成时刻
     assert.ok(String(final.result).includes('"tracks":2')); // result 整行可回放
@@ -427,7 +428,7 @@ test('task-update 推送：失败回执 → failed 行带 error 原文', async (
   } finally { ws?.close(); ctx.cleanup(); }
 });
 
-test('task-delete 推送：DELETE 后广播 {type:"task-delete",id}', async () => {
+test('task-delete 推送：DELETE 后广播 {type:"task-delete",taskId}（无顶层 id）', async () => {
   const ctx = await setup();
   let ws: WebSocket | null = null;
   try {
@@ -439,7 +440,10 @@ test('task-delete 推送：DELETE 后广播 {type:"task-delete",id}', async () =
     await wait(200);
     const dels = events.filter((e) => e.type === 'task-delete');
     assert.equal(dels.length, 1);
-    assert.equal(dels[0].id, r.json.task.id);
+    assert.equal(dels[0].taskId, r.json.task.id);
+    // 无顶层 id：不穿过旧扩展 background 的 !msg.id 守卫（否则每条删除回一张
+    // "unknown action" 失败回执，噪音 + needs_update 误导）
+    assert.ok(!('id' in dels[0]));
   } finally { ws?.close(); ctx.cleanup(); }
 });
 
@@ -453,8 +457,12 @@ test('task-update 推送：批量建任务逐条广播（两条串行执行，�
     await wait(300);
     const ids = r.json.tasks.map((t: any) => t.id);
     for (const id of ids) {
-      const seq = events.filter((e) => e.task?.id === id).map((e) => e.task.status);
-      assert.deepEqual(seq, ['pending', 'dispatched', 'succeeded']);
+      const mine = events.filter((e) => e.task?.id === id);
+      assert.deepEqual(mine.map((e) => e.task.status), ['pending', 'dispatched', 'succeeded']);
+      // 批次分母：批次建齐后的推送携带 batch_total = 同批成员总数（popup 聚合分母无需列表全量）。
+      // 首条 pending 推送时同批仅插入 1 条（逐条创建逐条推），batch_total 是当时的实时数
+      //（1 → 2 递增），取最新推送即正确分母。
+      assert.equal(mine.at(-1)!.task.batch_total, 2);
     }
     assert.equal(new Set(ids).size, 2); // 批量每个任务 id 都有推送
   } finally { ws?.close(); ctx.cleanup(); }

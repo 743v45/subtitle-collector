@@ -19,6 +19,7 @@ export interface CollectTask {
   client_id: string | null;
   creator_client_id?: string | null; // 创建者客户端（popup 提交自带；CLI/旧任务 null），sticky 派发用
   batch_id?: string | null;          // 展示侧聚合标签（批量提交同批共享；单条/旧任务 null）
+  batch_total?: number;              // 仅 task-update 推送携带——同批成员总数（popup 聚合分母）；列表/单查 API 不返回
   error: string | null;
   result: string | null;
   title: string | null; // 库内视频标题（LEFT JOIN videos；采集页直接展示,未入库为 null）
@@ -288,16 +289,26 @@ export function getTask(db: Database.Database, id: number): CollectTask | null {
 
 // 任务状态推送：各落库点（createTask / dispatchTask / amend 改判）之后广播整行（含 title）。
 // popup 快照 + 兜底轮询补推送盲区（旧 server / popup 关闭期间），此处只管把变化及时发出去。
+// 批次任务附加 batch_total（同批成员总数）：批次成员被 >limit 新任务挤出列表窗口时，popup
+// 只能靠 TASK_UPDATE 流入的成员聚合，无总量则分母低估（60 条批次显示 3/3）。
 export function pushTask(db: Database.Database, id: number): void {
   const task = getTask(db, id);
-  if (task) broadcastEvent({ type: 'task-update', task });
+  if (!task) return;
+  if (task.batch_id) {
+    const n = (db.prepare('SELECT COUNT(*) AS n FROM collect_tasks WHERE batch_id = ?').get(task.batch_id) as { n: number }).n;
+    broadcastEvent({ type: 'task-update', task: { ...task, batch_total: n } });
+    return;
+  }
+  broadcastEvent({ type: 'task-update', task });
 }
 
 // 删除任务（采集页删除按钮）。任意状态可删：dispatched 删除后扩展回执的 UPDATE 不命中行,no-op 无副作用。
-// 删除后广播 task-delete（popup 列表移除该行）。
+// 删除后广播 task-delete（popup 列表移除该行）。载荷用 taskId 不用顶层 id：旧扩展（359fd97 之前）
+// background 对带 id 的消息一律回 "unknown action" 失败回执（噪音 + needs_update 误导），
+// 无顶层 id 则被其 !msg.id 守卫静默忽略（与 task-update 一致）。
 export function deleteTask(db: Database.Database, id: number): boolean {
   const deleted = db.prepare('DELETE FROM collect_tasks WHERE id = ?').run(id).changes > 0;
-  if (deleted) broadcastEvent({ type: 'task-delete', id });
+  if (deleted) broadcastEvent({ type: 'task-delete', taskId: id });
   return deleted;
 }
 
@@ -412,7 +423,10 @@ export function attachTaskScheduler(db: Database.Database): void {
         .run(error, Date.now(), taskId);
       pushTask(db2, taskId);
     }
-    inFlight.delete(clientId);
+    // 条件删除（竞态防串行失效）：断线重连链 close → releaseClient 清占位 → 重连 → 新任务 t2
+    // 派给同 client 后，t1 超时收尾若无条件 delete 会错删 t2 的占位 → 同 client 双开任务。
+    // 占位属于哪个任务，值就在 map 里，只删自己的。
+    if (inFlight.get(clientId) === taskId) inFlight.delete(clientId);
     dispatch(); // 派完一个立即尝试下一个（串行链式）
   };
 

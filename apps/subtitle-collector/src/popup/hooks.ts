@@ -698,8 +698,11 @@ export function useClientId(): string | null {
 }
 
 // —— 采集任务列表：快照 + TASK_UPDATE 推送 + 低频兜底轮询 ——
-// 打开时 GET /api/collect-tasks 全量；之后 background 转发的 server 推送按 id upsert/移除。
+// 打开时 GET /api/collect-tasks 全量；之后 background 转发的 server 推送按 id upsert/移除
+// （TASK_UPDATE 的 task 整对象 upsert，含推送专属的 batch_total）。
 // 10s 兜底重拉覆盖两类盲区：旧 server 无推送（慢实时）、popup 关闭/断线期间错过的推送。
+// pull 响应是请求时刻的快照：在途期间到达的推送先暂存，落地后按到达序重放——直接 setTasks
+// 会把在途推送覆盖回滚（UI 状态回退 / TASK_DELETE 已删行复活，直到下次推送/轮询）。
 // null=未拉到（loading/server 不可达，保留 null 让调用方隐藏）；[]=已拉到且无任务。
 export function useCollectTasks(httpBase: string, enabled: boolean): CollectTask[] | null {
   const [tasks, setTasks] = useState<CollectTask[] | null>(null);
@@ -708,32 +711,61 @@ export function useCollectTasks(httpBase: string, enabled: boolean): CollectTask
       setTasks(null);
       return;
     }
+    // httpBase 变化（切换激活 server）：进入即清旧数据（对齐 enabled=false 分支）——
+    // 新 server 不可达时不永久显示冻结的旧 server 数据；同 httpBase 下 pull 失败保留旧数据不变
+    setTasks(null);
     let alive = true;
+    let pullInFlight = false;
+    const pending: Array<{ type: 'TASK_UPDATE'; task: CollectTask } | { type: 'TASK_DELETE'; taskId: number }> = [];
+    // upsert（推送直应用与重放共用）：按 id 原位替换，不在则插到队头
+    const upsert = (list: CollectTask[], incoming: CollectTask): CollectTask[] => {
+      const i = list.findIndex((t) => t.id === incoming.id);
+      if (i === -1) return [incoming, ...list];
+      const next = [...list];
+      next[i] = incoming;
+      return next;
+    };
+    // 把暂存推送按到达序重放到 base 上（pull 响应落地后调用）
+    const replay = (base: CollectTask[]): CollectTask[] => {
+      let list = base;
+      for (const p of pending) {
+        if (p.type === 'TASK_UPDATE') list = upsert(list, p.task);
+        else list = list.filter((t) => t.id !== p.taskId);
+      }
+      return list;
+    };
     const pull = async () => {
+      pullInFlight = true;
       try {
         const r = await fetch(`${httpBase}/api/collect-tasks?limit=50`, authInit({ cache: 'no-cache' }));
         const d = await r.json();
-        if (alive && d?.ok) setTasks((d.items ?? []) as CollectTask[]);
+        if (alive && d?.ok) setTasks(replay((d.items ?? []) as CollectTask[]));
       } catch {
-        // server 不可达：保留上次数据（推送断流与拉取失败同表现,不额外提示）
+        // server 不可达：保留上次数据（推送断流与拉取失败同表现,不额外提示）；
+        // 暂存推送随之作废——同 id 后续推送覆盖、≤10s 下次快照修正
+      } finally {
+        pullInFlight = false;
+        pending.length = 0;
       }
     };
     void pull();
     const timer = setInterval(() => { void pull(); }, 10_000);
     const handler = (msg: unknown) => {
-      const m = msg as { type?: string; task?: CollectTask; id?: number };
+      const m = msg as { type?: string; task?: CollectTask; taskId?: number };
       if (m?.type === 'TASK_UPDATE' && m.task && typeof m.task.id === 'number') {
         const incoming = m.task;
-        setTasks((prev) => {
-          const list = prev ?? [];
-          const i = list.findIndex((t) => t.id === incoming.id);
-          if (i === -1) return [incoming, ...list];
-          const next = [...list];
-          next[i] = incoming;
-          return next;
-        });
-      } else if (m?.type === 'TASK_DELETE' && typeof m.id === 'number') {
-        const removed = m.id;
+        // pull 在途：暂存（直接应用会被响应快照覆盖回滚）
+        if (pullInFlight) {
+          pending.push({ type: 'TASK_UPDATE', task: incoming });
+          return;
+        }
+        setTasks((prev) => upsert(prev ?? [], incoming));
+      } else if (m?.type === 'TASK_DELETE' && typeof m.taskId === 'number') {
+        const removed = m.taskId;
+        if (pullInFlight) {
+          pending.push({ type: 'TASK_DELETE', taskId: removed });
+          return;
+        }
         setTasks((prev) => (prev ? prev.filter((t) => t.id !== removed) : prev));
       }
     };
@@ -742,6 +774,7 @@ export function useCollectTasks(httpBase: string, enabled: boolean): CollectTask
       alive = false;
       clearInterval(timer);
       chrome.runtime.onMessage.removeListener(handler);
+      pending.length = 0; // 在途 pull 已因 alive=false 丢弃响应，暂存推送一并作废
     };
   }, [httpBase, enabled]);
   return tasks;

@@ -119,6 +119,9 @@ export interface CollectTask {
   client_id: string | null;
   creator_client_id?: string | null;
   batch_id?: string | null; // 展示侧聚合标签：同批共享；单条/旧任务 null
+  // 仅 TASK_UPDATE 推送携带：同批成员总数。列表 API 不含；批次被 >limit 新任务遮蔽出
+  // 列表窗口（成员不全）时，批次行分母用它
+  batch_total?: number;
   error: string | null;
   result: string | null;
   title: string | null;
