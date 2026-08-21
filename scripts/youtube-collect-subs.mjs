@@ -4,7 +4,7 @@
 // 用法: node scripts/youtube-collect-videos.mjs | node scripts/youtube-collect-subs.mjs [输出目录] [--cookies 文件]
 //   额外参数透传 yt-dlp(如 --cookies-from-browser chrome,但 mac 非交互 keychain 解密会失败 → 用 cookies.txt)
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, existsSync, appendFileSync } from 'node:fs';
+import { mkdirSync, existsSync, appendFileSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 const OUT_DIR = process.argv[2] || 'youtube-subs';
@@ -13,7 +13,7 @@ const EXTRA = process.argv.slice(3); // 透传 yt-dlp(如 --cookies /path/cookie
 const LANGS = 'en,zh-Hans';
 
 mkdirSync(OUT_DIR, { recursive: true });
-const lines = require('fs').readFileSync(0, 'utf8').split('\n').filter(Boolean);
+const lines = readFileSync(0, 'utf8').split('\n').filter(Boolean);
 const videoIds = [...new Set(lines.map((l) => l.split('\t')[0]).filter((v) => /^[A-Za-z0-9_-]{11}$/.test(v)))];
 process.stderr.write(`采字幕(yt-dlp): ${videoIds.length} 视频 → ${OUT_DIR}/  透传: ${EXTRA.join(' ') || '(无)'}\n`);
 
