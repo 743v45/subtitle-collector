@@ -595,6 +595,7 @@ function BatchOrTaskRow({ items, active }: { items: CollectTask[]; active: boole
   const batch = items.length > 1;
   const ok = items.filter((t) => t.status === 'succeeded').length;
   const fail = items.filter((t) => t.status === 'failed').length;
+  const limited = items.filter((t) => t.status === 'limited').length; // 字幕受限（pot,0 轨入库）≠ 完成
   const head = items[0];
   const total = Math.max(items.length, ...items.map((t) => t.batch_total ?? 0));
   const title = batch ? `批量采集 ${total} 个视频` : head.title || head.source_vid;
@@ -626,15 +627,17 @@ function BatchOrTaskRow({ items, active }: { items: CollectTask[]; active: boole
         </a>
       )}
       {batch ? (
-        // 批次行：n/m 进度（进行中脉冲天蓝,全终态绿）;不展开子项（popup 速览,细节看 web 采集页）
+        // 批次行：n/m 进度（进行中脉冲天蓝,全终态绿）;受限琥珀、失败红各自计数;不展开子项（popup 速览,细节看 web 采集页）
         active ? (
           <span className="shrink-0 animate-pulse text-[10px] tabular-nums text-sky-600">
             {ok}/{total}
+            {limited > 0 && <span className="text-amber-600"> · {limited} 限</span>}
             {fail > 0 && <span className="text-destructive"> · {fail} 败</span>}
           </span>
         ) : (
           <span className="shrink-0 text-[10px] tabular-nums text-emerald-600">
             ✓ {ok}/{total}
+            {limited > 0 && <span className="text-amber-600"> · {limited} 限</span>}
             {fail > 0 && <span className="text-destructive"> · {fail} 败</span>}
           </span>
         )
@@ -644,6 +647,7 @@ function BatchOrTaskRow({ items, active }: { items: CollectTask[]; active: boole
           {head.status === 'pending' && <span className="shrink-0 text-[10px] text-muted-foreground">排队</span>}
           {head.status === 'dispatched' && <span className="shrink-0 animate-pulse text-[10px] text-sky-600">采集中</span>}
           {head.status === 'succeeded' && <span className="shrink-0 text-[10px] text-emerald-600">✓ {capturedLabel(head)}</span>}
+          {head.status === 'limited' && <span className="shrink-0 text-[10px] text-amber-600" title="字幕受限（pot），0 轨入库；元信息已入库,可在 web 采集页重试">受限</span>}
           {head.status === 'failed' && (
             <span className="max-w-[140px] shrink-0 truncate text-[10px] text-destructive" title={head.error ?? undefined}>
               失败 · {head.error}

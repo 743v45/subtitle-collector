@@ -1,7 +1,7 @@
 import type {
   VideoListItem, VideoDetail, VideoFilter, ClientInfo,
   StatsOverview, KeyValue, StatsGroupBy, CreatorDetail, ChangeRow,
-  TagSource, CollectTask, UpperVideoItem,
+  TagSource, CollectTask, CollectTaskStatus, UpperVideoItem,
 } from './types';
 import type { SubtitleLine } from '@/components/SubtitleView';
 
@@ -137,6 +137,18 @@ export async function createCollectTask(text: string): Promise<CollectTask> {
 
 export async function listCollectTasks(limit = 20): Promise<{ total: number; items: CollectTask[] }> {
   const r = await fetch(`${BASE}/api/collect-tasks?limit=${limit}`);
+  return ensureOk(r, (j) => ({ total: j.total ?? 0, items: j.items ?? [] }));
+}
+
+// 历史页：全量分页 + 状态筛选（status 缺省=全部）。批次补全语义同列表端点（种子页涉及的批次成员完整返回）。
+export async function listCollectTasksPage(
+  page: number,
+  pageSize: number,
+  status?: readonly CollectTaskStatus[] | null,
+): Promise<{ total: number; items: CollectTask[] }> {
+  const q = new URLSearchParams({ page: String(page), page_size: String(pageSize) });
+  if (status?.length) q.set('status', status.join(','));
+  const r = await fetch(`${BASE}/api/collect-tasks?${q}`);
   return ensureOk(r, (j) => ({ total: j.total ?? 0, items: j.items ?? [] }));
 }
 

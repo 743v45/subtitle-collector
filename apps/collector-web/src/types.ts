@@ -68,7 +68,8 @@ export interface ClientInfo {
 }
 
 // ── 采集任务（手机/网页提交 → server 派发扩展执行）──
-export type CollectTaskStatus = 'pending' | 'dispatched' | 'succeeded' | 'failed';
+// limited = 执行成功但字幕受限（YouTube pot，0 轨入库，元信息已入库）——终态，可重试重采
+export type CollectTaskStatus = 'pending' | 'dispatched' | 'succeeded' | 'failed' | 'limited';
 export interface CollectTask {
   id: number;
   source: 'bilibili' | 'youtube';

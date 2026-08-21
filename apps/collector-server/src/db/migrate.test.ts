@@ -200,3 +200,32 @@ test('v7：新库（schema.sql 已无 status 列）重放迁移不报错（DROP 
     assert.ok(!cols.map((c) => c.name).includes('status'), '新库本就无 status 列');
   } finally { db.close(); }
 });
+
+// ── v9（2026-08-22）：collect_tasks 状态 CHECK 加 limited（单事务表重建）──
+test('v9 迁移：旧 CHECK(4 值)库重建后可写 limited；重放幂等', () => {
+  const db = new Database(':memory:');
+  try {
+    // 手工建 v8 形态旧表(CHECK 不含 limited)+ 存量行——模拟迁移前旧库
+    db.exec(`CREATE TABLE collect_tasks (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      source TEXT NOT NULL CHECK(source IN ('bilibili','youtube')),
+      source_vid TEXT NOT NULL, url TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','dispatched','succeeded','failed')),
+      client_id TEXT, creator_client_id TEXT, error TEXT, result TEXT, batch_id TEXT,
+      created_at INTEGER NOT NULL, finished_at INTEGER)`);
+    db.prepare("INSERT INTO collect_tasks (source, source_vid, url, status, created_at) VALUES ('youtube', 'gaDdrDdczO4', 'https://x', 'succeeded', 1)").run();
+    db.pragma('user_version = 8');
+
+    runMigrations(db);
+    assert.equal(db.pragma('user_version', { simple: true }), MIGRATIONS[MIGRATIONS.length - 1].version);
+    // 旧 CHECK 下这会抛 no-check 约束;重建后合法
+    db.prepare("INSERT INTO collect_tasks (source, source_vid, url, status, created_at) VALUES ('youtube', 'F3lL98Pj90o', 'https://x', 'limited', 2)").run();
+    // 存量行保留
+    assert.equal((db.prepare("SELECT COUNT(*) AS n FROM collect_tasks WHERE status='succeeded'").get() as any).n, 1);
+    // 索引随重建恢复
+    assert.ok((db.prepare("SELECT name FROM sqlite_master WHERE type='index' AND name='idx_tasks_status'").get() as any));
+    // 重放幂等
+    runMigrations(db);
+    assert.equal(db.pragma('user_version', { simple: true }), MIGRATIONS[MIGRATIONS.length - 1].version);
+  } finally { db.close(); }
+});

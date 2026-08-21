@@ -115,7 +115,7 @@ export interface CollectTask {
   source: 'bilibili' | 'youtube';
   source_vid: string;
   url: string;
-  status: 'pending' | 'dispatched' | 'succeeded' | 'failed';
+  status: 'pending' | 'dispatched' | 'succeeded' | 'failed' | 'limited';
   client_id: string | null;
   creator_client_id?: string | null;
   batch_id?: string | null; // 展示侧聚合标签：同批共享；单条/旧任务 null

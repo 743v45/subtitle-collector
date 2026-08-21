@@ -1,13 +1,14 @@
 import { type IncomingMessage, type ServerResponse } from 'node:http';
 import type Database from 'better-sqlite3';
-import { extractVideoUrl, expandShortLink, parseVideoUrl, createTask, createTasksBatch, findActiveTask, expandUpperVideos, getTask, deleteTask, listTasks, kickTaskScheduler, type FetchLike } from '../tasks/tasks.js';
+import { extractVideoUrl, expandShortLink, parseVideoUrl, createTask, createTasksBatch, findActiveTask, expandUpperVideos, getTask, deleteTask, listTasks, kickTaskScheduler, type FetchLike, type TaskStatus } from '../tasks/tasks.js';
 import { json, readJsonBody } from './http-util.js';
 
 // ── 采集任务 HTTP 接口（手机/网页提交入口）──
 // POST   /api/collect-tasks        { text } → 从粘贴文本提取 URL → 建 pending 任务并尝试派发
 //                                  （同视频已有未终态任务则返回既有任务，created:false）
 // POST   /api/collect-tasks/batch  { vids[], source?, client_id? } → 批量建任务（popup/web 按 UP 勾选批量采集）并尝试派发
-// GET    /api/collect-tasks        最近任务列表（手机「采集」页主体）
+// GET    /api/collect-tasks        任务列表:limit(默认20)或 page+page_size 分页 + status 逗号筛选
+//                                  (采集页 limit=30 最近列表;历史页 page/page_size+status 全量分页)
 // GET    /api/collect-tasks/:id    单任务状态（手机每 2s 轮询直到终态）
 // DELETE /api/collect-tasks/:id    删除任务（采集页删除按钮,任意状态可删）
 // POST   /api/upper-videos/expand  { mid } → 经扩展 WS 代理拉 UP 全部视频 + 标注已采（web「按 UP 批量」用）
@@ -35,8 +36,23 @@ export async function handleTasksHttp(req: IncomingMessage, res: ServerResponse,
       return;
     }
     if (req.method === 'GET') {
-      const limit = Math.min(100, Math.max(1, Math.floor(Number(url.searchParams.get('limit') ?? '20')) || 20));
-      json(res, 200, { ok: true, ...listTasks(db, limit) });
+      // 两种形态:采集页 ?limit=N(最近列表,无分页);历史页 ?page=N&page_size=M&status=a,b(全量分页+筛选)
+      const STATUSES: readonly TaskStatus[] = ['pending', 'dispatched', 'succeeded', 'failed', 'limited'];
+      const statusParam = url.searchParams.get('status');
+      const statusFilter = statusParam
+        ? statusParam.split(',').map((s) => s.trim()).filter((s): s is TaskStatus => (STATUSES as readonly string[]).includes(s))
+        : undefined;
+      let limit = Math.min(100, Math.max(1, Math.floor(Number(url.searchParams.get('limit') ?? '20')) || 20));
+      let offset = 0;
+      let paged = false;
+      const page = Number(url.searchParams.get('page') ?? '');
+      const pageSize = Number(url.searchParams.get('page_size') ?? '');
+      if (Number.isInteger(page) && page >= 1 && Number.isInteger(pageSize) && pageSize >= 1) {
+        limit = Math.min(100, pageSize);
+        offset = (page - 1) * limit;
+        paged = true;
+      }
+      json(res, 200, { ok: true, ...(paged ? { page, page_size: limit } : {}), ...listTasks(db, limit, offset, statusFilter) });
       return;
     }
     json(res, 405, { ok: false, error: 'method not allowed' });

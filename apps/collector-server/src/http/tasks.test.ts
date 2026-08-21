@@ -499,3 +499,55 @@ test('列表批次补全：limit 截断后批次成员仍全量返回（聚合�
     assert.equal(list.json.total, 4); // total 仍是表总行数
   } finally { ctx.cleanup(); }
 });
+
+// ── limited 终态（2026-08-22）：pot_limited 回执 → status=limited（非 succeeded）──
+
+test('YouTube 回执 reason=pot_limited → 任务 limited 终态（0 轨,区别于已完成）', async () => {
+  const ctx = await setup();
+  let ws: WebSocket | null = null;
+  try {
+    ws = new WebSocket(`ws://127.0.0.1:${ctx.port}/ext`);
+    await new Promise((r) => { ws!.once('open', r); });
+    ws!.send(JSON.stringify({ type: 'hello', ext_version: '0.1.0', token: 'test-token', client_id: 'ext-pot', reporting_enabled: true }));
+    ws!.on('message', (d) => {
+      const m = JSON.parse(d.toString());
+      if (m.action === 'fetch-youtube-subtitle') {
+        ws!.send(JSON.stringify({ type: 'result', id: m.id, ok: true, data: { videoId: m.videoId, captured: 0, tracks: 2, reason: 'pot_limited' } }));
+      }
+    });
+    await wait(100);
+
+    const r = await httpReq(ctx.port, 'POST', '/api/collect-tasks', { text: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ' });
+    await wait(300);
+    const t = getTask(ctx.db, r.json.task.id)!;
+    assert.equal(t.status, 'limited');       // 受限 ≠ 已完成
+    assert.ok(t.finished_at);                // 终态带完成时刻
+    assert.ok(String(t.result).includes('pot_limited'));
+  } finally { ws?.close(); ctx.cleanup(); }
+});
+
+test('列表分页 + 状态筛选：page/page_size/status 查询（历史页数据源）', async () => {
+  const ctx = await setup();
+  try {
+    // 3 单任务（无扩展,留 pending）
+    for (const v of ['BV1xx411c7mD', 'BV1yy411c7mD', 'BV1zz411c7mD']) {
+      await httpReq(ctx.port, 'POST', '/api/collect-tasks', { text: `https://www.bilibili.com/video/${v}` });
+    }
+    // 手动落一个 limited / 一个 failed（不经扩展,直接 UPDATE 模拟终态）
+    ctx.db.prepare("UPDATE collect_tasks SET status='limited', finished_at=? WHERE source_vid='BV1xx411c7mD'").run(Date.now());
+    ctx.db.prepare("UPDATE collect_tasks SET status='failed', error='x', finished_at=? WHERE source_vid='BV1yy411c7mD'").run(Date.now());
+
+    const p1 = await httpReq(ctx.port, 'GET', '/api/collect-tasks?page=1&page_size=2');
+    assert.equal(p1.json.total, 3);
+    assert.equal(p1.json.items.length, 2);      // 第 1 页 2 条(id desc 最新)
+    assert.equal(p1.json.page, 1);
+
+    const p2 = await httpReq(ctx.port, 'GET', '/api/collect-tasks?page=2&page_size=2');
+    assert.equal(p2.json.items.length, 1);      // 第 2 页剩 1 条
+
+    const lim = await httpReq(ctx.port, 'GET', '/api/collect-tasks?page=1&page_size=50&status=limited');
+    assert.equal(lim.json.total, 1);            // 筛选计数 = 筛选后总数
+    assert.equal(lim.json.items[0].status, 'limited');
+    assert.equal(lim.json.items[0].source_vid, 'BV1xx411c7mD');
+  } finally { ctx.cleanup(); }
+});

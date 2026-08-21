@@ -9,18 +9,20 @@ import { TagsPage } from './pages/TagsPage';
 import { CreatorsPage } from './pages/CreatorsPage';
 import { CreatorDetailPage } from './pages/CreatorDetailPage';
 import { ChangesLog } from './pages/ChangesLog';
+import { TasksHistoryPage } from './pages/TasksHistoryPage';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { cn } from '@/lib/utils';
 import { navigate, useRoute, type Tab } from './router';
 import {
-  BarChart3, Film, FolderTree, Inbox, MonitorSmartphone, MoreHorizontal, ScrollText, Tags, Users,
+  BarChart3, Film, FolderTree, History, Inbox, MonitorSmartphone, MoreHorizontal, ScrollText, Tags, Users,
   type LucideIcon,
 } from 'lucide-react';
 
 // 导航分级：移动端底部 bar 只放高频 3 格,低频 5 格收进「更多」弹层;桌面顶部单行全量。
 const TABS: { key: Tab; label: string; icon: LucideIcon }[] = [
   { key: 'collect', label: '采集', icon: Inbox },
+  { key: 'history', label: '历史', icon: History },
   { key: 'videos', label: '视频', icon: Film },
   { key: 'stats', label: '看板', icon: BarChart3 },
   { key: 'creators', label: '创作者', icon: Users },
@@ -44,7 +46,9 @@ export default function App() {
   // 视频详情的 query 即进入前的列表筛选（onOpen 时附加）→ 返回列表原样还原
   const listQs = route.query.toString();
 
-  const page = tab === 'collect' ? (
+  const page = tab === 'history' ? (
+    <TasksHistoryPage />
+  ) : tab === 'collect' ? (
     <CollectPage />
   ) : tab === 'stats' ? (
     <StatsPage />

@@ -144,7 +144,7 @@ CREATE TABLE IF NOT EXISTS collect_tasks (
   source      TEXT NOT NULL CHECK(source IN ('bilibili','youtube')),
   source_vid  TEXT NOT NULL,
   url         TEXT NOT NULL,
-  status      TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','dispatched','succeeded','failed')),
+  status      TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','dispatched','succeeded','failed','limited')),
   client_id   TEXT,
   creator_client_id TEXT, -- 创建者客户端（popup 提交自带；CLI/旧任务 null），sticky 派发用
   error       TEXT,

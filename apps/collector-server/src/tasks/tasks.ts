@@ -8,7 +8,7 @@ import { inFlight } from './inflight.js';
 // 状态机：pending → dispatched → succeeded | failed
 // 批量扩展（2026-08-19）：docs/superpowers/specs/2026-08-19-upper-all-videos-batch-design.md
 
-export type TaskStatus = 'pending' | 'dispatched' | 'succeeded' | 'failed';
+export type TaskStatus = 'pending' | 'dispatched' | 'succeeded' | 'failed' | 'limited';
 
 export interface CollectTask {
   id: number;
@@ -312,16 +312,29 @@ export function deleteTask(db: Database.Database, id: number): boolean {
   return deleted;
 }
 
-export function listTasks(db: Database.Database, limit = 20): { total: number; items: CollectTask[] } {
-  const total = (db.prepare('SELECT COUNT(*) AS n FROM collect_tasks').get() as { n: number }).n;
+// 任务列表(采集页最近 N 条 / 历史页分页+状态筛选共用)。
+// 批次补全:limit/offset 只限制种子行,种子涉及的批次成员全量带出——展示侧聚合要完整成员
+// 才算得出「n/m 完成」进度;状态筛选同样只作用于种子(补全跨状态拉齐整批,分组完整)。
+export function listTasks(
+  db: Database.Database,
+  limit = 20,
+  offset = 0,
+  statusFilter?: readonly TaskStatus[],
+): { total: number; items: CollectTask[] } {
+  const where = statusFilter?.length
+    ? `WHERE t.status IN (${statusFilter.map(() => '?').join(',')})`
+    : '';
+  const filterArgs = statusFilter?.length ? (statusFilter as unknown as Array<string>) : [];
+  const total = (db.prepare(
+    `SELECT COUNT(*) AS n FROM collect_tasks t ${where}`,
+  ).get(...filterArgs) as { n: number }).n;
   const seed = db.prepare(`
     SELECT t.*, v.title AS title
     FROM collect_tasks t
     LEFT JOIN videos v ON v.source = t.source AND v.source_vid = t.source_vid
-    ORDER BY t.id DESC LIMIT ?
-  `).all(limit) as CollectTask[];
-  // 批次补全：limit 只限制种子行数,种子涉及的批次成员全量带出——展示侧聚合要完整成员才算得出
-  // 「n/m 完成」进度（截断会把 50 个视频的批次算成 20 个）。
+    ${where}
+    ORDER BY t.id DESC LIMIT ? OFFSET ?
+  `).all(...filterArgs, limit, offset) as CollectTask[];
   const batchIds = [...new Set(seed.map((r) => r.batch_id).filter((b): b is string => b != null))];
   let items = seed;
   if (batchIds.length > 0) {
@@ -409,8 +422,11 @@ export function attachTaskScheduler(db: Database.Database): void {
     const r = await requestCommand(clientId, action, params, commandTimeoutMs(task.source));
     if (r.ok && r.result?.ok) {
       const data = r.result.data ?? {};
-      db2.prepare("UPDATE collect_tasks SET status = 'succeeded', result = ?, finished_at = ? WHERE id = ?")
-        .run(JSON.stringify(data), Date.now(), taskId);
+      // 字幕受限（pot_limited：扩展全轨 body 为空，0 轨入库，元信息已入库）→ limited 终态：
+      // 执行本身成功但产出受限，区别于 succeeded（展示「受限」而非「已完成」，允许重试重采）。
+      const status = data?.reason === 'pot_limited' ? 'limited' : 'succeeded';
+      db2.prepare("UPDATE collect_tasks SET status = ?, result = ?, finished_at = ? WHERE id = ?")
+        .run(status, JSON.stringify(data), Date.now(), taskId);
       pushTask(db2, taskId);
     } else {
       // 失败分类：未收到回执（offline/timeout）→ 连接层文案；收到失败回执 →

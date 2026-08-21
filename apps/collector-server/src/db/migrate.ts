@@ -101,6 +101,34 @@ export const MIGRATIONS: readonly MigrationStep[] = [
       'ALTER TABLE collect_tasks ADD COLUMN batch_id TEXT',
     ],
   },
+  {
+    version: 9,
+    note: 'collect_tasks 状态机加 limited 终态（执行成功但字幕受限 0 轨入库，区别于 succeeded）。SQLite 无法 ALTER CHECK，单事务表重建；事务保证中断重放幂等（回滚后旧表结构原样）',
+    statements: [
+      // 单条多语句：整体原子（exec 逐条自动提交无法跨语句，事务包裹后中断即回滚，重放从头跑不残留中间态）
+      `BEGIN IMMEDIATE;
+       CREATE TABLE collect_tasks_v9 (
+         id          INTEGER PRIMARY KEY AUTOINCREMENT,
+         source      TEXT NOT NULL CHECK(source IN ('bilibili','youtube')),
+         source_vid  TEXT NOT NULL,
+         url         TEXT NOT NULL,
+         status      TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','dispatched','succeeded','failed','limited')),
+         client_id   TEXT,
+         creator_client_id TEXT,
+         error       TEXT,
+         result      TEXT,
+         batch_id    TEXT,
+         created_at  INTEGER NOT NULL,
+         finished_at INTEGER
+       );
+       INSERT INTO collect_tasks_v9 (id, source, source_vid, url, status, client_id, creator_client_id, error, result, batch_id, created_at, finished_at)
+         SELECT id, source, source_vid, url, status, client_id, creator_client_id, error, result, batch_id, created_at, finished_at FROM collect_tasks;
+       DROP TABLE collect_tasks;
+       ALTER TABLE collect_tasks_v9 RENAME TO collect_tasks;
+       CREATE INDEX idx_tasks_status ON collect_tasks(status, created_at);
+       COMMIT;`,
+    ],
+  },
 ];
 
 export function runMigrations(db: Database.Database): void {

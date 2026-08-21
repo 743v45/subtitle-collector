@@ -166,7 +166,14 @@ window.addEventListener("message", (event) => {
     if (cur.meta.likeCount == null) setTimeout(() => fillLikeCount(vid), 1500);
     const tracks = data.captionTracks ?? [];
     console.log(`[content-yt] CAPTION_TRACKS vid=${vid} tracks=${tracks.length} title=${data.title}`);
-    if (tracks.length === 0) return; // captionTracks 空（纯音乐/直播/真无字幕；或 YT 偶发读不到 captionTracks 但播放器仍请求 timedtext）：meta 已定居 collected，不 FETCH/flush——若播放器后续请求 timedtext，下方 TIMEDTEXT_BODY 兜底会构造轨入库；popup 经 GET_LOCAL_STATE 见 no-subtitle
+    if (tracks.length === 0) {
+      // captionTracks 空（纯音乐/直播/真无字幕；或 YT 偶发读不到 captionTracks 但播放器仍请求 timedtext）：
+      // 元信息也要入库（0 轨 video 行——标题/频道/统计可查，任务卡 title 直出，对齐 B 站「仅元信息入库」
+      // 展示语义）；不 FETCH。若播放器后续请求 timedtext，下方 TIMEDTEXT_BODY 兜底会构造轨，
+      // flushIfReady 再发带轨 payload，server ingest 幂等补轨。popup 经 GET_LOCAL_STATE 见 no-subtitle。
+      flushIfReady(vid);
+      return;
+    }
     // 路径 B（兜底，覆盖 ~96% 不需 pot 视频）：对每轨发 FETCH_SUBTITLE 让 background 免 CORS 抓 baseUrl+&fmt=json3。
     fetchSubtitleBodiesViaBg(vid, tracks);
     // 触发播放器请求各轨 timedtext（原轨 + 中文翻译），inject 拦截 → 双语 body。
@@ -332,18 +339,20 @@ function fetchSubtitleBodiesViaBg(vid, tracks) {
 
 // 所有轨都已「定居」（有 body 或 FETCH_SUBTITLE 已尝试）后组装 payload 发 INGEST（spec §6）。
 // force=true 透传 {force:true} 绕过上报开关（对齐 content.js flushIfReady 的 force 语义，供手动上报）。
+// 0 轨（no-subtitle）与全轨无 body（pot 受限）不再整体跳过：上报 0 轨元信息 payload——
+// videos 表入行（标题/频道/统计可查）；字幕后续到手（重试/翻译轨迟到/timedtext 兜底）时
+// 再 flush 带轨 payload，server ingest 幂等 upsert 补轨（2026-08-22 决策：元信息不是脏数据）。
 function flushIfReady(vid, force = false) {
   const cur = collected.get(vid);
   if (!cur?.meta) return;
   const tracks = cur.meta.captionTracks ?? [];
-  if (tracks.length === 0) return;
   // force 时立即 flush；否则等所有轨定居，避免过早 flush 漏轨（路径 A 后到的 body 会触发再 flush，server 去重）。
-  if (!force && !tracks.every((t) => cur.bodies.has(t.baseUrl) || cur.fetched.has(t.baseUrl))) return;
-  // 只含有 body 的轨（pot 全受限时为空 → 不上报脏数据，spec §7）。
+  // 0 轨天然定居（every 对空数组恒真），立即上报元信息。
+  if (!force && tracks.length > 0 && !tracks.every((t) => cur.bodies.has(t.baseUrl) || cur.fetched.has(t.baseUrl))) return;
+  // 只含有 body 的轨（受限轨无版本内容，不上报轨行；pot 全受限时为 0 轨 → 仅元信息入库）。
   const tracksWithBody = tracks.filter((t) => cur.bodies.has(t.baseUrl));
   if (tracksWithBody.length === 0) {
-    console.warn(`[content-yt] vid=${vid} 所有轨 body 为空（pot 受限？），跳过上报`);
-    return;
+    console.warn(`[content-yt] vid=${vid} 全部 ${tracks.length} 轨 body 为空（pot 受限？）→ 上报 0 轨元信息（字幕到手后重 flush 补轨）`);
   }
   const payload = buildYoutubePayload({
     videoId: cur.meta.videoId,
