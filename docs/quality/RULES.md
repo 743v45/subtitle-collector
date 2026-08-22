@@ -7,6 +7,7 @@
 
 | 层 | 触发时机 | 内容 |
 |---|---|---|
+| 日常 | 每次代码改动完成 | 即时 `pnpm build`（类型/编译门，见 §6） |
 | 日常 | 每次提交 | `pnpm qa` 质量门 + husky pre-commit（只查新增文件）+ 测试中文注释 |
 | 低频 | 偿还 / 调整时 | 台账 update（默认 dry-run）、覆盖率锁定线上调（>2pp）、`--allow-degrade` 豁免 |
 | 定期审计 | 阶段性大改后 | Stryker 变异测试（各 app `pnpm mutation`）、政策自检（§8） |
@@ -79,6 +80,15 @@ node scripts/quality-baseline.mjs update --write      # 才落盘刷新台账
 - 格式与标注法样例：[docs/quality/acceptance/main-pipeline.md](acceptance/main-pipeline.md)（主链路「批量采集 → 入库 → 导出 bundle」）。
 
 ## 6. QA 门与 pre-commit
+
+**即时 build 门**（每次代码改动完成后，先于 qa）：
+
+```
+pnpm build        # 或受影响 app 的 pnpm -C apps/<app> build
+```
+
+- **为什么必须有**：测试 runner 不做类型检查——server 走 tsx 直译（跳过类型）、web 的 vitest 不跑 tsc，**测试全绿 ≠ 可构建**；server 的 tsc 门历史上只在 docker build 兜底，中途不 build 会把编译错误积攒到部署前才爆。
+- 触发时机：完成一个逻辑单元的改动（交给用户/继续下一步）之前；qa 门内的 build 是最终兜底，不是唯一的编译验证点。
 
 **`pnpm qa`**（根 [package.json](../../package.json)，手动跑、不进 hook）：
 

@@ -25,6 +25,7 @@ B 站**字幕（subtitle）**相关浏览器扩展的 monorepo（pnpm + turbo，
 
 **三层分级**：
 
+- **日常（每次代码改动完成）**：即时 `pnpm build`（或受影响 app 的 build）——测试 runner 不做类型检查（tsx 直译/vitest 不跑 tsc），测试全绿≠可构建（RULES §6）。
 - **日常（每次提交）**：`pnpm qa` 全量质量门（build + test + 覆盖率锁定 + 静态台账 check + depcruise；涉代码提交前手动必跑并在 commit message 引用结果，纯文档/配置豁免）＋ husky pre-commit（只查 git 新增文件的两条静态规则）＋ 测试中文注释三档。
 - **低频（偿还/调整时）**：`node scripts/quality-baseline.mjs update` 刷新静态台账（默认 dry-run，`--write` 才落盘）；覆盖率锁定线上调（实际值高出锁定线 >2pp 时手动上调，只升不降）；`check --allow-degrade` 豁免通道（须 commit message 注明原因）。
 - **定期审计**：Stryker 变异测试（各 app `pnpm mutation`，阶段性大改后手动跑；观察制不设阈值）；政策自检（每完成 5 个 spec 或 CLAUDE.md 大改时过一遍执行记录，连续两次零执行的条款提请退役）。
