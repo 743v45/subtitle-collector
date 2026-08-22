@@ -20,7 +20,7 @@ import {
   ServerResponseError,
 } from '../http.js';
 import { emitResult, emitError } from '../output.js';
-import { getCliContext } from '../main.js';
+import { getCliContext } from '../context.js';
 
 /** `clients command` 下发给扩展的可选参数；undefined 字段不会被收进发送体。 */
 export interface CommandParams {

@@ -11,7 +11,7 @@ import { listVideosFiltered, getVideoByDbId, type VideoFilter, type ListFilter, 
 import { getVersionPayload } from '../../db/queries.js';
 import { convertSubtitle, type SubtitleFormat } from '../subtitleFormat.js';
 import { Command } from 'commander';
-import { getCliContext } from '../main.js';
+import { getCliContext } from '../context.js';
 import { emitResult, emitError } from '../output.js';
 import { openReadonlyDb } from '../db.js';
 import { parseNum, parseTime } from './videos.js';

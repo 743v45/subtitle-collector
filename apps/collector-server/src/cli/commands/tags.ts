@@ -4,7 +4,7 @@
 import { Command } from 'commander';
 import { ServerClient, ServerUnreachableError, ServerResponseError } from '../http.js';
 import { emitResult, emitError } from '../output.js';
-import { getCliContext } from '../main.js';
+import { getCliContext } from '../context.js';
 import { openReadonlyDb } from '../db.js';
 import { listTags, type TagSource } from '../../db/tags.js';
 

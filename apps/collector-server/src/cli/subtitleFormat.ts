@@ -1,5 +1,10 @@
+import type Database from 'better-sqlite3';
+import { getVideo, getVersionPayload } from '../db/queries.js';
+
 /**
- * 字幕格式转换：把 B 站字幕 payload 转成 srt / vtt / txt / json。
+ * 字幕格式转换 + 字幕版本解析（resolveSubtitle 下沉于此，2026-08-23 断环：原在 commands/export.ts，
+ * bundle.ts 引用会构成 bundle ↔ export 循环依赖；本模块是两侧共同依赖的字幕处理层）。
+ * 把 B 站字幕 payload 转成 srt / vtt / txt / json。
  *
  * payload 真实结构（参考 info/body.json 样本 + subtitle-collector/inject.js 拦截到的响应体）：
  * {
@@ -123,4 +128,70 @@ export function convertSubtitle(payload: unknown, format: SubtitleFormat): strin
       // 运行时兜底（format 已是闭合联合类型，正常不会到这里）
       throw new Error(`未支持的字幕格式: ${String(format)}`);
   }
+}
+
+// ── 字幕版本解析（export subtitle 子命令与 export bundle 共用；自 commands/export.ts 下沉）──
+
+export interface ExportSubtitleOpts {
+  source: string;
+  sourceVid: string;
+  track?: string;        // --track <lan>，精确匹配 subtitle_tracks.lan
+  versionId?: number;    // --version <id>，优先于 track
+  format: SubtitleFormat;
+}
+
+export type SubtitleResolveResult =
+  | {
+    kind: 'ok'; payload: unknown; text: string; format: SubtitleFormat; versionId: number;
+    // 轨信息（bundle 消费）：仅走 getVideo 的路径填充；显式 --version 直取时不填（可选，向后兼容）
+    trackLan?: string | null; trackLanDoc?: string | null; trackType?: number | null; versionOrigin?: string;
+  }
+  | { kind: 'not_found'; message: string };
+
+/**
+ * 解析字幕版本 + 转格式。优先级：--version >（--track | 默认轨）的默认版本。
+ * 视频 / 轨 / 版本不存在返回 { kind: 'not_found', message }，便于 action 直 emitError NOT_FOUND。
+ * convertSubtitle 在 payload 结构不符时会抛（数据损坏，理论不会发生；若发生则向上冒泡为 RUNTIME）。
+ *
+ * 默认轨 / 默认版本的判定复用 queries.getVideo 的 is_default 标记：
+ *   - 默认轨 = 排序后首个（CC中文 > AI中文 > en > 其他）
+ *   - 每个轨各自的默认 version = origin 优先级（external > manual > asr）首个，不跨轨串台
+ */
+export function resolveSubtitle(db: Database.Database, opts: ExportSubtitleOpts): SubtitleResolveResult {
+  const fmt = opts.format;
+
+  // 1. 显式 version id 优先
+  if (opts.versionId !== undefined) {
+    const v = getVersionPayload(db, opts.versionId);
+    if (!v) return { kind: 'not_found', message: `subtitle_version not found: id=${opts.versionId}` };
+    return { kind: 'ok', payload: v.payload, text: convertSubtitle(v.payload, fmt), format: fmt, versionId: v.id };
+  }
+
+  // 2. 按 source + sourceVid 取视频详情（getVideo 已标 is_default 轨 / 每轨 is_default version）
+  const detail = getVideo(db, opts.source, opts.sourceVid);
+  if (!detail) return { kind: 'not_found', message: `video not found: ${opts.source}/${opts.sourceVid}` };
+
+  // 3. 选轨：--track 精确匹配 lan；否则取 is_default 轨
+  const track = opts.track !== undefined
+    ? detail.tracks.find((t) => t.lan === opts.track)
+    : detail.tracks.find((t) => (t as { is_default?: boolean }).is_default);
+  if (!track) {
+    const msg = opts.track !== undefined
+      ? `track not found: lan=${opts.track} in ${opts.source}/${opts.sourceVid}`
+      : `${opts.source}/${opts.sourceVid} 无字幕轨`;
+    return { kind: 'not_found', message: msg };
+  }
+
+  // 4. 选版本：该轨 is_default version
+  const ver = track.versions.find((v) => (v as { is_default?: boolean }).is_default);
+  if (!ver) {
+    return { kind: 'not_found', message: `track lan=${track.lan ?? '(无)'} 无字幕版本` };
+  }
+
+  const v = getVersionPayload(db, ver.id);
+  if (!v) return { kind: 'not_found', message: `subtitle_version not found: id=${ver.id}` };
+  return {
+    kind: 'ok', payload: v.payload, text: convertSubtitle(v.payload, fmt), format: fmt, versionId: v.id,
+    trackLan: track.lan, trackLanDoc: track.lan_doc, trackType: track.track_type, versionOrigin: ver.origin,
+  };
 }

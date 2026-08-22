@@ -4,7 +4,7 @@
 
 import type Database from 'better-sqlite3';
 import { Command } from 'commander';
-import { getCliContext } from '../main.js';
+import { getCliContext } from '../context.js';
 import { emitResult, emitError } from '../output.js';
 import { openReadonlyDb } from '../db.js';
 import { countOverview, aggregateStats } from '../../db/advanced.js';

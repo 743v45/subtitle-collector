@@ -1,4 +1,5 @@
-// export.ts 纯处理函数单测：resolveSubtitle（默认/track/version/NOT_FOUND/各格式）+ serializeVideosResult。
+// export.ts / subtitleFormat.ts 纯处理函数单测：resolveSubtitle（默认/track/version/NOT_FOUND/各格式，
+// 已下沉 subtitleFormat.ts）+ serializeVideosResult。
 // 跑法（不在 pnpm test glob 内）：cd apps/collector-server && node --test --import tsx src/cli/commands/export.test.ts
 //
 // 测试轮次记录表（对齐全局 8.2）：
@@ -6,6 +7,7 @@
 // |---|---|---|---|
 // | R1 | resolveSubtitle + serializeVideosResult | 通过 | 字幕 payload 对齐 info/body.json 结构 |
 // | R2 | 端到端 commander 解析（--sub-format 回归） | 通过 | spawn tsx 跑 main.ts，防 commander 同名 option 冲突再现 |
+// | R3 | resolveSubtitle NOT_FOUND message 文案（无字幕轨/裸轨/NULL lan） | 通过 | Stryker 补测：subtitleFormat.ts mutation 88.48%→96.97%，19 存活杀 14（余 5 等价：secsToStamp 零边界 + getVideo 后 getVersionPayload 防御兜底不可达） |
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -16,7 +18,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { openDb, migrate } from '../../db/migrate.js';
 import { ingestVideo } from '../../db/ingest.js';
-import { resolveSubtitle, serializeVideosResult } from './export.js';
+import { serializeVideosResult } from './export.js';
+import { resolveSubtitle } from '../subtitleFormat.js';
 import type { VideoListItemAdvanced, PageResult } from '../../db/advanced.js';
 
 // B 站字幕 payload 样本（结构对齐 info/body.json，裁剪为 2 条便于断言）
@@ -102,6 +105,40 @@ test('resolveSubtitle: NOT_FOUND（视频 / track / version）', () => {
     assert.equal(r2.kind, 'not_found');
     if (r2.kind === 'not_found') assert.match(r2.message, /99999/);
     assert.ok(ids.zhVer > 0);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('resolveSubtitle: NOT_FOUND message 文案（视频不存在 / 无字幕轨 / 轨无版本）', () => {
+  const { db, dir } = setup();
+  try {
+    // 视频不存在：message 须带可定位的 source/vid（而非空串）
+    const r0 = resolveSubtitle(db, { source: 'bilibili', sourceVid: 'NOPE', format: 'srt' });
+    assert.equal(r0.kind, 'not_found');
+    if (r0.kind === 'not_found') assert.equal(r0.message, 'video not found: bilibili/NOPE');
+
+    // 视频存在但 0 字幕轨（未传 --track）：走「无字幕轨」文案，而非 track 分支文案
+    ingestVideo(db, { source: 'bilibili', video: { source_vid: 'BV_EMPTY', title: '空轨视频' }, tracks: [] });
+    const r1 = resolveSubtitle(db, { source: 'bilibili', sourceVid: 'BV_EMPTY', format: 'srt' });
+    assert.equal(r1.kind, 'not_found');
+    if (r1.kind === 'not_found') assert.equal(r1.message, 'bilibili/BV_EMPTY 无字幕轨');
+
+    // --track 命中轨、但轨下 0 版本（versions: [] 可造裸轨）：message 须带轨 lan
+    ingestVideo(db, {
+      source: 'bilibili', video: { source_vid: 'BV_BARE', title: '裸轨视频' },
+      tracks: [{ lan: 'ko', track_type: 1, versions: [] }],
+    });
+    const r2 = resolveSubtitle(db, { source: 'bilibili', sourceVid: 'BV_BARE', track: 'ko', format: 'srt' });
+    assert.equal(r2.kind, 'not_found');
+    if (r2.kind === 'not_found') assert.equal(r2.message, 'track lan=ko 无字幕版本');
+
+    // 默认轨路径的裸轨且 lan 为 NULL：lan 直出会渲染成 null，须兜底「(无)」
+    ingestVideo(db, {
+      source: 'bilibili', video: { source_vid: 'BV_NULL_LAN', title: '空lan视频' },
+      tracks: [{ lan_doc: '未知语言', track_type: 1, versions: [] }],
+    });
+    const r3 = resolveSubtitle(db, { source: 'bilibili', sourceVid: 'BV_NULL_LAN', format: 'srt' });
+    assert.equal(r3.kind, 'not_found');
+    if (r3.kind === 'not_found') assert.equal(r3.message, 'track lan=(无) 无字幕版本');
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 

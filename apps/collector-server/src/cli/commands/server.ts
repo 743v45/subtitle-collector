@@ -12,7 +12,7 @@ import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Command } from 'commander';
 
-import { getCliContext } from '../main.js';
+import { getCliContext } from '../context.js';
 import { emitError, emitResult } from '../output.js';
 import { openReadonlyDb } from '../db.js';
 import { ServerClient } from '../http.js';

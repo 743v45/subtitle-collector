@@ -11,12 +11,12 @@ import type Database from 'better-sqlite3';
 import { Command } from 'commander';
 import { writeFileSync, existsSync, mkdirSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
-import { getCliContext } from '../main.js';
+import { getCliContext } from '../context.js';
 import { emitResult, emitError } from '../output.js';
 import { openReadonlyDb } from '../db.js';
-import { getVideo, getVersionPayload } from '../../db/queries.js';
 import type { VideoListItemAdvanced, PageResult, VideoSortKey } from '../../db/advanced.js';
-import { convertSubtitle, type SubtitleFormat } from '../subtitleFormat.js';
+// resolveSubtitle 已下沉 subtitleFormat.ts（2026-08-23 断环：bundle.ts 也用它，原在本文件会构成 bundle ↔ export 循环）
+import { convertSubtitle, resolveSubtitle, type SubtitleFormat } from '../subtitleFormat.js';
 import { buildBundle } from '../bundle.js';
 // videos.ts 暴露 videosList（camelCase opts → snake_case filter）+ normalizeTimestamp，export videos 直接复用查询逻辑。
 import { videosList, normalizeTimestamp, type VideosListOpts } from './videos.js';
@@ -25,72 +25,6 @@ const SUBTITLE_FORMATS = ['srt', 'vtt', 'txt', 'json'] as const;
 const VIDEOS_FORMATS = ['json', 'csv', 'ndjson'] as const;
 const SORT_KEYS = ['first_seen', 'published_at', 'title', 'duration', 'view'] as const;
 export type ExportVideosFormat = (typeof VIDEOS_FORMATS)[number];
-
-// ── export subtitle 纯处理 ──
-
-export interface ExportSubtitleOpts {
-  source: string;
-  sourceVid: string;
-  track?: string;        // --track <lan>，精确匹配 subtitle_tracks.lan
-  versionId?: number;    // --version <id>，优先于 track
-  format: SubtitleFormat;
-}
-
-export type SubtitleResolveResult =
-  | {
-    kind: 'ok'; payload: unknown; text: string; format: SubtitleFormat; versionId: number;
-    // 轨信息（bundle 消费）：仅走 getVideo 的路径填充；显式 --version 直取时不填（可选，向后兼容）
-    trackLan?: string | null; trackLanDoc?: string | null; trackType?: number | null; versionOrigin?: string;
-  }
-  | { kind: 'not_found'; message: string };
-
-/**
- * 解析字幕版本 + 转格式。优先级：--version >（--track | 默认轨）的默认版本。
- * 视频 / 轨 / 版本不存在返回 { kind: 'not_found', message }，便于 action 直 emitError NOT_FOUND。
- * convertSubtitle 在 payload 结构不符时会抛（数据损坏，理论不会发生；若发生则向上冒泡为 RUNTIME）。
- *
- * 默认轨 / 默认版本的判定复用 queries.getVideo 的 is_default 标记：
- *   - 默认轨 = 排序后首个（CC中文 > AI中文 > en > 其他）
- *   - 每个轨各自的默认 version = origin 优先级（external > manual > asr）首个，不跨轨串台
- */
-export function resolveSubtitle(db: Database.Database, opts: ExportSubtitleOpts): SubtitleResolveResult {
-  const fmt = opts.format;
-
-  // 1. 显式 version id 优先
-  if (opts.versionId !== undefined) {
-    const v = getVersionPayload(db, opts.versionId);
-    if (!v) return { kind: 'not_found', message: `subtitle_version not found: id=${opts.versionId}` };
-    return { kind: 'ok', payload: v.payload, text: convertSubtitle(v.payload, fmt), format: fmt, versionId: v.id };
-  }
-
-  // 2. 按 source + sourceVid 取视频详情（getVideo 已标 is_default 轨 / 每轨 is_default version）
-  const detail = getVideo(db, opts.source, opts.sourceVid);
-  if (!detail) return { kind: 'not_found', message: `video not found: ${opts.source}/${opts.sourceVid}` };
-
-  // 3. 选轨：--track 精确匹配 lan；否则取 is_default 轨
-  const track = opts.track !== undefined
-    ? detail.tracks.find((t) => t.lan === opts.track)
-    : detail.tracks.find((t) => (t as { is_default?: boolean }).is_default);
-  if (!track) {
-    const msg = opts.track !== undefined
-      ? `track not found: lan=${opts.track} in ${opts.source}/${opts.sourceVid}`
-      : `${opts.source}/${opts.sourceVid} 无字幕轨`;
-    return { kind: 'not_found', message: msg };
-  }
-
-  // 4. 选版本：该轨 is_default version
-  const ver = track.versions.find((v) => (v as { is_default?: boolean }).is_default);
-  if (!ver) {
-    return { kind: 'not_found', message: `track lan=${track.lan ?? '(无)'} 无字幕版本` };
-  }
-
-  const v = getVersionPayload(db, ver.id);
-  if (!v) return { kind: 'not_found', message: `subtitle_version not found: id=${ver.id}` };
-  return {
-    kind: 'ok', payload: v.payload, text: convertSubtitle(v.payload, fmt), format: fmt, versionId: v.id,
-    trackLan: track.lan, trackLanDoc: track.lan_doc, trackType: track.track_type, versionOrigin: ver.origin,
-  };
-}
 
 // ── export videos 文件序列化（-o 写文件用；stdout 走 emitResult）──
 

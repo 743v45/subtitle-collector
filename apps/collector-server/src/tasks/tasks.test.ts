@@ -7,6 +7,16 @@ import type Database from 'better-sqlite3';
 import { openDb, migrate } from '../db/migrate.js';
 import { ingestVideo } from '../db/ingest.js';
 import { extractVideoUrl, expandShortLink, parseVideoUrl, createTask, createTasksBatch, findActiveTask, pickClientForTask, commandTimeoutMs, expandUpperVideos, getTask, retryTask, listTasks, resetDispatched, type FetchLike, type UpperExpandDeps } from './tasks.js';
+import { registerWsBridge, type WsBridge } from './wsBridge.js';
+
+// 测试桥注册：tasks.ts 不再 import ws/server（分层规则 server-tasks-no-upward），pushTask 经
+// getWsBridge() 调 broadcastEvent——本测试不加载 ws/server，须注册 fake（no-op）桥。
+const broadcast: Array<Record<string, unknown>> = [];
+registerWsBridge({
+  listClients: () => [],
+  requestCommand: async () => ({ ok: false, code: 'offline' }),
+  broadcastEvent: (msg) => { broadcast.push(msg); },
+} satisfies WsBridge);
 
 function setupDb(): { db: Database.Database; cleanup: () => void } {
   const dir = mkdtempSync(join(tmpdir(), 'collector-tasks-'));
@@ -562,6 +572,18 @@ test('listTasks 多维：batchScope 批量/单点过滤（batch_id 空/非空，
     const pendingSingle = listTasks(db, 50, 0, { batchScope: 'single', status: ['pending'] });
     assert.equal(pendingSingle.total, 1);
     assert.equal(pendingSingle.items[0].id, ids.nolib);
+  } finally { cleanup(); }
+});
+
+test('listTasks 富化：creator_source_uid 回填（任务卡 UP 外链）——入库/任务行/无归属三路径', () => {
+  const { db, cleanup, ids } = setupFilterDb();
+  try {
+    // 未入库但任务行带 creator_uid（popup 按 UP 批量的形态）
+    const withUid = createTasksBatch(db, ['BV1UIDBAT01x'], 'bilibili', null, '11');
+    const { items } = listTasks(db, 50, 0, {});
+    assert.equal(items.find((t) => t.id === ids.alphaBatch)!.creator_source_uid, '1');          // 已入库：videos→creators
+    assert.equal(items.find((t) => t.id === withUid.created[0].id)!.creator_source_uid, '11'); // 未入库：t.creator_uid 冗余列兜底
+    assert.equal(items.find((t) => t.id === ids.nolib)!.creator_source_uid, null);             // 无归属：null
   } finally { cleanup(); }
 });
 

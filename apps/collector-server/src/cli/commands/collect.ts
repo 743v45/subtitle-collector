@@ -10,7 +10,7 @@ import {
   ServerResponseError,
 } from '../http.js';
 import { emitResult, emitError } from '../output.js';
-import { getCliContext } from '../main.js';
+import { getCliContext } from '../context.js';
 import { openReadonlyDb } from '../db.js';
 
 /** 采集类命令默认超时：对齐 server 调度器分档（tasks.ts commandTimeoutMs——bilibili 90s / youtube 180s），

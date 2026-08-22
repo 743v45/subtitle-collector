@@ -6,6 +6,7 @@ import { ingestVideo, ingestUpper, type IngestRequest, type IngestUpperRequest }
 import { notifyClientOnline, pushTask } from '../tasks/tasks.js';
 import { amendLateResult, amendLateIngest } from '../tasks/amend.js';
 import { releaseClient } from '../tasks/inflight.js';
+import { registerWsBridge } from '../tasks/wsBridge.js';
 
 // 超时命令的 params 暂存：result 迟到时 pending 已删，靠它定位任务做改判（amendLateResult）。
 // 上限防无界增长；改判命中或永不迟到则等淘汰。
@@ -246,3 +247,7 @@ export async function requestReportingChange(
     });
   });
 }
+
+// 模块加载即注册 ws 桥（函数声明有提升，此处引用安全）：tasks.ts 经 getWsBridge() 间接调用
+// 三函数，断开 tasks → ws 上跳依赖（分层规则 server-tasks-no-upward；见 tasks/wsBridge.ts 注释）。
+registerWsBridge({ listClients, requestCommand, broadcastEvent });

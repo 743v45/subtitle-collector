@@ -7,32 +7,11 @@
 import { pathToFileURL } from 'node:url';
 import { Command } from 'commander';
 import { resolveConfig } from './config.js';
-import { emitResult, emitError, setQuiet, EXIT_CODES, type Format } from './output.js';
+import { emitResult, setQuiet, EXIT_CODES, type Format } from './output.js';
+import { getCliContext, setCliContext, peekCliContext, type CliContext } from './context.js';
 
 // 与 [package.json](apps/collector-server/package.json) version 保持一致；硬编码避免 tsx 跑 JSON import attribute 的兼容性麻烦。
 const VERSION = '0.1.0';
-
-// 全局上下文：把解析后的全局选项 + resolveConfig 结果打包，传给（未来的）命令处理。
-// 命令组通过 getCliContext() 拿到当前上下文（在 commander action 内调用）。
-export interface CliContext {
-  format: Format;
-  dbPath: string;
-  serverUrl: string;
-  token: string;
-  quiet: boolean;
-}
-
-let currentContext: CliContext | null = null;
-
-// 在 commander preAction 钩子里设置；命令 action 内调用。
-// 设计取舍：用模块态而非参数注入，因为 commander 的 .action(callback) 签名不便多传 context，
-// 而各命令 buildXxxCommand() 在模块加载时构造、context 在 parse 后才确定——只能延迟到 action 取。
-export function getCliContext(): CliContext {
-  if (!currentContext) {
-    emitError('CLI context not initialized (preAction hook did not run)', 'RUNTIME');
-  }
-  return currentContext;
-}
 
 const program = new Command();
 
@@ -57,8 +36,9 @@ program.hook('preAction', () => {
   };
   const format = normalizeFormat(opts.format);
   const cfg = resolveConfig({ db: opts.db, server: opts.server, token: opts.token });
-  currentContext = { format, ...cfg, quiet: !!opts.quiet };
-  setQuiet(currentContext.quiet);
+  const ctx: CliContext = { format, ...cfg, quiet: !!opts.quiet };
+  setCliContext(ctx);
+  setQuiet(ctx.quiet);
 });
 
 function normalizeFormat(raw: string | undefined): Format {
@@ -76,8 +56,8 @@ program
     emitResult({ name: 'collector-cli', version: VERSION }, ctx.format);
   });
 
-// 命令组在 main() 内动态 import + addCommand 注册（避免顶层循环依赖：
-// commands/*.ts 反向 import 本模块的 getCliContext，故须延迟到运行时解析）。
+// 命令组在 main() 内动态 import + addCommand 注册（沿用既有结构；
+// commands/*.ts 的上下文依赖已下沉到 ./context.js，不再反向 import 本模块）。
 
 export async function main(): Promise<void> {
   try {
@@ -121,7 +101,7 @@ export async function main(): Promise<void> {
     // 注意：commander 自身的用法错误（未知选项/缺参数）由 commander 默认流程处理（默认退 1），
     // 不会走到这里——按设计文档约定先信任 commander 默认退出码。
     const message = err instanceof Error ? err.message : String(err);
-    if (!currentContext?.quiet) {
+    if (!peekCliContext()?.quiet) {
       process.stderr.write(`[collector-cli] RUNTIME: ${message}\n`);
     }
     process.exit(EXIT_CODES.RUNTIME);

@@ -2,10 +2,9 @@
 // 设计：[export bundle 设计文档](../../../docs/superpowers/specs/2026-08-19-export-bundle-design.md)。
 // 措辞：字幕（subtitle），非弹幕。分析在 Claude Code 会话完成，本模块只产原料。
 
-import { extractBody } from './subtitleFormat.js';
+import { extractBody, resolveSubtitle } from './subtitleFormat.js';
 import type Database from 'better-sqlite3';
 import { videosList, type VideosListOpts } from './commands/videos.js';
-import { resolveSubtitle } from './commands/export.js';
 import { latestTaskStatusByVideoIds } from '../db/advanced.js';
 
 // ── 时间格式化 ──

@@ -1,6 +1,6 @@
 import type Database from 'better-sqlite3';
 import { randomUUID } from 'node:crypto';
-import { listClients, requestCommand, broadcastEvent } from '../ws/server.js';
+import { getWsBridge } from './wsBridge.js';
 import { DEFAULT_COLLECT_TIMEOUT_MS, getCollectTimeout, type CollectTimeoutMs } from '../db/settings.js';
 import { inFlight } from './inflight.js';
 
@@ -25,6 +25,7 @@ export interface CollectTask {
   result: string | null;
   title: string | null; // 库内视频标题（LEFT JOIN videos；采集页直接展示,未入库为 null）
   creator_name?: string | null; // UP 名（入库经 creators、未入库经任务行 creator_uid 关联资料行；两处都无则 null）
+  creator_source_uid?: string | null; // UP 外链 uid（入库取 creators.source_uid、未入库回落任务行 creator_uid；任务卡跳空间页）
   creator_uid?: string | null; // 任务行 UP 归属冗余列（批量提交已知 / 建任务查库 / ingest 回填；历史页筛未入库任务）
   created_at: number;
   finished_at: number | null;
@@ -39,7 +40,7 @@ const TASK_JOINS = `
   LEFT JOIN creators c ON c.id = v.creator_id
   LEFT JOIN creators ct ON ct.source = t.source AND ct.source_uid = t.creator_uid
 `;
-const TASK_SELECT = `SELECT t.*, v.title AS title, COALESCE(c.name, ct.name) AS creator_name ${TASK_JOINS}`;
+const TASK_SELECT = `SELECT t.*, v.title AS title, COALESCE(c.name, ct.name) AS creator_name, COALESCE(c.source_uid, t.creator_uid) AS creator_source_uid ${TASK_JOINS}`;
 
 // 任务行 + 库内视频标题（videos 有 UNIQUE(source, source_vid),JOIN 不扇出）
 const TASK_WITH_TITLE = `${TASK_SELECT} WHERE t.id = ?`;
@@ -226,7 +227,7 @@ function normalizePic(p: unknown): string | null {
   return p.startsWith('//') ? `https:${p}` : p;
 }
 
-// 依赖注入（测试 mock 用）；生产默认真 WS 实现。
+// 依赖注入（测试 mock 用）；生产默认经 wsBridge 取真 WS 实现（ws/server.ts 加载时注册）。
 export interface UpperExpandDeps {
   listClients?: () => Array<{ client_id: string }>;
   requestCommand?: (
@@ -246,8 +247,8 @@ export async function expandUpperVideos(
   mid: string,
   deps: UpperExpandDeps = {},
 ): Promise<{ total: number; items: UpperVideoItem[] }> {
-  const lsClients = deps.listClients ?? listClients;
-  const reqCmd = deps.requestCommand ?? requestCommand;
+  const lsClients = deps.listClients ?? getWsBridge().listClients;
+  const reqCmd = deps.requestCommand ?? getWsBridge().requestCommand;
   const sleep = deps.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
   const gap = deps.pageGapMs ?? 500;
 
@@ -317,10 +318,10 @@ export function pushTask(db: Database.Database, id: number): void {
   if (!task) return;
   if (task.batch_id) {
     const n = (db.prepare('SELECT COUNT(*) AS n FROM collect_tasks WHERE batch_id = ?').get(task.batch_id) as { n: number }).n;
-    broadcastEvent({ type: 'task-update', task: { ...task, batch_total: n } });
+    getWsBridge().broadcastEvent({ type: 'task-update', task: { ...task, batch_total: n } });
     return;
   }
-  broadcastEvent({ type: 'task-update', task });
+  getWsBridge().broadcastEvent({ type: 'task-update', task });
 }
 
 // 删除任务（采集页删除按钮）。任意状态可删：dispatched 删除后扩展回执的 UPDATE 不命中行,no-op 无副作用。
@@ -329,7 +330,7 @@ export function pushTask(db: Database.Database, id: number): void {
 // 无顶层 id 则被其 !msg.id 守卫静默忽略（与 task-update 一致）。
 export function deleteTask(db: Database.Database, id: number): boolean {
   const deleted = db.prepare('DELETE FROM collect_tasks WHERE id = ?').run(id).changes > 0;
-  if (deleted) broadcastEvent({ type: 'task-delete', taskId: id });
+  if (deleted) getWsBridge().broadcastEvent({ type: 'task-delete', taskId: id });
   return deleted;
 }
 
@@ -453,6 +454,7 @@ export function resetDispatched(db: Database.Database): void {
 //   - 串行：同 client 同时只派 1 个任务（inFlight 集合）,防风控对齐 CLI 采集的 sleep 思路。
 
 // inFlight 状态在 ./inflight.ts（ws/server 连接 close 时释放，避免循环 import）
+// ws 能力（listClients/requestCommand/broadcastEvent）经 ./wsBridge.ts 间接取（分层不上跳 ws/）
 
 // 任务 → 派发目标（纯函数供测试）。四态：
 //   { clientId }  派给它；'wait'  创建者在线但忙（本轮跳过，留给创建者）；null  无任何空闲客户端。
@@ -497,7 +499,7 @@ export function attachTaskScheduler(db: Database.Database): void {
   resetDispatched(db); // 启动恢复
 
   const dispatch = async () => {
-    const clients = listClients();
+    const clients = getWsBridge().listClients();
     if (clients.length === 0) return; // 无扩展在线：任务留 pending
     const pendingRows = db.prepare(
       "SELECT * FROM collect_tasks WHERE status = 'pending' ORDER BY id ASC",
@@ -522,7 +524,7 @@ export function attachTaskScheduler(db: Database.Database): void {
     const params = task.source === 'bilibili'
       ? { bvid: task.source_vid }
       : { videoId: task.source_vid, timeout_ms: timeouts.youtube };
-    const r = await requestCommand(clientId, action, params, commandTimeoutMs(task.source, timeouts));
+    const r = await getWsBridge().requestCommand(clientId, action, params, commandTimeoutMs(task.source, timeouts));
     if (r.ok && r.result?.ok) {
       const data = r.result.data ?? {};
       // 字幕受限（pot_limited：扩展全轨 body 为空，0 轨入库，元信息已入库）→ limited 终态：
@@ -553,7 +555,6 @@ export function attachTaskScheduler(db: Database.Database): void {
   const timer = setInterval(dispatch, SWEEP_MS);
   timer.unref();
 
-  // 暴露手动触发（HTTP handler 建任务后调用；单 server 进程单调度器,全局引用足够）
   taskSchedulerKick = () => { void dispatch(); };
 }
 

@@ -1,14 +1,17 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { convertSubtitle, type SubtitleFormat } from './subtitleFormat.js';
 
-// 用 info/body.json（B 站真实字幕样本）作为输入
-const here = dirname(fileURLToPath(import.meta.url));
-const payload = JSON.parse(readFileSync(join(here, '../../../../info/body.json'), 'utf-8')) as {
-  body: Array<{ from: number; to: number; content: string }>;
+// 输入样本：仓库根 info/body.json（B 站真实字幕样本，428 条）的裁剪版——内联头 2 条 + 一条
+// from>60s（分钟进位用例），结构与原样本一致。原先直读仓库根文件，出了 app 包边界：Stryker
+// 沙箱（只拷贝本 app 目录）与任意单包拷贝场景下 ENOENT，2026-08-23 改内联自包含。
+const payload = {
+  font_size: 0.4, type: 'AIsubtitle', lang: 'zh', version: 'v1.7.0.4',
+  body: [
+    { from: 0.36, to: 2.56, sid: 1, location: 2, content: '前几期我一直在讲AI编程工程化', music: 0 },
+    { from: 2.56, to: 5.63, sid: 2, location: 2, content: '评论区很多观众说能不能看实际的代码的流程', music: 0 },
+    { from: 124.82, to: 127.56, sid: 53, location: 2, content: '在开始之前有必要快速认识我这个项目', music: 0 },
+  ],
 };
 const bodyLen = payload.body.length;
 const firstContent = payload.body[0].content.trim();
@@ -17,6 +20,11 @@ const firstContent = payload.body[0].content.trim();
 const srtStamp = /\d{2}:\d{2}:\d{2},\d{3}/; // SRT：逗号毫秒
 const vttStamp = /\d{2}:\d{2}:\d{2}\.\d{3}/; // VTT：小数点毫秒
 const srtLine = /^\d{2}:\d{2}:\d{2},\d{3} --> \d{2}:\d{2}:\d{2},\d{3}$/;
+
+// 测试轮次记录表（对齐全局 8.2）：
+// | 轮次 | 范围 | 结果 | 备注 |
+// |---|---|---|---|
+// | R1 | Stryker 补测：extractBody 非 null 标量 / 仅 to 类型错 / srt+vtt trim | 通过 | mutation 88.48%→96.97%（19 存活杀 14，余 5 等价：secsToStamp 零边界对称 + resolveSubtitle L192 防御兜底不可达） |
 
 test('json: 可往返（parse 回来 deepEqual 原 payload）', () => {
   const out = convertSubtitle(payload, 'json');
@@ -131,6 +139,28 @@ test('错误：body 条目缺字段或类型错 → 抛清晰错误', () => {
   assert.throws(() => convertSubtitle({ body: [null] }, 'txt'), /不是对象/);
 });
 
+test('错误：body 条目是非 null 标量 → 抛「不是对象」', () => {
+  // 字符串/数字条目既非对象也非 null：必须命中「不是对象」检查，
+  // 而非漏进后面的 from/to/content 类型检查（那是另一条错误文案）
+  assert.throws(() => convertSubtitle({ body: ['x'] }, 'srt'), /body\[0\] 不是对象/);
+  assert.throws(() => convertSubtitle({ body: [42] }, 'txt'), /body\[0\] 不是对象/);
+});
+
+test('错误：仅 to 类型非法（from/content 合法）→ 抛 from/to 错误', () => {
+  // 单独错 to 一项，防止 from/to/content 三连类型检查被短路掉中间一项后静默通过
+  assert.throws(
+    () => convertSubtitle({ body: [{ from: 0, to: 'x', content: 'a' }] }, 'srt'),
+    /from\/to/,
+  );
+});
+
+test('srt/vtt: content 去首尾空白后渲染', () => {
+  const p = { body: [{ from: 0, to: 1, content: '  你好  ' }] };
+  // 单条样本可整串精确断言：字幕行应是 trim 后的「你好」，原样带空格即错
+  assert.equal(convertSubtitle(p, 'srt'), '1\n00:00:00,000 --> 00:00:01,000\n你好\n');
+  assert.equal(convertSubtitle(p, 'vtt'), 'WEBVTT\n\n00:00:00.000 --> 00:00:01.000\n你好\n');
+});
+
 test('负 from/to 归零（不抛、不渲染负时间）', () => {
   const out = convertSubtitle({ body: [{ from: -1.5, to: 1, content: 'x' }] }, 'srt');
   assert.ok(out.includes('00:00:00,000 --> 00:00:01,000'), `负值未归零: ${out}`);
@@ -142,4 +172,9 @@ test('所有 SubtitleFormat 值都能产出非空字符串', () => {
     const out = convertSubtitle(payload, f);
     assert.ok(out.length > 0, `${f} 输出为空`);
   }
+});
+
+// 运行时兜底：format 是闭合联合类型，正常调用到不了 default——外部传脏值（as 断言）应抛清晰错误而非静默
+test('未支持的格式（运行时脏值）→ default 分支抛错', () => {
+  assert.throws(() => convertSubtitle(payload, 'xml' as SubtitleFormat), /未支持的字幕格式: xml/);
 });
