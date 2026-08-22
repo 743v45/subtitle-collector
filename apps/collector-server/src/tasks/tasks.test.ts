@@ -212,10 +212,10 @@ test('createTasksBatch：source=youtube（11 位 vid 校验 + watch URL + 独立
 test('retryTask：failed/limited 原地重置回 pending（行 id/batch 不变,旧执行结果清空）', () => {
   const { db, cleanup } = setupDb();
   try {
-    // 批量建两个任务 → 手工落成 failed/limited 终态（带 error/result/finished_at 残留）
+    // 批量建两个任务 → 手工落成 failed/limited 终态（带 error/result/finished_at 残留 + 执行者）
     const r = createTasksBatch(db, ['llwTBpPqo9A', 'gaDdrDdczO4'], 'youtube');
     const [t1, t2] = r.created;
-    db.prepare("UPDATE collect_tasks SET status = 'failed', error = 'YouTube 采集超时（45s）', finished_at = 123 WHERE id = ?").run(t1.id);
+    db.prepare("UPDATE collect_tasks SET status = 'failed', error = 'YouTube 采集超时（45s）', finished_at = 123, client_id = 'ext-A' WHERE id = ?").run(t1.id);
     db.prepare("UPDATE collect_tasks SET status = 'limited', result = '{\"reason\":\"pot_limited\"}', finished_at = 456 WHERE id = ?").run(t2.id);
 
     // 重试：原行重置回 pending——行 id 不变（批次卡/聚焦视图随该行更新,不出现 failed+succeeded 双行）
@@ -223,6 +223,7 @@ test('retryTask：failed/limited 原地重置回 pending（行 id/batch 不变,�
     assert.equal(rt!.id, t1.id);
     assert.equal(rt!.status, 'pending');
     assert.equal(rt!.batch_id, t1.batch_id); // batch_id 保留原值（重试不换批不换行）
+    assert.equal(rt!.client_id, 'ext-A');    // 上次执行者保留（重试优先派回原扩展的线索）
     assert.equal(rt!.error, null);       // 旧失败原因清空
     assert.equal(rt!.finished_at, null); // 旧完成时间清空
     const rl = retryTask(db, t2.id);
@@ -380,31 +381,48 @@ test('expandUpperVideos：扩展离线抛错；单页回执失败抛错', async 
   } finally { cleanup(); }
 });
 
-// ── pickClientForTask：任务归属（2026-08-21，多客户端 sticky 派发）──
-// 语义：creator 在线 → 永远归 creator（忙则 wait 本轮跳过，不给别人）；离线/无 creator → 任意空闲。
+// ── pickClientForTask：任务归属（2026-08-21 多客户端 sticky;2026-08-22 加上次执行者软偏好）──
+// 语义：creator 在线 → 永远归 creator（忙则 wait 本轮跳过，不给别人）；无 creator →
+// 上次执行者在线且空闲 → 回原扩展（忙/离线不等待）→ 都没有 → 任意空闲。
 
-test('pickClientForTask：creator 在线 → 归 creator（即便别人空闲）', () => {
+test('pickClientForTask：creator 在线 → 归 creator（即便别人空闲/曾是执行者）', () => {
   const clients = [{ client_id: 'ext-A' }, { client_id: 'ext-B' }];
-  assert.deepEqual(pickClientForTask({ creator_client_id: 'ext-B' }, clients, new Map()), { clientId: 'ext-B' });
+  assert.deepEqual(pickClientForTask({ creator_client_id: 'ext-B', client_id: 'ext-A' }, clients, new Map()), { clientId: 'ext-B' });
 });
 
 test('pickClientForTask：creator 在线但忙 → wait（不给别人）', () => {
   const clients = [{ client_id: 'ext-A' }, { client_id: 'ext-B' }];
-  assert.equal(pickClientForTask({ creator_client_id: 'ext-B' }, clients, new Map([['ext-B', 7]])), 'wait');
+  assert.equal(pickClientForTask({ creator_client_id: 'ext-B', client_id: null }, clients, new Map([['ext-B', 7]])), 'wait');
 });
 
-test('pickClientForTask：creator 离线 → 降级任意空闲', () => {
+test('pickClientForTask：creator 离线 → 降级上次执行者/任意空闲', () => {
   const clients = [{ client_id: 'ext-A' }];
-  assert.deepEqual(pickClientForTask({ creator_client_id: 'ext-X' }, clients, new Map()), { clientId: 'ext-A' });
+  assert.deepEqual(pickClientForTask({ creator_client_id: 'ext-X', client_id: null }, clients, new Map()), { clientId: 'ext-A' });
 });
 
-test('pickClientForTask：无 creator（CLI/旧任务）→ 任意空闲（现状语义）', () => {
+test('pickClientForTask：无 creator、上次执行者在线空闲 → 优先回原扩展（重试不换环境）', () => {
   const clients = [{ client_id: 'ext-A' }, { client_id: 'ext-B' }];
-  assert.deepEqual(pickClientForTask({ creator_client_id: null }, clients, new Map()), { clientId: 'ext-A' });
+  // 上次执行者 ext-B 不在列表首位——仍应选它（软偏好,非任意空闲的 find-first）
+  assert.deepEqual(pickClientForTask({ creator_client_id: null, client_id: 'ext-B' }, clients, new Map()), { clientId: 'ext-B' });
+});
+
+test('pickClientForTask：上次执行者忙 → 回落任意空闲（软偏好不 wait 不空转）', () => {
+  const clients = [{ client_id: 'ext-A' }, { client_id: 'ext-B' }];
+  assert.deepEqual(pickClientForTask({ creator_client_id: null, client_id: 'ext-B' }, clients, new Map([['ext-B', 9]])), { clientId: 'ext-A' });
+});
+
+test('pickClientForTask：上次执行者离线 → 任意空闲', () => {
+  const clients = [{ client_id: 'ext-A' }];
+  assert.deepEqual(pickClientForTask({ creator_client_id: null, client_id: 'ext-X' }, clients, new Map()), { clientId: 'ext-A' });
+});
+
+test('pickClientForTask：无 creator 无执行者（CLI/旧任务）→ 任意空闲（现状语义）', () => {
+  const clients = [{ client_id: 'ext-A' }, { client_id: 'ext-B' }];
+  assert.deepEqual(pickClientForTask({ creator_client_id: null, client_id: null }, clients, new Map()), { clientId: 'ext-A' });
 });
 
 test('pickClientForTask：全忙 → null', () => {
-  assert.equal(pickClientForTask({ creator_client_id: null }, [{ client_id: 'ext-A' }], new Map([['ext-A', 1]])), null);
+  assert.equal(pickClientForTask({ creator_client_id: null, client_id: 'ext-A' }, [{ client_id: 'ext-A' }], new Map([['ext-A', 1]])), null);
 });
 
 test('createTasksBatch：creator_client_id 透传到任务行；不传为 null', () => {

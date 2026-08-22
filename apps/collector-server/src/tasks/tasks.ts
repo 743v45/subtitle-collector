@@ -354,8 +354,10 @@ export function retryTask(db: Database.Database, id: number): CollectTask | null
     db.prepare("UPDATE collect_tasks SET status = 'succeeded', error = NULL, result = ?, finished_at = ? WHERE id = ?")
       .run(JSON.stringify({ reason: 'already_collected', tracks }), Date.now(), id);
   } else {
+    // client_id 保留（不清）：上次执行者线索——重试优先派回原扩展（各扩展环境/登录态不同,
+    // 换机重跑结果可能漂移）;派发时 dispatchTask 会覆盖为实际执行者
     db.prepare(
-      "UPDATE collect_tasks SET status = 'pending', error = NULL, result = NULL, finished_at = NULL, client_id = NULL WHERE id = ?",
+      "UPDATE collect_tasks SET status = 'pending', error = NULL, result = NULL, finished_at = NULL WHERE id = ?",
     ).run(id);
   }
   pushTask(db, id);
@@ -444,22 +446,35 @@ export function resetDispatched(db: Database.Database): void {
 // 派发策略：
 //   - 每次触发（建任务 / 扩展上线 / 轮询）扫 pending 队列（按创建顺序）；
 //   - 客户端归属（2026-08-21，多客户端 sticky）：任务带 creator_client_id 且创建者在线 →
-//     只派给创建者（忙则本轮跳过等待，不给别的客户端弹采集页）；创建者离线或无归属
-//     （CLI/旧任务）→ 任意空闲客户端；
+//     只派给创建者（忙则本轮跳过等待，不给别的客户端弹采集页）；
+//   - 上次执行者优先（2026-08-22，软偏好）：无创建者归属时优先派回 client_id 记录的原
+//     执行者（重试不换环境——各扩展登录态不同,换机重跑结果可能漂移）;原执行者忙/离线 →
+//     任意空闲客户端；
 //   - 串行：同 client 同时只派 1 个任务（inFlight 集合）,防风控对齐 CLI 采集的 sleep 思路。
 
 // inFlight 状态在 ./inflight.ts（ws/server 连接 close 时释放，避免循环 import）
 
-// 任务 → 派发目标（纯函数供测试）。三态：
+// 任务 → 派发目标（纯函数供测试）。四态：
 //   { clientId }  派给它；'wait'  创建者在线但忙（本轮跳过，留给创建者）；null  无任何空闲客户端。
+// 优先级：创建者 > 上次执行者 > 任意空闲。
+//   - 创建者（2026-08-21 sticky）：任务带 creator_client_id 且创建者在线 → 只派给创建者
+//     （忙则 wait，不给别的客户端弹采集页）；
+//   - 上次执行者（2026-08-22 软偏好）：重试/重新派发优先回到原扩展——各扩展环境/登录态不同,
+//     换机重跑同一视频结果可能漂移（实测 h4xhid52 抓到轨、换 8n2g7ny3 重跑变 pot_limited）;
+//     原执行者在线且空闲才选它,忙则回落任意空闲（软偏好不 wait,不空转——创建者是任务主人
+//     才值得等,执行者只是环境偏好）。
 export function pickClientForTask(
-  task: Pick<CollectTask, 'creator_client_id'>,
+  task: Pick<CollectTask, 'creator_client_id' | 'client_id'>,
   clients: ReadonlyArray<{ client_id: string }>,
   inFlight: ReadonlyMap<string, number>,
 ): { clientId: string } | 'wait' | null {
   if (task.creator_client_id) {
     const creator = clients.find((c) => c.client_id === task.creator_client_id);
     if (creator) return inFlight.has(creator.client_id) ? 'wait' : { clientId: creator.client_id };
+  }
+  if (task.client_id) {
+    const last = clients.find((c) => c.client_id === task.client_id && !inFlight.has(c.client_id));
+    if (last) return { clientId: last.client_id };
   }
   const free = clients.find((c) => !inFlight.has(c.client_id));
   return free ? { clientId: free.client_id } : null;
