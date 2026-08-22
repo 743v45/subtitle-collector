@@ -423,6 +423,12 @@ test('commandTimeoutMs：youtube 长预算（后台 tab+自限+宽限）、bilib
   assert.equal(commandTimeoutMs('bilibili'), 90_000);
 });
 
+test('commandTimeoutMs：随 settings 配置联动（youtube 预算 = 无进展窗口 + 135s 余量）', () => {
+  const t = { bilibili: 120_000, youtube: 90_000 };
+  assert.equal(commandTimeoutMs('youtube', t), 225_000); // 90s 窗口 + 135s 余量（关 tab/INGEST）
+  assert.equal(commandTimeoutMs('bilibili', t), 120_000); // B 站直接用配置预算（API 拉取无自限）
+});
+
 // ── listTasks 多维筛选（2026-08-22 历史页）：creator/q 是入库元数据维度 ──
 // 契约：未入库任务（无 videos 行）无 UP/标题归属，creator/q 筛不中；status/source/since/
 // until/batchId 走 t.* 列覆盖未入库任务。批次补全：筛选只作用种子，种子涉及的批次成员

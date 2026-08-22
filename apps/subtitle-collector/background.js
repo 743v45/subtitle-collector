@@ -649,7 +649,10 @@ async function connect() {
         inFlightCollects.add(ytKey);
         try {
           // msg.id（server 命令 id）透传作 taskId，供 [yt-navigate] 日志与 server 任务关联
-          const data = await collectYoutubeViaNavigate(msg.videoId, 45000, msg.id);
+          // 无进展窗口可配：server 派发时随 msg.timeout_ms 下发（settings.collect_timeout_ms,
+          // 慢视频轨加载极慢时调大）；popup 直采/旧 server 不带该字段回落内置 45s
+          const windowMs = Number.isInteger(msg.timeout_ms) && msg.timeout_ms >= 15000 ? msg.timeout_ms : 45000;
+          const data = await collectYoutubeViaNavigate(msg.videoId, windowMs, msg.id);
           ws.send(JSON.stringify({ type: "result", id: msg.id, ok: true, data }));
         } catch (err) {
           ws.send(JSON.stringify({ type: "result", id: msg.id, ok: false, error: String(err.message || err) }));

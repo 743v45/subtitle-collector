@@ -61,3 +61,47 @@ test('getTagPriority：四档时代存量（无 season）→ 回落新默认（�
     assert.deepEqual(getTagPriority(db), ['manual', 'batch', 'bili', 'season', 'ai']);
   } finally { db.close(); rmSync(dir, { recursive: true, force: true }); }
 });
+
+// ── 采集超时配置（2026-08-22，按平台分档）──
+import { getCollectTimeout, setCollectTimeout, DEFAULT_COLLECT_TIMEOUT_MS } from './settings.js';
+
+test('getCollectTimeout：缺行回落默认 {bilibili:90s, youtube:45s}', () => {
+  const { db, dir } = freshDb();
+  try {
+    assert.deepEqual(getCollectTimeout(db), DEFAULT_COLLECT_TIMEOUT_MS);
+  } finally { db.close(); rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('setCollectTimeout：写读往返 + 覆盖（upsert）', () => {
+  const { db, dir } = freshDb();
+  try {
+    const custom = { bilibili: 120_000, youtube: 90_000 };
+    setCollectTimeout(db, custom);
+    assert.deepEqual(getCollectTimeout(db), custom);
+    setCollectTimeout(db, { bilibili: 90_000, youtube: 180_000 });
+    assert.deepEqual(getCollectTimeout(db), { bilibili: 90_000, youtube: 180_000 });
+  } finally { db.close(); rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('setCollectTimeout：缺键/非整数/越界（<15s 或 >600s）抛错', () => {
+  const { db, dir } = freshDb();
+  try {
+    assert.throws(() => setCollectTimeout(db, { bilibili: 90_000 }));                    // 缺 youtube
+    assert.throws(() => setCollectTimeout(db, { bilibili: 10_000, youtube: 45_000 }));  // < 15s
+    assert.throws(() => setCollectTimeout(db, { bilibili: 90_000, youtube: 601_000 })); // > 600s
+    assert.throws(() => setCollectTimeout(db, { bilibili: '90s', youtube: 45_000 }));   // 非数字
+    assert.throws(() => setCollectTimeout(db, null));
+  } finally { db.close(); rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('getCollectTimeout：DB 值损坏/单项越界 → 逐项回落默认不炸', () => {
+  const { db, dir } = freshDb();
+  try {
+    db.prepare("INSERT INTO settings (key, value) VALUES ('collect_timeout_ms', 'not-json')").run();
+    assert.deepEqual(getCollectTimeout(db), DEFAULT_COLLECT_TIMEOUT_MS);
+    // 单项越界：该项回落默认,另一项保留
+    db.prepare("UPDATE settings SET value = ? WHERE key = 'collect_timeout_ms'")
+      .run(JSON.stringify({ bilibili: 120_000, youtube: 999_999 }));
+    assert.deepEqual(getCollectTimeout(db), { bilibili: 120_000, youtube: 45_000 });
+  } finally { db.close(); rmSync(dir, { recursive: true, force: true }); }
+});

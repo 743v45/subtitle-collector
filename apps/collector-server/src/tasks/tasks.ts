@@ -1,6 +1,7 @@
 import type Database from 'better-sqlite3';
 import { randomUUID } from 'node:crypto';
 import { listClients, requestCommand, broadcastEvent } from '../ws/server.js';
+import { DEFAULT_COLLECT_TIMEOUT_MS, getCollectTimeout, type CollectTimeoutMs } from '../db/settings.js';
 import { inFlight } from './inflight.js';
 
 // ── 采集任务系统：手机/网页提交 → server 派发给桌面扩展 → 扩展采集回执 ──
@@ -43,11 +44,17 @@ const TASK_SELECT = `SELECT t.*, v.title AS title, COALESCE(c.name, ct.name) AS 
 // 任务行 + 库内视频标题（videos 有 UNIQUE(source, source_vid),JOIN 不扇出）
 const TASK_WITH_TITLE = `${TASK_SELECT} WHERE t.id = ?`;
 
-// 单任务在扩展侧的执行预算（按平台分档）——须覆盖扩展全链路（导航加载 + 多请求 + 宽限 + 关 tab 间隔），
-// 超时早于扩展实际完成会落假失败（扩展仍在跑并落库，任务页却显示失败，用户重试 = 重复采集）。
-// bilibili：navigate ~20s + view/tags/player 拉取；youtube：后台 tab + 45s 自限 + 8s 宽限 + 关 tab 间隔。
-export function commandTimeoutMs(source: 'bilibili' | 'youtube'): number {
-  return source === 'youtube' ? 180_000 : 90_000;
+// 单任务在扩展侧的执行预算（按平台分档，可经 settings.collect_timeout_ms 配置）——须覆盖扩展
+// 全链路（导航加载 + 多请求 + 宽限 + 关 tab 间隔），超时早于扩展实际完成会落假失败（扩展仍在
+// 跑并落库，任务页却显示失败，用户重试 = 重复采集）。
+// bilibili：navigate ~20s + view/tags/player 拉取；youtube：后台 tab + 无进展窗口 + 8s 宽限 + 关 tab 间隔。
+// youtube 等回执预算 = 无进展窗口 + 135s 余量（窗口本身可配置下发扩展,余量覆盖关 tab/INGEST 落库,
+// 对齐原硬编码 45s 窗口 + 180s 预算的关系）。
+export function commandTimeoutMs(
+  source: 'bilibili' | 'youtube',
+  timeouts: CollectTimeoutMs = DEFAULT_COLLECT_TIMEOUT_MS,
+): number {
+  return source === 'youtube' ? timeouts.youtube + 135_000 : timeouts.bilibili;
 }
 // 兜底轮询周期（事件驱动派发之外，防事件遗漏）
 const SWEEP_MS = 15_000;
@@ -495,8 +502,12 @@ export function attachTaskScheduler(db: Database.Database): void {
     db2.prepare("UPDATE collect_tasks SET status = 'dispatched', client_id = ? WHERE id = ? AND status = 'pending'").run(clientId, taskId);
     pushTask(db2, taskId);
     const action = task.source === 'bilibili' ? 'fetch-subtitle' : 'fetch-youtube-subtitle';
-    const params = task.source === 'bilibili' ? { bvid: task.source_vid } : { videoId: task.source_vid };
-    const r = await requestCommand(clientId, action, params, commandTimeoutMs(task.source));
+    // youtube：无进展窗口随命令下发（settings.collect_timeout_ms 可配;旧扩展忽略未知字段回落内置 45s）
+    const timeouts = getCollectTimeout(db2);
+    const params = task.source === 'bilibili'
+      ? { bvid: task.source_vid }
+      : { videoId: task.source_vid, timeout_ms: timeouts.youtube };
+    const r = await requestCommand(clientId, action, params, commandTimeoutMs(task.source, timeouts));
     if (r.ok && r.result?.ok) {
       const data = r.result.data ?? {};
       // 字幕受限（pot_limited：扩展全轨 body 为空，0 轨入库，元信息已入库）→ limited 终态：

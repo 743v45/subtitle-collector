@@ -226,6 +226,23 @@ export async function retryCollectTasks(ids: number[]): Promise<{ retried: numbe
   return ensureOk(r, (j) => ({ retried: j.retried ?? 0, tasks: j.tasks ?? [] }));
 }
 
+// ── 采集超时配置（2026-08-22，按平台分档）──
+// youtube=扩展无进展窗口（持续无新进展判超时,慢视频调大）;bilibili=server 等回执预算。
+// 毫秒存储,UI 用秒展示;范围 [15s, 600s]（server 校验,非法 400）。
+export async function getCollectTimeout(): Promise<{ bilibili: number; youtube: number }> {
+  const r = await fetch(`${BASE}/api/settings/collect-timeout`);
+  return ensureOk(r, (j) => ({ bilibili: j.bilibili, youtube: j.youtube }));
+}
+
+export async function setCollectTimeout(v: { bilibili: number; youtube: number }): Promise<{ bilibili: number; youtube: number }> {
+  const r = await fetch(`${BASE}/api/settings/collect-timeout`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(v),
+  });
+  return ensureOk(r, (j) => ({ bilibili: j.bilibili, youtube: j.youtube }));
+}
+
 export async function setReporting(clientId: string, enabled: boolean): Promise<boolean> {
   const r = await fetch(`${BASE}/api/clients/${encodeURIComponent(clientId)}/reporting`, {
     method: 'POST',

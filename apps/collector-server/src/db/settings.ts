@@ -33,3 +33,45 @@ export function setTagPriority(db: Database.Database, priority: unknown): TagPri
     .run('tag_priority', JSON.stringify(priority));
   return priority;
 }
+
+// ── 采集超时配置（2026-08-22，按平台分档，单位毫秒）──
+// 两平台超时语义不同（对齐各自采集链路）：
+//   youtube：扩展侧「无进展窗口」——navigate 后台 tab 里持续无新进展（就绪/轨数/正文数指纹
+//            不变）此时长才判超时，默认 45s。慢视频（轨加载极慢）调大它；派发时随命令下发
+//            （background.js 读 msg.timeout_ms，旧扩展忽略未知字段回落内置 45s）。
+//   bilibili：server 等扩展回执的总预算——扩展纯 API 拉取无自限窗口，默认 90s。
+// server 对 youtube 的等回执预算 = 窗口 + 135s 余量（覆盖关 tab/INGEST 落库，对齐原 45s+180s 关系），
+// 见 tasks.commandTimeoutMs。
+export interface CollectTimeoutMs { bilibili: number; youtube: number; }
+export const DEFAULT_COLLECT_TIMEOUT_MS: CollectTimeoutMs = { bilibili: 90_000, youtube: 45_000 };
+const TIMEOUT_MIN_MS = 15_000;  // 下限：再短必误杀（navigate 就要 ~20s）
+const TIMEOUT_MAX_MS = 600_000; // 上限：10 分钟防呆
+
+function isValidTimeout(v: unknown): v is number {
+  return typeof v === 'number' && Number.isInteger(v) && v >= TIMEOUT_MIN_MS && v <= TIMEOUT_MAX_MS;
+}
+
+// 读采集超时：缺行 / JSON 损坏 / 单项越界 → 逐项回落默认（不炸调用方）。
+export function getCollectTimeout(db: Database.Database): CollectTimeoutMs {
+  const row = db.prepare('SELECT value FROM settings WHERE key = ?').get('collect_timeout_ms') as { value: string } | undefined;
+  if (!row) return { ...DEFAULT_COLLECT_TIMEOUT_MS };
+  try {
+    const parsed = JSON.parse(row.value) as Partial<CollectTimeoutMs>;
+    return {
+      bilibili: isValidTimeout(parsed.bilibili) ? parsed.bilibili : DEFAULT_COLLECT_TIMEOUT_MS.bilibili,
+      youtube: isValidTimeout(parsed.youtube) ? parsed.youtube : DEFAULT_COLLECT_TIMEOUT_MS.youtube,
+    };
+  } catch { /* 损坏回落 */ }
+  return { ...DEFAULT_COLLECT_TIMEOUT_MS };
+}
+
+// 写采集超时：两键齐全且均为 [15s, 600s] 整数毫秒，否则抛错（http 层转 400，失败可见）。
+export function setCollectTimeout(db: Database.Database, value: unknown): CollectTimeoutMs {
+  const v = value as Partial<CollectTimeoutMs> | null;
+  if (!v || !isValidTimeout(v.bilibili) || !isValidTimeout(v.youtube)) {
+    throw new Error(`collect timeout must be {bilibili, youtube} integer ms in [${TIMEOUT_MIN_MS}, ${TIMEOUT_MAX_MS}]`);
+  }
+  db.prepare('INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value')
+    .run('collect_timeout_ms', JSON.stringify(v));
+  return { bilibili: v.bilibili, youtube: v.youtube };
+}

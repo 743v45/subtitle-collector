@@ -228,3 +228,24 @@ test('season 档 HTTP：列表/详情富化 + 只读 400 + 过滤 + 聚合', asy
     assert.equal(row.count, 2);
   } finally { cleanup(); }
 });
+
+// ── 采集超时配置端点（2026-08-22）：GET/PUT /api/settings/collect-timeout ──
+test('settings API：collect-timeout 默认值 → PUT 覆盖 → 非法 400', async () => {
+  const { port, cleanup } = await setup();
+  try {
+    let r = await call(port, 'GET', '/api/settings/collect-timeout');
+    assert.equal(r.status, 200);
+    assert.deepEqual({ bilibili: r.json.bilibili, youtube: r.json.youtube }, { bilibili: 90_000, youtube: 45_000 });
+
+    r = await call(port, 'PUT', '/api/settings/collect-timeout', { bilibili: 120_000, youtube: 90_000 });
+    assert.equal(r.status, 200);
+    r = await call(port, 'GET', '/api/settings/collect-timeout');
+    assert.deepEqual({ bilibili: r.json.bilibili, youtube: r.json.youtube }, { bilibili: 120_000, youtube: 90_000 });
+
+    // 越界（<15s）→ 400 失败可见;值不变
+    r = await call(port, 'PUT', '/api/settings/collect-timeout', { bilibili: 5_000, youtube: 90_000 });
+    assert.equal(r.status, 400);
+    r = await call(port, 'GET', '/api/settings/collect-timeout');
+    assert.equal(r.json.bilibili, 120_000);
+  } finally { cleanup(); }
+});
