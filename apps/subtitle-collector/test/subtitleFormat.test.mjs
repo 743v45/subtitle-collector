@@ -126,3 +126,71 @@ test('非 ASCII content（中文/emoji）保留', () => {
   assert.equal(subtitleToPlainText(body), '中文🎉 tests');
   assert.equal(subtitleToTimestamped(body), '[00:00] 中文🎉 tests');
 });
+
+test('cue 缺 content / cue 为 null：getContent 兜底空串（不抛错，空条目被过滤）', () => {
+  // body 数组可能混入 null 条目或无 content 的骨架（JSON 截断/上游脏数据）：
+  // getContent 的 cue?.content ?? '' 兜底 → 空文本条目被三个格式化函数统一过滤
+  const body = { body: [{ from: 0, to: 1 }, null, { from: 1, to: 2, content: '唯一有效' }] };
+  assert.equal(subtitleToPlainText(body), '唯一有效');
+  assert.equal(subtitleToTimestamped(body), '[00:01] 唯一有效');
+  assert.equal(subtitleToSRT(body), '1\n00:00:01,000 --> 00:00:02,000\n唯一有效\n');
+  // content 显式 undefined 同缺 content
+  assert.equal(subtitleToPlainText({ body: [{ content: undefined }] }), '');
+});
+
+test('extractCues 直接契约：null / undefined / 非法形状 → 空数组', () => {
+  // 三个格式化函数只消费条目 content，兜底数组里混入无 content 字段的元素会被整体过滤：
+  // 输出层面区分不出「真空数组」与「兜底数组非空但元素全无效」，须直接断言 extractCues 自身契约
+  assert.deepEqual(extractCues(null), []);
+  assert.deepEqual(extractCues(undefined), []);
+  // 既非数组、body 也不是数组的形状走末尾兜底空数组
+  assert.deepEqual(extractCues({}), []);
+  assert.deepEqual(extractCues({ body: 'not-array' }), []);
+});
+
+test('from: Infinity / -Infinity：非有限秒数兜底为 0（时间戳不产生 "Infinity:NaN"）', () => {
+  // NaN 有 NaN>=0 恒 false 的双保险拦着，+Infinity 是唯一能通过 >=0 检查的非有限数，
+  // 专测 safeSec 的 Number.isFinite 拦截；-Infinity 走 >=0 分支兜底
+  assert.equal(
+    subtitleToTimestamped({ body: [{ from: Infinity, to: 1, content: '正无穷' }] }),
+    '[00:00] 正无穷',
+  );
+  assert.equal(
+    subtitleToTimestamped({ body: [{ from: -Infinity, to: 1, content: '负无穷' }] }),
+    '[00:00] 负无穷',
+  );
+});
+
+test('from/to: Infinity / NaN：SRT 时间轴兜底 00:00:00,000（不产生非法 Infinity 轴）', () => {
+  // Infinity 是 number（能穿透 from/to 的 typeof 检查），只能靠 safeSec 的 Number.isFinite 兜底
+  assert.equal(
+    subtitleToSRT({ body: [{ from: Infinity, to: Infinity, content: '无穷' }] }),
+    '1\n00:00:00,000 --> 00:00:00,000\n无穷\n',
+  );
+  // to 单独非有限：结束轴回落 0（格式层不纠正倒轴，与 to<from 用例同理）
+  assert.equal(
+    subtitleToSRT({ body: [{ from: 65, to: Infinity, content: 'end' }] }),
+    '1\n00:01:05,000 --> 00:00:00,000\nend\n',
+  );
+  // NaN 走 SRT 路径同样兜底 0（NaN>=0 恒 false，此前 NaN 只测过时间戳格式）
+  assert.equal(
+    subtitleToSRT({ body: [{ from: NaN, to: 1, content: 'nan' }] }),
+    '1\n00:00:00,000 --> 00:00:01,000\nnan\n',
+  );
+});
+
+test('from 非 number（字符串数字 / null / undefined / true）：按缺失兜底 0', () => {
+  // 上游脏数据可能出现字符串时间戳：外层 c.from 的 typeof 守卫兜 0，
+  // 即便穿透（如内部实现调整）内层 safeSec 也会再兜 0，输出恒 [00:00]
+  for (const bad of ['65', null, undefined, true]) {
+    assert.equal(
+      subtitleToTimestamped({ body: [{ from: bad, to: 1, content: '脏from' }] }),
+      '[00:00] 脏from',
+    );
+  }
+  // SRT：from/to 都非法时双轴回落 00:00:00,000（to 非法回落到 from 的兜底值 0）
+  assert.equal(
+    subtitleToSRT({ body: [{ from: '2.5', to: '3', content: '脏轴' }] }),
+    '1\n00:00:00,000 --> 00:00:00,000\n脏轴\n',
+  );
+});

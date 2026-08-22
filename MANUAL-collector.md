@@ -13,7 +13,7 @@
 
 `pnpm test:ext`（或 `node scripts/verify-collector.mjs`）：用 puppeteer mock 验证扩展的 subtitle_url 四情况 + navigate + operate 命令。**需要 headed Chrome 环境**（headless 模式不加载 MV3 扩展）。失败时按 `[mock-server]` 日志排查 WS 握手。
 
-自动化单元测试走 `pnpm test`（= turbo run test，跑 collector-server 的 db/http/ws 单测 + subtitle-collector 的 `reporting/wbi/subtitleFormat` 纯函数单测）。
+自动化单元测试走 `pnpm test`（= turbo run test，三端：collector-server 的 c8 单测、collector-web 的 vitest 单测、subtitle-collector 的 c8 包裹纯函数单测，各带覆盖率锁定）；全量质量门 `pnpm qa`（build + test + 静态质量台账 + 依赖结构检查），细则见 [docs/quality/RULES.md](docs/quality/RULES.md)。
 
 ## 验收项（对应 spec §10）
 

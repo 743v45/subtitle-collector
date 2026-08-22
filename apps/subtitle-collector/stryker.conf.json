@@ -1,0 +1,13 @@
+{
+  "_comment": "command 直跑 node --test，禁止复用 pnpm test：c8 的 --check-coverage 会让每个变异体都因覆盖率骤降而失败，被误判为 killed，分数虚高作废。注：Stryker 10 起 command 选项位于 commandRunner.command（顶层 command 不再被识别，会静默回落 package.json test 脚本）",
+  "testRunner": "command",
+  "commandRunner": {
+    "command": "node --test \"test/*.test.mjs\""
+  },
+  "mutate": [
+    "subtitleFormat.mjs"
+  ],
+  "concurrency": 2,
+  "reporters": ["clear-text", "progress"],
+  "timeoutMS": 30000
+}

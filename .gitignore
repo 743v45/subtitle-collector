@@ -36,3 +36,9 @@ apps/collector-server/.collector-server.log
 # subtitle-extractor:ort wasm 是 copy-ort.mjs 从 @huggingface/transformers 拷贝的构建产物,不入库
 apps/subtitle-extractor/public/ort/
 youtube-subs/
+
+# Stryker 变异测试与覆盖率产物（reports/、.stryker-tmp/、coverage/、*.lcov，本地生成不入库）
+reports/
+.stryker-tmp/
+coverage/
+*.lcov

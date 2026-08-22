@@ -18,11 +18,12 @@ B 站**字幕（subtitle）**相关浏览器扩展与配套服务的 monorepo（
 - ✅ **合集批量**：popup 合集卡（视频属合集时列出全集 `seasons_archives_list` 全量分页，勾选批量采集上报）
 - ✅ **搜索批量**：`collect search <keyword>` / `collect find <keyword>`（粉丝数/发布时间/播放量等条件过滤）
 - ✅ 充电专属视频采集 + 付费标记（`videos list --paid`）
+- ✅ **已采集视频刷新**：视频详情页「刷新字幕」按钮 / 采集页与历史页任务行刷新图标，一键重采（ingest 按 body_hash 幂等去重，内容未变零新增），任务行显示「已刷新：新增 X 版 / 无新增」；UP 批量勾选含已采视频时提交按钮提示将刷新
 - 🚧 无字幕视频兜底：subtitle-extractor 浏览器本地 Whisper 转写（旁挂手动工具，未集成入库链路——转写产物暂无回流 bundle 的桥）
 
 ### 查询与导出（✅）
 
-- ✅ web 后台：视频库浏览 / 搜索 / UP 主 / 分类管理 / 采集日志
+- ✅ web 后台：视频库**列表布局**（一行一视频：平台图标+标题 / 创作者 / 播放 / 时长 / 轨道数 / 发布时间 / 分区 / 标签列，窄屏自动折叠次要列）、多维筛选搜索（关键词、字幕正文、**多标签下拉多选**、标签档位、分区、时间、时长/播放区间等；全部 URL query 承载，刷新/分享还原，视频详情的轨/版本选择亦进 URL）、UP 主 / 分类管理 / 采集日志；**原站外链跳转**（视频标题旁 ↗ 开 B 站/YouTube 视频页、UP 名/创作者 ↗ 开空间页/频道页，覆盖视频库/详情/创作者/任务卡各处，站内详情整行点击不受影响）
 - ✅ 采集任务历史页多维查询：按 UP（名字模糊 / mid 精确；任务行 UP 归属冗余——批量提交/重采/ingest 回填，未入库/失败任务也命中）、时间范围（今天 / 近7天 / 近30天 / 自定义）、平台、采集方式（批量/单点）、标题/关键词（vid 段搜 BV 号）、批次聚焦筛选；URL query 承载，可刷新/分享还原；重试并入原批次（聚焦视图实时看重试行，不另开新批）、任务全部到终态时浏览器系统通知（提交/重试后切走标签页，跑完即被提醒）
 - ✅ 视频标签五档：manual/batch/ai（落表）+ bili（视频自带）/ **season（合集，只读实时读 extra.ugc_season.title）**，tag_priority 可调 + 按档位过滤/聚合
 - ✅ 字幕正文全文检索：`sub search <keyword>`（带时间戳定位片段）
@@ -107,11 +108,13 @@ server 端**可选**设置 `COLLECTOR_TOKEN`：设置后扩展的 server URL 必
 ## 测试
 
 ```bash
-pnpm test        # turbo run test：collector-server 单测 + subtitle-collector 单测（node:test）
-pnpm test:ext    # puppeteer mock 扩展回归（scripts/verify-collector.mjs）
+pnpm test        # turbo run test：三端单测（server c8 / web vitest / 扩展 c8，各带覆盖率锁定）
+pnpm qa          # 全量质量门：build + test + 静态质量台账 check + depcruise（细则见 docs/quality/RULES.md）
+pnpm test:ext    # puppeteer mock 扩展回归（scripts/verify-collector.mjs，按需手动，不进 qa）
 ```
 
-- **单测**（`pnpm test`）：跑 [apps/collector-server](apps/collector-server) 的 4 个 `*.test.ts`（db/http/ws）与 [apps/subtitle-collector](apps/subtitle-collector) 的 `reporting/wbi/subtitleFormat.test.mjs`（纯函数，import 源码）。
+- **单测**（`pnpm test`）：[apps/collector-server](apps/collector-server)（c8 + node:test）、[apps/collector-web](apps/collector-web)（vitest + jsdom + Testing Library）、[apps/subtitle-collector](apps/subtitle-collector)（c8 包裹 node --test，import 源码）；三端覆盖率按锁定线只升不降。
+- **质量门**（`pnpm qa`）：涉代码提交前手动跑——build + test + 圈复杂度/模块大小台账 + 依赖结构检查；政策见 [CLAUDE.md](CLAUDE.md) 第 3 节与 [docs/quality/RULES.md](docs/quality/RULES.md)。
 - **扩展 e2e**（`pnpm test:ext`）：puppeteer 起 mock server + `--load-extension` 端到端回归。**仅在本地运行**（脚本当前按 macOS 的 Chrome 路径定位，且 MV3 扩展需要 headed 浏览器）。
 - **构建冒烟**：`pnpm --filter @bilibili-ext/collector-web build` 与 `pnpm --filter @bilibili-ext/subtitle-collector build`（见 CI）。
 
@@ -125,7 +128,7 @@ pnpm test:ext    # puppeteer mock 扩展回归（scripts/verify-collector.mjs）
 
 ## 项目约定
 
-- 开发规范、样式政策、测试政策、字幕/弹幕措辞红线：见 [CLAUDE.md](CLAUDE.md)。
+- 开发规范、样式政策、测试质量政策、字幕/弹幕措辞红线：见 [CLAUDE.md](CLAUDE.md)。
 - 服务端运维手册：见 [MANUAL-collector.md](MANUAL-collector.md)。
 - 设计文档与实现计划：见 [docs/superpowers/specs/](docs/superpowers/specs) 与 [docs/superpowers/plans/](docs/superpowers/plans)。
 - 变更记录：见 [CHANGELOG.md](CHANGELOG.md)。

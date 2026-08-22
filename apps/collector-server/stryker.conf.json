@@ -1,0 +1,14 @@
+{
+  "$schema": "https://raw.githubusercontent.com/stryker-mutator/stryker-js/master/packages/api/schema/stryker-schema.json",
+  "_comment": "commandRunner.command 直跑 node --test，绝不能带 c8（更不能落到 npm test）：c8 的 --check-coverage 阈值会让每个变异体都『失败』退出非零，被 Stryker 误判为 killed，mutation score 虚高作废（设计决策 Q26；且变异插桩后的分支覆盖率本就低于阈值）。command 只跑覆盖 mutate 目标的测试文件（subtitleFormat/bundle/export 三处覆盖 src/cli/subtitleFormat.ts 全部逻辑，<1s/轮）：全量 51s × ~165 变异体 ≈ 1 小时且逼近 timeoutMS，违背『定期手动审计』定位。ignorePatterns 挡掉沙箱无关大文件（根目录 dev 库 285MB、构建产物）。注意 Stryker 10 命令须配在 commandRunner.command，顶层 command 已不被识别（会静默回落 npm test）。",
+  "testRunner": "command",
+  "commandRunner": {
+    "command": "node --test --import tsx src/cli/subtitleFormat.test.ts src/cli/bundle.test.ts src/cli/commands/export.test.ts"
+  },
+  "coverageAnalysis": "off",
+  "mutate": ["src/cli/subtitleFormat.ts"],
+  "concurrency": 2,
+  "reporters": ["clear-text", "progress"],
+  "timeoutMS": 60000,
+  "ignorePatterns": ["*.db", "*.db-shm", "*.db-wal", "dist", "public", "data", ".turbo", "coverage", "scripts", "*.log"]
+}

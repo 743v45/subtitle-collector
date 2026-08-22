@@ -1,43 +1,64 @@
 # bilibili-extensions 项目级 CLAUDE.md
 
-> 本文件补充/收窄全局 `~/.claude/CLAUDE.md` 在本项目的适用边界。冲突时以本文件为准。
+> 本文件是本仓库的项目级开发规范；测试质量细则见 [docs/quality/RULES.md](docs/quality/RULES.md)。冲突时以本文件为准。
 
 ## 1. 项目概述
 
 B 站**字幕（subtitle）**相关浏览器扩展的 monorepo（pnpm + turbo，workspace 为 `apps/*`）。
 每个 `apps/<name>` 是一个独立扩展或应用；`scripts/` 放跨包脚本（含 `verify-*.mjs` 验证）。
 
-## 2. 样式政策（豁免边界 — 对齐审查 C4/C8）
+## 2. 样式政策（豁免边界）
 
-按"是否带构建链"划界，**不要一刀切套用全局"禁止手写 CSS"规则**：
+按"是否带构建链"划界，不一刀切禁手写 CSS：
 
 | App 类型 | 例子 | 构建链 | 样式规则 |
 |---|---|---|---|
-| 无构建链纯原生扩展 | （暂无） | 无 | **豁免**全局规则，沿用原生手写 CSS |
+| 无构建链纯原生扩展 | （暂无） | 无 | **豁免**手写 CSS 禁令，沿用原生手写 CSS |
 | 有构建链前端 | `apps/collector-web`、`apps/subtitle-collector`（popup） | 有 | **无豁免**，强制 Tailwind 工具类 + shadcn/ui；禁 `style={{}}` 内联、禁手写 `.css`、禁 CSS-in-JS；subtitle-collector 的 inject/content 虽为裸 JS 但无独立样式，不豁免 popup |
 | 纯后端 | `apps/collector-server` | — | 无 UI，不涉及 |
 
 通用约束：**content script 向宿主页注入可视 UI 时，必须用 Shadow DOM 隔离样式，禁止注入裸 `<style>` 污染宿主页。**
 
-## 3. 测试政策（豁免边界 — 对齐审查 C8）
+## 3. 测试质量政策
 
-| App 类型 | 测试方式 | 是否豁免全局 `integration-tests/*.spec.ts` |
+> 细则全部外移 [docs/quality/RULES.md](docs/quality/RULES.md)（下称 RULES），本节只留摘要与入口。
+
+**三层分级**：
+
+- **日常（每次提交）**：`pnpm qa` 全量质量门（build + test + 覆盖率锁定 + 静态台账 check + depcruise；涉代码提交前手动必跑并在 commit message 引用结果，纯文档/配置豁免）＋ husky pre-commit（只查 git 新增文件的两条静态规则）＋ 测试中文注释三档。
+- **低频（偿还/调整时）**：`node scripts/quality-baseline.mjs update` 刷新静态台账（默认 dry-run，`--write` 才落盘）；覆盖率锁定线上调（实际值高出锁定线 >2pp 时手动上调，只升不降）；`check --allow-degrade` 豁免通道（须 commit message 注明原因）。
+- **定期审计**：Stryker 变异测试（各 app `pnpm mutation`，阶段性大改后手动跑；观察制不设阈值）；政策自检（每完成 5 个 spec 或 CLAUDE.md 大改时过一遍执行记录，连续两次零执行的条款提请退役）。
+
+**八项规则**（一行一条，关键参数 + RULES 对应节）：
+
+1. 单元测试：全中文测试名 + 注释三档（RULES §1）
+2. 覆盖率：三 app 四指标锁定只升不降，>2pp 手动上调（RULES §2）
+3. 圈复杂度 ≤15 / 模块 ≤400 行：新文件必须达标，存量走台账不得恶化（RULES §3）
+4. 依赖结构：depcruise 五组规则（跨 app 禁 import / web 分层 / server 分层 / 扩展运行时脚本黑名单 / 禁循环），违反直接修不豁免（RULES §4）
+5. Gherkin 验收：文档式中文场景 + 标注映射测试文件，样例 [main-pipeline.md](docs/quality/acceptance/main-pipeline.md)（RULES §5）
+6. QA 流程：`pnpm qa` 一条命令 + pre-commit 分工，puppeteer 冒烟不进 qa（RULES §6）
+7. 变异测试：Stryker 观察制，command runner 直跑 `node --test`（RULES §7）
+8. 测试轮次记录表：每个 spec 必含，至少一行 `pnpm qa` 结果（RULES §5）
+
+**各 app 测试方式**（runner + 覆盖率口径）：
+
+| App | 命令 | 口径 |
 |---|---|---|
-| subtitle-collector（已迁构建链） | `vite build` 冒烟 + `scripts/verify-*.mjs`（puppeteer mock，`--load-extension=apps/subtitle-collector/dist`）+ `node:test`（reporting.mjs 纯函数，import 源码不依赖 dist） | **豁免** Playwright E2E；新增 `vite build` 冒烟 |
-| collector-server（TS） | `node --test --import tsx` | — |
-| collector-web | 至少 `vite build` 冒烟 | — |
-| subtitle-extractor（旁挂工具） | 依赖缺失期间测试冻结（workspace 排除，见 [pnpm-workspace.yaml](pnpm-workspace.yaml)） | 豁免 turbo 编排 |
+| collector-server | `c8 node --test --import tsx "src/**/*.test.ts"` | c8 出覆盖率（node:test+tsx 直报覆盖率对个别文件行级丢失，见 [stats.test.ts](apps/collector-server/src/cli/commands/stats.test.ts) 头部排查记录）＋ `--check-coverage` 锁定阈值 |
+| collector-web | `vitest run --coverage`（vitest 3 + jsdom + @testing-library/react，2026-08-22 经用户确认引入） | vitest thresholds 锁定；`vite build` 归 build task |
+| subtitle-collector | `c8 node --test "test/*.test.mjs"`（import 源码不依赖 dist） | c8 包裹（`--experimental-test-coverage` 退役）＋锁定；扩展链路改动另跑 `pnpm test:ext` puppeteer 冒烟（不进 qa，涉 YouTube 加 `test:youtube`） |
 
-约定：
-- **验收章节位置灵活**（不必硬塞"第8章"），但每个 spec **必须含"测试轮次记录表"**（对齐全局 8.2）。
-- **测试编排**：`turbo run test` 一条命令跑全部 —— `turbo.json` 需补 `test` task，各 app 在 `package.json` 暴露 `test` 脚本。
-- **回归纪律**：bug 修复 commit 必须含对应「失败→通过」的测试用例。
+- subtitle-extractor：依赖缺失测试冻结，豁免全套质量规则（RULES §10 豁免登记表；workspace 排除见 [pnpm-workspace.yaml](pnpm-workspace.yaml)）。
+- `*.test.*` 测试文件对 complexity/max-lines 两条静态规则豁免（静态门只约束源码，测试质量由覆盖率管）。
+- 编排：`turbo run test` 一条命令跑全部；qa 门内用 `--force` 直跑防缓存误判。
+- 回归纪律：bug 修复 commit 必须含对应「失败→通过」的测试用例。
+- 新 app 准入清单：完成 = 接入四件套（ESLint 范围、测试 runner+覆盖率锁定、depcruise、Stryker）＋ 豁免表登记（RULES §9）。
 
 ## 4. 字幕 vs 弹幕（措辞红线）
 
 本项目是**字幕（subtitle）**系统，**不是弹幕（danmaku）**。文档与代码措辞严禁混用；遇到"弹幕"字样先确认指代。
 
-## 5. 文档跳转（沿用全局）
+## 5. 文档跳转
 
 所有与代码/文档相关的输出须带 `[file:行号](path#L行号)` 链接定位，禁止笼统描述。
 

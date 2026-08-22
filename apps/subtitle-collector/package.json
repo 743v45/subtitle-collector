@@ -7,7 +7,8 @@
     "build": "node scripts/generate-icons.mjs && vite build",
     "dev": "vite",
     "gen:icons": "node scripts/generate-icons.mjs",
-    "test": "node --test \"test/*.test.mjs\""
+    "test": "c8 --include '*.mjs' --include '*.js' --exclude 'test/**' --exclude 'postcss.config.js' --exclude 'scripts/**' --check-coverage --lines 99 --statements 99 --functions 99 --branches 98 node --test \"test/*.test.mjs\"",
+    "mutation": "stryker run"
   },
   "dependencies": {
     "@radix-ui/react-collapsible": "^1.1.15",
@@ -30,6 +31,7 @@
     "@types/react-dom": "^18.3.0",
     "@vitejs/plugin-react": "^4.3.0",
     "autoprefixer": "^10.4.0",
+    "c8": "^12.0.0",
     "postcss": "^8.4.0",
     "tailwindcss": "^3.4.0",
     "typescript": "^5.6.0",

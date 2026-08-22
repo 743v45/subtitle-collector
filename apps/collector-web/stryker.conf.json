@@ -1,0 +1,15 @@
+{
+  "testRunner": "vitest",
+  "mutate": [
+    "src/lib/**/*.{ts,tsx}",
+    "src/api.ts",
+    "src/videoFilterUrl.ts",
+    "src/taskHistoryFilterUrl.ts",
+    "src/router.ts",
+    "!src/**/*.test.{ts,tsx}"
+  ],
+  "plugins": ["./node_modules/@stryker-mutator/vitest-runner/dist/src/index.js"],
+  "concurrency": 2,
+  "reporters": ["clear-text", "progress"],
+  "timeoutMS": 60000
+}
