@@ -198,15 +198,18 @@ export async function expandUpperVideos(mid: string): Promise<{ total: number; i
 // body 统一 {vids, source}（2026-08-21 删除 bvids 旧键，两平台同格式）；web 入口只有 B 站按 UP 批量。
 // creatorUid（可选，2026-08-22）：批量入口已知的 UP 归属——任务行落冗余列，未入库/失败任务
 // 也能在历史页按 UP 筛（server 端靠它关掉「按 UP 找失败任务」的盲区）。
+// batchId（可选，2026-08-22）：重试并入原批次——新任务沿用原批次标签，聚焦视图/轮询/完成
+// 通知都能覆盖重试行（server 端非 UUID 400）。
 export async function createCollectTasksBatch(
   vids: string[],
   source: 'bilibili' | 'youtube',
   creatorUid?: string,
+  batchId?: string,
 ): Promise<{ created: number; skipped: number }> {
   const r = await fetch(`${BASE}/api/collect-tasks/batch`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ vids, source, ...(creatorUid ? { creator_uid: creatorUid } : {}) }),
+    body: JSON.stringify({ vids, source, ...(creatorUid ? { creator_uid: creatorUid } : {}), ...(batchId ? { batch_id: batchId } : {}) }),
   });
   return ensureOk(r, (j) => ({ created: j.created ?? 0, skipped: j.skipped ?? 0 }));
 }

@@ -353,6 +353,41 @@ test('POST /api/collect-tasks/batch：可选 creator_uid 落任务行（未入�
   } finally { ctx.cleanup(); }
 });
 
+// ── 批量端点 batch_id（2026-08-22）：重试并入原批次——聚焦视图/轮询/完成通知覆盖重试行 ──
+
+test('POST /api/collect-tasks/batch：可选 batch_id 透传到任务行（重试并入原批次）', async () => {
+  const ctx = await setup();
+  try {
+    const bid = 'b9edba8e-9917-4b8b-a3a5-32945e175a78';
+    const r = await httpReq(ctx.port, 'POST', '/api/collect-tasks/batch', {
+      vids: ['llwTBpPqo9A', 'gaDdrDdczO4'],
+      source: 'youtube',
+      batch_id: bid,
+    });
+    assert.equal(r.status, 200);
+    for (const t of r.json.tasks) {
+      assert.equal(t.batch_id, bid); // 重试重建的行落回原批次标签
+    }
+    // 不传 → server 自动生成新批（既有语义不变）
+    const r2 = await httpReq(ctx.port, 'POST', '/api/collect-tasks/batch', { vids: ['F3lL98Pj90o'], source: 'youtube' });
+    assert.match(r2.json.tasks[0].batch_id, /^[0-9a-f-]{36}$/);
+    assert.notEqual(r2.json.tasks[0].batch_id, bid);
+  } finally { ctx.cleanup(); }
+});
+
+test('POST /api/collect-tasks/batch：batch_id 非 UUID → 400（防 undefined 之类脏值落成幽灵批次）', async () => {
+  const ctx = await setup();
+  try {
+    const r = await httpReq(ctx.port, 'POST', '/api/collect-tasks/batch', { vids: ['gaDdrDdczO4'], source: 'youtube', batch_id: 'undefined' });
+    assert.equal(r.status, 400);
+    assert.equal(r.json.ok, false);
+    assert.match(r.json.error, /batch_id/);
+    // 库里没建任何任务（失败可见，不静默降级）
+    const row = ctx.db.prepare('SELECT COUNT(*) c FROM collect_tasks').get() as { c: number };
+    assert.equal(row.c, 0);
+  } finally { ctx.cleanup(); }
+});
+
 // ── 扩展版本过旧分类（2026-08-21）：未知 action 的失败回执 ≠ 普通采集失败 ──
 
 test('扩展回执 unknown action：任务 error 写「扩展版本过旧」（旧扩展形态：error 字符串）', async () => {

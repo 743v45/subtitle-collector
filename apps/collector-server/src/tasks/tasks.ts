@@ -182,12 +182,14 @@ export function createTasksBatch(
   source: 'bilibili' | 'youtube' = 'bilibili',
   creatorClientId: string | null = null,
   creatorUid: string | null = null, // UP 归属（B 站 mid / YouTube channelId；批量提交入口已知）
+  batchId?: string | null, // 显式批次标签：重试并入原批次（沿用原 UUID，不另开新批）
 ): { created: CollectTask[]; skipped: string[] } {
   const re = VID_RE[source];
   const urlFor = (vid: string) =>
     source === 'youtube' ? `https://www.youtube.com/watch?v=${vid}` : `https://www.bilibili.com/video/${vid}`;
-  // 同批共享一个 batch_id：纯展示侧聚合标签（UI 分组成一个批量任务），无批次实体/状态
-  const batchId = randomUUID();
+  // 同批共享一个 batch_id：纯展示侧聚合标签（UI 分组成一个批量任务），无批次实体/状态。
+  // 显式传入时沿用（重试并入原批次——聚焦视图/轮询/完成通知覆盖重试行）。
+  const batch = batchId ?? randomUUID();
   const created: CollectTask[] = [];
   const skipped: string[] = [];
   const seen = new Set<string>();
@@ -195,7 +197,7 @@ export function createTasksBatch(
     if (typeof vid !== 'string' || !re.test(vid) || seen.has(vid)) continue;
     seen.add(vid);
     if (findActiveTask(db, source, vid)) { skipped.push(vid); continue; }
-    created.push(createTask(db, { source, source_vid: vid, url: urlFor(vid) }, creatorClientId, batchId, creatorUid));
+    created.push(createTask(db, { source, source_vid: vid, url: urlFor(vid) }, creatorClientId, batch, creatorUid));
   }
   return { created, skipped };
 }

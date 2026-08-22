@@ -1,14 +1,15 @@
 // ── 采集任务卡片（2026-08-22 从 CollectPage 提取）──
 // 采集页（最近 30 条,轮询）与历史页（全量分页）共用:单任务卡 TaskRow / 批次聚合卡 BatchTaskCard。
 // 重试:failed/limited 行与批次卡「重试未成功」按钮 → onRetry(该组未终态外的可重试任务);
-// 上层用批量端点重建任务(终态允许重采,pending/dispatched 由 server 去重跳过)。
+// 上层经 resubmitTasks 重建任务(终态允许重采,pending/dispatched 由 server 去重跳过)。
 import { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { cn } from '@/lib/utils';
 import { navigate } from '../router';
-import { getVideo, getVersion } from '../api';
+import { createCollectTasksBatch, getVideo, getVersion } from '../api';
 import { useAsync } from '@/lib/useAsync';
+import { requestTaskNotifyPermission } from '@/lib/taskNotify';
 import type { SubtitleLine } from '@/components/SubtitleView';
 import { ChevronDown, ChevronUp, Eye, Focus, RotateCcw, Trash2 } from 'lucide-react';
 import type { CollectTask, VideoDetail } from '../types';
@@ -27,6 +28,25 @@ export const PLATFORM_LABEL: Record<string, string> = { bilibili: 'B站', youtub
 // 可重试判据:终态且产出不全（failed / limited——字幕受限 0 轨）。succeeded 的 no_subtitle 是真无字幕,不可重试。
 export function retryable(t: CollectTask): boolean {
   return t.status === 'failed' || t.status === 'limited';
+}
+
+// 重试提交（2026-08-22 抽取两页共用）：按 (source, batch_id) 分组重建——有原批次的并入原批次
+// （重试行落回原批 → 聚焦视图立刻可见、轮询/完成通知覆盖重试行，修「重试进新批、聚焦页永远静止」），
+// 无批次的同 source 合为一新批。终态允许重采；同视频已有在途任务由 server 去重 skipped；
+// 无错误弹窗：结果以列表为准（调用方 finally refresh/reload）。
+// 顺带在用户手势内请求通知授权——重试后跑完要能弹系统提醒。
+export async function resubmitTasks(list: CollectTask[]): Promise<void> {
+  const retryList = list.filter(retryable);
+  if (retryList.length === 0) return;
+  requestTaskNotifyPermission();
+  const groups = new Map<string, { source: 'bilibili' | 'youtube'; batchId: string | undefined; vids: string[] }>();
+  for (const t of retryList) {
+    const key = `${t.source}|${t.batch_id ?? ''}`;
+    const g = groups.get(key) ?? { source: t.source, batchId: t.batch_id ?? undefined, vids: [] };
+    g.vids.push(t.source_vid);
+    groups.set(key, g);
+  }
+  for (const g of groups.values()) await createCollectTasksBatch(g.vids, g.source, undefined, g.batchId);
 }
 
 export function formatTs(ts: number | null | undefined): string {

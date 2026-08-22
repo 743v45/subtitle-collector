@@ -7,9 +7,10 @@ import { toInt } from './filter.js';
 // ── 采集任务 HTTP 接口（手机/网页提交入口）──
 // POST   /api/collect-tasks        { text } → 从粘贴文本提取 URL → 建 pending 任务并尝试派发
 //                                  （同视频已有未终态任务则返回既有任务，created:false）
-// POST   /api/collect-tasks/batch  { vids[], source?, client_id?, creator_uid? } → 批量建任务
+// POST   /api/collect-tasks/batch  { vids[], source?, client_id?, creator_uid?, batch_id? } → 批量建任务
 //                                  （popup/web 按 UP 勾选批量采集）并尝试派发；creator_uid 可选，
-//                                  批量入口已知的 UP 归属（历史页按 UP 筛未入库任务用）
+//                                  批量入口已知的 UP 归属（历史页按 UP 筛未入库任务用）；batch_id 可选，
+//                                  重试并入原批次（非 UUID 400）
 // GET    /api/collect-tasks        任务列表:limit(默认20)或 page+page_size 分页 + 多维筛选
 //                                  (采集页 limit=30 最近列表;历史页 page/page_size+筛选全量分页)
 //                                  筛选参数:status(CSV) / source / batch_id / creator(UP名模糊) /
@@ -96,9 +97,18 @@ export async function handleTasksHttp(req: IncomingMessage, res: ServerResponse,
     // creator_uid（可选）：批量提交入口已知的 UP 归属（B 站 mid / YouTube channelId）——
     // 落任务行冗余列，未入库/失败任务也能在历史页按 UP 筛（不传则靠建任务查库/ingest 回填兜底）
     const creatorUid = typeof body?.creator_uid === 'string' && body.creator_uid ? body.creator_uid : null;
+    // batch_id（可选，2026-08-22）：重试并入原批次——新任务沿用原批次标签，聚焦视图/轮询/
+    // 完成通知都能覆盖重试行。非 UUID 格式 400（防 "undefined" 之类脏值静默落库成幽灵批次）。
+    const BATCH_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    const rawBatchId = body?.batch_id;
+    if (rawBatchId != null && !(typeof rawBatchId === 'string' && BATCH_ID_RE.test(rawBatchId))) {
+      json(res, 400, { ok: false, error: 'batch_id: 须为 UUID（原批次标签）或省略' });
+      return;
+    }
+    const batchId = typeof rawBatchId === 'string' ? rawBatchId : null;
     const label = source === 'youtube' ? 'YouTube 视频 ID（11 位）' : 'BV 号';
     if (!vids || vids.length === 0) { json(res, 400, { ok: false, error: `vids: string[] required（至少一个${label}）` }); return; }
-    const r = createTasksBatch(db, vids, source, clientId, creatorUid);
+    const r = createTasksBatch(db, vids, source, clientId, creatorUid, batchId);
     if (r.created.length > 0) kickTaskScheduler(); // 事件驱动：建任务立即尝试派发
     json(res, 200, { ok: true, created: r.created.length, skipped: r.skipped.length, tasks: r.created });
     return;

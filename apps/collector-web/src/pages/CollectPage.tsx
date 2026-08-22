@@ -9,7 +9,8 @@ import { useAsync } from '@/lib/useAsync';
 import { navigate } from '../router';
 import { Loader2, Search, Send } from 'lucide-react';
 import type { CollectTask, UpperVideoItem } from '../types';
-import { BatchTaskCard, TaskRow, retryable } from '@/components/TaskCards';
+import { BatchTaskCard, TaskRow, resubmitTasks } from '@/components/TaskCards';
+import { isActiveStatus, requestTaskNotifyPermission, sendTaskDoneNotification, terminalTransitions } from '@/lib/taskNotify';
 
 const REFRESH_MS = 2000;
 
@@ -125,6 +126,7 @@ function UpperBatchSection({ onTasksChanged }: { onTasksChanged: () => void }) {
 
   const submitBatch = async () => {
     if (selected.size === 0 || submitting) return;
+    requestTaskNotifyPermission(); // 用户手势内请求授权:批量跑完要能弹系统提醒
     if (selected.size > 50 && !window.confirm(`将创建 ${selected.size} 个采集任务（串行执行，约需 ${Math.ceil((selected.size * 8) / 60)} 分钟），确认？`)) return;
     setSubmitting(true);
     setSubmitMsg(null);
@@ -296,6 +298,8 @@ export function CollectPage() {
   // 在途待删任务 id:乐观移除后、DELETE 往返期间,轮询响应带回的这些 id 不写回列表
   // (否则批次卡以半删状态随轮询复活闪烁);删完或失败收尾时移除登记并 refresh 对齐真值。
   const deletingRef = useRef(new Set<number>());
+  // 上一轮拉回的任务列表:完成检测 diff 基准(被删 id 不出现在 next 即出局,不误报完成)
+  const tasksRef = useRef<CollectTask[]>([]);
 
   // 摘要行刷新信号：挂载 1 次 + succeeded 数变化（新任务完成）时 +1
   const [statsTick, setStatsTick] = useState(0);
@@ -312,7 +316,13 @@ export function CollectPage() {
     listCollectTasks(30)
       .then(({ items }) => {
         if (!aliveRef.current) return;
-        setTasks(items.filter((t) => !deletingRef.current.has(t.id)));
+        const next = items.filter((t) => !deletingRef.current.has(t.id));
+        // 完成检测:与上一轮 diff 出「进行中→终态」转移且已无进行中 → 系统通知
+        // (提交后切走标签页,跑完即被提醒;Notification 不可用/未授权时静默跳过)
+        const finished = terminalTransitions(tasksRef.current, next);
+        if (finished.length > 0 && !next.some((t) => isActiveStatus(t.status))) sendTaskDoneNotification(finished);
+        tasksRef.current = next;
+        setTasks(next);
       })
       .catch(() => { /* 轮询失败静默,下次再试 */ });
   };
@@ -326,6 +336,7 @@ export function CollectPage() {
 
   const submit = async () => {
     if (!text.trim() || submitting) return;
+    requestTaskNotifyPermission(); // 用户手势内请求授权:提交后跑完要能弹系统提醒
     setSubmitting(true);
     setErr(null);
     try {
@@ -370,19 +381,11 @@ export function CollectPage() {
     refresh();
   };
 
-  // 重试:failed/limited 任务重建——复用批量端点(终态允许重采;同视频已有在途任务由 server 去重
-  // skipped)。按 source 分组各发一次;新任务(新批次)随 refresh 出现。无错误弹窗:结果以列表为准。
+  // 重试:failed/limited 任务重建——resubmitTasks 按 (source, batch_id) 分组,并入原批次
+  // (同视频已有在途任务由 server 去重 skipped)。无错误弹窗:结果以列表为准。
   const retry = async (list: CollectTask[]) => {
-    const bySource = new Map<'bilibili' | 'youtube', string[]>();
-    for (const t of list) {
-      if (!retryable(t)) continue;
-      const arr = bySource.get(t.source) ?? [];
-      arr.push(t.source_vid);
-      bySource.set(t.source, arr);
-    }
-    if (bySource.size === 0) return;
     try {
-      for (const [source, vids] of bySource) await createCollectTasksBatch(vids, source);
+      await resubmitTasks(list);
     } finally {
       refresh();
     }

@@ -209,6 +209,21 @@ test('createTasksBatch：source=youtube（11 位 vid 校验 + watch URL + 独立
   } finally { cleanup(); }
 });
 
+test('createTasksBatch：显式 batchId 并入原批次（重试重建沿用原批次标签，不另开新批）', () => {
+  const { db, cleanup } = setupDb();
+  try {
+    const bid = 'b9edba8e-9917-4b8b-a3a5-32945e175a78';
+    const r = createTasksBatch(db, ['llwTBpPqo9A'], 'youtube', null, null, bid);
+    assert.equal(r.created.length, 1);
+    assert.equal(r.created[0].batch_id, bid); // 重试行落回原批次 → 聚焦视图/轮询/完成通知都能覆盖
+    // 不传 batchId 仍自动生成新批（既有语义不变）
+    const r2 = createTasksBatch(db, ['gaDdrDdczO4'], 'youtube');
+    assert.equal(r2.created.length, 1);
+    assert.notEqual(r2.created[0].batch_id, bid);
+    assert.match(r2.created[0].batch_id!, /^[0-9a-f-]{36}$/);
+  } finally { cleanup(); }
+});
+
 // ── expandUpperVideos：经扩展 WS 代理拉 UP 全量列表 + 标注已采 ──
 
 // fake requestCommand：模拟真实扩展契约（background.js list-upper-videos action 读

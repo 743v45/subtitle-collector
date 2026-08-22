@@ -4,9 +4,11 @@
 // （#/history?creator=某UP&range=7d&status=failed&page=3——刷新/分享还原视图）。
 // UP 筛选双来源：任务行 creator_uid 冗余列（批量提交/重采/ingest 回填,未入库任务也命中）+
 // 入库后视频归属;q 的标题段仅覆盖已入库任务,vid 段（搜 BV 号）覆盖全部任务。
-// 有进行中任务时 2s 轮询同步状态（同采集页节拍,全终态即停）,重试提交后无需手动刷新。
+// 有进行中任务时 2s 轮询同步状态（同采集页节拍,全终态即停）,重试提交后无需手动刷新;
+// 重试并入原批次（resubmitTasks）→ 聚焦视图立刻看到重试行,轮询随之启动。
+// 轮询间 diff 出「进行中→终态」转移且全终态时,发浏览器系统通知（切走标签页也能被提醒）。
 import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { createCollectTasksBatch, deleteCollectTask, listCollectTasksPage, type TaskHistoryFilter } from '../api';
+import { deleteCollectTask, listCollectTasksPage, type TaskHistoryFilter } from '../api';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
@@ -16,7 +18,8 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { cn } from '@/lib/utils';
 import { ChevronLeft, ChevronRight, RotateCcw, X } from 'lucide-react';
 import { useRoute, useQueryUpdater, navigate } from '../router';
-import { BatchTaskCard, TaskRow, retryable } from '@/components/TaskCards';
+import { BatchTaskCard, TaskRow, retryable, resubmitTasks } from '@/components/TaskCards';
+import { isActiveStatus, sendTaskDoneNotification, terminalTransitions } from '@/lib/taskNotify';
 import { taskHistoryFromQuery, isMidLike } from '../taskHistoryFilterUrl';
 import type { CollectTask, CollectTaskStatus } from '../types';
 
@@ -92,6 +95,18 @@ export function TasksHistoryPage() {
   const aliveRef = useRef(true);
   // 在途待删(删除乐观移除期间防刷新写回,同采集页语义;轮询带回的这些 id 同样不写回)
   const deletingRef = useRef(new Set<number>());
+  // 上一轮拉回的任务列表(完成检测的 diff 基准;只在本函数族更新,乐观删除不碰——
+  // 被删 id 不出现在 next 即出局,不影响转移判定)
+  const tasksRef = useRef<CollectTask[]>([]);
+
+  // 拉回数据统一落点:过滤在途删除 → 与上一轮 diff → 有终态转移且已无进行中 → 系统通知
+  const applyFetched = (items: CollectTask[]) => {
+    const next = items.filter((x) => !deletingRef.current.has(x.id));
+    const finished = terminalTransitions(tasksRef.current, next);
+    if (finished.length > 0 && !next.some((x) => isActiveStatus(x.status))) sendTaskDoneNotification(finished);
+    tasksRef.current = next;
+    setTasks(next);
+  };
 
   const queryKey = route.query.toString();
   useEffect(() => {
@@ -102,7 +117,7 @@ export function TasksHistoryPage() {
       .then(({ total: t, items }) => {
         if (!aliveRef.current) return;
         setTotal(t);
-        setTasks(items.filter((x) => !deletingRef.current.has(x.id)));
+        applyFetched(items);
       })
       .catch((e: any) => { if (aliveRef.current) setErr(String(e?.message ?? e)); })
       .finally(() => { if (aliveRef.current) setLoading(false); });
@@ -130,17 +145,10 @@ export function TasksHistoryPage() {
     void reload();
   };
 
+  // 重试:经 resubmitTasks 按 (source, batch_id) 分组重建——并入原批次,聚焦视图立刻可见
   const retry = async (list: CollectTask[]) => {
-    const bySource = new Map<'bilibili' | 'youtube', string[]>();
-    for (const t of list) {
-      if (!retryable(t)) continue;
-      const arr = bySource.get(t.source) ?? [];
-      arr.push(t.source_vid);
-      bySource.set(t.source, arr);
-    }
-    if (bySource.size === 0) return;
     try {
-      for (const [source, vids] of bySource) await createCollectTasksBatch(vids, source);
+      await resubmitTasks(list);
     } finally { void reload(); }
   };
 
@@ -150,7 +158,7 @@ export function TasksHistoryPage() {
       .then(({ total: t, items }) => {
         if (!aliveRef.current) return;
         setTotal(t);
-        setTasks(items.filter((x) => !deletingRef.current.has(x.id)));
+        applyFetched(items);
       })
       .catch(() => { /* 静默 */ });
   };
