@@ -1,16 +1,17 @@
 import { type IncomingMessage, type ServerResponse } from 'node:http';
 import type Database from 'better-sqlite3';
-import { extractVideoUrl, expandShortLink, parseVideoUrl, createTask, createTasksBatch, findActiveTask, expandUpperVideos, getTask, deleteTask, listTasks, kickTaskScheduler, type FetchLike, type TaskListFilter, type TaskStatus } from '../tasks/tasks.js';
+import { extractVideoUrl, expandShortLink, parseVideoUrl, createTask, createTasksBatch, findActiveTask, expandUpperVideos, getTask, deleteTask, retryTask, listTasks, kickTaskScheduler, type FetchLike, type TaskListFilter, type TaskStatus } from '../tasks/tasks.js';
 import { json, readJsonBody } from './http-util.js';
 import { toInt } from './filter.js';
 
 // ── 采集任务 HTTP 接口（手机/网页提交入口）──
 // POST   /api/collect-tasks        { text } → 从粘贴文本提取 URL → 建 pending 任务并尝试派发
 //                                  （同视频已有未终态任务则返回既有任务，created:false）
-// POST   /api/collect-tasks/batch  { vids[], source?, client_id?, creator_uid?, batch_id? } → 批量建任务
+// POST   /api/collect-tasks/batch  { vids[], source?, client_id?, creator_uid? } → 批量建任务
 //                                  （popup/web 按 UP 勾选批量采集）并尝试派发；creator_uid 可选，
-//                                  批量入口已知的 UP 归属（历史页按 UP 筛未入库任务用）；batch_id 可选，
-//                                  重试并入原批次（非 UUID 400）
+//                                  批量入口已知的 UP 归属（历史页按 UP 筛未入库任务用）
+// POST   /api/collect-tasks/retry  { ids[] } → failed/limited 任务行原地重置回 pending 重跑
+//                                  （重试不建新行,批次视图/进度随原行更新;调用侧 kick 派发）
 // GET    /api/collect-tasks        任务列表:limit(默认20)或 page+page_size 分页 + 多维筛选
 //                                  (采集页 limit=30 最近列表;历史页 page/page_size+筛选全量分页)
 //                                  筛选参数:status(CSV) / source / batch_id / batch(batch|single 批量/单点档) /
@@ -99,20 +100,28 @@ export async function handleTasksHttp(req: IncomingMessage, res: ServerResponse,
     // creator_uid（可选）：批量提交入口已知的 UP 归属（B 站 mid / YouTube channelId）——
     // 落任务行冗余列，未入库/失败任务也能在历史页按 UP 筛（不传则靠建任务查库/ingest 回填兜底）
     const creatorUid = typeof body?.creator_uid === 'string' && body.creator_uid ? body.creator_uid : null;
-    // batch_id（可选，2026-08-22）：重试并入原批次——新任务沿用原批次标签，聚焦视图/轮询/
-    // 完成通知都能覆盖重试行。非 UUID 格式 400（防 "undefined" 之类脏值静默落库成幽灵批次）。
-    const BATCH_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-    const rawBatchId = body?.batch_id;
-    if (rawBatchId != null && !(typeof rawBatchId === 'string' && BATCH_ID_RE.test(rawBatchId))) {
-      json(res, 400, { ok: false, error: 'batch_id: 须为 UUID（原批次标签）或省略' });
-      return;
-    }
-    const batchId = typeof rawBatchId === 'string' ? rawBatchId : null;
     const label = source === 'youtube' ? 'YouTube 视频 ID（11 位）' : 'BV 号';
     if (!vids || vids.length === 0) { json(res, 400, { ok: false, error: `vids: string[] required（至少一个${label}）` }); return; }
-    const r = createTasksBatch(db, vids, source, clientId, creatorUid, batchId);
+    const r = createTasksBatch(db, vids, source, clientId, creatorUid);
     if (r.created.length > 0) kickTaskScheduler(); // 事件驱动：建任务立即尝试派发
     json(res, 200, { ok: true, created: r.created.length, skipped: r.skipped.length, tasks: r.created });
+    return;
+  }
+
+  // 重试（2026-08-22 原地重置,取代「重试并入原批次」建新行方案）：failed/limited 行重置回 pending
+  // 原行重跑——批次卡/聚焦视图随原行实时更新（新行方案旧失败行永不更新,批次徽章停在「失败」）。
+  // 路由在 /batch 之后、数字 id 之前（对齐 /batch 注释）。
+  if (pathname === '/api/collect-tasks/retry') {
+    if (req.method !== 'POST') { json(res, 405, { ok: false, error: 'method not allowed' }); return; }
+    const body = await readJsonBody(req);
+    // 显式 number[]（body 为 any,三元不标注会推成 any[]|never[] 联合,泛型回调推断失败 TS7006）
+    const ids: number[] = Array.isArray(body?.ids) ? body.ids.map(Number).filter(Number.isInteger) : [];
+    if (ids.length === 0) { json(res, 400, { ok: false, error: 'ids: number[] required（任务 id 至少一个）' }); return; }
+    // 非可重试行（不存在/succeeded/在途）逐个静默跳过——批量重试混入在途行是正常操作不报错;
+    // 成功重置的任务行原样返回（调用侧以列表为准,返回值主要用于测试断言）
+    const tasks = ids.map((id) => retryTask(db, id)).filter((t) => t != null);
+    if (tasks.length > 0) kickTaskScheduler(); // 事件驱动：重置回 pending 立即尝试派发
+    json(res, 200, { ok: true, retried: tasks.length, tasks });
     return;
   }
 

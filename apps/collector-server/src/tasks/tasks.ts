@@ -182,14 +182,12 @@ export function createTasksBatch(
   source: 'bilibili' | 'youtube' = 'bilibili',
   creatorClientId: string | null = null,
   creatorUid: string | null = null, // UP 归属（B 站 mid / YouTube channelId；批量提交入口已知）
-  batchId?: string | null, // 显式批次标签：重试并入原批次（沿用原 UUID，不另开新批）
 ): { created: CollectTask[]; skipped: string[] } {
   const re = VID_RE[source];
   const urlFor = (vid: string) =>
     source === 'youtube' ? `https://www.youtube.com/watch?v=${vid}` : `https://www.bilibili.com/video/${vid}`;
   // 同批共享一个 batch_id：纯展示侧聚合标签（UI 分组成一个批量任务），无批次实体/状态。
-  // 显式传入时沿用（重试并入原批次——聚焦视图/轮询/完成通知覆盖重试行）。
-  const batch = batchId ?? randomUUID();
+  const batch = randomUUID();
   const created: CollectTask[] = [];
   const skipped: string[] = [];
   const seen = new Set<string>();
@@ -326,6 +324,21 @@ export function deleteTask(db: Database.Database, id: number): boolean {
   const deleted = db.prepare('DELETE FROM collect_tasks WHERE id = ?').run(id).changes > 0;
   if (deleted) broadcastEvent({ type: 'task-delete', taskId: id });
   return deleted;
+}
+
+// ── 重试（2026-08-22 原地重置，取代「重试建新任务并入原批」方案）──
+// failed/limited 任务行重置回 pending 重跑：不建新行——原任务行状态直接 failed→pending→succeeded,
+// 批次聚合卡/聚焦视图/进度徽章随该行实时更新（新建行方案下旧失败行永不更新,批次徽章永远停在
+// 「失败」,聚焦视图同一视频出现 failed+succeeded 两行）。仅终态未成功可重置：succeeded 重采走
+// 建新任务（保留成功历史）;pending/dispatched 在途不可重入。error/result/finished_at/client_id
+// 一并清空回到全新 pending 态（旧执行结果不作残留）。
+export function retryTask(db: Database.Database, id: number): CollectTask | null {
+  const hit = db.prepare(
+    "UPDATE collect_tasks SET status = 'pending', error = NULL, result = NULL, finished_at = NULL, client_id = NULL WHERE id = ? AND status IN ('failed', 'limited')",
+  ).run(id);
+  if (hit.changes === 0) return null; // 不存在 / 非可重试状态：静默跳过（批量重试里混入在途行不报错）
+  pushTask(db, id);
+  return getTask(db, id);
 }
 
 // 任务列表筛选（2026-08-22 历史页多维查询）。UP 归属双来源：任务行冗余列 t.creator_uid

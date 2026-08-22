@@ -5,7 +5,7 @@
 // UP 筛选双来源：任务行 creator_uid 冗余列（批量提交/重采/ingest 回填,未入库任务也命中）+
 // 入库后视频归属;q 的标题段仅覆盖已入库任务,vid 段（搜 BV 号）覆盖全部任务。
 // 有进行中任务时 2s 轮询同步状态（同采集页节拍,全终态即停）,重试提交后无需手动刷新;
-// 重试并入原批次（resubmitTasks）→ 聚焦视图立刻看到重试行,轮询随之启动。
+// 重试原地重置原任务行（resubmitTasks）→ 聚焦视图里该行立刻回排队中,轮询随之启动。
 // 轮询间 diff 出「进行中→终态」转移且全终态时,发浏览器系统通知（切走标签页也能被提醒）。
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { deleteCollectTask, listCollectTasksPage, type TaskHistoryFilter } from '../api';
@@ -146,7 +146,7 @@ export function TasksHistoryPage() {
     void reload();
   };
 
-  // 重试:经 resubmitTasks 按 (source, batch_id) 分组重建——并入原批次,聚焦视图立刻可见
+  // 重试:经 resubmitTasks 原地重置原任务行——聚焦视图里该行立刻回排队中,轮询随之启动
   const retry = async (list: CollectTask[]) => {
     try {
       await resubmitTasks(list);

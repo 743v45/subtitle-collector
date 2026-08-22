@@ -381,8 +381,8 @@ export function CollectPage() {
     refresh();
   };
 
-  // 重试:failed/limited 任务重建——resubmitTasks 按 (source, batch_id) 分组,并入原批次
-  // (同视频已有在途任务由 server 去重 skipped)。无错误弹窗:结果以列表为准。
+  // 重试:failed/limited 任务原地重置——resubmitTasks 经 retry 端点把原行重置回 pending 重跑
+  // (不建新行,批次卡/进度随原行更新;在途行 server 跳过)。无错误弹窗:结果以列表为准。
   const retry = async (list: CollectTask[]) => {
     try {
       await resubmitTasks(list);

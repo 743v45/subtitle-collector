@@ -7,7 +7,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { cn } from '@/lib/utils';
 import { navigate } from '../router';
-import { createCollectTasksBatch, getVideo, getVersion } from '../api';
+import { getVideo, getVersion, retryCollectTasks } from '../api';
 import { useAsync } from '@/lib/useAsync';
 import { requestTaskNotifyPermission } from '@/lib/taskNotify';
 import type { SubtitleLine } from '@/components/SubtitleView';
@@ -30,23 +30,16 @@ export function retryable(t: CollectTask): boolean {
   return t.status === 'failed' || t.status === 'limited';
 }
 
-// 重试提交（2026-08-22 抽取两页共用）：按 (source, batch_id) 分组重建——有原批次的并入原批次
-// （重试行落回原批 → 聚焦视图立刻可见、轮询/完成通知覆盖重试行，修「重试进新批、聚焦页永远静止」），
-// 无批次的同 source 合为一新批。终态允许重采；同视频已有在途任务由 server 去重 skipped；
+// 重试提交（2026-08-22 抽取两页共用；同日改为原地重置）：failed/limited 行经 retry 端点重置回
+// pending 原行重跑——不建新行，批次卡/聚焦视图/进度徽章随原行实时更新（旧方案新建行挂原批，
+// 原失败行永不更新，批次徽章永远停在「失败」）。在途/succeeded 行 server 端逐个跳过。
 // 无错误弹窗：结果以列表为准（调用方 finally refresh/reload）。
 // 顺带在用户手势内请求通知授权——重试后跑完要能弹系统提醒。
 export async function resubmitTasks(list: CollectTask[]): Promise<void> {
-  const retryList = list.filter(retryable);
-  if (retryList.length === 0) return;
+  const ids = list.filter(retryable).map((t) => t.id);
+  if (ids.length === 0) return;
   requestTaskNotifyPermission();
-  const groups = new Map<string, { source: 'bilibili' | 'youtube'; batchId: string | undefined; vids: string[] }>();
-  for (const t of retryList) {
-    const key = `${t.source}|${t.batch_id ?? ''}`;
-    const g = groups.get(key) ?? { source: t.source, batchId: t.batch_id ?? undefined, vids: [] };
-    g.vids.push(t.source_vid);
-    groups.set(key, g);
-  }
-  for (const g of groups.values()) await createCollectTasksBatch(g.vids, g.source, undefined, g.batchId);
+  await retryCollectTasks(ids);
 }
 
 export function formatTs(ts: number | null | undefined): string {

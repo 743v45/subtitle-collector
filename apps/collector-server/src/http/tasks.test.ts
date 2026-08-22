@@ -353,38 +353,63 @@ test('POST /api/collect-tasks/batch：可选 creator_uid 落任务行（未入�
   } finally { ctx.cleanup(); }
 });
 
-// ── 批量端点 batch_id（2026-08-22）：重试并入原批次——聚焦视图/轮询/完成通知覆盖重试行 ──
+// ── 重试端点（2026-08-22 原地重置）：failed/limited 行重置回 pending 原行重跑 ──
+// 取代「重试并入原批次」建新行方案：新行方案下原失败行永不更新,批次徽章停在「失败」,
+// 聚焦视图同一视频出现 failed+succeeded 双行。回归锚点：批次成员数不随重试膨胀。
 
-test('POST /api/collect-tasks/batch：可选 batch_id 透传到任务行（重试并入原批次）', async () => {
+test('POST /api/collect-tasks/retry：failed/limited 原行重置回 pending（id/batch 不变,批次不膨胀）', async () => {
   const ctx = await setup();
   try {
-    const bid = 'b9edba8e-9917-4b8b-a3a5-32945e175a78';
-    const r = await httpReq(ctx.port, 'POST', '/api/collect-tasks/batch', {
+    const batch = await httpReq(ctx.port, 'POST', '/api/collect-tasks/batch', {
       vids: ['llwTBpPqo9A', 'gaDdrDdczO4'],
       source: 'youtube',
-      batch_id: bid,
     });
+    assert.equal(batch.status, 200);
+    const bid = batch.json.tasks[0].batch_id;
+    const ids = batch.json.tasks.map((t: any) => t.id);
+    ctx.db.prepare("UPDATE collect_tasks SET status = 'failed', error = 'YouTube 采集超时（45s）', finished_at = 1 WHERE id = ?").run(ids[0]);
+    ctx.db.prepare("UPDATE collect_tasks SET status = 'limited', result = '{}', finished_at = 2 WHERE id = ?").run(ids[1]);
+
+    const r = await httpReq(ctx.port, 'POST', '/api/collect-tasks/retry', { ids });
     assert.equal(r.status, 200);
+    assert.equal(r.json.retried, 2);
+    // 原行原地重置：返回行 id 与原任务相同（不建新行）,pending 态旧结果清空
+    assert.deepEqual(r.json.tasks.map((t: any) => t.id).sort(), [...ids].sort());
     for (const t of r.json.tasks) {
-      assert.equal(t.batch_id, bid); // 重试重建的行落回原批次标签
+      assert.equal(t.status, 'pending');
+      assert.equal(t.batch_id, bid);
+      assert.equal(t.error, null);
+      assert.equal(t.finished_at, null);
     }
-    // 不传 → server 自动生成新批（既有语义不变）
-    const r2 = await httpReq(ctx.port, 'POST', '/api/collect-tasks/batch', { vids: ['F3lL98Pj90o'], source: 'youtube' });
-    assert.match(r2.json.tasks[0].batch_id, /^[0-9a-f-]{36}$/);
-    assert.notEqual(r2.json.tasks[0].batch_id, bid);
+    // 聚焦视图：批次成员数不变（旧「并入原批」方案重试一次 +1 行,进度分母虚增）
+    const list = await httpReq(ctx.port, 'GET', `/api/collect-tasks?page=1&page_size=50&batch_id=${bid}`);
+    assert.equal(list.json.total, 2);
   } finally { ctx.cleanup(); }
 });
 
-test('POST /api/collect-tasks/batch：batch_id 非 UUID → 400（防 undefined 之类脏值落成幽灵批次）', async () => {
+test('POST /api/collect-tasks/retry：ids 缺失/空 → 400;混入在途/succeeded/未知行静默跳过', async () => {
   const ctx = await setup();
   try {
-    const r = await httpReq(ctx.port, 'POST', '/api/collect-tasks/batch', { vids: ['gaDdrDdczO4'], source: 'youtube', batch_id: 'undefined' });
-    assert.equal(r.status, 400);
-    assert.equal(r.json.ok, false);
-    assert.match(r.json.error, /batch_id/);
-    // 库里没建任何任务（失败可见，不静默降级）
-    const row = ctx.db.prepare('SELECT COUNT(*) c FROM collect_tasks').get() as { c: number };
-    assert.equal(row.c, 0);
+    const r0 = await httpReq(ctx.port, 'POST', '/api/collect-tasks/retry', {});
+    assert.equal(r0.status, 400);
+    assert.match(r0.json.error, /ids/);
+    const r0b = await httpReq(ctx.port, 'POST', '/api/collect-tasks/retry', { ids: [] });
+    assert.equal(r0b.status, 400);
+
+    const batch = await httpReq(ctx.port, 'POST', '/api/collect-tasks/batch', {
+      vids: ['llwTBpPqo9A', 'gaDdrDdczO4', 'F3lL98Pj90o'],
+      source: 'youtube',
+    });
+    const ids = batch.json.tasks.map((t: any) => t.id);
+    ctx.db.prepare("UPDATE collect_tasks SET status = 'failed', finished_at = 1 WHERE id = ?").run(ids[0]); // 可重试
+    ctx.db.prepare("UPDATE collect_tasks SET status = 'succeeded', finished_at = 1 WHERE id = ?").run(ids[1]); // 成功不可重采
+    // ids[2] 保持 pending（在途不可重入）
+    const r = await httpReq(ctx.port, 'POST', '/api/collect-tasks/retry', { ids: [...ids, 99999] });
+    assert.equal(r.status, 200);
+    assert.equal(r.json.retried, 1); // 只有 failed 那条被重置
+    assert.equal(r.json.tasks[0].id, ids[0]);
+    const rows = ctx.db.prepare('SELECT id, status FROM collect_tasks ORDER BY id').all() as Array<{ id: number; status: string }>;
+    assert.deepEqual(rows.map((x) => x.status), ['pending', 'succeeded', 'pending']); // 其余行原样
   } finally { ctx.cleanup(); }
 });
 

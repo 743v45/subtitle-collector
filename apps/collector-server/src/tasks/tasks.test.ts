@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import type Database from 'better-sqlite3';
 import { openDb, migrate } from '../db/migrate.js';
 import { ingestVideo } from '../db/ingest.js';
-import { extractVideoUrl, expandShortLink, parseVideoUrl, createTask, createTasksBatch, findActiveTask, pickClientForTask, commandTimeoutMs, expandUpperVideos, getTask, listTasks, resetDispatched, type FetchLike, type UpperExpandDeps } from './tasks.js';
+import { extractVideoUrl, expandShortLink, parseVideoUrl, createTask, createTasksBatch, findActiveTask, pickClientForTask, commandTimeoutMs, expandUpperVideos, getTask, retryTask, listTasks, resetDispatched, type FetchLike, type UpperExpandDeps } from './tasks.js';
 
 function setupDb(): { db: Database.Database; cleanup: () => void } {
   const dir = mkdtempSync(join(tmpdir(), 'collector-tasks-'));
@@ -209,18 +209,49 @@ test('createTasksBatch：source=youtube（11 位 vid 校验 + watch URL + 独立
   } finally { cleanup(); }
 });
 
-test('createTasksBatch：显式 batchId 并入原批次（重试重建沿用原批次标签，不另开新批）', () => {
+test('retryTask：failed/limited 原地重置回 pending（行 id/batch 不变,旧执行结果清空）', () => {
   const { db, cleanup } = setupDb();
   try {
-    const bid = 'b9edba8e-9917-4b8b-a3a5-32945e175a78';
-    const r = createTasksBatch(db, ['llwTBpPqo9A'], 'youtube', null, null, bid);
-    assert.equal(r.created.length, 1);
-    assert.equal(r.created[0].batch_id, bid); // 重试行落回原批次 → 聚焦视图/轮询/完成通知都能覆盖
-    // 不传 batchId 仍自动生成新批（既有语义不变）
-    const r2 = createTasksBatch(db, ['gaDdrDdczO4'], 'youtube');
-    assert.equal(r2.created.length, 1);
-    assert.notEqual(r2.created[0].batch_id, bid);
-    assert.match(r2.created[0].batch_id!, /^[0-9a-f-]{36}$/);
+    // 批量建两个任务 → 手工落成 failed/limited 终态（带 error/result/finished_at 残留）
+    const r = createTasksBatch(db, ['llwTBpPqo9A', 'gaDdrDdczO4'], 'youtube');
+    const [t1, t2] = r.created;
+    db.prepare("UPDATE collect_tasks SET status = 'failed', error = 'YouTube 采集超时（45s）', finished_at = 123 WHERE id = ?").run(t1.id);
+    db.prepare("UPDATE collect_tasks SET status = 'limited', result = '{\"reason\":\"pot_limited\"}', finished_at = 456 WHERE id = ?").run(t2.id);
+
+    // 重试：原行重置回 pending——行 id 不变（批次卡/聚焦视图随该行更新,不出现 failed+succeeded 双行）
+    const rt = retryTask(db, t1.id);
+    assert.equal(rt!.id, t1.id);
+    assert.equal(rt!.status, 'pending');
+    assert.equal(rt!.batch_id, t1.batch_id); // batch_id 保留原值（重试不换批不换行）
+    assert.equal(rt!.error, null);       // 旧失败原因清空
+    assert.equal(rt!.finished_at, null); // 旧完成时间清空
+    const rl = retryTask(db, t2.id);
+    assert.equal(rl!.status, 'pending');
+    assert.equal(rl!.result, null);      // 旧受限回执清空
+
+    // 聚焦视图按原批次筛：成员数不变（重试不膨胀批次——旧「并入原批」方案会 +1 行）
+    const focus = listTasks(db, 50, 0, { batchId: t1.batch_id! });
+    assert.equal(focus.items.length, 2);
+    assert.ok(focus.items.every((t) => t.status === 'pending'));
+  } finally { cleanup(); }
+});
+
+test('retryTask：succeeded/pending/dispatched/不存在 均拒绝（返回 null,行不动）', () => {
+  const { db, cleanup } = setupDb();
+  try {
+    const r = createTasksBatch(db, ['llwTBpPqo9A', 'gaDdrDdczO4', 'F3lL98Pj90o'], 'youtube');
+    const [s, p, d] = r.created;
+    db.prepare("UPDATE collect_tasks SET status = 'succeeded', result = '{}' , finished_at = 1 WHERE id = ?").run(s.id);
+    db.prepare("UPDATE collect_tasks SET status = 'dispatched', client_id = 'ext-A' WHERE id = ?").run(d.id);
+    // succeeded 重采走建新任务（保留成功历史）;pending/dispatched 在途不可重入;未知 id 不存在
+    assert.equal(retryTask(db, s.id), null);
+    assert.equal(retryTask(db, p.id), null);
+    assert.equal(retryTask(db, d.id), null);
+    assert.equal(retryTask(db, 99999), null);
+    for (const t of [s, p, d]) {
+      const row = getTask(db, t.id)!;
+      assert.equal(row.status, t.id === s.id ? 'succeeded' : t.id === d.id ? 'dispatched' : 'pending');
+    }
   } finally { cleanup(); }
 });
 
