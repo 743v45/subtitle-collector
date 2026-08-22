@@ -98,6 +98,16 @@ export class ServerClient {
     return this.requestJson('POST', '/api/tags/remove', body);
   }
 
+  // 批量建采集任务：POST /api/collect-tasks/batch（任务系统调度执行,扩展串行;
+  // creator_uid 可选——合集/UP 批量的归属,未入库失败任务也能按 UP 筛）。
+  async createCollectTasksBatch(body: {
+    vids: string[];
+    source: 'bilibili' | 'youtube';
+    creator_uid?: string | null;
+  }): Promise<unknown> {
+    return this.requestJson('POST', '/api/collect-tasks/batch', body);
+  }
+
   // 统一请求：fetch + JSON 解析 + 错误归一化。
   // 连不上 → ServerUnreachableError；非 2xx → ServerResponseError；2xx → 解析后的 JSON（无 body 时返回 null）。
   private async requestJson(method: 'GET' | 'POST' | 'PATCH' | 'DELETE', path: string, body?: Record<string, unknown>): Promise<unknown> {

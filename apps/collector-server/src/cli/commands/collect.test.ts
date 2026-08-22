@@ -611,3 +611,91 @@ test('collectYtVideosRun：传输层失败（server 不可达）→ 整轮抛出
     /network down/,
   );
 });
+
+// ── collect season（2026-08-22）：合集全量字幕批量采集 ──
+import { parseSeasonArg, seasonIdFromDb, collectSeason, type SeasonCollectClient } from './collect.js';
+
+test('parseSeasonArg：BV 号 / 合集 id / 合集链接三形态', () => {
+  assert.deepEqual(parseSeasonArg('BV1QYo6B3EdV'), { seasonId: null, bvid: 'BV1QYo6B3EdV' });
+  assert.deepEqual(parseSeasonArg('7818900'), { seasonId: 7818900, bvid: null });
+  assert.deepEqual(parseSeasonArg('https://space.bilibili.com/123/channel/collectiondetail?sid=7818900'), { seasonId: 7818900, bvid: null });
+  assert.deepEqual(parseSeasonArg('https://example.com/x?season_id=42'), { seasonId: 42, bvid: null });
+  assert.deepEqual(parseSeasonArg('乱写'), { seasonId: null, bvid: null });
+});
+
+function seasonDb() {
+  const db = new Database(':memory:');
+  db.exec(`CREATE TABLE videos (id INTEGER PRIMARY KEY, source TEXT, source_vid TEXT, title TEXT, extra TEXT, first_seen_at INTEGER, UNIQUE(source, source_vid));`);
+  return db;
+}
+
+test('seasonIdFromDb：已采视频 extra.ugc_season.id 命中;未采/无合集返回 null', () => {
+  const db = seasonDb();
+  db.prepare("INSERT INTO videos (source, source_vid, title, extra, first_seen_at) VALUES ('bilibili','BV1','t','{\"ugc_season\":{\"id\":7818900,\"title\":\"AI面试官\"}}',1)").run();
+  db.prepare("INSERT INTO videos (source, source_vid, title, extra, first_seen_at) VALUES ('bilibili','BV2','t','{}',1)").run();
+  assert.equal(seasonIdFromDb(db, 'BV1'), 7818900);
+  assert.equal(seasonIdFromDb(db, 'BV2'), null);   // 无合集归属
+  assert.equal(seasonIdFromDb(db, 'BV9'), null);   // 未采过
+});
+
+function seasonClient(items: Array<{ bvid: string }>, mid: number | null) {
+  const batchCalls: Array<{ vids: string[]; creator_uid: string | null }> = [];
+  const c = mockClient({ ok: true, result: { mid, total: items.length, items } });
+  return {
+    calls: (c as { calls: unknown[] }).calls,
+    batchCalls,
+    async listClients() { return [{ client_id: 'c1' }]; },
+    async sendCommand(clientId: string, action: string, params: Record<string, unknown>, timeout: number) {
+      return (c as { sendCommand: (...a: unknown[]) => Promise<unknown> }).sendCommand(clientId, action, params, timeout);
+    },
+    async createCollectTasksBatch(body: { vids: string[]; creator_uid: string | null }) {
+      batchCalls.push(body);
+      return { created: body.vids.length, skipped: 0 };
+    },
+  } as unknown as SeasonCollectClient & { batchCalls: Array<{ vids: string[]; creator_uid: string | null }> };
+}
+
+test('collectSeason：BV 入参查库取合集 → 展开 → 判重 → 未采批量建任务（creator_uid=mid）', async () => {
+  const db = seasonDb();
+  db.prepare("INSERT INTO videos (source, source_vid, title, extra, first_seen_at) VALUES ('bilibili','BV1QYo6B3EdV','t','{\"ugc_season\":{\"id\":7818900}}',1)").run();
+  db.prepare("INSERT INTO videos (source, source_vid, title, extra, first_seen_at) VALUES ('bilibili','BVALREADY000','t','{}',1)").run(); // 合集里已采的一期
+  const c = seasonClient([{ bvid: 'BV1QYo6B3EdV' }, { bvid: 'BVALREADY000' }, { bvid: 'BVNEW0000000' }], 1125);
+
+  const out = await collectSeason(c, 'c1', db, 'BV1QYo6B3EdV', { timeout: 180000 });
+  // 展开参数：BV → 库内 season_id
+  assert.deepEqual((c as unknown as { calls: Array<{ params: unknown }> }).calls[0].params, { season_id: 7818900 });
+  assert.equal(out.total, 3);
+  assert.equal(out.collected, 2);   // BV1QYo6B3EdV 本身 + BVALREADY000 已入库
+  assert.equal(out.missing, 1);
+  assert.equal(out.tasks_created, 1);
+  // 建任务只含 missing,归属带合集 UP 的 mid
+  assert.deepEqual((c as unknown as { batchCalls: Array<{ vids: string[]; creator_uid: string | null }> }).batchCalls[0], {
+    vids: ['BVNEW0000000'], source: 'bilibili', creator_uid: '1125',
+  });
+});
+
+test('collectSeason：--dry-run 只列计划不建任务;全已采不建任务', async () => {
+  const db = seasonDb();
+  db.prepare("INSERT INTO videos (source, source_vid, title, extra, first_seen_at) VALUES ('bilibili','BVA000000000','t','{}',1)").run();
+  const c = seasonClient([{ bvid: 'BVA000000000' }, { bvid: 'BVB000000000' }], null);
+  const out = await collectSeason(c, 'c1', db, '7818900', { dryRun: true, timeout: 180000 });
+  assert.equal(out.dry_run, true);
+  assert.deepEqual(out.missing_bvids, ['BVB000000000']);
+  assert.equal((c as unknown as { batchCalls: unknown[] }).batchCalls.length, 0); // dry-run 不建任务
+
+  // 全已采 → tasks_created 0,不调 batch
+  db.prepare("INSERT INTO videos (source, source_vid, title, extra, first_seen_at) VALUES ('bilibili','BVB000000000','t','{}',1)").run();
+  const out2 = await collectSeason(c, 'c1', db, '7818900', { timeout: 180000 });
+  assert.equal(out2.tasks_created, 0);
+  assert.equal((c as unknown as { batchCalls: unknown[] }).batchCalls.length, 0);
+});
+
+test('collectSeason：BV 未采过（库内无合集归属）→ 报错指引;非法参数 → 报错', async () => {
+  const db = seasonDb();
+  const c = seasonClient([{ bvid: 'BVX000000000' }], null);
+  await assert.rejects(() => collectSeason(c, 'c1', db, 'BVNOTSEEN000', { timeout: 1000 }), /先 collect subtitle/);
+  await assert.rejects(() => collectSeason(c, 'c1', db, '啥也不是', { timeout: 1000 }), /无法识别合集参数/);
+  // 展开结果为空 → 报错（合集不存在/拉取失败）
+  const empty = seasonClient([], null);
+  await assert.rejects(() => collectSeason(empty, 'c1', db, '7818900', { timeout: 1000 }), /展开结果为空/);
+});

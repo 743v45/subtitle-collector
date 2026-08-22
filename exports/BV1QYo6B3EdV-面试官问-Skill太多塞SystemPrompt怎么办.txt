@@ -1,0 +1,238 @@
+大家好
+这里是AI深度幻觉
+今天的面试题
+你的agent把skill直接塞进system prompt
+skill越积越多
+上下文窗口快被吃光了
+怎么处理
+这题不简单吗
+分层加载呗
+progressive disclosure不就行了呵
+这答案半对会被追问
+我们之前在mc p vs skills那期拆过skills
+三级渐进式加载50个skill没触发
+只占大概5000token
+看着天衣无缝
+今天反转描述写详细的话
+5~6个就开始奔
+等一下先说清楚你说的skill是什么skill
+好问题
+这是面试场景的第一个加分项
+今天我们说的skill特指ANTHROPIC
+2025年10月16号发布的agent skills
+也就是skill md文件夹格式
+那为啥很多人会和to搞混
+因为微软的semantic kernel最早把它叫skills
+2023年10月4号
+官方改名plugins
+留了个空位
+ANTHROPIC两年后用了同一个词
+但语义彻底不同
+从单纯的提示词集合
+变成了文件夹加渐进披露架构哼行
+那回到正题
+为啥metadata才100
+token多装几个就崩
+我直觉上100个skill乘100token才1万20万
+context里才占5%
+没问题啊
+你这个直觉算法是错的
+真正瓶颈不是token总量
+是几个机制叠加
+先讲最直观的两个chara budget
+截断N方注意力稀释
+第三个等下讲char budget截断啥意思
+cloud code里有个东西叫skill listing
+就是塞给模型看的所有skill名加描述清单
+这个清单由总预算context的1%
+或者fall back到8000字符
+那单个skill呢
+单个skill的description加when to use
+合计上限是1536字符
+如果你描述写的详细
+比如1500字符
+那5~6个就把for back budget撞穿了啊
+那routine不就直接断电了
+对ANTHROPIC原话
+DOSCOPE描述会被强制缩短
+以适应字符预算
+可能砍掉cloud匹配请求所需的关键词
+最坑的是这个机制完全静默
+你看不到任何报错
+那我description写短一点不就行了
+还有瓶颈2N方注意力
+我们之前在agent上下文维护那期
+专门拆过transformer架构
+每个token要和所有其他token算关系
+N个token就是N方个关系架构及数学约束
+window再大也绕不过
+业界把这现象叫context RT chroma
+2025年提出anthropic block拿来当标准说法
+不是lost in the middle那种位置
+bug是attention budget
+被太多token摊保skill上具体表现metadata越多
+每个被注意到的概率越稀好
+那这两个都规避了呢
+还有瓶颈三
+最致命DIAMBIGUATION
+如果你有三个skill都谈PDF处理
+LLM选不出来
+ANTHROPIC原话
+人类工程师都说不清该用哪个tool的时候
+AI也别指望能行哼
+对三个相似scale
+比100个不相似的还啃哎
+有数据吗
+Berkelefunction
+Calling leaderboard v
+四实测加入语义相似的destructor function
+准确率平均掉1~8个百分点等等
+ANTHROPIC官方文档不是说100个加都没问题
+那是理论上限
+不是性能推荐
+那他们自己一次塞100个吗
+ANTHROPIC工程师derrick
+2026年3月17号讲过
+团队skill不少
+但靠name space加pass缩到实际激活的子集
+不是一次给LLM看100个等等
+NAMESPACE是啥
+就是给skill套个分组前缀
+比如front end斜杠
+lint backend斜杠deploy
+同一时刻只激活当下场景
+那一组有具体的人这么干吗
+raza raz vi自己半年发布了235个scale
+他就是用plugin把跨九个domain切分的实践者
+每周实际激活只有12个
+这正是答案
+真实生产里每人一次激活200个
+靠name space缩到当下场景需要的子集好
+那我现在生产环境80个skill
+准确率退化了
+怎么救场
+3face救乘法
+face0是5分钟止血调大
+Slash command tool
+Char budget
+收到2万4000
+立刻缓解描述截断代价是放大瓶颈
+二三更多metadata塞进listing
+注意力备弹更稀
+这只是延后撞墙
+然后呢
+face s1是半天盘点写脚本
+扫所有skill mid
+按THEOC总结的职能类别分组
+比如library reference
+Code
+Quality run books
+这些重点是记录每个skill最后被调用的时间
+30天
+零调用的总比直接删
+不是合并
+face are呢
+face2是结构化救场
+三个front matter字段
+加一个plugin打包
+front matter是啥
+就是skill md文件开头那段YMO配置
+第一个字段是pass
+用通配符限定skill自动激活范围
+比如只在你编辑Python文件时
+这个jungle review skill才进listing好
+第二字段呢
+第二个是disabled model invocation等于true
+把skill从cloud自动选择池移出来
+只能斜杠手动调
+适合deploy删数据库
+生产回滚这种高危副作用
+skill第三个是啥
+第三个context fork杀手锏
+skill在独立子代里
+SUBAGENT里跑主agent等于把这个任务外包出去
+自己只收回一段总结
+原始执行细节都不进驻context啊
+能省多少
+Build this now
+2026年实测五个并行agent不开fork
+累计消耗约240000token
+开fork后五个加起来只占6万8000多
+差距怎么这么大
+child d1站4万8700
+child d2到五个指占约5050
+靠prompt cash前缀复用不重算
+第四个
+第四招
+plugin打包
+把同场景的skill装一个plugin里
+plugin名自动加在skill前作命名前缀
+举个例子
+Razor razvanni
+把235个skill跨九个斗man打成九个核心
+Plugin bundle
+Engineering
+Marketing product
+这些用户只装当前需要的plugin
+其他的连meta data都不进listing
+听上去很完美
+哼
+还差一道安全skill
+SK论文扫了3万1000多个公开skill
+26.1%
+至少含一个漏洞
+含可执行脚本的skill风险翻倍
+OR等于2.12
+P小于0.001唉
+所以SKIL到MD里挂的可执行脚本
+越多越危险
+对skill inject测出当时最前沿的frontier模型
+G p t5
+cloud opus那种注入攻击成功率也高达80%
+论文说加大模型解决不了
+那ANTHROPIC有动作吗
+2026年4月初
+cloud code加了开关
+Disabled skill
+Shell execution
+直接进skill里嵌入的shell命令
+代价是放弃可执行脚本带来的经济性
+那marketplace上下载的skill靠谱吗
+snake扫了CLOTHUB加skills
+点SH共近4000个skill
+1400多个
+含安全缺陷
+76个是confirmed恶意payload啊
+还有别的扫描CORE security
+单独发现
+CLUUPB上还有340一个恶意skill
+永远别从不可信
+marketplace直接装skill
+面试时怎么答
+能拿高分
+30秒电题答progressive disclosure
+不是答案
+是起点三机制叠加char budget
+5~6个
+重穿N方注意力稀释
+Dissemigration
+选不出来
+ANTHROPIC的100加可行是理论上限
+不是性能最优
+实操3face救场止血盘点face24件套救命
+最后一句话总结
+这期skill越多越好
+是个直觉陷阱
+真正高手让大部分skill不进
+listing4件套
+pass限定
+Disabled
+Model
+Invocation
+Context
+Folk
+plugin分包
+如果你有啥想让我们分析的面试题
+评论区告诉我们觉得有帮助的话
+一键三连
+我们下期再见

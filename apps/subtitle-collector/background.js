@@ -759,6 +759,60 @@ async function connect() {
         } catch (err) {
           ws.send(JSON.stringify({ type: "result", id: msg.id, ok: false, error: String(err.message || err) }));
         }
+      } else if (msg.action === "list-season-videos") {
+        // 合集视频列表（CLI collect season 用,2026-08-22）：同步分页拉全量回执。
+        // fetchAllSeasonVideos 是 popup 异步任务模式（storage 渐进落盘 + 轮询）,不适合 WS 同步
+        // 回执——此处独立循环（同 API 同节流同停滞判定）,拉完落盘复用 popup 的 seasonVideos:*
+        // 缓存结构（TTL 内互认免重拉;mid 额外带上,建任务的 UP 归属用）。大合集页多,CLI 侧
+        // --timeout 建议 ≥120000（默认 180000 已覆盖）。
+        try {
+          const seasonId = msg.season_id;
+          if (!Number.isInteger(seasonId) || seasonId <= 0) throw new Error('season_id（合集 id,正整数）required');
+          const cacheKey = `seasonVideos:${seasonId}`;
+          const { [cacheKey]: cached } = await chrome.storage.local.get(cacheKey);
+          if (cached?.done && !cached.error && Array.isArray(cached.items) && Date.now() - cached.fetchedAt < SEASON_ALL_TTL_MS) {
+            ws.send(JSON.stringify({
+              type: "result", id: msg.id, ok: true,
+              data: { season_id: seasonId, mid: cached.mid ?? null, total: cached.total, items: cached.items },
+            }));
+            return;
+          }
+          const items = [];
+          const seen = new Set(); // bvid 去重（合集追加投稿使分页位移重叠时防重复）
+          let total = 0;
+          let mid = cached?.mid ?? null;
+          let noNewStreak = 0; // 连续整页无新条目（≥3 判定分页停滞,保已拉部分终止）
+          for (let pageNum = 1; ; pageNum++) {
+            const parsed = await biliFetch('/x/polymer/web-space/seasons_archives_list', {
+              params: { season_id: seasonId, sort_reverse: false, page_num: pageNum, page_size: SEASON_ALL_PS },
+            });
+            if (!parsed.ok) throw new Error('seasons_archives_list ' + parsed.code + (items.length ? `（已拉 ${items.length}/${total},中断）` : ''));
+            mid = parsed.data?.mid ?? mid;
+            const archives = parsed.data?.archives ?? [];
+            total = parsed.data?.page?.total ?? items.length + archives.length;
+            let added = 0;
+            for (const a of archives) {
+              if (!a?.bvid || seen.has(a.bvid)) continue;
+              seen.add(a.bvid);
+              added++;
+              items.push({
+                bvid: a.bvid, title: a.title, created: a.pubdate ?? null,
+                play: a.stat?.view ?? null,
+                length: typeof a.duration === 'number' && a.duration >= 0 ? fmtLength(a.duration) : null,
+                pic: typeof a.pic === 'string' ? (a.pic.startsWith('//') ? 'https:' + a.pic : a.pic) : null,
+              });
+            }
+            if (archives.length === 0 || items.length >= total) break;
+            noNewStreak = added > 0 ? 0 : noNewStreak + 1;
+            if (noNewStreak >= 3) break;
+            await new Promise((r) => setTimeout(r, SEASON_ALL_PAGE_GAP_MS));
+          }
+          // 落盘复用 popup 缓存（命中免重拉）;mid 为附加字段,popup 读取不受影响
+          await chrome.storage.local.set({ [cacheKey]: { items, total, done: true, error: null, fetchedAt: Date.now(), mid } });
+          ws.send(JSON.stringify({ type: "result", id: msg.id, ok: true, data: { season_id: seasonId, mid, total, items } }));
+        } catch (err) {
+          ws.send(JSON.stringify({ type: "result", id: msg.id, ok: false, error: String(err.message || err) }));
+        }
       } else if (msg.action === "set-reporting") {
         const newEnabled = await applyReporting(msg.enabled === true);
         ws.send(JSON.stringify({ type: "result", id: msg.id, ok: true, data: { reporting_enabled: newEnabled } }));

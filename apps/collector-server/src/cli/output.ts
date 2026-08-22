@@ -12,6 +12,7 @@ export const EXIT_CODES = {
   SERVER_UNREACHABLE: 3,
   DB_UNREADABLE: 4,
   NOT_FOUND: 5,
+  EXT_UPDATE: 6, // 扩展版本过旧（不认识新 action）——提示更新扩展而非重试
 } as const;
 
 export type ExitCodeName = keyof typeof EXIT_CODES;

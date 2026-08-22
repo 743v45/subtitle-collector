@@ -137,6 +137,87 @@ export function collectDedupe(
   return { collected, missing };
 }
 
+// ── `collect season`：整个合集（ugc_season）字幕批量采集（2026-08-22）──
+// 入参三形态：BV 号（须已采过——库内 extra.ugc_season.id 取合集）/ 纯数字合集 id /
+// 合集页链接（…/channel/collectiondetail?sid=N 或 ?season_id=N）。
+// 流程：扩展 list-season-videos 同步展开全量 → 直读库判重（已采跳过,判据同 dedupe）→
+// 未采批量建任务（server 调度器自动串行执行,扩展离线则排队等上线;creator_uid 带 mid）。
+
+/** 入参解析（纯函数可测）：BV 号 / 合集 id / 合集页链接 → {seasonId, bvid}。都认不出返回双 null。 */
+export function parseSeasonArg(arg: string): { seasonId: number | null; bvid: string | null } {
+  const t = arg.trim();
+  if (/^BV[0-9A-Za-z]{10}$/.test(t)) return { seasonId: null, bvid: t };
+  if (/^\d+$/.test(t)) return { seasonId: Number(t), bvid: null };
+  try {
+    const u = new URL(t);
+    const sid = u.searchParams.get('sid') ?? u.searchParams.get('season_id');
+    if (sid && /^\d+$/.test(sid)) return { seasonId: Number(sid), bvid: null };
+  } catch { /* 非 URL 忽略 */ }
+  return { seasonId: null, bvid: null };
+}
+
+/** 库内取合集 id：已采视频的 extra.ugc_season.id（ingest-payload 落）。未采过返回 null。 */
+export function seasonIdFromDb(db: Database.Database, bvid: string): number | null {
+  const row = db.prepare(
+    "SELECT json_extract(extra, '$.ugc_season.id') AS sid FROM videos WHERE source = 'bilibili' AND source_vid = ?",
+  ).get(bvid) as { sid: number | null } | undefined;
+  return row?.sid ?? null;
+}
+
+/** season 子命令的 client 依赖（CollectClient + 批量建任务;测试注入 mock 用）。 */
+export interface SeasonCollectClient extends CollectClient {
+  createCollectTasksBatch(body: { vids: string[]; source: 'bilibili'; creator_uid?: string | null }): Promise<unknown>;
+}
+
+/** `collect season <arg>`：展开合集 → 判重 → 未采批量建任务。返回汇总（created/skipped 透传任务端点）。 */
+export async function collectSeason(
+  client: SeasonCollectClient,
+  clientId: string,
+  db: Database.Database,
+  arg: string,
+  opts: { dryRun?: boolean; timeout: number },
+): Promise<Record<string, unknown>> {
+  const parsed = parseSeasonArg(arg);
+  let seasonId = parsed.seasonId;
+  if (parsed.bvid) {
+    seasonId = seasonIdFromDb(db, parsed.bvid);
+    if (seasonId == null) {
+      throw new Error(`BV 未采集过,库内无合集归属——先 collect subtitle ${parsed.bvid} 采一次,或直接传合集 id / 合集页链接`);
+    }
+  }
+  if (seasonId == null) throw new Error(`无法识别合集参数: ${arg}（支持 BV 号 / 合集 id / 合集页链接）`);
+
+  // 扩展同步展开合集全量（分页 + 500ms 页间节流;大合集十几秒,timeout 建议 ≥120000）
+  const resp = await sendExtCommand(client, clientId, 'list-season-videos', { season_id: seasonId }, opts.timeout);
+  const data = (resp.result ?? {}) as { mid?: unknown; items?: unknown };
+  const items = Array.isArray(data.items) ? data.items : [];
+  const bvids = items
+    .map((it) => (typeof (it as { bvid?: unknown })?.bvid === 'string' ? (it as { bvid: string }).bvid : ''))
+    .filter(Boolean);
+  if (bvids.length === 0) throw new Error(`合集 ${seasonId} 展开结果为空（合集不存在或扩展拉取失败）`);
+  const mid = typeof data.mid === 'number' ? String(data.mid) : null;
+
+  // 判重：已入库视频跳过（重采个别视频用 collect subtitle 单发）
+  const { collected, missing } = collectDedupe(db, bvids);
+  const out: Record<string, unknown> = {
+    season_id: seasonId,
+    total: bvids.length,
+    collected: collected.length,
+    missing: missing.length,
+  };
+  if (missing.length === 0) return { ...out, tasks_created: 0, note: '合集视频已全部采集' };
+  if (opts.dryRun) return { ...out, dry_run: true, missing_bvids: missing };
+  const r = await client.createCollectTasksBatch({ vids: missing, source: 'bilibili', creator_uid: mid }) as {
+    created?: number; skipped?: number;
+  };
+  return {
+    ...out,
+    tasks_created: r?.created ?? 0,
+    tasks_skipped: r?.skipped ?? 0,
+    note: '任务已创建,server 调度器自动派发扩展执行（web 采集页 / 历史页看进度）',
+  };
+}
+
 /** `collect nosub`（内部用）：返回 bvids 中「已入 videos 但无 subtitle_tracks」的子集（供 --retry-nosub 重采）。
  *  与 collectDedupe 互补：dedupe 只看 video 行存在即标 collected（含「无字幕也入库」），nosub 进一步挑出
  *  「video 在库但无字幕轨」者——刚发布的视频字幕可能尚未生成，采过后入库 video 但无 track，需可重采。 */
@@ -635,6 +716,39 @@ export function buildCollectCommand(): Command {
       }
       const data = collectDedupe(db, bvids);
       emitResult(data, ctx.format);
+    });
+
+  collect
+    .command('season <arg>')
+    .description('采集整个合集（ugc_season）全部视频字幕：BV 号（须已采过）/ 合集 id / 合集页链接 → 展开全量 → 未采的批量建任务（server 自动串行执行）')
+    .option('--dry-run', '只列计划（missing 列表）,不建任务')
+    .option('--client <id>', '扩展 client_id（缺省取第一个在线）')
+    .option('--timeout <ms>', '等扩展回执的超时毫秒（默认 180000,大合集页多耗时长）', (v) => Number.parseInt(v, 10), DEFAULT_COLLECT_TIMEOUT_MS)
+    .action(async (arg: string, opts: { dryRun?: boolean; client?: string; timeout: number }) => {
+      if (!Number.isFinite(opts.timeout) || opts.timeout <= 0) emitError(`invalid --timeout: ${opts.timeout}`, 'ARGS');
+      const ctx = getCliContext();
+      let db: Database.Database;
+      try {
+        db = openReadonlyDb(ctx.dbPath);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        emitError(msg, 'DB_UNREADABLE');
+      }
+      const client = new ServerClient(ctx.serverUrl, ctx.token);
+      try {
+        const clientId = await resolveClientId(client as CollectClient, opts.client);
+        const data = await collectSeason(client as unknown as SeasonCollectClient, clientId, db, arg, {
+          dryRun: opts.dryRun === true,
+          timeout: opts.timeout,
+        });
+        emitResult(data, ctx.format);
+      } catch (err) {
+        // 旧扩展不认识新 action → 明确指向更新而非重试（对齐 server 侧 extNeedsUpdate 语义）
+        if (err instanceof ExtCommandError && err.extError.includes('unknown action')) {
+          emitError(`扩展版本过旧（不认识 list-season-videos）,请更新扩展后重试: ${err.extError}`, 'EXT_UPDATE');
+        }
+        handleHttpError(err);
+      }
     });
 
   collect
