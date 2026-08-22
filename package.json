@@ -15,7 +15,7 @@
     "test:youtube": "turbo run build --filter=@bilibili-ext/subtitle-collector && node scripts/verify-youtube-collector.mjs",
     "lint:quality": "node scripts/quality-baseline.mjs check",
     "depcruise": "depcruise apps/collector-server/src apps/collector-web/src apps/subtitle-collector/src apps/subtitle-collector/*.mjs apps/subtitle-collector/*.js scripts --config .dependency-cruiser.cjs",
-    "qa": "turbo run build --force && turbo run test --force && node --test scripts/quality-baseline.test.mjs scripts/pre-commit-check.test.mjs && pnpm lint:quality && pnpm depcruise && node -e \"console.log('[qa] ✓ 全部质量门通过。覆盖率若显著高于锁定线(>2pp)，请手动上调阈值并 commit（CLAUDE.md 测试质量政策）')\"",
+    "qa": "turbo run build --force && turbo run test --force && node --test scripts/quality-baseline.test.mjs scripts/pre-commit-check.test.mjs scripts/verify-skill-sync.test.mjs && pnpm lint:quality && node scripts/verify-skill-sync.mjs && pnpm depcruise && node -e \"console.log('[qa] ✓ 全部质量门通过。覆盖率若显著高于锁定线(>2pp)，请手动上调阈值并 commit（CLAUDE.md 测试质量政策）')\"",
     "prepare": "husky",
     "cli": "pnpm -C apps/collector-server exec tsx src/cli/main.ts",
     "collect-uppers": "pnpm -C apps/collector-server exec tsx ../../scripts/collect-uppers.mts"

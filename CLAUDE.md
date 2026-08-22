@@ -26,11 +26,11 @@ B 站**字幕（subtitle）**相关浏览器扩展的 monorepo（pnpm + turbo，
 **三层分级**：
 
 - **日常（每次代码改动完成）**：即时 `pnpm build`（或受影响 app 的 build）——测试 runner 不做类型检查（tsx 直译/vitest 不跑 tsc），测试全绿≠可构建（RULES §6）。
-- **日常（每次提交）**：`pnpm qa` 全量质量门（build + test + 覆盖率锁定 + 静态台账 check + depcruise；涉代码提交前手动必跑并在 commit message 引用结果，纯文档/配置豁免）＋ husky pre-commit（只查 git 新增文件的两条静态规则）＋ 测试中文注释三档。
+- **日常（每次提交）**：`pnpm qa` 全量质量门（build + test + 覆盖率锁定 + 静态台账 check + skill 同步 + depcruise；涉代码提交前手动必跑并在 commit message 引用结果，纯文档/配置豁免）＋ husky pre-commit（只查 git 新增文件的两条静态规则）＋ 测试中文注释三档。
 - **低频（偿还/调整时）**：`node scripts/quality-baseline.mjs update` 刷新静态台账（默认 dry-run，`--write` 才落盘）；覆盖率锁定线上调（实际值高出锁定线 >2pp 时手动上调，只升不降）；`check --allow-degrade` 豁免通道（须 commit message 注明原因）。
 - **定期审计**：Stryker 变异测试（各 app `pnpm mutation`，阶段性大改后手动跑；观察制不设阈值）；政策自检（每完成 5 个 spec 或 CLAUDE.md 大改时过一遍执行记录，连续两次零执行的条款提请退役）。
 
-**八项规则**（一行一条，关键参数 + RULES 对应节）：
+**九项规则**（一行一条，关键参数 + RULES 对应节）：
 
 1. 单元测试：全中文测试名 + 注释三档（RULES §1）
 2. 覆盖率：三 app 四指标锁定只升不降，>2pp 手动上调（RULES §2）
@@ -40,6 +40,7 @@ B 站**字幕（subtitle）**相关浏览器扩展的 monorepo（pnpm + turbo，
 6. QA 流程：`pnpm qa` 一条命令 + pre-commit 分工，puppeteer 冒烟不进 qa（RULES §6）
 7. 变异测试：Stryker 观察制，command runner 直跑 `node --test`（RULES §7）
 8. 测试轮次记录表：每个 spec 必含，至少一行 `pnpm qa` 结果（RULES §5）
+9. skill 同步：改 collector-cli 命令/选项或 scripts 工具后必须同步 [docs/skills/collector/](docs/skills/collector/SKILL.md)（agent 调度参考；`.claude/skills/collector` 是其 symlink），qa 门 `verify-skill-sync.mjs` 拦漂移（RULES §6）
 
 **各 app 测试方式**（runner + 覆盖率口径）：
 

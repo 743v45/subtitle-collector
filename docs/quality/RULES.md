@@ -95,6 +95,7 @@ pnpm build        # 或受影响 app 的 pnpm -C apps/<app> build
 ```
 turbo run build --force && turbo run test --force   # --force 防 turbo 缓存误判
   && node scripts/quality-baseline.mjs check
+  && node scripts/verify-skill-sync.mjs             # skill ↔ CLI/scripts 同步门
   && pnpm depcruise
   && node --test scripts/*.test.mjs                 # 根脚本自身的测试
 ```
@@ -102,6 +103,12 @@ turbo run build --force && turbo run test --force   # --force 防 turbo 缓存�
 - **触发纪律**：涉代码的提交前必跑，commit message 引用结果（如 `qa: 全绿` 或附覆盖率摘要）；纯文档/配置改动豁免。
 - 尾部输出覆盖率上调提醒（对比锁定线，见 §2）。
 - puppeteer 冒烟**不进 qa**：扩展链路改动时按需 `pnpm test:ext`（涉 YouTube 链路加 `pnpm test:youtube`）。
+
+**skill 同步门**（`scripts/verify-skill-sync.mjs`，2026-08-23 引入）：
+
+- 校验对象：[docs/skills/collector/](../../docs/skills/collector/SKILL.md)（agent 调度参考，`.claude/skills/collector` 是其 symlink——skill 正文进 git，`.claude/` 目录整体 gitignore 维持私有定位）。
+- 两级校验（全静态、不执行真业务命令）：` ```collector-cli ` 标注块里样例的子命令链逐级比对 CLI `--help`；`--opt` 长选项与叶子级 help 选项清单比对；`scripts/<name>` 引用做存在性检查。
+- 维护契约：改 collector-cli 命令/选项或 scripts 工具入口后同步 skill 文件，否则此门拦截（CLAUDE.md 九项规则第 9 条）。
 
 **husky pre-commit**（`scripts/pre-commit-check.mjs`，只装 husky 不用 lint-staged）：
 
