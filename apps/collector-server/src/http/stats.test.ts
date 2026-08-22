@@ -231,6 +231,26 @@ test('GET /api/stats：非法 type / 缺 groupBy / 非法 groupBy → 400', asyn
   } finally { ctx.cleanup(); }
 });
 
+// ── 分支洼地：type 缺省回落 overview、topN 非法回落 20 / 越界夹取 ──
+test('GET /api/stats：缺 type → 默认 overview；topN 非法回落 20、越大夹 500', async () => {
+  const ctx = await setup();
+  try {
+    // 缺 type 参数 → 'overview'（?? 'overview' 分支）
+    const r = await httpGet(ctx.port, '/api/stats');
+    assert.equal(r.status, 200);
+    assert.equal(r.json.overview.videos, 4);
+    // topN=abc（NaN）→ || 20 回落；topN=1 截 1 条
+    const agg = await httpGet(ctx.port, '/api/stats?type=aggregate&groupBy=tname&topN=abc');
+    assert.equal(agg.status, 200);
+    assert.equal(agg.json.items.length, 3, '非法 topN 回落 20 不截断（只有 3 个分区）');
+    const one = await httpGet(ctx.port, '/api/stats?type=aggregate&groupBy=tname&topN=1');
+    assert.equal(one.json.items.length, 1);
+    const big = await httpGet(ctx.port, '/api/stats?type=aggregate&groupBy=tname&topN=99999');
+    assert.equal(big.status, 200, '超大 topN 夹到 500，不报错');
+    assert.equal(big.json.items.length, 3);
+  } finally { ctx.cleanup(); }
+});
+
 test('GET /api/creators/:id：返回富字段（sign/level/fans/official_*）——task #3', async () => {
   const ctx = await setup();
   try {

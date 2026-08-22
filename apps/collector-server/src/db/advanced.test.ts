@@ -498,3 +498,179 @@ test('EXPLAIN QUERY PLAN：stat.view 范围过滤走 idx_videos_extra_view（SEA
       `view 过滤应走表达式索引，实际计划：${plan.map((p) => p.detail).join(' | ')}`);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
+
+// ── 过滤洼地补齐：creator_id / creator_uid / subtitle_q / paid / min_view / max_view / 显式 false ──
+
+test('listVideosFiltered: creator_id 精确（UP 详情页拉该 UP 视频）+ creator_uid 精确（子查询防 LIKE 误匹配）', () => {
+  const { db, dir, ids } = setup();
+  try {
+    assert.deepEqual(titles(listVideosFiltered(db, { creator_id: ids.alpha }).items.sort()), ['标题A', '标题B']);
+    assert.equal(listVideosFiltered(db, { creator_id: ids.beta }).total, 2);
+    assert.equal(listVideosFiltered(db, { creator_id: 99999 }).total, 0);
+    // creator_uid '1' 不误命中 '21' 式前缀（子查询 = 精确）
+    assert.deepEqual(titles(listVideosFiltered(db, { creator_uid: '1' }).items.sort()), ['标题A', '标题B']);
+    assert.deepEqual(titles(listVideosFiltered(db, { creator_uid: '2' }).items.sort()), ['标题C', '标题D']);
+    assert.equal(listVideosFiltered(db, { creator_uid: '21' }).total, 0);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('listVideosFiltered: subtitle_q 命中字幕正文（payload LIKE）', () => {
+  const { db, dir } = freshDb();
+  try {
+    ingestVideo(db, {
+      source: 'bilibili',
+      video: { source_vid: 'S1', title: '有正文的视频', creator: { source_uid: '1', name: 'up' }, extra: {}, duration: 10, published_at: 1 },
+      tracks: [{ lan: 'zh-Hans', track_type: 2, versions: [{ origin: 'external', payload: { body: [{ from: 0, to: 1, content: '独特的正文关键词' }] }, source_url: 'https://a' }] }],
+    });
+    ingestVideo(db, {
+      source: 'bilibili',
+      video: { source_vid: 'S2', title: '别的视频', creator: { source_uid: '1', name: 'up' }, extra: {}, duration: 10, published_at: 1 },
+      tracks: [{ lan: 'zh-Hans', track_type: 2, versions: [{ origin: 'external', payload: { body: [{ from: 0, to: 1, content: '别的话' }] }, source_url: 'https://b' }] }],
+    });
+    assert.deepEqual(listVideosFiltered(db, { subtitle_q: '正文关键词' }).items.map((i) => i.source_vid), ['S1']);
+    assert.equal(listVideosFiltered(db, { subtitle_q: '不存在词' }).total, 0);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('listVideosFiltered: paid=true 只命中付费视频；has_subtitle/paid 显式 false 等同未传', () => {
+  const { db, dir } = setup();
+  try {
+    assert.equal(listVideosFiltered(db, { paid: true }).total, 0, 'setup 均未写 paid（列 0）→ 无命中');
+    // 给 V1 置 paid=1（直接 UPDATE，绕开 ingest 的只升不降）
+    db.prepare("UPDATE videos SET paid = 1 WHERE source_vid = 'BV1'").run();
+    assert.deepEqual(listVideosFiltered(db, { paid: true }).items.map((i) => i.source_vid), ['BV1']);
+    // 显式 false：与未传同效（不过滤）
+    assert.equal(listVideosFiltered(db, { has_subtitle: false }).total, 4);
+    assert.equal(listVideosFiltered(db, { paid: false }).total, 4);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('listVideosFiltered: min_view / max_view（extra.stat.view 范围，CAST INTEGER）', () => {
+  const { db, dir } = setup();
+  try {
+    // view：V2=5000 > V1=1000 > V3=200 > V4=50
+    assert.deepEqual(titles(listVideosFiltered(db, { min_view: 1000 }).items.sort()), ['标题A', '标题B']);
+    assert.deepEqual(titles(listVideosFiltered(db, { max_view: 200 }).items.sort()), ['标题C', '标题D']);
+    assert.deepEqual(titles(listVideosFiltered(db, { min_view: 200, max_view: 1000 }).items.sort()), ['标题A', '标题C']);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('listVideosFiltered: page/size 非正数回落默认（page=1, size=20）', () => {
+  const { db, dir } = setup();
+  try {
+    const r = listVideosFiltered(db, { page: -1, size: 0 });
+    assert.equal(r.page, 1);
+    assert.equal(r.size, 20);
+    assert.equal(r.total, 4);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('getChanges: page/size 非正数回落默认（p=1, s=20）', () => {
+  const { db, dir } = setup();
+  try {
+    const r = getChanges(db, {}, 0, -5);
+    assert.equal(r.page, 1);
+    assert.equal(r.size, 20);
+    assert.equal(r.total, 3);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+// ── tagMatchCond / aggregateStats 的 tag_source 边界 ──
+
+test('tag_source 全非法（过滤后空）→ 视同五档全查（sources.length===0 兜底）', () => {
+  const { db, dir } = setup();
+  try {
+    // ['xxx'] 非法 → filter 后空 → 兜底 push 全档 → 与省略 tag_source 同效（命中 BV1/BV3 的 bili 游戏）
+    const r = listVideosFiltered(db, { tags: ['游戏'], tag_source: ['xxx'] });
+    assert.equal(r.total, 2);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('aggregateStats groupBy=tag：tag_source 全非法 → 三路分支全不拼 → 空结果', () => {
+  const { db, dir } = setup();
+  try {
+    assert.deepEqual(aggregateStats(db, 'tag', { tag_source: ['xxx'] }, 20), []);
+    // 空数组同样走兜底全查（?.length 为 0 → falsy）
+    const r = aggregateStats(db, 'tag', { tag_source: [] }, 20);
+    assert.ok(r.some((row) => row.key === '游戏'));
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('aggregateStats groupBy=lang：lan 为 NULL 的轨归入 (unknown) 桶', () => {
+  const { db, dir } = freshDb();
+  try {
+    ingestVideo(db, {
+      source: 'bilibili',
+      video: { source_vid: 'N1', title: '无语言轨', creator: { source_uid: '1', name: 'up' }, extra: {}, duration: 10, published_at: 1 },
+      tracks: [{ versions: [{ origin: 'external', payload: { body: [] }, source_url: 'https://n' }] }], // 无 lan/track_type
+    });
+    const r = aggregateStats(db, 'lang');
+    assert.deepEqual(r, [{ key: '(unknown)', count: 1 }]);
+    const byType = aggregateStats(db, 'track-type');
+    assert.deepEqual(byType, [{ key: '(unknown)', count: 1 }]);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+// ── getVideoByDbId 排序镜像的剩余分支：en 无 type 轨优先级 2、manual origin 优先级 1 ──
+
+test('getVideoByDbId: en 无 type 轨排最后（优先级 2 vs 其他 5）；同轨 manual 版本排在 asr 前', () => {
+  const { db, dir } = freshDb();
+  try {
+    ingestVideo(db, {
+      source: 'bilibili',
+      video: { source_vid: 'P1', title: '优先级分支', creator: { source_uid: '1', name: 'up' }, extra: {}, duration: 10, published_at: 1 },
+      tracks: [
+        { lan: 'fr', lan_doc: '法语', versions: [{ origin: 'external', payload: { body: [] }, source_url: 'https://fr' }] },
+        { lan: 'en', lan_doc: '英文无type', versions: [
+          { origin: 'asr', payload: { body: [] }, source_url: null, asr_engine: 'whisper' },
+          { origin: 'manual', payload: { body: [] }, source_url: null },
+        ] },
+      ],
+    });
+    const vid = (db.prepare("SELECT id FROM videos WHERE source_vid = 'P1'").get() as { id: number }).id;
+    const d = getVideoByDbId(db, vid);
+    if (!d) throw new Error('no detail');
+    // en 无 type（优先级 2）在 fr（其他 5）之前
+    assert.deepEqual(d.tracks.map((t) => t.lan_doc), ['英文无type', '法语']);
+    // 同轨版本序：external(0) < manual(1) < asr(2)
+    assert.deepEqual(d.tracks[0].versions.map((v) => v.origin), ['manual', 'asr']);
+    assert.equal((d.tracks[0].versions[0] as { is_default?: boolean }).is_default, true);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('getVideoByDbId: zh AI(type=1) 优先级 1；同轨 external 版本最优先（镜像的 268/276 分支）', () => {
+  const { db, dir } = freshDb();
+  try {
+    ingestVideo(db, {
+      source: 'bilibili',
+      video: { source_vid: 'P2', title: '优先级分支二', creator: { source_uid: '1', name: 'up' }, extra: {}, duration: 10, published_at: 1 },
+      tracks: [
+        { lan: 'fr', lan_doc: '法语', versions: [{ origin: 'external', payload: { body: [] }, source_url: 'https://fr' }] },
+        { lan: 'zh-Hans', lan_doc: 'AI中文', track_type: 1, versions: [
+          { origin: 'asr', payload: { body: [] }, source_url: null, asr_engine: 'whisper' },
+          { origin: 'manual', payload: { body: [] }, source_url: null },
+          { origin: 'external', payload: { body: [] }, source_url: 'https://zh' },
+        ] },
+      ],
+    });
+    const vid = (db.prepare("SELECT id FROM videos WHERE source_vid = 'P2'").get() as { id: number }).id;
+    const d = getVideoByDbId(db, vid);
+    if (!d) throw new Error('no detail');
+    // zh AI（优先级 1）在 en/fr（2/5）之前
+    assert.deepEqual(d.tracks.map((t) => t.lan_doc), ['AI中文', '法语']);
+    // 同轨三版本齐：external(0) < manual(1) < asr(2)
+    assert.deepEqual(d.tracks[0].versions.map((v) => v.origin), ['external', 'manual', 'asr']);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('listVideosFiltered: date_field=published_at → since/until 比对发布时间列', () => {
+  const { db, dir } = setup();
+  try {
+    // published_at：V1(T+1000) V2(T+2000) V3(T+3000) V4(T+4000)
+    assert.deepEqual(titles(listVideosFiltered(db, { since: T + 2500, date_field: 'published_at' }).items.sort()), ['标题C', '标题D']);
+    assert.deepEqual(titles(listVideosFiltered(db, { until: T + 1500, date_field: 'published_at' }).items.sort()), ['标题A']);
+    // 对照：默认 first_seen（V1=T+100..V4=T+400）下同阈值命中完全不同
+    assert.deepEqual(listVideosFiltered(db, { since: T + 2500 }).items, [], 'first_seen 均小于阈值 → 空');
+    assert.equal(listVideosFiltered(db, { until: T + 1500 }).total, 4, 'first_seen 均小于阈值 → 全量');
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});

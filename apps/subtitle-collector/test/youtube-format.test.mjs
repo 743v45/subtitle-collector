@@ -41,6 +41,11 @@ test('parseStatCount：null/空/无数字 → null', () => {
   assert.equal(parseStatCount('顶此视频'), null);
 });
 
+test('parseStatCount：超大数字串（parseFloat → Infinity）→ null（防御分支）', () => {
+  // 正则匹配到 400 位纯数字，parseFloat 溢出为 Infinity → !Number.isFinite → null
+  assert.equal(parseStatCount('9'.repeat(400)), null);
+});
+
 // ---------------- parseYtPublishDateMs ----------------
 // 回归 2026-08-22②：inject-yt extractMeta 此前不抽发布时间，content-yt 传的 publishedAt
 // 恒 undefined、落库 published_at 恒 NULL。现从 microformat.playerMicroformatRenderer.publishDate
@@ -175,6 +180,27 @@ test('parseYoutubeJson3：非法 JSON 字符串 → {body:[]}（pot 受限/截�
   assert.deepEqual(parseYoutubeJson3('   '), { body: [] });
 });
 
+test('parseYoutubeJson3：非对象入参（数字/JSON 解析出字符串）→ {body:[]}', () => {
+  assert.deepEqual(parseYoutubeJson3(123), { body: [] });          // 数字直入
+  assert.deepEqual(parseYoutubeJson3('"str"'), { body: [] });      // 合法 JSON 但解析结果是 string
+  assert.deepEqual(parseYoutubeJson3(true), { body: [] });         // 布尔直入
+});
+
+test('parseYoutubeJson3：events 含非对象项被跳过（null/字符串/数字）', () => {
+  const json3 = {
+    events: [null, 'str', 42, { tStartMs: 0, dDurationMs: 1000, segs: [{ utf8: 'ok' }] }],
+  };
+  const body = parseYoutubeJson3(json3).body;
+  assert.equal(body.length, 1);
+  assert.equal(body[0].content, 'ok');
+});
+
+test('parseYoutubeJson3：tStartMs 缺失/非数 → from 兜底 0', () => {
+  assert.equal(parseYoutubeJson3({ events: [{ dDurationMs: 1000, segs: [{ utf8: 'a' }] }] }).body[0].from, 0);
+  assert.equal(parseYoutubeJson3({ events: [{ tStartMs: 'x', segs: [{ utf8: 'b' }] }] }).body[0].from, 0);
+  assert.equal(parseYoutubeJson3({ events: [{ tStartMs: NaN, segs: [{ utf8: 'c' }] }] }).body[0].from, 0);
+});
+
 // ---------------- parseYoutubeXml ----------------
 
 test('parseYoutubeXml：标准 transcript → 正确 cue（start/dur 秒制）', () => {
@@ -230,6 +256,35 @@ test('parseYoutubeXml：null/undefined/空串/纯空白 → {body:[]}', () => {
   }
 });
 
+test('parseYoutubeXml：未知命名实体原样保留（&nbsp; 不在白名单）', () => {
+  const xml = '<transcript><text start="0" dur="1">a&nbsp;b &unknownent; c</text></transcript>';
+  assert.equal(parseYoutubeXml(xml).body[0].content, 'a&nbsp;b &unknownent; c');
+});
+
+test('parseYoutubeXml：越界码点数字实体原样保留（&#1114112; > 0x10FFFF）', () => {
+  const xml = '<transcript><text start="0" dur="1">&#1114112;</text></transcript>';
+  assert.equal(parseYoutubeXml(xml).body[0].content, '&#1114112;');
+});
+
+test('parseYoutubeXml：start/dur 非数字或空串 → toNumberOrNull null 兜底', () => {
+  // start="abc"：Number 非有限 → null → from 兜底 0
+  assert.equal(parseYoutubeXml('<transcript><text start="abc" dur="2">x</text></transcript>').body[0].from, 0);
+  // start=""：空串 → null → from 0
+  assert.equal(parseYoutubeXml('<transcript><text start="" dur="2">x</text></transcript>').body[0].from, 0);
+  // dur 非数字 → to=from（dur null）
+  const cue = parseYoutubeXml('<transcript><text start="1" dur="abc">y</text></transcript>').body[0];
+  assert.equal(cue.to, cue.from);
+  assert.equal(cue.from, 1);
+});
+
+test('parseYoutubeXml：<text> 无属性 / 空内容 → attrs 与 content 兜底仍产出条目', () => {
+  const body = parseYoutubeXml('<transcript><text>no attrs</text><text start="1"></text></transcript>').body;
+  assert.equal(body.length, 2);
+  // 无 attrs → start/dur 均 null → from=0, to=0；content 空串
+  assert.deepEqual(body[0], { from: 0, to: 0, content: 'no attrs' });
+  assert.equal(body[1].content, ''); // 空内容的 text 节点
+});
+
 // ---------------- normalizeYoutubeTimedtext ----------------
 
 test('normalizeYoutubeTimedtext：fmt=json3 走 json3 解析', () => {
@@ -280,6 +335,12 @@ test('normalizeYoutubeTimedtext：null/空入参（任意 fmt）→ {body:[]}', 
 
 test('normalizeYoutubeTimedtext：fmt=null 无法嗅探的内容 → {body:[]}', () => {
   assert.deepEqual(normalizeYoutubeTimedtext('plain text no structure', null), { body: [] });
+});
+
+test('normalizeYoutubeTimedtext：非串非对象入参（数字/布尔）→ {body:[]}', () => {
+  assert.deepEqual(normalizeYoutubeTimedtext(123, null), { body: [] });
+  assert.deepEqual(normalizeYoutubeTimedtext(123, 'json3'), { body: [] });
+  assert.deepEqual(normalizeYoutubeTimedtext(false, null), { body: [] });
 });
 
 // ---------------- 产物与 subtitleFormat 串联（契约 Y1：可直接喂下游） ----------------

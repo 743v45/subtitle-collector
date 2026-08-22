@@ -8,6 +8,8 @@ import { useToast } from '@/components/ui/toast';
 import { useAsync } from '@/lib/useAsync';
 import { useQueryUpdater, useRoute } from '../router';
 import { listCategories, listCreators, setCreatorCategory, type Category, type CreatorListItem } from '@/api';
+import { creatorUrl } from '../lib/externalLinks';
+import { ExtLink } from '@/components/ExtLink';
 
 const PAGE_SIZE = 20;
 type CreatorSort = 'first_seen' | 'fans' | 'video_count';
@@ -79,7 +81,7 @@ export function CreatorsPage({ onOpen }: { onOpen: (id: number) => void }) {
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
-        <h2 className="text-lg font-semibold">创作者管理</h2>
+        <h2 className="text-xl font-semibold tracking-tight">创作者管理</h2>
         <span className="text-sm text-muted-foreground">共 {total} 条</span>
       </div>
 
@@ -130,44 +132,54 @@ export function CreatorsPage({ onOpen }: { onOpen: (id: number) => void }) {
         </Select>
       </div>
 
-      <Table>
-        <TableHeader>
-          <TableRow>
-            <TableHead>名称</TableHead>
-            <TableHead>ID</TableHead>
-            <TableHead>Agent 分类</TableHead>
-            <TableHead>人工分类</TableHead>
-            <TableHead className="text-right">粉丝</TableHead>
-            <TableHead className="text-right">视频数</TableHead>
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          {error ? (
-            <TableRow>
-              <TableCell colSpan={6} className="text-sm text-destructive">
-                加载失败：{error}
-                <Button variant="link" size="sm" onClick={reload}>重试</Button>
-              </TableCell>
+      <div className="overflow-hidden rounded-md border" aria-busy={loading || undefined}>
+        <Table>
+          <TableHeader>
+            <TableRow className="hover:bg-transparent">
+              <TableHead>名称</TableHead>
+              <TableHead>ID</TableHead>
+              <TableHead>Agent 分类</TableHead>
+              <TableHead>人工分类</TableHead>
+              <TableHead className="text-right">粉丝</TableHead>
+              <TableHead className="text-right">视频数</TableHead>
             </TableRow>
-          ) : loading && items.length === 0 ? (
-            Array.from({ length: 5 }).map((_, i) => (
-              <TableRow key={i}>
-                <TableCell><Skeleton className="h-4 w-24" /></TableCell>
-                <TableCell><Skeleton className="h-4 w-20" /></TableCell>
-                <TableCell><Skeleton className="h-8 w-32" /></TableCell>
-                <TableCell><Skeleton className="h-8 w-32" /></TableCell>
-                <TableCell className="text-right"><Skeleton className="ml-auto h-4 w-10" /></TableCell>
-                <TableCell className="text-right"><Skeleton className="ml-auto h-4 w-8" /></TableCell>
+          </TableHeader>
+          <TableBody>
+            {error ? (
+              <TableRow className="hover:bg-transparent">
+                <TableCell colSpan={6} className="text-sm text-destructive">
+                  加载失败：{error}
+                  <Button variant="link" size="sm" onClick={reload}>重试</Button>
+                </TableCell>
               </TableRow>
-            ))
-          ) : items.length === 0 ? (
-            <TableRow>
-              <TableCell colSpan={6} className="text-center text-sm text-muted-foreground">暂无数据</TableCell>
-            </TableRow>
-          ) : (
+            ) : loading && items.length === 0 ? (
+              Array.from({ length: 5 }).map((_, i) => (
+                <TableRow key={i}>
+                  <TableCell><Skeleton className="h-4 w-24" /></TableCell>
+                  <TableCell><Skeleton className="h-4 w-20" /></TableCell>
+                  <TableCell><Skeleton className="h-8 w-32" /></TableCell>
+                  <TableCell><Skeleton className="h-8 w-32" /></TableCell>
+                  <TableCell className="text-right"><Skeleton className="ml-auto h-4 w-10" /></TableCell>
+                  <TableCell className="text-right"><Skeleton className="ml-auto h-4 w-8" /></TableCell>
+                </TableRow>
+              ))
+            ) : items.length === 0 ? (
+              <TableRow className="hover:bg-transparent">
+                <TableCell colSpan={6} className="py-8 text-center">
+                  <div className="text-sm text-muted-foreground">
+                    {q || catFilter ? '没有匹配的创作者——试试放宽搜索或分类筛选' : '暂无创作者——采集视频后创作者会自动入库'}
+                  </div>
+                </TableCell>
+              </TableRow>
+            ) : (
             items.map((c) => (
               <TableRow key={c.id} className="cursor-pointer hover:bg-accent" onClick={() => onOpen(c.id)}>
-                <TableCell>{c.name ?? '(未知)'}</TableCell>
+                <TableCell>
+                  <span className="inline-flex items-center gap-1">
+                    {c.name ?? '(未知)'}
+                    <ExtLink href={creatorUrl(c.source, c.source_uid)} label={`在原站打开 ${c.name ?? c.source_uid} 的空间`} />
+                  </span>
+                </TableCell>
                 <TableCell className="font-mono text-muted-foreground">{c.source_uid}</TableCell>
                 {/* stopPropagation：点 Select 触发器不能冒泡到行触发行跳转。SelectContent 走 Portal 不会冒泡到行。 */}
                 <TableCell onClick={(e) => e.stopPropagation()}>
@@ -209,9 +221,10 @@ export function CreatorsPage({ onOpen }: { onOpen: (id: number) => void }) {
           )}
         </TableBody>
       </Table>
+      </div>
 
       <div className="flex items-center justify-between rounded-md border bg-muted/40 px-4 py-2 text-sm text-muted-foreground">
-        <div>第 {page}/{totalPages} 页</div>
+        <div className="tabular-nums">第 {page}/{totalPages} 页</div>
         <div className="flex gap-2">
           <Button variant="outline" size="sm" disabled={page <= 1} onClick={() => updateQuery({ page: page - 1 > 1 ? String(page - 1) : null })}>上一页</Button>
           <Button variant="outline" size="sm" disabled={page >= totalPages || total === 0} onClick={() => updateQuery({ page: String(page + 1) })}>下一页</Button>

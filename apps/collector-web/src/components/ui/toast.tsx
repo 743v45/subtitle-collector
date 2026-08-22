@@ -35,9 +35,9 @@ export function ToastProvider({ children }: { children: ReactNode }) {
           <div
             key={t.id}
             className={cn(
-              'pointer-events-auto max-w-sm rounded-md border px-4 py-2 text-sm shadow-md',
+              'pointer-events-auto max-w-sm animate-in fade-in slide-in-from-top-2 rounded-md border px-4 py-2 text-sm shadow-md duration-200',
               t.kind === 'error' && 'border-destructive bg-destructive text-destructive-foreground',
-              t.kind === 'success' && 'border-emerald-500 bg-emerald-600 text-white',
+              t.kind === 'success' && 'border-emerald-600 bg-emerald-700 text-white',
               t.kind === 'default' && 'border-border bg-popover text-popover-foreground',
             )}
           >

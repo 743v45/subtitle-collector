@@ -5,22 +5,26 @@
 import { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
+import { Skeleton } from '@/components/ui/skeleton';
 import { cn } from '@/lib/utils';
 import { navigate } from '../router';
 import { getVideo, getVersion, retryCollectTasks } from '../api';
 import { useAsync } from '@/lib/useAsync';
 import { requestTaskNotifyPermission } from '@/lib/taskNotify';
+import { creatorUrl, videoUrl } from '../lib/externalLinks';
+import { ExtLink } from '@/components/ExtLink';
 import type { SubtitleLine } from '@/components/SubtitleView';
 import { ChevronDown, ChevronUp, Eye, Focus, RotateCcw, Trash2 } from 'lucide-react';
 import type { CollectTask, VideoDetail } from '../types';
 
-// 任务状态徽章文案与配色（pending 细分「等待扩展上线/排队中」由客户端数区分,这里统一显示）
+// 任务状态徽章文案与配色（pending 细分「等待扩展上线/排队中」由客户端数区分,这里统一显示）。
+// 暗色主题：x-500/15 底 + x-400 字（暗底对比 7-9:1）。
 export const STATUS_META: Record<CollectTask['status'], { label: string; className: string }> = {
-  pending: { label: '排队中', className: 'bg-amber-500/15 text-amber-600 dark:text-amber-400' },
-  dispatched: { label: '采集中', className: 'bg-blue-500/15 text-blue-600 dark:text-blue-400' },
-  succeeded: { label: '已完成', className: 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400' },
-  failed: { label: '失败', className: 'bg-red-500/15 text-red-600 dark:text-red-400' },
-  limited: { label: '受限', className: 'bg-amber-500/15 text-amber-600 dark:text-amber-400' },
+  pending: { label: '排队中', className: 'bg-amber-500/15 text-amber-400' },
+  dispatched: { label: '采集中', className: 'bg-blue-500/15 text-blue-400' },
+  succeeded: { label: '已完成', className: 'bg-emerald-500/15 text-emerald-400' },
+  failed: { label: '失败', className: 'bg-red-500/15 text-red-400' },
+  limited: { label: '受限', className: 'bg-amber-500/15 text-amber-400' },
 };
 
 export const PLATFORM_LABEL: Record<string, string> = { bilibili: 'B站', youtube: 'YouTube' };
@@ -97,6 +101,8 @@ export function TaskRow({ task, onDelete, onRetry }: {
               {PLATFORM_LABEL[task.source] ?? task.source} · {task.source_vid}
             </span>
           )}
+          {/* 原站外链：任何状态都可开原站页面（failed/未入库也有 BV 号可跳） */}
+          <ExtLink href={videoUrl(task.source, task.source_vid)} label="在原站打开视频" />
           <span className="ml-auto shrink-0 text-xs text-muted-foreground">{formatTs(task.created_at)}</span>
           {canRetry && (
             <Button
@@ -144,12 +150,16 @@ export function TaskRow({ task, onDelete, onRetry }: {
             <Trash2 className="size-4" />
           </Button>
         </div>
-        <div className={cn('text-sm', task.status === 'failed' ? 'text-destructive' : task.status === 'limited' ? 'text-amber-600 dark:text-amber-400' : 'text-muted-foreground')}>
+        <div className={cn('text-sm', task.status === 'failed' ? 'text-destructive' : task.status === 'limited' ? 'text-amber-400' : 'text-muted-foreground')}>
           {/* 有标题时次行给 平台·BV号·UP名 + 摘要;无标题保持摘要（UP 名来自 LEFT JOIN creators,未入库 null） */}
           {task.title && (
             <span className="text-xs">
               {PLATFORM_LABEL[task.source] ?? task.source} · {task.source_vid}
-              {task.creator_name ? <> · {task.creator_name}</> : null} ·{' '}
+              {task.creator_name && task.creator_source_uid ? (
+                <> · <ExtLink href={creatorUrl(task.source, task.creator_source_uid)} label={`在原站打开 ${task.creator_name} 的空间`}>{task.creator_name}</ExtLink></>
+              ) : task.creator_name ? (
+                <> · {task.creator_name}</>
+              ) : null}{' '}·{' '}
             </span>
           )}
           {resultSummary(task)}
@@ -168,9 +178,9 @@ function TaskPreview({ task }: { task: CollectTask }) {
 
   if (detailQ.loading) {
     return (
-      <div className="space-y-2 pt-1">
-        <div className="h-4 w-2/3 animate-pulse rounded bg-muted" />
-        <div className="h-16 w-full animate-pulse rounded bg-muted" />
+      <div className="space-y-2 pt-1" aria-busy="true">
+        <Skeleton className="h-4 w-2/3" />
+        <Skeleton className="h-16 w-full" />
       </div>
     );
   }
@@ -218,11 +228,11 @@ function TaskPreviewBody({ task, detail }: { task: CollectTask; detail: VideoDet
       {/* 默认轨正文前几行 */}
       {defVersion != null && (
         <>
-          {bodyQ.loading && <div className="h-24 w-full animate-pulse rounded bg-muted" />}
+          {bodyQ.loading && <Skeleton className="h-24 w-full" />}
           {!bodyQ.loading && bodyQ.error && (
             <div className="text-xs text-destructive">
               字幕加载失败:{bodyQ.error}
-              <button className="ml-1 underline" onClick={bodyQ.reload}>重试</button>
+              <button className="ml-1 cursor-pointer underline" onClick={bodyQ.reload}>重试</button>
             </div>
           )}
           {!bodyQ.loading && !bodyQ.error && (
@@ -353,7 +363,8 @@ export function BatchTaskCard({ items, onDelete, onDeleteBatch, onRetry, onRetry
                   >
                     {t.title || `${PLATFORM_LABEL[t.source] ?? t.source} · ${t.source_vid}`}
                   </span>
-                  <span className={cn('shrink-0 text-xs', t.status === 'failed' ? 'text-destructive' : t.status === 'limited' ? 'text-amber-600 dark:text-amber-400' : 'text-muted-foreground')}>
+                  <ExtLink href={videoUrl(t.source, t.source_vid)} label="在原站打开视频" />
+                  <span className={cn('shrink-0 text-xs', t.status === 'failed' ? 'text-destructive' : t.status === 'limited' ? 'text-amber-400' : 'text-muted-foreground')}>
                     {resultSummary(t)}
                   </span>
                   {retryable(t) && onRetryTask && (

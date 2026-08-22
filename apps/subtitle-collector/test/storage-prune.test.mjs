@@ -55,3 +55,23 @@ test('pruneExpired：fetchedAt 缺失/非数字不删（坏数据保守保留）
   const n = await pruneExpired(st, 'upperAllVideos:', TTL, NOW);
   assert.equal(n, 0);
 });
+
+test('pruneExpired：前缀内非对象值（字符串/数字/null）保守保留', async () => {
+  // 同前缀下可能混存其它类型的键（如手写的标记/时间戳）：v == null || typeof !== 'object' → 不删
+  const st = mockStorage({
+    'ytChannelVideos:str': '1680000000000',
+    'ytChannelVideos:num': 42,
+    'ytChannelVideos:nul': null,
+  });
+  const n = await pruneExpired(st, 'ytChannelVideos:', TTL, NOW);
+  assert.equal(n, 0);
+  assert.ok(st.data.has('ytChannelVideos:str'));
+  assert.ok(st.data.has('ytChannelVideos:num'));
+  assert.ok(st.data.has('ytChannelVideos:nul'));
+});
+
+test('pruneExpired：恰好等于 TTL（未超过）不删（> 严格比较）', async () => {
+  const st = mockStorage({ 'seasonVideos:eql': { done: true, fetchedAt: NOW - TTL } });
+  assert.equal(await pruneExpired(st, 'seasonVideos:', TTL, NOW), 0);
+  assert.ok(st.data.has('seasonVideos:eql'));
+});

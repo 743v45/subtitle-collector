@@ -35,3 +35,32 @@ test('extractKeysFromNav 从 nav 响应抽 img_key/sub_key', () => {
     sub_key: '4932caff0ff746eab6f01bf08b70ac45',
   });
 });
+
+test('extractKeysFromNav：nav 缺 data/wbi_img/url 字段 → 空串兜底（不抛错）', () => {
+  // nav 接口失败/风控返畸形体时 wbi_img 整段缺失，可选链 + ?? 全兜空串
+  assert.deepEqual(extractKeysFromNav(null), { img_key: '', sub_key: '' });
+  assert.deepEqual(extractKeysFromNav(undefined), { img_key: '', sub_key: '' });
+  assert.deepEqual(extractKeysFromNav({}), { img_key: '', sub_key: '' });
+  assert.deepEqual(extractKeysFromNav({ data: null }), { img_key: '', sub_key: '' });
+  assert.deepEqual(extractKeysFromNav({ data: {} }), { img_key: '', sub_key: '' });
+  assert.deepEqual(extractKeysFromNav({ data: { wbi_img: null } }), { img_key: '', sub_key: '' });
+  assert.deepEqual(extractKeysFromNav({ data: { wbi_img: {} } }), { img_key: '', sub_key: '' });
+  // 只缺 sub_url：img 正常、sub 空
+  assert.deepEqual(
+    extractKeysFromNav({ data: { wbi_img: { img_url: 'https://x/abc.png' } } }),
+    { img_key: 'abc', sub_key: '' },
+  );
+});
+
+test('encWbi 缺省 wts → 取当前秒（近实时），w_rid 仍为 32 位 md5', () => {
+  const img = '7cd084941338484aae1ad9425b84077c';
+  const sub = '4932caff0ff746eab6f01bf08b70ac45';
+  const before = Math.round(Date.now() / 1000);
+  const out = encWbi({ foo: '114' }, img, sub);
+  const after = Math.round(Date.now() / 1000);
+  const m = out.match(/(?:^|&)wts=(\d+)(?:&|$)/);
+  assert.ok(m, `输出应含 wts 参数：${out}`);
+  const wts = Number(m[1]);
+  assert.ok(wts >= before && wts <= after, `wts=${wts} 应落在 [${before}, ${after}]`);
+  assert.match(out, /&w_rid=[0-9a-f]{32}$/);
+});

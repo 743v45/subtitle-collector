@@ -153,5 +153,24 @@ test('getVideoTagsByVideoIds：批查分组正确', () => {
     const map = getVideoTagsByVideoIds(db, [1, 2]);
     assert.deepEqual(map.get(1), [{ name: 'x', source: 'manual' }]);
     assert.deepEqual(map.get(2), [{ name: 'y', source: 'ai' }]);
+    // 空 ids → 空 map（不发查询）
+    assert.equal(getVideoTagsByVideoIds(db, []).size, 0);
+  } finally { db.close(); rmSync(dir, { recursive: true, force: true }); }
+});
+
+// ── 分支洼地：removeVideoTags 的空入参早退 ──
+test('removeVideoTags：视频不存在 / names 全空白 → {removed:0, missing}早退', () => {
+  const { db, dir } = freshDb();
+  try {
+    seedVideos(db);
+    applyVideoTags(db, [{ source: 'bilibili', source_vid: 'BV1a' }], ['保留'], 'manual');
+    // 视频不在库 → found.size===0 早退，missing 带清单
+    let r = removeVideoTags(db, [{ source: 'bilibili', source_vid: 'BVnope' }], ['x']);
+    assert.equal(r.removed, 0);
+    assert.deepEqual(r.missing, [{ source: 'bilibili', source_vid: 'BVnope' }]);
+    // names 过滤后为空（全空白串）→ cleanNames.length===0 早退，不动库
+    r = removeVideoTags(db, [{ source: 'bilibili', source_vid: 'BV1a' }], ['  ']);
+    assert.equal(r.removed, 0);
+    assert.equal(getVideoTagsForDetail(db, 1).length, 1, '已有关系不受影响');
   } finally { db.close(); rmSync(dir, { recursive: true, force: true }); }
 });

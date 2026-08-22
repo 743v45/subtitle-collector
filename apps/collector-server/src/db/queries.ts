@@ -58,7 +58,7 @@ const versionPriority = (origin: string): number => {
 };
 
 export function getVideo(db: Database.Database, source: string, sourceVid: string): VideoDetail | null {
-  const video = db.prepare('SELECT v.*, c.name as creator_name FROM videos v LEFT JOIN creators c ON c.id = v.creator_id WHERE v.source = ? AND v.source_vid = ?').get(source, sourceVid) as Record<string, unknown> | undefined;
+  const video = db.prepare('SELECT v.*, c.name as creator_name, c.source_uid as creator_source_uid FROM videos v LEFT JOIN creators c ON c.id = v.creator_id WHERE v.source = ? AND v.source_vid = ?').get(source, sourceVid) as Record<string, unknown> | undefined;
   if (!video) return null;
   const tracks = db.prepare('SELECT * FROM subtitle_tracks WHERE video_id = ? ORDER BY id').all(video.id) as Array<{ id: number; lan: string | null; lan_doc: string | null; track_type: number | null }>;
   const allVersions = db.prepare('SELECT * FROM subtitle_versions WHERE track_id = ? ORDER BY id');

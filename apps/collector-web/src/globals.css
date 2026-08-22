@@ -4,48 +4,57 @@
 
 @layer base {
   :root {
-    --background: 0 0% 100%;
-    --foreground: 240 10% 3.9%;
-    --card: 0 0% 100%;
-    --card-foreground: 240 10% 3.9%;
-    --popover: 0 0% 100%;
-    --popover-foreground: 240 10% 3.9%;
-    --primary: 240 5.9% 10%;
-    --primary-foreground: 0 0% 98%;
-    --secondary: 240 4.8% 95.9%;
-    --secondary-foreground: 240 5.9% 10%;
-    --muted: 240 4.8% 95.9%;
-    --muted-foreground: 240 3.8% 46.1%;
-    --accent: 240 4.8% 95.9%;
-    --accent-foreground: 240 5.9% 10%;
-    --destructive: 0 84.2% 60.2%;
-    --destructive-foreground: 0 0% 98%;
-    --border: 240 5.9% 90%;
-    --input: 240 5.9% 90%;
-    --ring: 240 5.9% 10%;
+    /* 暗色媒体库主题（2026-08-22 大改造，方向：Plex/YouTube Studio 风深底 + 蓝accent）。
+       单暗色应用——:root 即暗色，不做亮/暗切换；.dark 保留同值兼容旧类挂载。
+       取舍记录：
+       - background #0F172A（slate-900，用户选定方向），card 再深一档与背景分层；
+       - primary #3B82F6（blue-500）：暗底上白字 3.7:1 达大文本标准，按钮文字用
+         font-medium 且尺寸 ≥sm——若后续有正文级 primary 按钮再升 blue-600；
+       - border slate-700：暗底下分隔线可见但不抢；
+       - accent（hover 面）slate-800：行 hover/ghost hover 的中性浮层，不用饱和色。 */
+    --background: 222 47% 11%; /* #0F172A slate-900 */
+    --foreground: 210 40% 98%; /* #F8FAFC */
+    --card: 222 47% 8%; /* #0C1222 比 background 深一档 */
+    --card-foreground: 210 40% 98%;
+    --popover: 222 47% 9%;
+    --popover-foreground: 210 40% 98%;
+    --primary: 217 91% 60%; /* #3B82F6 blue-500 */
+    --primary-foreground: 0 0% 100%;
+    --secondary: 217 33% 17%; /* #1E293B slate-800 */
+    --secondary-foreground: 210 40% 98%;
+    --muted: 217 33% 17%; /* slate-800 */
+    --muted-foreground: 215 20% 65%; /* #94A3B8 slate-400 */
+    --accent: 217 33% 17%; /* hover 浮层 = slate-800 */
+    --accent-foreground: 210 40% 98%;
+    --destructive: 0 84% 60%; /* #EF4444 red-500（暗底亮红） */
+    --destructive-foreground: 0 0% 100%;
+    --border: 217 19% 27%; /* #334155 slate-700 */
+    --input: 217 19% 27%;
+    --ring: 217 91% 60%; /* = primary */
     --radius: 0.5rem;
   }
 
   .dark {
-    --background: 240 10% 3.9%;
-    --foreground: 0 0% 98%;
-    --card: 240 10% 3.9%;
-    --card-foreground: 0 0% 98%;
-    --popover: 240 10% 3.9%;
-    --popover-foreground: 0 0% 98%;
-    --primary: 0 0% 98%;
-    --primary-foreground: 240 5.9% 10%;
-    --secondary: 240 3.7% 15.9%;
-    --secondary-foreground: 0 0% 98%;
-    --muted: 240 3.7% 15.9%;
-    --muted-foreground: 240 5% 64.9%;
-    --accent: 240 3.7% 15.9%;
-    --accent-foreground: 0 0% 98%;
-    --destructive: 0 62.8% 30.6%;
-    --destructive-foreground: 0 0% 98%;
-    --border: 240 3.7% 15.9%;
-    --input: 240 3.7% 15.9%;
-    --ring: 240 4.9% 83.9%;
+    /* 兼容保留：与 :root 同值（html 挂 .dark 时无跳变） */
+    --background: 222 47% 11%;
+    --foreground: 210 40% 98%;
+    --card: 222 47% 8%;
+    --card-foreground: 210 40% 98%;
+    --popover: 222 47% 9%;
+    --popover-foreground: 210 40% 98%;
+    --primary: 217 91% 60%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 217 33% 17%;
+    --secondary-foreground: 210 40% 98%;
+    --muted: 217 33% 17%;
+    --muted-foreground: 215 20% 65%;
+    --accent: 217 33% 17%;
+    --accent-foreground: 210 40% 98%;
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 217 19% 27%;
+    --input: 217 19% 27%;
+    --ring: 217 91% 60%;
   }
 }
 

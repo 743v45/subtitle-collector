@@ -52,18 +52,18 @@ export function StatsPage() {
 
   return (
     <div className="space-y-4">
-      <h2 className="text-lg font-semibold">数据看板</h2>
+      <h2 className="text-xl font-semibold tracking-tight">数据看板</h2>
 
       {/* overview 数字卡 */}
       {overview.loading && (
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-6">
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-6" aria-busy="true">
           {Array.from({ length: 6 }).map((_, i) => <Skeleton key={i} className="h-[88px]" />)}
         </div>
       )}
       {overview.error && (
         <div className="text-sm text-destructive">
           加载统计失败：{overview.error}{' '}
-          <button className="underline" onClick={overview.reload}>重试</button>
+          <button className="cursor-pointer underline" onClick={overview.reload}>重试</button>
         </div>
       )}
       {overview.data && (
@@ -82,8 +82,8 @@ export function StatsPage() {
         </>
       )}
 
-      {/* 分组聚合 Top 榜 */}
-      <div className="flex gap-1 pt-2">
+      {/* 分组聚合 Top 榜（flex-wrap：375 档 5 个按钮一行放不下会折行,不横滚） */}
+      <div className="flex flex-wrap gap-1 pt-2">
         {(Object.keys(GROUP_LABEL) as StatsGroupBy[]).map((g) => (
           <Button key={g} variant={groupBy === g ? 'default' : 'outline'} size="sm" onClick={() => updateQuery({ groupBy: g === 'tname' ? null : g })}>
             按{GROUP_LABEL[g]}
@@ -112,7 +112,7 @@ function AggregatePanel({
 }) {
   if (loading) {
     return (
-      <div className="mt-3 space-y-2">
+      <div className="mt-3 space-y-2" aria-busy="true">
         {Array.from({ length: 8 }).map((_, i) => <Skeleton key={i} className="h-8" />)}
       </div>
     );
@@ -121,12 +121,16 @@ function AggregatePanel({
     return (
       <div className="mt-3 text-sm text-destructive">
         加载失败：{error}{' '}
-        <button className="underline" onClick={reload}>重试</button>
+        <button className="cursor-pointer underline" onClick={reload}>重试</button>
       </div>
     );
   }
   if (!data || data.length === 0) {
-    return <div className="mt-3 text-sm text-muted-foreground">暂无数据</div>;
+    return (
+      <div className="mt-3 text-sm text-muted-foreground">
+        暂无数据——采集入库后这里会出现聚合统计
+      </div>
+    );
   }
   const max = Math.max(1, ...data.map((d) => d.count));
   return (

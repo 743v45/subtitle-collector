@@ -9,7 +9,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { useToast } from '@/components/ui/toast';
 import { useAsync } from '@/lib/useAsync';
 import { cn } from '@/lib/utils';
-import { navigate } from '../router';
+import { navigate, useQueryUpdater, useRoute } from '../router';
 import { GripVertical } from 'lucide-react';
 import { listTags, renameTag, deleteTag, getTagPriority, putTagPriority, type TagItem } from '@/api';
 import { TAG_SOURCE_DOT, TAG_SOURCE_LABEL, type TagSource } from '@/lib/tagSources';
@@ -35,7 +35,13 @@ const SCOPES: { value: LibraryScope; label: string }[] = [
 
 export function TagsPage() {
   const toast = useToast();
-  const [scope, setScope] = useState<LibraryScope>('');
+  // 档位过滤进 URL（#/tags?scope=manual），刷新/分享还原；默认「全部」省略不写
+  const route = useRoute();
+  const updateQuery = useQueryUpdater();
+  const scopeRaw = route.query.get('scope');
+  const scope: LibraryScope = (SCOPES.some((s) => s.value !== '' && s.value === scopeRaw))
+    ? (scopeRaw as LibraryScope)
+    : '';
   const { data: items, loading, error, reload } = useAsync(
     () => listTags(scope ? { source: scope } : {}),
     [scope],
@@ -118,7 +124,7 @@ export function TagsPage() {
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
-        <h2 className="text-lg font-semibold">标签管理</h2>
+        <h2 className="text-xl font-semibold tracking-tight">标签管理</h2>
         <span className="text-sm text-muted-foreground">共 {items?.length ?? 0} 条</span>
       </div>
 
@@ -168,14 +174,14 @@ export function TagsPage() {
         </CardContent>
       </Card>
 
-      {/* 档位过滤 */}
+      {/* 档位过滤（URL query 承载） */}
       <div className="flex gap-2 items-center">
         {SCOPES.map((s) => (
           <Button
             key={s.value || 'all'}
             variant={scope === s.value ? 'default' : 'outline'}
             size="sm"
-            onClick={() => setScope(s.value)}
+            onClick={() => updateQuery({ scope: s.value || null })}
           >
             {s.label}
           </Button>
@@ -190,63 +196,69 @@ export function TagsPage() {
       )}
 
       {/* 标签库 */}
-      <Table>
-        <TableHeader>
-          <TableRow>
-            <TableHead>名称</TableHead>
-            <TableHead>手动</TableHead>
-            <TableHead>批量</TableHead>
-            <TableHead>AI</TableHead>
-            <TableHead>总计</TableHead>
-            <TableHead>创建时间</TableHead>
-            <TableHead className="text-right">操作</TableHead>
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          {loading && Array.from({ length: 3 }).map((_, i) => (
-            <TableRow key={`sk-${i}`}>
-              {Array.from({ length: 7 }).map((_, j) => (
-                <TableCell key={j}><Skeleton className="h-4 w-16" /></TableCell>
-              ))}
+      <div className="overflow-hidden rounded-md border" aria-busy={loading || undefined}>
+        <Table>
+          <TableHeader>
+            <TableRow className="hover:bg-transparent">
+              <TableHead>名称</TableHead>
+              <TableHead className="text-right">手动</TableHead>
+              <TableHead className="text-right">批量</TableHead>
+              <TableHead className="text-right">AI</TableHead>
+              <TableHead className="text-right">总计</TableHead>
+              <TableHead>创建时间</TableHead>
+              <TableHead className="text-right">操作</TableHead>
             </TableRow>
-          ))}
-          {!loading && items?.map((t) => {
-            const rowBusy = deletingId === t.id || renameTarget?.id === t.id;
-            return (
-              <TableRow key={t.id}>
-                <TableCell className="font-medium">
-                  {/* 点击名称 → 视频页按该标签筛选（URL 直达,可分享/后退） */}
-                  <button
-                    className="underline-offset-2 hover:underline"
-                    title={`查看带「${t.name}」标签的视频`}
-                    onClick={() => navigate(`/videos?tag=${encodeURIComponent(t.name)}`)}
-                  >
-                    {t.name}
-                  </button>
-                </TableCell>
-                <TableCell className="tabular-nums">{t.counts.manual}</TableCell>
-                <TableCell className="tabular-nums">{t.counts.batch}</TableCell>
-                <TableCell className="tabular-nums">{t.counts.ai}</TableCell>
-                <TableCell className="tabular-nums">{t.counts.total}</TableCell>
-                <TableCell className="text-muted-foreground">{fmtTime(t.created_at)}</TableCell>
-                <TableCell className="text-right space-x-2">
-                  <Button variant="outline" size="sm" disabled={rowBusy} onClick={() => openRename(t)}>
-                    改名
-                  </Button>
-                  <Button variant="destructive" size="sm" disabled={rowBusy} onClick={() => onDelete(t)}>
-                    {deletingId === t.id ? '删除中…' : '删除'}
-                  </Button>
+          </TableHeader>
+          <TableBody>
+            {loading && Array.from({ length: 3 }).map((_, i) => (
+              <TableRow key={`sk-${i}`}>
+                {Array.from({ length: 7 }).map((_, j) => (
+                  <TableCell key={j}><Skeleton className="h-4 w-16" /></TableCell>
+                ))}
+              </TableRow>
+            ))}
+            {!loading && items?.map((t) => {
+              const rowBusy = deletingId === t.id || renameTarget?.id === t.id;
+              return (
+                <TableRow key={t.id}>
+                  <TableCell className="font-medium">
+                    {/* 点击名称 → 视频页按该标签筛选（URL 直达,可分享/后退） */}
+                    <button
+                      className="cursor-pointer underline-offset-2 transition-colors hover:text-primary hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                      title={`查看带「${t.name}」标签的视频`}
+                      onClick={() => navigate(`/videos?tags=${encodeURIComponent(t.name)}`)}
+                    >
+                      {t.name}
+                    </button>
+                  </TableCell>
+                  <TableCell className="text-right tabular-nums">{t.counts.manual}</TableCell>
+                  <TableCell className="text-right tabular-nums">{t.counts.batch}</TableCell>
+                  <TableCell className="text-right tabular-nums">{t.counts.ai}</TableCell>
+                  <TableCell className="text-right tabular-nums">{t.counts.total}</TableCell>
+                  <TableCell className="whitespace-nowrap text-xs tabular-nums text-muted-foreground">{fmtTime(t.created_at)}</TableCell>
+                  <TableCell className="space-x-2 text-right">
+                    <Button variant="outline" size="sm" disabled={rowBusy} onClick={() => openRename(t)}>
+                      改名
+                    </Button>
+                    <Button variant="destructive" size="sm" disabled={rowBusy} onClick={() => onDelete(t)}>
+                      {deletingId === t.id ? '删除中…' : '删除'}
+                    </Button>
+                  </TableCell>
+                </TableRow>
+              );
+            })}
+            {!loading && !error && (items?.length ?? 0) === 0 && (
+              <TableRow>
+                <TableCell colSpan={7} className="py-8 text-center">
+                  <div className="text-sm text-muted-foreground">
+                    {scope ? '该档位暂无标签' : '暂无标签——在视频详情页可添加手动标签，批量/AI 打标后也会出现在这里'}
+                  </div>
                 </TableCell>
               </TableRow>
-            );
-          })}
-          {!loading && !error && (items?.length ?? 0) === 0 && (
-            <TableRow>
-              <TableCell colSpan={7} className="text-center text-sm text-muted-foreground">暂无标签</TableCell>
-            </TableRow>
-          )}
-        </TableBody>
-      </Table>
+            )}
+          </TableBody>
+        </Table>
+      </div>
 
       {/* 改名 Dialog（替代 window.prompt） */}
       <Dialog

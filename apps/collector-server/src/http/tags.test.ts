@@ -249,3 +249,150 @@ test('settings API：collect-timeout 默认值 → PUT 覆盖 → 非法 400', a
     assert.equal(r.json.bilibili, 120_000);
   } finally { cleanup(); }
 });
+
+// ── parseApplyBody 校验分支：items/names 各非法形态 → 400 ──
+test('POST /api/tags/apply|remove：body 各非法形态 → 400', async () => {
+  const { port, cleanup } = await setup();
+  try {
+    // items 缺失 / names 缺失 / 空数组 → 400（apply 与 remove 同一 parseApplyBody）
+    for (const path of ['/api/tags/apply', '/api/tags/remove']) {
+      let r = await call(port, 'POST', path, { names: ['x'] });
+      assert.equal(r.status, 400, `${path} items 缺失`);
+      assert.equal(r.json.error, 'items:[{source,source_vid}] and names:string[] required');
+      r = await call(port, 'POST', path, { items: [], names: ['x'] });
+      assert.equal(r.status, 400, `${path} items 空数组`);
+      r = await call(port, 'POST', path, { items: [{ source: 'bilibili', source_vid: 'BV1' }] });
+      assert.equal(r.status, 400, `${path} names 缺失`);
+      r = await call(port, 'POST', path, { items: [{ source: 'bilibili', source_vid: 'BV1' }], names: [] });
+      assert.equal(r.status, 400, `${path} names 空数组`);
+      // names 全空白串 → 过滤后空 → 400
+      r = await call(port, 'POST', path, { items: [{ source: 'bilibili', source_vid: 'BV1' }], names: ['  '] });
+      assert.equal(r.status, 400, `${path} names 全空白`);
+      assert.equal(r.json.error, 'names must contain at least one non-empty string');
+    }
+
+    // item 字段脏值：缺 source / 空 source_vid / 非字符串 → 400
+    for (const item of [{ source_vid: 'BV1' }, { source: '', source_vid: 'BV1' }, { source: 'bilibili', source_vid: '' }, { source: 42, source_vid: 'BV1' }]) {
+      const r = await call(port, 'POST', '/api/tags/apply', { items: [item], names: ['x'], source: 'manual' });
+      assert.equal(r.status, 400);
+      assert.equal(r.json.error, 'each item needs non-empty source & source_vid');
+    }
+
+    // remove 显式 source=bogus → 400；source=season 只读 → 400；source=bili 只读 → 400
+    let r = await call(port, 'POST', '/api/tags/remove', { items: [{ source: 'bilibili', source_vid: 'BV1' }], names: ['x'], source: 'bogus' });
+    assert.equal(r.status, 400);
+    r = await call(port, 'POST', '/api/tags/remove', { items: [{ source: 'bilibili', source_vid: 'BV1' }], names: ['x'], source: 'season' });
+    assert.equal(r.status, 400);
+    r = await call(port, 'POST', '/api/tags/remove', { items: [{ source: 'bilibili', source_vid: 'BV1' }], names: ['x'], source: 'bili' });
+    assert.equal(r.status, 400);
+    // remove 显式合法 source=manual → 200（走带档删除分支）
+    await call(port, 'POST', '/api/tags/apply', { items: [{ source: 'bilibili', source_vid: 'BV1' }], names: ['档删'], source: 'manual' });
+    await call(port, 'POST', '/api/tags/apply', { items: [{ source: 'bilibili', source_vid: 'BV1' }], names: ['档删'], source: 'ai' });
+    r = await call(port, 'POST', '/api/tags/remove', { items: [{ source: 'bilibili', source_vid: 'BV1' }], names: ['档删'], source: 'manual' });
+    assert.equal(r.status, 200);
+    assert.equal(r.json.removed, 1);
+  } finally { cleanup(); }
+});
+
+// ── PATCH /api/tags/:id 的 name 校验 + 404 + 500 兜底；路由兜底 404 ──
+test('PATCH /api/tags/:id：name 缺失/非串/空白 → 400；不存在 id → 404；未知方法/路径 → 404', async () => {
+  const { port, cleanup } = await setup();
+  try {
+    await call(port, 'POST', '/api/tags/apply', { items: [{ source: 'bilibili', source_vid: 'BV1' }], names: ['目标'], source: 'manual' });
+    const tagId = (await call(port, 'GET', '/api/tags')).json.items.find((t: any) => t.name === '目标').id;
+
+    // name 缺失 / 非字符串 / 纯空白 → 400
+    let r = await call(port, 'PATCH', `/api/tags/${tagId}`, {});
+    assert.equal(r.status, 400);
+    assert.equal(r.json.error, 'name required');
+    r = await call(port, 'PATCH', `/api/tags/${tagId}`, { name: 42 });
+    assert.equal(r.status, 400);
+    r = await call(port, 'PATCH', `/api/tags/${tagId}`, { name: '   ' });
+    assert.equal(r.status, 400);
+    // 不存在的 id → 404
+    r = await call(port, 'PATCH', '/api/tags/99999', { name: '改名' });
+    assert.equal(r.status, 404);
+    // 非 /api/tags/(\d+) 形态（字母 id）与方法不匹配 → 兜底 404
+    r = await call(port, 'PATCH', '/api/tags/abc', { name: 'x' });
+    assert.equal(r.status, 404);
+    r = await call(port, 'POST', '/api/tags', {});
+    assert.equal(r.status, 404);
+    r = await call(port, 'PUT', `/api/tags/${tagId}`, { name: 'x' });
+    assert.equal(r.status, 404);
+  } finally { cleanup(); }
+});
+
+// ── renameTag 抛非 UNIQUE 错误 → 500 兜底（Proxy 拦 db.prepare 注入故障）──
+test('PATCH /api/tags/:id：rename 抛非 UNIQUE 错误 → 500 + 错误 message 透传', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'collector-tags-500-'));
+  const db = openDb(join(dir, 'test.db'));
+  migrate(db);
+  ingestVideo(db, {
+    source: 'bilibili',
+    video: { source_vid: 'BV1', title: 't', creator: { source_uid: '1', name: 'up' }, extra: {}, duration: 1, published_at: 1 },
+    tracks: [],
+  });
+  // 拦 UPDATE tags 的 prepare，run 时抛非 UNIQUE 错误（模拟磁盘 I/O 故障等）
+  const faultyDb = new Proxy(db, {
+    get(target, prop) {
+      if (prop === 'prepare') {
+        return (sql: string) => {
+          if (sql.includes('UPDATE tags SET name')) {
+            return { run: () => { throw new Error('disk I/O error'); } };
+          }
+          return target.prepare(sql);
+        };
+      }
+      const v = Reflect.get(target, prop, target);
+      return typeof v === 'function' ? (v as (...a: unknown[]) => unknown).bind(target) : v;
+    },
+  });
+  const server = createServer((req: IncomingMessage, res: ServerResponse) => {
+    void handleTagsHttp(req, res, faultyDb as typeof db);
+  });
+  const port = await new Promise<number>((resolve) => {
+    server.listen(0, '127.0.0.1', () => resolve((server.address() as AddressInfo).port));
+  });
+  try {
+    const apply = await call(port, 'POST', '/api/tags/apply', { items: [{ source: 'bilibili', source_vid: 'BV1' }], names: ['目标'], source: 'manual' });
+    assert.equal(apply.status, 200);
+    const tagId = (await call(port, 'GET', '/api/tags')).json.items[0].id;
+    const r = await call(port, 'PATCH', `/api/tags/${tagId}`, { name: '改名' });
+    assert.equal(r.status, 500);
+    assert.equal(r.json.ok, false);
+    assert.equal(r.json.error, 'disk I/O error');
+  } finally {
+    server.close(); db.close(); rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// ── GET /api/tags 的 source 校验与 topN 归一 ──
+test('GET /api/tags：source 非法 400；topN 非法回落 500、上限 500、下限 1', async () => {
+  const { port, cleanup } = await setup();
+  try {
+    await call(port, 'POST', '/api/tags/apply', { items: [{ source: 'bilibili', source_vid: 'BV1' }], names: ['t1', 't2', 't3'], source: 'manual' });
+    // source 非法档 → 400
+    let r = await call(port, 'GET', '/api/tags?source=bogus');
+    assert.equal(r.status, 400);
+    assert.equal(r.json.error, 'source must be manual|batch|ai');
+    // source 合法（manual）→ 只列该档 >0 的标签
+    r = await call(port, 'GET', '/api/tags?source=manual');
+    assert.equal(r.status, 200);
+    assert.equal(r.json.items.length, 3);
+    // topN 非法（NaN）→ 回落 500；topN=2 → 截 2 条；topN=99999 → 上限 500
+    r = await call(port, 'GET', '/api/tags?topN=abc');
+    assert.equal(r.json.items.length, 3);
+    r = await call(port, 'GET', '/api/tags?topN=2');
+    assert.equal(r.json.items.length, 2);
+    r = await call(port, 'GET', '/api/tags?topN=99999');
+    assert.equal(r.status, 200); // 不因超大 topN 报错（夹到 500）
+    // 详情全档：三个 manual 同档标签按名字 localeCompare 排序（同优先级 tie 分支）
+    r = await call(port, 'GET', '/api/videos/bilibili/BV1');
+    assert.deepEqual(r.json.tag_details, [
+      { name: 't1', source: 'manual' },
+      { name: 't2', source: 'manual' },
+      { name: 't3', source: 'manual' },
+      { name: 'B站自带', source: 'bili' },
+    ], '同档（manual）内部按名字排序，档间按优先级');
+  } finally { cleanup(); }
+});

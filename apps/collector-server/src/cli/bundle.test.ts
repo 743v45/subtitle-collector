@@ -190,3 +190,63 @@ test('buildBundle: 失败任务不算受限（仅 limited 终态标记）；无�
     assert.equal(r.manifest.videos.find((v) => v.source_vid === 'BV2')!.pot_limited, false, 'failed ≠ limited，不标受限');
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
+
+// ── 头部元信息降级分支：缺 creator/duration/published_at、轨缺 lan/lan_doc/track_type ──
+// 覆盖 videoHeader 的 '未知UP'/'未知'/'?'/'(无lan)' 与 BundleSubtitleMeta 的 null 透传。
+//
+// 测试轮次记录表（对齐全局 8.2）：
+// | 轮次 | 范围 | 结果 | 备注 |
+// |---|---|---|---|
+// | R2 | videoHeader 降级分支 + track_type=3 '翻译' 标签 | 通过 | 头部字段各自回落占位文案 |
+
+test('buildBundle: 无 creator/duration/published_at + 轨缺 lan/lan_doc/track_type → 头部占位文案 + meta null', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'cli-bundle-'));
+  const db = openDb(join(dir, 'test.db'));
+  migrate(db);
+  // 无 creator、无 duration/published_at；轨不带 lan/lan_doc/track_type；版本 manual 档
+  ingestVideo(db, {
+    source: 'youtube',
+    video: { source_vid: 'ytBare', title: '裸元信息' },
+    tracks: [{ versions: [{ origin: 'manual', payload: { body: [{ from: 1, to: 2, content: 'hi' }] }, source_url: null }] }],
+  });
+  try {
+    const r = buildBundle(db, { filters: {}, limit: 10, now: 0 });
+    const v = r.manifest.videos.find((x) => x.source_vid === 'ytBare')!;
+    assert.equal(v.creator_name, null);
+    assert.equal(v.duration, null);
+    assert.equal(v.published_at, null);
+    assert.equal(v.subtitle?.lan, null);
+    assert.equal(v.subtitle?.lan_doc, null);
+    assert.equal(v.subtitle?.track_type, null);
+    assert.equal(v.subtitle?.origin, 'manual');
+    const txt = r.files.find((f) => f.path === 'videos/ytBare.txt')!.content;
+    assert.ok(txt.includes('# 裸元信息'));
+    assert.ok(txt.includes('UP: 未知UP  时长: 未知  发布: 未知'), `头部降级文案不符: ${txt.split('\n')[1]}`);
+    assert.ok(txt.includes('轨: (无lan)  版本来源: manual'), `轨行降级文案不符: ${txt.split('\n')[2]}`);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('buildBundle: track_type=3（翻译轨）→ 头部轨标签「翻译」；有 lan 无 lan_doc → 只显 lan', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'cli-bundle-'));
+  const db = openDb(join(dir, 'test.db'));
+  migrate(db);
+  ingestVideo(db, {
+    source: 'youtube',
+    video: { source_vid: 'ytT3', title: '翻译轨视频', creator: { source_uid: 'UC1', name: 'ch' }, extra: {}, duration: 60, published_at: 1724000000000 },
+    tracks: [{ lan: 'ja', lan_doc: '日本語', track_type: 3, versions: [{ origin: 'external', payload: { body: [{ from: 0, to: 1, content: 'こん' }] }, source_url: 'https://tt?tlang=ja' }] }],
+  });
+  // lan 存在但 lan_doc 缺 → trackLabel 退化为裸 lan（不带 (lan, 类型) 后缀）
+  ingestVideo(db, {
+    source: 'youtube',
+    video: { source_vid: 'ytNoDoc', title: '无轨名视频', creator: { source_uid: 'UC1', name: 'ch' }, extra: {}, duration: 60, published_at: 1724000000000 },
+    tracks: [{ lan: 'ko', track_type: 1, versions: [{ origin: 'external', payload: { body: [{ from: 0, to: 1, content: '안녕' }] }, source_url: 'https://tt?lang=ko' }] }],
+  });
+  try {
+    const r = buildBundle(db, { filters: {}, track: 'ja', limit: 10, now: 0 });
+    let txt = r.files.find((f) => f.path === 'videos/ytT3.txt')!.content;
+    assert.ok(txt.includes('轨: 日本語(ja, 翻译)'), `track_type=3 应标「翻译」: ${txt.split('\n')[2]}`);
+    const r2 = buildBundle(db, { filters: {}, track: 'ko', limit: 10, now: 0 });
+    txt = r2.files.find((f) => f.path === 'videos/ytNoDoc.txt')!.content;
+    assert.ok(txt.includes('轨: ko  版本来源: external'), `lan_doc 缺失应只显 lan: ${txt.split('\n')[2]}`);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});

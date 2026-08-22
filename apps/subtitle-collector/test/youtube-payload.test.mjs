@@ -196,3 +196,12 @@ test('buildYoutubePayload extra 填充：viewCount/likeCount/shortDescription �
     desc: 'a video description',
   });
 });
+
+test('buildYoutubePayload captionTracks/bodies 全缺省 → tracks:[]（?? / ?. 兜底不抛错）', () => {
+  // content-yt 聚合失败/纯音乐视频：captionTracks 与 bodies 都可能不传
+  const payload = buildYoutubePayload({ videoId: 'VID00000010', title: 't', channelId: 'UC_x' });
+  assert.deepEqual(payload.tracks, []);
+  assert.deepEqual(payload.video.extra, { stat: { view: null, like: null }, desc: null });
+  assert.equal(payload.video.duration, null);
+  assert.equal(payload.video.published_at, null);
+});

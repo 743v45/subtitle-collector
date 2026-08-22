@@ -30,9 +30,11 @@ export interface VideoListItem {
   tid?: number | null; tname?: string | null; tags?: string[];
   tag_details?: TagDetail[];
   view?: number | null;
+  pic?: string | null;   // 封面 URL（列表富化：extra.pic，ingest 已归一 https:；无封面 null → 前端回落占位）
 }
 export interface VideoInfo {
   title: string; creator_name: string | null; duration: number | null;
+  creator_source_uid?: string | null; // UP uid（getVideo LEFT JOIN creators；详情页作者外链跳空间）
   extra?: VideoExtra;
   published_at?: number | null;
   source?: string;
@@ -82,6 +84,7 @@ export interface CollectTask {
   result: string | null; // JSON 字符串（扩展回执 data：captured/tracks/reason…）
   title: string | null;  // 库内视频标题（server LEFT JOIN videos；任务卡直接展示,未入库 null）
   creator_name?: string | null; // 库内 UP 名（server LEFT JOIN creators；历史页按 UP 筛选后回显,未入库 null）
+  creator_source_uid?: string | null; // UP uid（入库取 creators、未入库回落任务行 creator_uid；任务卡跳空间）
   created_at: number;
   finished_at: number | null;
 }

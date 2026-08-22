@@ -10,8 +10,10 @@ const badgeVariants = cva(
       variant: {
         default:
           "border-transparent bg-primary text-primary-foreground shadow hover:bg-primary/80",
+        // secondary（分区/选中筛选 chip）：整饱和 #3B82F6 在密集表格里过响——
+        // 降为 15% 蓝底 + primary 深蓝字（对比 8.5:1），保留「blue data」又不抢焦点。
         secondary:
-          "border-transparent bg-secondary text-secondary-foreground hover:bg-secondary/80",
+          "border-transparent bg-secondary/15 font-medium text-primary hover:bg-secondary/25",
         destructive:
           "border-transparent bg-destructive text-destructive-foreground shadow hover:bg-destructive/80",
         outline: "text-foreground",

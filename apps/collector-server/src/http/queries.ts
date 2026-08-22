@@ -48,7 +48,7 @@ const SORT_KEYS: readonly VideoSortKey[] = ['first_seen', 'published_at', 'title
 function enrichItems(
   db: Database.Database,
   items: VideoListItemAdvanced[],
-): Array<VideoListItemAdvanced & { tid: number | null; tname: string | null; tags: string[]; view: number | null; tag_details: Array<{ name: string; source: TagPrioritySource }>; pot_limited: boolean }> {
+): Array<VideoListItemAdvanced & { tid: number | null; tname: string | null; tags: string[]; view: number | null; pic: string | null; tag_details: Array<{ name: string; source: TagPrioritySource }>; pot_limited: boolean }> {
   if (items.length === 0) return [];
   const ids = items.map((i) => i.id);
   const latestStatus = latestTaskStatusByVideoIds(db, ids);
@@ -59,9 +59,10 @@ function enrichItems(
             json_extract(extra, '$.tname') AS tname,
             json_extract(extra, '$.tags') AS tags,
             json_extract(extra, '$.ugc_season.title') AS season_title,
+            json_extract(extra, '$.pic') AS pic,
             CAST(json_extract(extra, '$.stat.view') AS INTEGER) AS view
        FROM videos WHERE id IN (${placeholders})`,
-  ).all(...ids) as Array<{ id: number; tid: number | null; tname: string | null; tags: string | null; season_title: string | null; view: number | null }>;
+  ).all(...ids) as Array<{ id: number; tid: number | null; tname: string | null; tags: string | null; season_title: string | null; pic: string | null; view: number | null }>;
   const byId = new Map(rows.map((r) => [r.id, r]));
   const relTags = getVideoTagsByVideoIds(db, ids);
   const priority = getTagPriority(db);
@@ -81,7 +82,8 @@ function enrichItems(
       }
     }
     const tag_details = mergeTagDetails(biliNames, relTags.get(it.id) ?? [], priority, false, r?.season_title ? [r.season_title] : []);
-    return { ...it, tid: r?.tid ?? null, tname: r?.tname ?? null, tags: tag_details.map((t) => t.name), view: r?.view ?? null, tag_details, pot_limited: latestStatus.get(it.id) === 'limited' };
+    // pic：ingest 时已归一 https:（tasks.ts normalizePic），列表直接透传（无封面 null，前端回落占位）
+    return { ...it, tid: r?.tid ?? null, tname: r?.tname ?? null, tags: tag_details.map((t) => t.name), view: r?.view ?? null, tag_details, pot_limited: latestStatus.get(it.id) === 'limited', pic: r?.pic ?? null };
   });
 }
 

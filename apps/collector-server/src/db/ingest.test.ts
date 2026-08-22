@@ -519,3 +519,142 @@ test('extra.tags 保底：重采 extra 无 tags / 空 tags 保留旧 tags；带�
     assert.equal(JSON.parse(tags.t)[0].tag_name, '新标签', '新 extra 带非空 tags 应整体替换');
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
+
+// ── 分支洼地补齐：最小 payload、库内脏 extra、无 lan/lan_doc 轨、upper 最小请求 ──
+
+test('最小 payload：无 extra/duration/published_at + creator 只带 uid → 全部落 NULL 不炸', () => {
+  const { db, dir } = freshDb();
+  try {
+    const r = ingestVideo(db, {
+      source: 'youtube',
+      video: { source_vid: 'ytMin', title: '最小', creator: { source_uid: 'UC1' } },
+      tracks: [],
+    });
+    assert.equal(r.inserted_tracks, 0);
+    const v = db.prepare('SELECT * FROM videos WHERE source_vid = ?').get('ytMin') as any;
+    assert.equal(v.extra, '{}', 'extra 缺省 → {}');
+    assert.equal(v.duration, null);
+    assert.equal(v.published_at, null);
+    assert.equal(v.paid, 0);
+    // creator 只带 uid → name/avatar 落 NULL（change_log created 的 new_value 也是 null）
+    const c = db.prepare("SELECT * FROM creators WHERE source_uid = 'UC1'").get() as any;
+    assert.equal(c.name, null);
+    assert.equal(c.avatar, null);
+    const created = db.prepare("SELECT new_value FROM change_log WHERE entity='creator' AND field='created'").get() as any;
+    assert.equal(created.new_value, null);
+    // 重采：creator 仍不带 name → 不记 name 变更
+    ingestVideo(db, {
+      source: 'youtube',
+      video: { source_vid: 'ytMin', title: '最小', creator: { source_uid: 'UC1' } },
+      tracks: [],
+    });
+    assert.equal((db.prepare("SELECT COUNT(*) AS c FROM change_log WHERE field='name'").get() as any).c, 0);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('库内 extra 为 NULL：重采不炸，extra 按新值整体替换', () => {
+  const { db, dir } = freshDb();
+  try {
+    ingestVideo(db, {
+      source: 'bilibili',
+      video: { source_vid: 'BVD', title: 't', creator: { source_uid: '1', name: 'up' }, extra: { tags: [{ tag_name: '旧' }] }, duration: 1, published_at: 1 },
+      tracks: [],
+    });
+    // extra 置 NULL（typeof 非 string → String(null ?? '') 参与比较；mergeExtraTags 无 tags 可保底）
+    db.prepare("UPDATE videos SET extra = NULL WHERE source_vid = 'BVD'").run();
+    ingestVideo(db, {
+      source: 'bilibili',
+      video: { source_vid: 'BVD', title: 't', creator: { source_uid: '1', name: 'up' }, extra: { aid: 1 }, duration: 1, published_at: 1 },
+      tracks: [],
+    });
+    const v = db.prepare('SELECT extra FROM videos WHERE source_vid = ?').get('BVD') as any;
+    assert.equal(JSON.parse(v.extra).aid, 1, 'NULL extra 被新值替换');
+    // 注：非法 JSON 的 extra 写不进库——idx_videos_extra_tid/view 表达式索引在写时即抛
+    // malformed JSON（实测 SQLITE_ERROR），structuralExtra/mergeExtraTags 的 catch 属 schema 不可达防御分支。
+    assert.throws(() => db.prepare("UPDATE videos SET extra = '{broken' WHERE source_vid = 'BVD'").run(), /malformed JSON/);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('重采补 duration：旧值为 NULL 时 change_log 的 old_value 记 NULL', () => {
+  const { db, dir } = freshDb();
+  try {
+    ingestVideo(db, {
+      source: 'bilibili',
+      video: { source_vid: 'BVQ', title: 't', creator: { source_uid: '1', name: 'up' }, extra: {}, published_at: 1 }, // 无 duration
+      tracks: [],
+    });
+    ingestVideo(db, {
+      source: 'bilibili',
+      video: { source_vid: 'BVQ', title: 't', creator: { source_uid: '1', name: 'up' }, extra: {}, duration: 480, published_at: 1 },
+      tracks: [],
+    });
+    const logs = db.prepare("SELECT * FROM change_log WHERE field='duration'").all() as any[];
+    assert.equal(logs.length, 1);
+    assert.equal(logs[0].old_value, null, '旧 duration NULL → old_value 记 null（?? 分支）');
+    assert.equal(logs[0].new_value, '480');
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('轨缺 lan/lan_doc/track_type：各落 NULL，lan_doc 缺省不触发 UPDATE', () => {
+  const { db, dir } = freshDb();
+  try {
+    ingestVideo(db, {
+      source: 'bilibili',
+      video: { source_vid: 'BVL', title: 't', creator: { source_uid: '1', name: 'up' }, extra: {}, duration: 1, published_at: 1 },
+      tracks: [{ versions: [{ origin: 'external', payload: { body: [] }, source_url: 'https://nolan' }] }],
+    });
+    const t = db.prepare('SELECT * FROM subtitle_tracks').get() as any;
+    assert.equal(t.lan, null);
+    assert.equal(t.lan_doc, null);
+    assert.equal(t.track_type, null);
+    // 重采同形态：命中已有轨、lan_doc 仍缺 → 不 UPDATE 不炸
+    const r = ingestVideo(db, {
+      source: 'bilibili',
+      video: { source_vid: 'BVL', title: 't', creator: { source_uid: '1', name: 'up' }, extra: {}, duration: 1, published_at: 1 },
+      tracks: [{ versions: [{ origin: 'external', payload: { body: [] }, source_url: 'https://nolan2' }] }], // 同 body → 去重跳过
+    });
+    assert.equal(r.skipped_tracks, 1);
+    assert.equal((db.prepare('SELECT COUNT(*) AS c FROM subtitle_tracks').get() as any).c, 1);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('重采已有轨带新 lan_doc → trackUpd 更新轨显示名', () => {
+  const { db, dir } = freshDb();
+  try {
+    const rec = (lanDoc: string) => ingestVideo(db, {
+      source: 'bilibili',
+      video: { source_vid: 'BVU', title: 't', creator: { source_uid: '1', name: 'up' }, extra: {}, duration: 1, published_at: 1 },
+      tracks: [{ lan: 'zh-Hans', lan_doc: lanDoc, track_type: 2, versions: [{ origin: 'external', payload: { body: [] }, source_url: 'https://u' }] }],
+    });
+    rec('旧轨名');
+    rec('新轨名'); // 轨已存在（同 lan/type）→ lan_doc 更新
+    const t = db.prepare('SELECT lan_doc FROM subtitle_tracks').get() as any;
+    assert.equal(t.lan_doc, '新轨名', '重采带新 lan_doc 应 UPDATE 轨显示名');
+    assert.equal((db.prepare('SELECT COUNT(*) AS c FROM subtitle_tracks').get() as any).c, 1, '轨不重复建');
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('ingestUpper 最小请求（只带 uid）→ 全字段 NULL 建行；补 name 时 change_log old=null', () => {
+  const { db, dir } = freshDb();
+  try {
+    const out = ingestUpper(db, { source: 'bilibili', creator: { source_uid: '42' } });
+    assert.ok(out.updated_fields.length > 0, '首次建行视为全字段更新');
+    const row = db.prepare("SELECT * FROM creators WHERE source_uid='42'").get() as any;
+    for (const f of ['name', 'avatar', 'sign', 'level', 'sex', 'official_type', 'official_title', 'fans', 'following']) {
+      assert.equal(row[f], null, `${f} 应为 NULL`);
+    }
+    // 第二次带 name：旧 name NULL → change_log old_value 记 null
+    ingestUpper(db, { source: 'bilibili', creator: { source_uid: '42', name: '新名字' } });
+    const log = db.prepare("SELECT * FROM change_log WHERE entity='creator' AND field='name'").get() as any;
+    assert.equal(log.old_value, null);
+    assert.equal(log.new_value, '新名字');
+    // 第三次不发 name（字段移除）→ newV null → change_log new_value 记 null
+    ingestUpper(db, { source: 'bilibili', creator: { source_uid: '42' } });
+    const logs = db.prepare("SELECT * FROM change_log WHERE entity='creator' AND field='name' ORDER BY id").all() as any[];
+    assert.equal(logs.length, 2);
+    assert.equal(logs[1].old_value, '新名字');
+    assert.equal(logs[1].new_value, null, '字段移除 → new_value null');
+    const row2 = db.prepare("SELECT name FROM creators WHERE source_uid='42'").get() as any;
+    assert.equal(row2.name, null, '列被置回 NULL');
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});

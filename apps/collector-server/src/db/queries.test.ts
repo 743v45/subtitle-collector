@@ -84,6 +84,22 @@ test('getVideo: 翻译轨(type=3) 排在原文 CC/ASR 之后——YouTube 默认
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
+test('getVideo: video 带 creator_source_uid（详情页作者外链跳转）', () => {
+  const { db, dir } = freshDb();
+  try {
+    ingestVideo(db, sampleReq('外链视频', []));
+    const d = getVideo(db, 'bilibili', 'BV1');
+    if (!d) throw new Error('no detail');
+    assert.equal(d.video.creator_name, 'up');
+    assert.equal(d.video.creator_source_uid, '1'); // LEFT JOIN creators 补 uid，前端据此跳空间页
+    // 无 creator 归属的旧数据：null 不炸（前端回落纯文本）
+    ingestVideo(db, { source: 'bilibili', video: { source_vid: 'BV2', title: '无归属', creator: null, extra: {}, duration: 1, published_at: 1 }, tracks: [] });
+    const d2 = getVideo(db, 'bilibili', 'BV2');
+    if (!d2) throw new Error('no detail2');
+    assert.equal(d2.video.creator_source_uid, null);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
 test('getVideo: 仅有 ASR + 翻译轨时默认 = 原文 ASR；翻译轨排在其他语言轨之前', () => {
   const { db, dir } = freshDb();
   try {
@@ -256,4 +272,81 @@ test('listCreators 按分类筛选', () => {
   setCreatorCategory(db, 'bilibili', '3', 'agent', '基金');
   const r = listCreators(db, { category: '股票', scope: 'agent' }, 1, 20);
   assert.equal(r.total, 2);
+});
+
+// ── 分支洼地补齐：track/version 优先级镜像、categories 空补丁、listCreators 排序与 q ──
+
+test('getVideo: en 无 type 轨（优先级 2）排在其他语言轨（5）之前；同轨 manual 版本排 asr 前', () => {
+  const { db, dir } = freshDb();
+  try {
+    ingestVideo(db, sampleReq('优先级分支', [
+      { lan: 'fr', lan_doc: '法语', track_type: null, versions: [{ origin: 'external', payload: { body: [] }, source_url: 'https://fr' }] },
+      { lan: 'en', lan_doc: '英文无type', track_type: null, versions: [
+        { origin: 'asr', payload: { body: [] }, source_url: null, asr_engine: 'whisper' },
+        { origin: 'manual', payload: { body: [] }, source_url: null },
+      ] },
+    ]));
+    const d = getVideo(db, 'bilibili', 'BV1');
+    if (!d) throw new Error('no detail');
+    assert.deepEqual(d.tracks.map((t) => t.lan_doc), ['英文无type', '法语'], 'en 无 type 轨优先级 2，fr 其他 5');
+    assert.deepEqual(d.tracks[0].versions.map((v) => v.origin), ['manual', 'asr'], 'external(0) < manual(1) < asr(2)');
+    assert.equal((d.tracks[0].versions[0] as any).is_default, true);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('listCategories: 省略 scope → 全量（scope 排序）', () => {
+  const db = memDb();
+  createCategory(db, '股票', 'agent');
+  createCategory(db, '关注', 'human');
+  const all = listCategories(db);
+  assert.equal(all.length, 2);
+  // ORDER BY scope：agent < human
+  assert.deepEqual(all.map((c) => c.scope), ['agent', 'human']);
+});
+
+test('updateCategory: 仅 sort_order / 空 patch（原样返回不改名）', () => {
+  const db = memDb();
+  const a = createCategory(db, '股票', 'agent');
+  // 只改 sort_order（不带 name）
+  const u1 = updateCategory(db, a.id, { sort_order: 7 });
+  assert.equal(u1?.name, '股票');
+  assert.equal(u1?.sort_order, 7);
+  // 空 patch → 不 UPDATE，原样返回当前行
+  const u2 = updateCategory(db, a.id, {});
+  assert.equal(u2?.name, '股票');
+  assert.equal(u2?.sort_order, 7);
+  // 不存在的 id + 空 patch → 查无行（返回 falsy；注：.get() 实际给 undefined，函数签名标的 | null 略有出入）
+  assert.ok(!updateCategory(db, 999, {}));
+});
+
+test('listCreators: q 模糊 / human scope 分类 / 无过滤全量 + fans / video_count 排序', () => {
+  const db = memDb();
+  setCreatorCategory(db, 'bilibili', '1', 'human', '关注');
+  setCreatorCategory(db, 'bilibili', '2', 'agent', '股票');
+  // 视频数：uid1 两条、uid2 一条
+  for (const [vid, uid] of [['BV1', '1'], ['BV2', '1'], ['BV3', '2']] as const) {
+    ingestVideo(db, { source: 'bilibili', video: { source_vid: vid, title: 't', creator: { source_uid: uid }, extra: {}, duration: 1, published_at: 1 }, tracks: [] });
+  }
+  // fans 时点值（uid2 高）
+  db.prepare("UPDATE creators SET fans = 9000 WHERE source_uid = '2'").run();
+  db.prepare("UPDATE creators SET fans = 100 WHERE source_uid = '1'").run();
+
+  // human scope 分类筛选
+  const human = listCreators(db, { category: '关注', scope: 'human' }, 1, 20);
+  assert.equal(human.total, 1);
+  assert.equal(human.items[0].source_uid, '1');
+  assert.equal(human.items[0].category_human_name, '关注');
+  // q 模糊（name / source_uid）
+  assert.equal(listCreators(db, { q: '1' }, 1, 20).items.length, 1, 'q 命中 source_uid=1');
+  // 无过滤 → 空where + 默认 first_seen 排序，全量
+  const all = listCreators(db, {}, 1, 20);
+  assert.equal(all.total, 2);
+  // fans 排序：uid2(9000) 在前
+  assert.deepEqual(listCreators(db, {}, 1, 20, 'fans').items.map((c) => c.source_uid), ['2', '1']);
+  // video_count 排序：uid1(2) 在前
+  assert.deepEqual(listCreators(db, {}, 1, 20, 'video_count').items.map((c) => c.source_uid), ['1', '2']);
+  // items 带 video_count 与分类名
+  const c1 = all.items.find((c) => c.source_uid === '1')!;
+  assert.equal(c1.video_count, 2);
+  assert.equal(c1.category_human_name, '关注');
 });

@@ -4,12 +4,13 @@
 
 export type TagSource = 'manual' | 'batch' | 'bili' | 'season' | 'ai';
 
+// 暗色媒体库主题（2026-08-22）：x-500/10 半透明底 + x-300 字（暗底对比 7-10:1）+ x-500/30 边。
 export const TAG_SOURCE_CLASS: Record<TagSource, string> = {
-  manual: 'border-blue-200 bg-blue-100 text-blue-800',
-  batch: 'border-amber-200 bg-amber-100 text-amber-800',
-  bili: 'border-pink-200 bg-pink-100 text-pink-800',
-  season: 'border-teal-200 bg-teal-100 text-teal-800',
-  ai: 'border-violet-200 bg-violet-100 text-violet-800',
+  manual: 'border-blue-500/30 bg-blue-500/10 text-blue-300',
+  batch: 'border-amber-500/30 bg-amber-500/10 text-amber-300',
+  bili: 'border-pink-500/30 bg-pink-500/10 text-pink-300',
+  season: 'border-teal-500/30 bg-teal-500/10 text-teal-300',
+  ai: 'border-violet-500/30 bg-violet-500/10 text-violet-300',
 };
 
 export const TAG_SOURCE_LABEL: Record<TagSource, string> = {

@@ -1,17 +1,19 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { listVideos, getStatsAggregate } from '../api';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/components/ui/card';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { cn } from '@/lib/utils';
 import { useAsync } from '@/lib/useAsync';
 import { TAG_SOURCE_CLASS, type TagSource } from '@/lib/tagSources';
+import { creatorUrl, videoUrl } from '../lib/externalLinks';
+import { ExtLink } from '@/components/ExtLink';
 import { navigate, useQueryUpdater, useRoute } from '../router';
 import { videoListFromQuery } from '../videoFilterUrl';
-import { ArrowDown, ArrowUp, ChevronDown, RotateCcw } from 'lucide-react';
+import { ArrowDown, ArrowUp, Check, ChevronDown, Film, RotateCcw, X } from 'lucide-react';
 import type { VideoFilter, VideoListItem } from '../types';
 
 const PAGE_SIZE = 20;
@@ -99,7 +101,7 @@ export function VideoList() {
         source: f.source || undefined,
         subtitle_q: f.sq || undefined,
         tname: f.tname || undefined,
-        tags: f.tag ? [f.tag] : undefined,
+        tags: f.tags.length > 0 ? f.tags : undefined,
         tag_source: f.tagSource ? [f.tagSource] : undefined,
         lang: f.lang || undefined,
         has_subtitle: f.hasSubtitle || undefined,
@@ -132,7 +134,7 @@ export function VideoList() {
   }
 
   // 任一次要筛选已激活时，"更多筛选"按钮给个视觉提示
-  const secondaryActive = !!(f.tag || f.tagSource || f.lang || f.hasSubtitle || f.sinceDate || f.untilDate || f.minDur || f.maxDur || f.minView || f.maxView);
+  const secondaryActive = !!(f.tags.length > 0 || f.tagSource || f.lang || f.hasSubtitle || f.sinceDate || f.untilDate || f.minDur || f.maxDur || f.minView || f.maxView);
 
   // 进详情：URL 附加当前列表 query → 返回时筛选原样还原
   const openVideo = (source: string, sourceVid: string) => {
@@ -143,8 +145,11 @@ export function VideoList() {
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
-        <h2 className="text-lg font-semibold">视频库</h2>
-        <span className="text-sm text-muted-foreground">共 {total} 条</span>
+        <h2 className="text-xl font-semibold tracking-tight">视频库</h2>
+        {/* tabular-nums：计数变化时宽度稳定不跳动 */}
+        <span className="text-sm text-muted-foreground">
+          共 <span className="font-medium tabular-nums text-foreground">{total}</span> 条
+        </span>
       </div>
 
       {/* 主筛选行 */}
@@ -218,10 +223,14 @@ export function VideoList() {
             {f.desc ? <ArrowDown className="h-4 w-4" /> : <ArrowUp className="h-4 w-4" />}
           </Button>
         </div>
-        <Button variant="ghost" size="sm" onClick={() => setShowMore((s) => !s)}>
+        <Button variant="ghost" size="sm" onClick={() => setShowMore((s) => !s)} aria-expanded={showMore}>
           更多筛选
-          <ChevronDown className={cn('h-4 w-4 transition-transform', showMore && 'rotate-180')} />
-          {secondaryActive && <span className="ml-1 inline-block h-1.5 w-1.5 rounded-full bg-primary" />}
+          <ChevronDown className={cn('h-4 w-4 transition-transform duration-150', showMore && 'rotate-180')} />
+          {/* 指示点常驻占位（透明度切换），避免激活时按钮宽度跳动 */}
+          <span
+            aria-hidden="true"
+            className={cn('ml-0.5 inline-block h-1.5 w-1.5 rounded-full bg-primary transition-opacity duration-150', secondaryActive ? 'opacity-100' : 'opacity-0')}
+          />
         </Button>
         <Button variant="outline" size="sm" onClick={resetAll}>
           <RotateCcw className="h-4 w-4" />
@@ -232,22 +241,25 @@ export function VideoList() {
       {/* 次要筛选折叠区 */}
       {showMore && (
         <div className="flex flex-wrap items-center gap-3 rounded-md border bg-muted/30 p-3">
-          <Select
-            value={f.tag || '__all'}
-            onValueChange={(v) => setFilter({ tag: v === '__all' ? null : v })}
-          >
-            <SelectTrigger className="w-[160px]">
-              <SelectValue placeholder="标签" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="__all">全部标签</SelectItem>
-              {tagOptions.map((t) => (
-                <SelectItem key={t.key} value={t.key}>
-                  {t.key} ({t.count})
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+          {/* 多标签筛选：下拉多选面板（手写受控组件，不引第三方依赖），选中项回显为可 × 移除的 Badge */}
+          <TagMultiSelect
+            options={tagOptions}
+            selected={f.tags}
+            onChange={(next) => setFilter({ tags: next.length > 0 ? next.join(',') : null })}
+          />
+          {f.tags.map((name) => (
+            <Badge key={name} variant="secondary" className="gap-1 font-normal">
+              {name}
+              <button
+                type="button"
+                aria-label={`移除标签筛选 ${name}`}
+                className="-mr-1 flex size-4 cursor-pointer items-center justify-center rounded-full transition-colors hover:bg-muted-foreground/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                onClick={() => setFilter({ tags: f.tags.filter((x) => x !== name).join(',') || null })}
+              >
+                <X className="size-3" />
+              </button>
+            </Badge>
+          ))}
           <Select
             value={f.tagSource || '__all'}
             onValueChange={(v) => setFilter({ tag_source: v === '__all' ? null : v })}
@@ -348,7 +360,7 @@ export function VideoList() {
 
       {/* 分页 */}
       <div className="flex items-center justify-between rounded-md border bg-muted/40 px-4 py-2 text-sm text-muted-foreground">
-        <div>第 {f.page}/{totalPages} 页</div>
+        <div className="tabular-nums">第 {f.page}/{totalPages} 页</div>
         <div className="flex gap-2">
           <Button variant="outline" size="sm" disabled={f.page <= 1} onClick={() => updateQuery({ page: f.page - 1 > 1 ? String(f.page - 1) : null })}>
             上一页
@@ -364,37 +376,157 @@ export function VideoList() {
         </div>
       </div>
 
-      {/* 列表区：响应式网格（移动单列 / md 两列 / xl 三列），loading / error / 空态 */}
-      <div className="grid grid-cols-1 gap-2 md:grid-cols-2 md:gap-3 xl:grid-cols-3">
-        {loading &&
-          Array.from({ length: 6 }).map((_, i) => (
-            <Card key={i}>
-              <CardHeader className="space-y-2 p-3">
-                <Skeleton className="h-4 w-3/4" />
-                <Skeleton className="h-3 w-1/2" />
-              </CardHeader>
-            </Card>
-          ))}
+      {/* 列表区：一行一视频的横向列表（窄屏隐藏次要列，Tailwind 响应式 table-cell），
+          loading / error / 空态改造成行式；表头纯展示（排序仍走顶部筛选）。
+          容器 rounded+shadow 出卡片质感；表头 muted 底与正文分层 */}
+      <div className="overflow-hidden rounded-lg border shadow-sm" aria-busy={loading || undefined}>
+        {/* table-fixed：列宽由表头显式声明。标题 38%（1440 容器约 420px）优先保长标题；
+            标签列无显式宽吃剩余（~150px，badge 两行）；min-w-[240px] 保底：375px 窄屏只剩
+            标题+播放 两列时不至于被压没（240+64+padding < 375 视口，不横滚） */}
+        <Table className="table-fixed">
+          <TableHeader className="bg-muted/50">
+            <TableRow className="hover:bg-transparent">
+              <TableHead className="w-[96px] pl-3" aria-label="封面" />
+              <TableHead className="w-[34%] min-w-[200px]">标题</TableHead>
+              <TableHead className="hidden w-32 md:table-cell">创作者</TableHead>
+              <TableHead className="w-16 text-right">播放</TableHead>
+              <TableHead className="hidden w-16 text-right sm:table-cell">时长</TableHead>
+              <TableHead className="hidden w-14 text-right lg:table-cell">轨道</TableHead>
+              <TableHead className="hidden w-32 xl:table-cell">发布时间</TableHead>
+              <TableHead className="hidden w-20 xl:table-cell">分区</TableHead>
+              <TableHead className="hidden md:table-cell">标签</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {loading &&
+              Array.from({ length: 8 }).map((_, i) => (
+                <TableRow key={`sk-${i}`}>
+                  <TableCell className="pl-3"><Skeleton className="h-5 w-full max-w-64" /></TableCell>
+                  <TableCell className="hidden md:table-cell"><Skeleton className="h-4 w-20" /></TableCell>
+                  <TableCell><Skeleton className="ml-auto h-4 w-10" /></TableCell>
+                  <TableCell className="hidden sm:table-cell"><Skeleton className="ml-auto h-4 w-10" /></TableCell>
+                  <TableCell className="hidden lg:table-cell"><Skeleton className="ml-auto h-4 w-8" /></TableCell>
+                  <TableCell className="hidden xl:table-cell"><Skeleton className="h-4 w-24" /></TableCell>
+                  <TableCell className="hidden xl:table-cell"><Skeleton className="h-4 w-14" /></TableCell>
+                  <TableCell className="hidden md:table-cell"><Skeleton className="h-4 w-24" /></TableCell>
+                </TableRow>
+              ))}
 
-        {!loading && error && (
-          <Card className="col-span-full">
-            <CardContent className="flex flex-col items-center gap-2 p-6 text-center text-sm">
-              <div className="text-destructive">加载失败：{error}</div>
-              <Button variant="outline" size="sm" onClick={reload}>
-                重试
-              </Button>
-            </CardContent>
-          </Card>
-        )}
+            {!loading && error && (
+              <TableRow>
+                <TableCell colSpan={8} className="py-6 text-center">
+                  <div className="text-sm text-destructive">加载失败：{error}</div>
+                  <Button variant="outline" size="sm" className="mt-2" onClick={reload}>
+                    重试
+                  </Button>
+                </TableCell>
+              </TableRow>
+            )}
 
-        {!loading && !error && items.map((v) => <VideoRow key={v.id} v={v} onOpen={openVideo} />)}
+            {!loading && !error && items.map((v) => <VideoRow key={v.id} v={v} onOpen={openVideo} />)}
 
-        {!loading && !error && items.length === 0 && (
-          <Card className="col-span-full">
-            <CardContent className="p-6 text-center text-sm text-muted-foreground">暂无数据</CardContent>
-          </Card>
-        )}
+            {!loading && !error && items.length === 0 && (
+              <TableRow>
+                <TableCell colSpan={8} className="py-10 text-center">
+                  {/* 空态给行动指引：可能是筛选过严（给重置），也可能是库真没数据（引导去采集） */}
+                  {secondaryActive || f.q || f.sq || f.source || f.tname ? (
+                    <div className="space-y-1.5">
+                      <div className="text-sm text-muted-foreground">没有匹配的视频——试试放宽筛选条件</div>
+                      <Button variant="outline" size="sm" onClick={resetAll}>
+                        <RotateCcw className="h-4 w-4" />
+                        重置筛选
+                      </Button>
+                    </div>
+                  ) : (
+                    <div className="space-y-1.5">
+                      <div className="text-sm text-muted-foreground">视频库还是空的</div>
+                      <Button variant="outline" size="sm" onClick={() => navigate('/collect')}>
+                        去采集页提交第一个任务
+                      </Button>
+                    </div>
+                  )}
+                </TableCell>
+              </TableRow>
+            )}
+          </TableBody>
+        </Table>
       </div>
+    </div>
+  );
+}
+
+// ── 多标签下拉多选（手写受控面板：button + absolute 定位 div，不新增依赖）──
+// 视觉对齐 select.tsx（border rounded-md bg-popover shadow-md）；面板外点击关闭；
+// 勾选即回调 onChange（父组件写 URL query），选项带计数。
+function TagMultiSelect({ options, selected, onChange }: {
+  options: { key: string; count: number }[];
+  selected: string[];
+  onChange: (next: string[]) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
+
+  // 面板外 mousedown → 关闭（mousedown 而非 click，避免面板内点击冒泡时序问题）
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: MouseEvent) => {
+      if (rootRef.current && !rootRef.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener('mousedown', onDown);
+    return () => document.removeEventListener('mousedown', onDown);
+  }, [open]);
+
+  const toggle = (name: string) => {
+    onChange(selected.includes(name) ? selected.filter((s) => s !== name) : [...selected, name]);
+  };
+
+  return (
+    <div ref={rootRef} className="relative">
+      <button
+        type="button"
+        aria-expanded={open}
+        onClick={() => setOpen((o) => !o)}
+        className={cn(
+          'flex h-9 min-w-[140px] cursor-pointer items-center justify-between gap-2 rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-sm transition-colors duration-150 focus:outline-none focus:ring-1 focus:ring-ring',
+          open && 'ring-1 ring-ring',
+        )}
+      >
+        <span className={cn('truncate', selected.length === 0 && 'text-muted-foreground')}>
+          {selected.length > 0 ? `标签（${selected.length}）` : '标签'}
+        </span>
+        <ChevronDown className={cn('h-4 w-4 shrink-0 opacity-50 transition-transform', open && 'rotate-180')} />
+      </button>
+      {open && (
+        <div className="absolute left-0 z-50 mt-1 max-h-72 w-72 overflow-y-auto rounded-md border bg-popover p-1 text-popover-foreground shadow-md">
+          {options.length === 0 && (
+            <div className="px-2 py-1.5 text-sm text-muted-foreground">暂无标签</div>
+          )}
+          {options.map((t) => {
+            const checked = selected.includes(t.key);
+            return (
+              <button
+                key={t.key}
+                type="button"
+                role="option"
+                aria-selected={checked}
+                onClick={() => toggle(t.key)}
+                className="flex w-full cursor-pointer items-center gap-2 rounded-sm px-2 py-1.5 text-left text-sm outline-none transition-colors duration-150 hover:bg-accent focus:bg-accent"
+              >
+                <span
+                  className={cn(
+                    'flex h-4 w-4 shrink-0 items-center justify-center rounded-[4px] border',
+                    checked ? 'border-primary bg-primary text-primary-foreground' : 'border-input',
+                  )}
+                >
+                  {checked && <Check className="h-3 w-3" />}
+                </span>
+                <span className="min-w-0 flex-1 truncate" title={t.key}>{t.key}</span>
+                <span className="shrink-0 text-xs tabular-nums text-muted-foreground">{t.count}</span>
+              </button>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }
@@ -417,29 +549,55 @@ function VideoRow({ v, onOpen }: { v: VideoListItem; onOpen: (source: string, so
     v.tag_details ?? (v.tags ?? []).map((name) => ({ name }));
   const shownTags = tagDetails.slice(0, 3);
   const extraTags = Math.max(0, tagDetails.length - shownTags.length);
-  const dur = formatDuration(v.duration);
   const iconColor = v.source === 'youtube' ? 'text-red-500' : 'text-[#FB7299]';
 
   return (
-    <Card
-      onClick={() => onOpen(v.source, v.source_vid)}
-      className="cursor-pointer transition-colors hover:bg-accent"
-    >
-      <CardHeader className="space-y-1 p-3">
-        <CardTitle className="flex items-start gap-1.5 text-sm font-medium">
-          <PlatformIcon source={v.source} className={cn('mt-0.5 h-3.5 w-3.5 shrink-0', iconColor)} />
-          <span className="line-clamp-2">{v.title}</span>
-        </CardTitle>
-        <CardDescription className="text-xs flex flex-wrap items-center gap-x-2">
-          <span>{v.creator_name ?? '—'}</span>
-          {v.view != null && <span>· 播放 {formatView(v.view)}</span>}
-          {dur && <span>· {dur}</span>}
-          <span>· {v.track_count} 轨</span>
-          {v.published_at ? <span>· 发布 {formatTs(v.published_at)}</span> : null}
-        </CardDescription>
-        {(v.tname || tagDetails.length > 0) && (
-          <div className="flex flex-wrap gap-1 pt-0.5">
-            {v.tname && <Badge variant="secondary">{v.tname}</Badge>}
+    // 整行点击进详情（onOpen 已附加当前列表 query → 返回原样还原）
+    <TableRow onClick={() => onOpen(v.source, v.source_vid)} className="cursor-pointer">
+      {/* 封面缩略图（16:10 圆角）：媒体库观感的锚点;无封面回落 Film 占位,懒加载减流量 */}
+      <TableCell className="pl-3">
+        <div className="flex h-[50px] w-[80px] items-center justify-center overflow-hidden rounded bg-muted">
+          {v.pic ? (
+            <img
+              src={v.pic.replace(/^http:\/\//, 'https://')} /* 老数据存 http: 头,https 站点下会被 mixed content 拦 */
+              alt=""
+              loading="lazy"
+              decoding="async"
+              referrerPolicy="no-referrer"
+              className="h-full w-full object-cover transition-transform duration-200 hover:scale-105"
+            />
+          ) : (
+            <Film className="size-4 text-muted-foreground" aria-hidden="true" />
+          )}
+        </div>
+      </TableCell>
+      {/* fixed 布局列宽由表头定；单元格内 truncate 需 flex 子项 min-w-0 */}
+      <TableCell>
+        <div className="flex items-center gap-1.5">
+          <PlatformIcon source={v.source} className={cn('h-3.5 w-3.5 shrink-0', iconColor)} />
+          <span className="min-w-0 truncate" title={v.title}>{v.title}</span>
+          <ExtLink href={videoUrl(v.source, v.source_vid)} label="在原站打开视频" />
+        </div>
+      </TableCell>
+      <TableCell className="hidden truncate text-muted-foreground md:table-cell" title={v.creator_name ?? undefined}>
+        {v.creator_name && v.creator_source_uid
+          ? <ExtLink href={creatorUrl(v.source, v.creator_source_uid)} label={`在原站打开 ${v.creator_name} 的空间`}>{v.creator_name}</ExtLink>
+          : (v.creator_name ?? '—')}
+      </TableCell>
+      <TableCell className="text-right tabular-nums">{v.view != null ? formatView(v.view) : '—'}</TableCell>
+      <TableCell className="hidden text-right tabular-nums sm:table-cell">{formatDuration(v.duration) || '—'}</TableCell>
+      <TableCell className="hidden text-right tabular-nums lg:table-cell">{v.track_count}</TableCell>
+      <TableCell className="hidden whitespace-nowrap text-xs text-muted-foreground xl:table-cell">
+        {v.published_at ? formatTs(v.published_at) : '—'}
+      </TableCell>
+      <TableCell className="hidden xl:table-cell">
+        {v.tname ? <Badge variant="secondary">{v.tname}</Badge> : <span className="text-muted-foreground">—</span>}
+      </TableCell>
+      <TableCell className="hidden md:table-cell">
+        {tagDetails.length === 0 ? (
+          <span className="text-muted-foreground">—</span>
+        ) : (
+          <div className="flex flex-wrap items-center gap-1">
             {shownTags.map((t, i) => (
               <Badge
                 key={`${t.name}-${t.source ?? i}`}
@@ -452,7 +610,7 @@ function VideoRow({ v, onOpen }: { v: VideoListItem; onOpen: (source: string, so
             {extraTags > 0 && <Badge variant="outline">+{extraTags}</Badge>}
           </div>
         )}
-      </CardHeader>
-    </Card>
+      </TableCell>
+    </TableRow>
   );
 }

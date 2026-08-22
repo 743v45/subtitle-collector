@@ -1,6 +1,7 @@
 import type { VersionInfo } from '../types';
 import { Button } from '@/components/ui/button';
 const label = (v: VersionInfo) => v.origin === 'external' ? '外挂' : v.origin === 'asr' ? 'ASR' : '人工';
+// 选中态用 primary token（shadcn default variant），不内联平台品牌色。
 export function VersionSwitcher({ versions, selected, onSelect }: { versions: VersionInfo[]; selected: number | null; onSelect: (id: number) => void; }) {
   if (versions.length <= 1) return null;
   return (
@@ -13,10 +14,9 @@ export function VersionSwitcher({ versions, selected, onSelect }: { versions: Ve
             variant={isSel ? 'default' : 'outline'}
             size="sm"
             onClick={() => onSelect(v.id)}
-            // 选中用 B 站蓝；非选中用 outline variant（shadcn 默认样式，不内联）
-            className={isSel ? 'bg-[#23ade5] text-white hover:bg-[#23ade5]' : 'text-muted-foreground'}
+            className={isSel ? undefined : 'text-muted-foreground'}
           >
-            {label(v)} {v.is_default && '★'}
+            {label(v)}{v.is_default && '（默认）'}
           </Button>
         );
       })}

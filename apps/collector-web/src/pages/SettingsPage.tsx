@@ -6,6 +6,7 @@ import { getCollectTimeout, setCollectTimeout } from '../api';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
+import { Skeleton } from '@/components/ui/skeleton';
 import { useToast } from '@/components/ui/toast';
 import { useAsync } from '@/lib/useAsync';
 import { Loader2 } from 'lucide-react';
@@ -29,8 +30,8 @@ function CollectTimeoutCard() {
   if (!data || yt === null || bili === null) {
     return (
       <Card>
-        <CardContent className="p-4">
-          <div className="h-16 w-full animate-pulse rounded bg-muted" />
+        <CardContent className="p-4" aria-busy="true">
+          <Skeleton className="h-16 w-full" />
         </CardContent>
       </Card>
     );
@@ -84,7 +85,7 @@ function CollectTimeoutCard() {
 export function SettingsPage() {
   return (
     <div className="space-y-4">
-      <h2 className="text-lg font-semibold">设置</h2>
+      <h2 className="text-xl font-semibold tracking-tight">设置</h2>
       <CollectTimeoutCard />
     </div>
   );

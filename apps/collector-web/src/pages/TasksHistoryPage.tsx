@@ -226,8 +226,8 @@ export function TasksHistoryPage() {
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
-        <h2 className="text-lg font-semibold">采集历史</h2>
-        <span className="text-sm text-muted-foreground">{total.toLocaleString('zh-CN')} 条记录</span>
+        <h2 className="text-xl font-semibold tracking-tight">采集历史</h2>
+        <span className="text-sm tabular-nums text-muted-foreground">{total.toLocaleString('zh-CN')} 条记录</span>
       </div>
 
       {/* 主筛选行：UP / 标题关键词（防抖）+ 平台 + 时间档（custom 展开日期）+ 重置 */}
@@ -317,7 +317,7 @@ export function TasksHistoryPage() {
               <button
                 type="button"
                 aria-label="清除批次聚焦"
-                className="ml-0.5 rounded-full hover:bg-muted-foreground/20"
+                className="-mr-1 flex size-4 cursor-pointer items-center justify-center rounded-full transition-colors hover:bg-muted-foreground/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 onClick={() => setFilter({ batch_id: null })}
               >
                 <X className="size-3" />
@@ -340,7 +340,7 @@ export function TasksHistoryPage() {
             type="button"
             onClick={() => setFilter({ status: x.key || null })}
             className={cn(
-              'rounded-full border px-2.5 py-0.5 text-xs transition-colors',
+              'cursor-pointer rounded-full border px-2.5 py-0.5 text-xs transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2',
               filter.key === x.key ? 'border-primary bg-primary text-primary-foreground' : 'bg-background hover:bg-muted',
             )}
           >
@@ -361,20 +361,40 @@ export function TasksHistoryPage() {
       </div>
 
       {/* 列表(批次聚合卡 + 单任务卡,同采集页) */}
-      <div className="space-y-2">
+      <div className="space-y-2" aria-busy={loading || undefined}>
         {loading && tasks.length === 0 && (
           <Card><CardContent className="p-6"><Skeleton className="h-16 w-full" /></CardContent></Card>
         )}
         {err && <Card><CardContent className="p-6 text-center text-sm text-destructive">加载失败:{err}</CardContent></Card>}
         {!loading && !err && tasks.length === 0 && (
-          <Card><CardContent className="p-6 text-center text-sm text-muted-foreground">无匹配记录</CardContent></Card>
+          <Card>
+            <CardContent className="space-y-1.5 p-6 text-center">
+              {/* 空态带行动指引：筛选中给重置，否则引导去采集 */}
+              {anySecondary || f.status ? (
+                <>
+                  <div className="text-sm text-muted-foreground">没有匹配的任务记录——试试放宽筛选条件</div>
+                  <Button variant="outline" size="sm" onClick={resetAll}>
+                    <RotateCcw className="h-4 w-4" />
+                    重置筛选
+                  </Button>
+                </>
+              ) : (
+                <>
+                  <div className="text-sm text-muted-foreground">还没有任务记录</div>
+                  <Button variant="outline" size="sm" onClick={() => navigate('/collect')}>
+                    去采集页提交第一个任务
+                  </Button>
+                </>
+              )}
+            </CardContent>
+          </Card>
         )}
         {listNodes}
       </div>
 
       {/* 分页 */}
       <div className="flex items-center justify-between">
-        <span className="text-xs text-muted-foreground">第 {f.page} / {totalPages} 页 · 每页 {PAGE_SIZE} 条</span>
+        <span className="text-xs tabular-nums text-muted-foreground">第 {f.page} / {totalPages} 页 · 每页 {PAGE_SIZE} 条</span>
         <div className="flex gap-2">
           <Button variant="outline" size="sm" disabled={f.page <= 1} onClick={() => updateQuery({ page: f.page - 1 > 1 ? String(f.page - 1) : null })}>
             <ChevronLeft className="size-4" /> 上一页

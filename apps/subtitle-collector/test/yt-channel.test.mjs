@@ -63,6 +63,12 @@ test('parseCountText：中文万/亿（简繁，YouTube 中文界面）', () => 
   assert.equal(parseCountText('无观看次数'), null);
 });
 
+test('parseCountText：畸形数字段（多小数点/裸点）→ null（Number → NaN 防御）', () => {
+  // [\d.]+ 会吃下 "1.2.3" / "."，Number() 得 NaN → 走 !Number.isFinite 防御返回 null
+  assert.equal(parseCountText('1.2.3 views'), null);
+  assert.equal(parseCountText('.'), null);
+});
+
 test('parseRelativeTime：单位换算 + Streamed 前缀 + 无 ago 返回 null', () => {
   const now = 1_700_000_000_000;
   assert.equal(parseRelativeTime('2 weeks ago', now), Math.floor(now / 1000) - 2 * 604800);
@@ -179,6 +185,75 @@ test('parseLockup：playlist lockup / 坏 contentId → null（宽容降级）',
   const partial = parseLockup({ contentId: 'gaDdrDdczO4', contentType: 'LOCKUP_CONTENT_TYPE_VIDEO', metadata: {} });  assert.equal(partial.vid, 'gaDdrDdczO4');
   assert.equal(partial.length, null);
   assert.equal(partial.title, null);
+});
+
+test('parseLockup：metadataRows 缺 metadataParts / part 缺 text → 容错跳过（?? 兜底）', () => {
+  // YouTube 结构变体/降级：空 row、无 text 的 part、无 content 的 text 都不炸不误读
+  const it = parseLockup({
+    contentId: 'gaDdrDdczO4',
+    contentType: 'LOCKUP_CONTENT_TYPE_VIDEO',
+    metadata: {
+      lockupMetadataViewModel: {
+        metadata: {
+          contentMetadataViewModel: {
+            metadataRows: [
+              {},                                  // 无 metadataParts → ?? [] 跳过
+              { metadataParts: [{}] },             // part 无 text → ?? '' 跳过
+              { metadataParts: [{ text: {} }] },   // text 无 content → ?? '' 跳过
+            ],
+          },
+        },
+      },
+    },
+  });
+  assert.equal(it.vid, 'gaDdrDdczO4');
+  assert.equal(it.play, null);
+  assert.equal(it.agoText, null);
+  assert.equal(it.created, null);
+});
+
+test('parseLockup：时长 badge 递归的防御分支（null 项 / 原始值 / 已找到后再遇 null）', () => {
+  // overlays 混入 null（node == null 早退）与字符串原始值（typeof 非 object 早退）：
+  // 递归不炸，且 badge 找到时长后再遇 null 走 length 已置的短路分支
+  const it = parseLockup({
+    contentId: 'gaDdrDdczO4',
+    contentType: 'LOCKUP_CONTENT_TYPE_VIDEO',
+    contentImage: {
+      thumbnailViewModel: {
+        overlays: [null, 'raw-string', { deep: ['x', { deeper: null }] }],
+      },
+    },
+  });
+  assert.equal(it.length, null, '无匹配时长 badge → null');
+
+  const hit = parseLockup({
+    contentId: 'gaDdrDdczO4',
+    contentType: 'LOCKUP_CONTENT_TYPE_VIDEO',
+    contentImage: {
+      thumbnailViewModel: {
+        overlays: [
+          { thumbnailBottomOverlayViewModel: { badges: [{ thumbnailBadgeViewModel: { text: 'LIVE', badgeStyle: 'STYLE' } }] } },
+          null, // LIVE 未置 length → 走 node == null 早退分支
+        ],
+      },
+    },
+  });
+  assert.equal(hit.length, null, 'text 非 M:SS 形态（LIVE）不误读为时长，递归穿原始值分支');
+
+  // badge 已找到时长后再遇 null → 走 length 已置的短路分支（|| 左侧命中）
+  const found = parseLockup({
+    contentId: 'gaDdrDdczO4',
+    contentType: 'LOCKUP_CONTENT_TYPE_VIDEO',
+    contentImage: {
+      thumbnailViewModel: {
+        overlays: [
+          { thumbnailBottomOverlayViewModel: { badges: [{ thumbnailBadgeViewModel: { text: '11:38' } }] } },
+          null,
+        ],
+      },
+    },
+  });
+  assert.equal(found.length, '11:38');
 });
 
 // —— parseYtBrowseResponse：richItemRenderer 树 + continuation ——

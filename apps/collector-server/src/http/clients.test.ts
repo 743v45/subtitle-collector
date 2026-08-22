@@ -166,3 +166,55 @@ test('POST /api/clients/:id/command：扩展不回 result → 504（短 timeout 
     ws.close();
   } finally { ctx.cleanup(); }
 });
+
+// ── 分支洼地：reporting 超时 504、回执无 error 字段的 502 兜底文案、路由兜底 404 ──
+
+test('POST /api/clients/:id/reporting：扩展不回 result → 504（默认 5s 超时，无 timeout 注入口）', { timeout: 10_000 }, async () => {
+  const ctx = await setup();
+  try {
+    const ws = await wsConnect(ctx.port, 'ext-A', true);
+    // 不注册 message 处理器：收到 set-reporting 不回 result → 默认 5000ms 超时后 504
+    await new Promise(r => setTimeout(r, 50));
+    const r = await httpReq(ctx.port, 'POST', '/api/clients/ext-A/reporting', { enabled: false });
+    assert.equal(r.status, 504);
+    assert.equal(r.json.ok, false);
+    assert.equal(r.json.error, 'extension result timeout');
+    ws.close();
+  } finally { ctx.cleanup(); }
+});
+
+test('POST /api/clients/:id/command：回执 ok=false 且无 error 字段 → 502 + 兜底文案', async () => {
+  const ctx = await setup();
+  try {
+    const ws = await wsConnect(ctx.port, 'ext-A', true);
+    ws.on('message', (d) => {
+      const m = JSON.parse(d.toString());
+      if (m.action === 'navigate') ws.send(JSON.stringify({ type: 'result', id: m.id, ok: false })); // 不带 error
+    });
+    await new Promise(r => setTimeout(r, 50));
+    const r = await httpReq(ctx.port, 'POST', '/api/clients/ext-A/command', { action: 'navigate', url: 'x' });
+    assert.equal(r.status, 502);
+    assert.equal(r.json.ok, false);
+    assert.equal(r.json.error, 'extension command failed', '回执无 error 时用兜底文案');
+    ws.close();
+  } finally { ctx.cleanup(); }
+});
+
+test('未知子路径 / 方法不匹配 → 兜底 404', async () => {
+  const ctx = await setup();
+  try {
+    // GET 未知子路径
+    let r = await httpReq(ctx.port, 'GET', '/api/clients/xxx');
+    assert.equal(r.status, 404);
+    assert.equal(r.json.error, 'not found');
+    // POST 但子路径形态不匹配（非 /reporting、/command）
+    r = await httpReq(ctx.port, 'POST', '/api/clients/ext-A/other', {});
+    assert.equal(r.status, 404);
+    // reporting 路径但 GET 方法
+    r = await httpReq(ctx.port, 'GET', '/api/clients/ext-A/reporting');
+    assert.equal(r.status, 404);
+    // command 路径但 GET 方法
+    r = await httpReq(ctx.port, 'GET', '/api/clients/ext-A/command');
+    assert.equal(r.status, 404);
+  } finally { ctx.cleanup(); }
+});

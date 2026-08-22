@@ -17,6 +17,11 @@ function startServer(): Promise<{ server: Server; port: number; close: () => Pro
       if (req.url === '/boom') {
         throw new Error('unexpected');
       }
+      // 已发响应头之后再抛（非 HttpError）：runHandler 走 else res.end() 分支，不重复写头
+      if (req.url === '/late-boom') {
+        json(res, 200, { ok: true, early: true });
+        throw new Error('late failure');
+      }
       json(res, 404, { ok: false, error: 'not found' });
     });
   });
@@ -69,6 +74,14 @@ test('runHandler 集成：非法 JSON → 400 不崩进程，后续请求照常�
     const boom = await post(port, '/boom', '{}');
     assert.equal(boom.status, 500);
     assert.equal(JSON.parse(boom.body).ok, false);
+
+    // 响应头已发出后再抛非 HttpError → 保留已发的 200 响应体（不二次写头、不崩）
+    const late = await post(port, '/late-boom', '{}');
+    assert.equal(late.status, 200);
+    assert.deepEqual(JSON.parse(late.body), { ok: true, early: true });
+    // 后续请求照常（连接未被拖垮）
+    const after = await post(port, '/echo', '{"b":2}');
+    assert.equal(after.status, 200);
   } finally {
     await close();
   }
@@ -142,4 +155,17 @@ test('httpOriginAllowed：ALLOWED_HOSTS 精确 host 匹配（放行主机及其 
   assert.equal(httpOriginAllowed({ host: 'other.host', allowedHosts: ['collector.local'], origin: 'http://collector.local' }), false);
   // 放行主机的 Origin 但 hostname 精确不匹配（前缀注入）→ 拒
   assert.equal(httpOriginAllowed({ ...base, origin: 'http://collector.local.evil.com' }), false);
+});
+
+// ── 分支洼地：非法 Origin URL 的 catch 降级、Host 头缺失 ──
+test('httpAuthOk：Origin 为非法 URL 字符串 → 解析失败按无 Origin 处理（须 Bearer）', () => {
+  const base = { required: true, token: 'T0KEN' };
+  // '::bad::' 令 new URL 抛错 → catch 置 null → 同源分支不成立 → 走 Bearer
+  assert.equal(httpAuthOk({ ...base, origin: '::bad::', host: '192.168.1.5:21527' }), false);
+  assert.equal(httpAuthOk({ ...base, origin: '::bad::', host: '192.168.1.5:21527', authorization: 'Bearer T0KEN' }), true);
+});
+
+test('httpOriginAllowed：Host 头缺失（undefined 归空串）→ 非 loopback 未放行 → 拒', () => {
+  assert.equal(httpOriginAllowed({ allowedHosts: [] }), false);
+  assert.equal(httpOriginAllowed({ allowedHosts: [], origin: 'http://localhost:5173' }), false, 'Host 缺失时即便 Origin 是 loopback 也拒');
 });

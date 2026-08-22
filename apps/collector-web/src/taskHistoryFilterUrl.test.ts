@@ -1,5 +1,5 @@
 // 采集历史页筛选 ↔ URLSearchParams 序列化纯函数测试（node 内建 TS type-stripping）
-import { test } from 'node:test';
+import { test } from 'vitest';
 import assert from 'node:assert/strict';
 import { taskHistoryFromQuery, taskHistoryToQuery, isMidLike, TASK_HISTORY_DEFAULTS, type TaskHistoryQueryState } from './taskHistoryFilterUrl.ts';
 

@@ -1,9 +1,9 @@
 // ── 任务完成通知纯函数（2026-08-22）──
 // terminalTransitions：轮询前后两次任务列表的「进行中→终态」转移检测
 // （被删除的任务不算完成——id 在 next 消失即出局）；notifyText：终态汇总文案。
-import { test } from 'node:test';
+import { test } from 'vitest';
 import assert from 'node:assert/strict';
-import { isActiveStatus, notifyText, terminalTransitions } from './taskNotify.ts';
+import { isActiveStatus, notifyText, terminalTransitions, sendTaskDoneNotification, requestTaskNotifyPermission } from './taskNotify.ts';
 import type { CollectTask, CollectTaskStatus } from '../types';
 
 function task(id: number, status: CollectTaskStatus): CollectTask {
@@ -72,4 +72,116 @@ test('notifyText：成功/受限/失败计数，零档省略', () => {
   );
   assert.equal(notifyText([task(1, 'failed'), task(2, 'failed')]), '成功 0 · 失败 2');
   assert.equal(notifyText([task(1, 'limited')]), '成功 0 · 受限 1');
+});
+
+// ── sendTaskDoneNotification / requestTaskNotifyPermission（Node 下 stub globalThis.Notification）──
+
+interface NotificationCall { title: string; options: unknown }
+
+function stubNotification(opts: {
+  permission?: string;
+  ctorThrows?: boolean;
+  requestImpl?: () => unknown;
+}): { calls: NotificationCall[]; state: { requested: number }; restore: () => void } {
+  const calls: NotificationCall[] = [];
+  const state = { requested: 0 };
+  const g = globalThis as any;
+  const prev = g.Notification;
+  g.Notification = class FakeNotification {
+    static permission = opts.permission ?? 'granted';
+    static requestPermission(): unknown {
+      state.requested++;
+      return opts.requestImpl ? opts.requestImpl() : 'granted';
+    }
+    constructor(title: string, options: unknown) {
+      if (opts.ctorThrows) throw new Error('policy blocked');
+      calls.push({ title, options });
+    }
+  };
+  return {
+    calls, state,
+    restore: () => {
+      if (prev === undefined) delete g.Notification;
+      else g.Notification = prev;
+    },
+  };
+}
+
+test('sendTaskDoneNotification：空完成列表不发（无转移不误弹）', () => {
+  const n = stubNotification({ permission: 'granted' });
+  try {
+    sendTaskDoneNotification([]);
+    assert.equal(n.calls.length, 0);
+  } finally { n.restore(); }
+});
+
+test('sendTaskDoneNotification：granted → 一条汇总通知（title 固定 / body 汇总 / tag 替换式不堆叠）', () => {
+  const n = stubNotification({ permission: 'granted' });
+  try {
+    sendTaskDoneNotification([task(1, 'succeeded'), task(2, 'limited'), task(3, 'failed')]);
+    assert.equal(n.calls.length, 1);
+    assert.equal(n.calls[0]!.title, '采集任务已全部完成');
+    assert.deepEqual(n.calls[0]!.options, { body: '成功 1 · 受限 1 · 失败 1', tag: 'collect-done' });
+  } finally { n.restore(); }
+});
+
+test('sendTaskDoneNotification：未授权（denied）静默跳过', () => {
+  const n = stubNotification({ permission: 'denied' });
+  try {
+    sendTaskDoneNotification([task(1, 'succeeded')]);
+    assert.equal(n.calls.length, 0);
+  } finally { n.restore(); }
+});
+
+test('sendTaskDoneNotification：API 不可用（非安全上下文）静默跳过', () => {
+  const g = globalThis as any;
+  const prev = g.Notification;
+  delete g.Notification;
+  try {
+    sendTaskDoneNotification([task(1, 'succeeded')]); // 不抛即过
+    requestTaskNotifyPermission();
+  } finally {
+    if (prev !== undefined) g.Notification = prev;
+  }
+});
+
+test('sendTaskDoneNotification：构造抛错被吞（策略拦截/老环境不冒泡）', () => {
+  const n = stubNotification({ permission: 'granted', ctorThrows: true });
+  try {
+    sendTaskDoneNotification([task(1, 'succeeded')]); // 不抛即过
+  } finally { n.restore(); }
+});
+
+test('requestTaskNotifyPermission：default 才发起请求；非 default 是 no-op', () => {
+  const d = stubNotification({ permission: 'default' });
+  try {
+    requestTaskNotifyPermission();
+    assert.equal(d.state.requested, 1);
+  } finally { d.restore(); }
+
+  const g1 = stubNotification({ permission: 'granted' });
+  try {
+    requestTaskNotifyPermission();
+    assert.equal(g1.state.requested, 0);
+  } finally { g1.restore(); }
+
+  const g2 = stubNotification({ permission: 'denied' });
+  try {
+    requestTaskNotifyPermission();
+    assert.equal(g2.state.requested, 0);
+  } finally { g2.restore(); }
+});
+
+test('requestTaskNotifyPermission：requestPermission 拒绝（rejected）与同步抛错都不冒泡', async () => {
+  const rej = stubNotification({ permission: 'default', requestImpl: () => Promise.reject(new Error('denied')) });
+  try {
+    requestTaskNotifyPermission();
+    // 等微任务落定：无 catch 的话这里会变成 unhandled rejection
+    await new Promise((r) => setTimeout(r, 0));
+  } finally { rej.restore(); }
+
+  const sync = stubNotification({ permission: 'default', requestImpl: () => { throw new Error('legacy callback form'); } });
+  try {
+    requestTaskNotifyPermission(); // 不抛即过
+  } finally { sync.restore(); }
 });

@@ -112,6 +112,20 @@ test('maskServerUrl：无 token / 非法 / 空 → 原样', () => {
   assert.equal(maskServerUrl(''), '');
 });
 
+test('maskServerUrl：非字符串入参原样返回（UI 容错，不抛错）', () => {
+  // storage 脏读（旧值/手改）可能读出非字符串，mask 层不设防会 TypeError 炸 UI
+  assert.equal(maskServerUrl(null), null);
+  assert.equal(maskServerUrl(undefined), undefined);
+  assert.equal(maskServerUrl(123), 123);
+});
+
+test('maskServerUrl：&token= 形式（多 query 参数）也被替换', () => {
+  assert.equal(
+    maskServerUrl('wss://example.com/ext?a=1&token=sec&b=2'),
+    'wss://example.com/ext?a=1&token=***&b=2',
+  );
+});
+
 // ---------------- isLocalServer ----------------
 
 test('isLocalServer：127.0.0.1 / localhost / ::1 → true，其余 false', () => {

@@ -24,7 +24,7 @@ function LibrarySummary({ refreshKey }: { refreshKey: number }) {
   return (
     <button
       onClick={() => navigate('/stats')}
-      className="flex w-full items-center justify-between rounded-md border bg-muted/30 px-3 py-2 text-sm text-muted-foreground transition-colors hover:bg-muted/60"
+      className="flex w-full cursor-pointer items-center justify-between rounded-md border bg-muted/30 px-3 py-2 text-sm text-muted-foreground transition-colors duration-150 hover:bg-muted/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
     >
       <span>
         库内 <span className="font-medium tabular-nums text-foreground">{data.videos.toLocaleString('zh-CN')}</span> 视频
@@ -268,7 +268,7 @@ function UpperBatchSection({ onTasksChanged }: { onTasksChanged: () => void }) {
               </Button>
             </div>
             {submitMsg && (
-              <div className={cn('text-sm', submitMsg.ok ? 'text-emerald-600' : 'text-destructive')}>
+              <div className={cn('text-sm', submitMsg.ok ? 'text-emerald-700' : 'text-destructive')}>
                 {submitMsg.text}
               </div>
             )}
@@ -286,7 +286,7 @@ function FilterPill({ active, onClick, children }: { active: boolean; onClick: (
       type="button"
       onClick={onClick}
       className={cn(
-        'rounded-full border px-2.5 py-0.5 text-xs transition-colors',
+        'cursor-pointer rounded-full border px-2.5 py-0.5 text-xs transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2',
         active ? 'border-primary bg-primary text-primary-foreground' : 'bg-background hover:bg-muted',
       )}
     >
@@ -444,7 +444,7 @@ export function CollectPage() {
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
-        <h2 className="text-lg font-semibold">采集</h2>
+        <h2 className="text-xl font-semibold tracking-tight">采集</h2>
         <span className="text-sm text-muted-foreground">{tasks.length} 条任务</span>
       </div>
 

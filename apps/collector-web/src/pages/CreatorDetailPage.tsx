@@ -7,6 +7,9 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { useAsync } from '@/lib/useAsync';
 import { useToast } from '@/components/ui/toast';
 import { getCreatorDetail, listCategories, setCreatorCategory, listVideos } from '@/api';
+import { creatorUrl, videoUrl } from '../lib/externalLinks';
+import { ExtLink } from '@/components/ExtLink';
+import { ArrowLeft, UserRound } from 'lucide-react';
 import type { CreatorDetail, VideoListItem } from '@/types';
 
 function fmtTime(ms: number): string {
@@ -39,7 +42,7 @@ function Field({ label, value }: { label: string; value: string | null | undefin
 
 function DetailSkeleton() {
   return (
-    <div className="space-y-4">
+    <div className="space-y-4" aria-busy="true">
       <Card>
         <CardContent className="flex items-center gap-4 p-4">
           <Skeleton className="h-16 w-16 rounded-full" />
@@ -111,7 +114,10 @@ export function CreatorDetailPage({
 
   return (
     <div className="space-y-4">
-      <Button variant="ghost" size="sm" onClick={onBack}>← 返回</Button>
+      <Button variant="ghost" size="sm" onClick={onBack}>
+        <ArrowLeft className="size-4" aria-hidden="true" />
+        返回
+      </Button>
 
       {error ? (
         <Card className="border-destructive">
@@ -134,12 +140,15 @@ export function CreatorDetailPage({
                   className="h-16 w-16 rounded-full object-cover"
                 />
               ) : (
-                <div className="flex h-16 w-16 items-center justify-center rounded-full bg-muted text-xs text-muted-foreground">
-                  无头像
+                <div className="flex h-16 w-16 items-center justify-center rounded-full bg-muted text-muted-foreground">
+                  <UserRound className="size-6" aria-hidden="true" />
                 </div>
               )}
               <div className="min-w-0 space-y-1">
-                <div className="text-xl font-semibold">{creator.name ?? '(未知)'}</div>
+                <div className="flex items-center gap-1.5 text-xl font-semibold">
+                  <span className="truncate">{creator.name ?? '(未知)'}</span>
+                  <ExtLink href={creatorUrl(creator.source, creator.source_uid)} label={`在原站打开 ${creator.name ?? creator.source_uid} 的空间`} />
+                </div>
                 <div className="text-sm text-muted-foreground">
                   ID: <span className="font-mono">{creator.source_uid}</span>
                 </div>
@@ -216,16 +225,19 @@ export function CreatorDetailPage({
             <CardContent className="space-y-1">
               {videosLoading && <Skeleton className="h-14 w-full" />}
               {!videosLoading && videos.length === 0 && (
-                <div className="py-2 text-sm text-muted-foreground">暂无已采集视频</div>
+                <div className="py-2 text-sm text-muted-foreground">该 UP 暂无已采集视频——可在采集页提交其视频链接</div>
               )}
               {!videosLoading && videos.map((v) => (
                 <div
                   key={v.id}
                   onClick={() => onOpenVideo(v.source, v.source_vid)}
-                  className="cursor-pointer rounded-md p-2 transition-colors hover:bg-accent"
+                  className="cursor-pointer rounded-md p-2 transition-colors duration-150 hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 >
-                  <div className="line-clamp-1 text-sm font-medium">{v.title}</div>
-                  <div className="text-xs text-muted-foreground">
+                  <div className="line-clamp-1 flex items-center gap-1 text-sm font-medium">
+                    <span className="min-w-0 truncate">{v.title}</span>
+                    <ExtLink href={videoUrl(v.source, v.source_vid)} label="在原站打开视频" />
+                  </div>
+                  <div className="text-xs tabular-nums text-muted-foreground">
                     {v.view != null && <span>播放 {fmtView(v.view)}</span>}
                     {v.view != null && fmtDur(v.duration) && ' · '}
                     {fmtDur(v.duration)}

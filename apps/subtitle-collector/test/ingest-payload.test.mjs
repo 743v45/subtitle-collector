@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { extractExtraFromView, buildIngestPayload, normalizeTags } from '../ingest-payload.js';
+import { extractExtraFromView, buildIngestPayload, normalizeTags, normalizeUrl } from '../ingest-payload.js';
 
 const view = {
   bvid: 'BV1xx', aid: 11, cid: 22, title: '标题', pic: 'https://pic',
@@ -96,4 +96,97 @@ test('回归 2026-08-22①：owner.mid 缺失 → creator 不携带 source_uid �
   assert.equal(p2.video.creator.name, null);
   // 正常 mid 仍携带且 String 化（mid 为数字）
   assert.equal(buildIngestPayload(view, [], {}).video.creator.source_uid, '99');
+});
+
+// ---------------- extractExtraFromView：字段守卫的缺失分支 ----------------
+
+test('extractExtraFromView：null/undefined → 基础三键全 null，其余字段不出现', () => {
+  const expect = { aid: null, cid: null, pic: null };
+  assert.deepEqual(extractExtraFromView(null), expect);
+  assert.deepEqual(extractExtraFromView(undefined), expect);
+});
+
+test('extractExtraFromView：空对象 → 所有 if 守卫走缺失分支（不抛错、不发明值）', () => {
+  // view 接口部分失败/截断时只剩骨架：desc/ctime/tid/copyright/state/tags/dimension/
+  // pages/rights/honor/ugc_season/stat 全缺失 → extra 只有基础三键
+  assert.deepEqual(extractExtraFromView({}), { aid: null, cid: null, pic: null });
+  // 字段显式 null 视同缺失（!= null 守卫）
+  assert.deepEqual(
+    extractExtraFromView({ desc: null, ctime: null, tid: null, copyright: null, state: null, stat: null }),
+    { aid: null, cid: null, pic: null },
+  );
+});
+
+test('extractExtraFromView：旧字段名 publocation 兜底（pub_location 缺失时）', () => {
+  assert.equal(extractExtraFromView({ publocation: 'IP 广东' }).publocation, 'IP 广东');
+  // pub_location 优先于旧名
+  assert.equal(extractExtraFromView({ pub_location: '新', publocation: '旧' }).publocation, '新');
+  // 两者都缺 → 不带 publocation 键
+  assert.ok(!('publocation' in extractExtraFromView({})));
+});
+
+test('extractExtraFromView：ugc_season 存在 → 抽 id/title（合集采集链路）', () => {
+  const extra = extractExtraFromView({ ugc_season: { id: 717, title: '合集名', episodes: [] } });
+  assert.deepEqual(extra.ugc_season, { id: 717, title: '合集名' });
+});
+
+test('extractExtraFromView：stat 部分字段缺失 → 缺项 null（不全量信任接口）', () => {
+  const extra = extractExtraFromView({ stat: { view: 5 } });
+  assert.deepEqual(extra.stat, {
+    view: 5, danmaku: null, reply: null, favorite: null, coin: null, share: null,
+    like: null, now_rank: null, his_rank: null,
+  });
+  // view 自身缺失（风控/截断响应）→ 同样 null，不发明 0
+  assert.equal(extractExtraFromView({ stat: { like: 7 } }).stat.view, null);
+});
+
+test('extractExtraFromView：tags 非数组（脏数据）→ 不落 tags 键', () => {
+  assert.ok(!('tags' in extractExtraFromView({ tags: '游戏' })));
+  assert.ok(!('tags' in extractExtraFromView({ tags: null })));
+});
+
+// ---------------- normalizeUrl ----------------
+
+test('normalizeUrl：//→https: 归一；https 直通；非字符串原样', () => {
+  assert.equal(normalizeUrl('//aisubtitle.hdslb.com/x.json'), 'https://aisubtitle.hdslb.com/x.json');
+  assert.equal(normalizeUrl('https://a.com/x.json'), 'https://a.com/x.json');
+  assert.equal(normalizeUrl('http://a.com/x'), 'http://a.com/x'); // 非 // 前缀不动协议
+  assert.equal(normalizeUrl(null), null);   // 字幕轨无 subtitle_url → 保持 null（调用方过滤）
+  assert.equal(normalizeUrl(undefined), undefined);
+  assert.equal(normalizeUrl(123), 123);
+});
+
+// ---------------- buildIngestPayload：缺省/畸形参数分支 ----------------
+
+test('buildIngestPayload paidInfo：打 paid=true + paid_detail（充电/付费专属标注）', () => {
+  // 形态对齐 background.js 的 paidInfo 构造（is_upower_exclusive 等）
+  const paidInfo = { is_upower_exclusive: true, is_ugc_pay_preview: false, elec_privilege_type: 2 };
+  const payload = buildIngestPayload(view, [], {}, null, paidInfo);
+  assert.equal(payload.video.extra.paid, true);
+  assert.equal(payload.video.extra.paid_detail, paidInfo);
+  // 缺省 paidInfo → 不落 paid/paid_detail 键
+  const noPaid = buildIngestPayload(view, [], {}).video.extra;
+  assert.ok(!('paid' in noPaid));
+  assert.ok(!('paid_detail' in noPaid));
+});
+
+test('buildIngestPayload duration/pubdate 缺失 → null（不发明值）', () => {
+  const payload = buildIngestPayload({ ...view, duration: undefined, pubdate: undefined }, [], {});
+  assert.equal(payload.video.duration, null);
+  assert.equal(payload.video.published_at, null);
+});
+
+test('buildIngestPayload subs 缺省 → tracks:[]（?? [] 兜底）', () => {
+  const payload = buildIngestPayload(view);
+  assert.deepEqual(payload.tracks, []);
+  assert.equal(payload.video.source_vid, 'BV1xx');
+});
+
+test('buildIngestPayload 轨道缺 type / 字幕体不在 bodies → track_type null / payload null', () => {
+  const subs = [{ lan: 'ai-ZH', lan_doc: '自动生成（中文）', subtitle_url: '//aisubtitle.hdslb.com/miss.json' }];
+  const payload = buildIngestPayload(view, subs, {}); // bodies 空 → 该轨 payload null
+  assert.equal(payload.tracks.length, 1);
+  assert.equal(payload.tracks[0].track_type, null, '无 type → null');
+  assert.equal(payload.tracks[0].versions[0].payload, null, 'bodies 缺失 → null（不报脏数据）');
+  assert.equal(payload.tracks[0].versions[0].source_url, 'https://aisubtitle.hdslb.com/miss.json');
 });

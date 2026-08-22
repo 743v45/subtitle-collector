@@ -37,7 +37,7 @@ export function parseHash(hash: string): Route {
   return { tab, path, query, videoView, creatorView };
 }
 
-// 跳转：path 如 '/videos?tag=游戏'。push 写历史（可后退）；replace 原位替换（筛选/防抖不打爆历史栈）。
+// 跳转：path 如 '/videos?tags=游戏'。push 写历史（可后退）；replace 原位替换（筛选/防抖不打爆历史栈）。
 // pushState/replaceState 改 hash 不触发 hashchange，手动 dispatch 让 useRoute 订阅者更新；
 // back/forward 引起 hash 变化时浏览器原生触发 hashchange，同样被监听。
 export function navigate(path: string, opts: { replace?: boolean } = {}): void {

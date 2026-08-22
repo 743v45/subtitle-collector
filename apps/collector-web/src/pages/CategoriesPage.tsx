@@ -7,6 +7,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from 
 import { Skeleton } from '@/components/ui/skeleton';
 import { useToast } from '@/components/ui/toast';
 import { useAsync } from '@/lib/useAsync';
+import { useQueryUpdater, useRoute } from '../router';
 import { listCategories, createCategory, updateCategory, deleteCategory, type Category } from '@/api';
 
 function errMsg(e: unknown): string {
@@ -15,7 +16,11 @@ function errMsg(e: unknown): string {
 
 export function CategoriesPage() {
   const toast = useToast();
-  const [scope, setScope] = useState<'agent' | 'human'>('agent');
+  // scope 进 URL（#/categories?scope=human），刷新/分享还原；默认 agent 省略不写
+  const route = useRoute();
+  const updateQuery = useQueryUpdater();
+  const scope: 'agent' | 'human' = route.query.get('scope') === 'human' ? 'human' : 'agent';
+  const setScope = (s: 'agent' | 'human') => updateQuery({ scope: s === 'agent' ? null : s });
   const { data: items, loading, error, reload } = useAsync(() => listCategories(scope), [scope]);
 
   // 新建
@@ -88,7 +93,7 @@ export function CategoriesPage() {
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
-        <h2 className="text-lg font-semibold">分类管理</h2>
+        <h2 className="text-xl font-semibold tracking-tight">分类管理</h2>
         <span className="text-sm text-muted-foreground">共 {items?.length ?? 0} 条</span>
       </div>
       <div className="flex gap-2 items-center">
@@ -131,46 +136,50 @@ export function CategoriesPage() {
         </div>
       )}
 
-      <Table>
-        <TableHeader>
-          <TableRow>
-            <TableHead>名称</TableHead>
-            <TableHead>排序</TableHead>
-            <TableHead className="text-right">操作</TableHead>
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          {loading && Array.from({ length: 3 }).map((_, i) => (
-            <TableRow key={`sk-${i}`}>
-              <TableCell><Skeleton className="h-4 w-32" /></TableCell>
-              <TableCell><Skeleton className="h-4 w-8" /></TableCell>
-              <TableCell className="text-right"><Skeleton className="ml-auto h-7 w-28" /></TableCell>
+      <div className="overflow-hidden rounded-md border" aria-busy={loading || undefined}>
+        <Table>
+          <TableHeader>
+            <TableRow className="hover:bg-transparent">
+              <TableHead>名称</TableHead>
+              <TableHead className="text-right">排序</TableHead>
+              <TableHead className="text-right">操作</TableHead>
             </TableRow>
-          ))}
-          {!loading && items?.map((c) => {
-            const rowBusy = deletingId === c.id || renameTarget?.id === c.id;
-            return (
-              <TableRow key={c.id}>
-                <TableCell>{c.name}</TableCell>
-                <TableCell>{c.sort_order}</TableCell>
-                <TableCell className="text-right space-x-2">
-                  <Button variant="outline" size="sm" disabled={rowBusy} onClick={() => openRename(c)}>
-                    改名
-                  </Button>
-                  <Button variant="destructive" size="sm" disabled={rowBusy} onClick={() => onDelete(c)}>
-                    {deletingId === c.id ? '删除中…' : '删除'}
-                  </Button>
+          </TableHeader>
+          <TableBody>
+            {loading && Array.from({ length: 3 }).map((_, i) => (
+              <TableRow key={`sk-${i}`}>
+                <TableCell><Skeleton className="h-4 w-32" /></TableCell>
+                <TableCell><Skeleton className="h-4 w-8" /></TableCell>
+                <TableCell className="text-right"><Skeleton className="ml-auto h-7 w-28" /></TableCell>
+              </TableRow>
+            ))}
+            {!loading && items?.map((c) => {
+              const rowBusy = deletingId === c.id || renameTarget?.id === c.id;
+              return (
+                <TableRow key={c.id}>
+                  <TableCell className="font-medium">{c.name}</TableCell>
+                  <TableCell className="text-right tabular-nums text-muted-foreground">{c.sort_order}</TableCell>
+                  <TableCell className="space-x-2 text-right">
+                    <Button variant="outline" size="sm" disabled={rowBusy} onClick={() => openRename(c)}>
+                      改名
+                    </Button>
+                    <Button variant="destructive" size="sm" disabled={rowBusy} onClick={() => onDelete(c)}>
+                      {deletingId === c.id ? '删除中…' : '删除'}
+                    </Button>
+                  </TableCell>
+                </TableRow>
+              );
+            })}
+            {!loading && !error && (items?.length ?? 0) === 0 && (
+              <TableRow>
+                <TableCell colSpan={3} className="py-8 text-center">
+                  <div className="text-sm text-muted-foreground">暂无分类——点右上「新建」创建第一个分类</div>
                 </TableCell>
               </TableRow>
-            );
-          })}
-          {!loading && !error && (items?.length ?? 0) === 0 && (
-            <TableRow>
-              <TableCell colSpan={3} className="text-center text-sm text-muted-foreground">暂无分类</TableCell>
-            </TableRow>
-          )}
-        </TableBody>
-      </Table>
+            )}
+          </TableBody>
+        </Table>
+      </div>
 
       {/* 改名 Dialog（替代 window.prompt） */}
       <Dialog

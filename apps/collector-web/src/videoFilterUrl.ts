@@ -11,7 +11,7 @@ export interface VideoListQueryState {
   sq: string;         // 字幕正文关键词（已提交值）
   source: string;     // 平台
   tname: string;      // 分区
-  tag: string;        // 标签（精确）
+  tags: string[];     // 标签（精确，多选 AND；query 形如 tags=a,b，对齐 server split(',') 口径）
   tagSource: string;  // 标签档位
   lang: string;
   hasSubtitle: boolean;
@@ -28,7 +28,7 @@ export interface VideoListQueryState {
 }
 
 export const VIDEO_LIST_DEFAULTS: VideoListQueryState = {
-  q: '', sq: '', source: '', tname: '', tag: '', tagSource: '', lang: '',
+  q: '', sq: '', source: '', tname: '', tags: [], tagSource: '', lang: '',
   hasSubtitle: false, dateField: 'first_seen',
   sinceDate: '', untilDate: '', minDur: '', maxDur: '', minView: '', maxView: '',
   sort: undefined, desc: true, page: 1,
@@ -41,12 +41,21 @@ export function videoListFromQuery(q: URLSearchParams): VideoListQueryState {
   const sortRaw = q.get('sort');
   const dateRaw = q.get('date_field');
   const pageRaw = Number(q.get('page'));
+  // tags 多选：tags=a,b（split+trim+去空，与 server filter.ts 同口径）；
+  // 旧单数 tag= 兼容读入（视作单元素数组，分享旧链接不断），不再写出
+  const tagsRaw = q.get('tags');
+  const legacyTag = q.get('tag');
+  const tags = tagsRaw
+    ? tagsRaw.split(',').map((s) => s.trim()).filter(Boolean)
+    : legacyTag
+      ? [legacyTag.trim()].filter(Boolean)
+      : [];
   return {
     q: q.get('q') ?? '',
     sq: q.get('sq') ?? '',
     source: q.get('source') ?? '',
     tname: q.get('tname') ?? '',
-    tag: q.get('tag') ?? '',
+    tags,
     tagSource: q.get('tag_source') ?? '',
     lang: q.get('lang') ?? '',
     hasSubtitle: q.get('has_subtitle') === '1',
@@ -69,7 +78,11 @@ export function videoListToQuery(s: VideoListQueryState): URLSearchParams {
   if (s.sq) u.set('sq', s.sq);
   if (s.source) u.set('source', s.source);
   if (s.tname) u.set('tname', s.tname);
-  if (s.tag) u.set('tag', s.tag);
+  // 标签名按本系统构造不含半角逗号（bili 档来自 B 站逐个录入的 tag 列表、manual 档录入时
+  // VideoDetail.onAddTags 即按逗号切分），join(',') 无歧义；万一出现含逗号名则序列化时丢弃
+  // （server split(',') 无法表达单名含逗号，防御性最小处理）
+  const tags = s.tags.filter((t) => t && !t.includes(','));
+  if (tags.length > 0) u.set('tags', tags.join(','));
   if (s.tagSource) u.set('tag_source', s.tagSource);
   if (s.lang) u.set('lang', s.lang);
   if (s.hasSubtitle) u.set('has_subtitle', '1');

@@ -103,5 +103,9 @@ test('getCollectTimeout：DB 值损坏/单项越界 → 逐项回落默认不炸
     db.prepare("UPDATE settings SET value = ? WHERE key = 'collect_timeout_ms'")
       .run(JSON.stringify({ bilibili: 120_000, youtube: 999_999 }));
     assert.deepEqual(getCollectTimeout(db), { bilibili: 120_000, youtube: 45_000 });
+    // 反向单项越界：bilibili 越界回落、youtube 保留
+    db.prepare("UPDATE settings SET value = ? WHERE key = 'collect_timeout_ms'")
+      .run(JSON.stringify({ bilibili: 9_999, youtube: 180_000 }));
+    assert.deepEqual(getCollectTimeout(db), { bilibili: 90_000, youtube: 180_000 });
   } finally { db.close(); rmSync(dir, { recursive: true, force: true }); }
 });
