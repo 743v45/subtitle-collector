@@ -33,13 +33,23 @@ export function retryable(t: CollectTask): boolean {
 // 重试提交（2026-08-22 抽取两页共用；同日改为原地重置）：failed/limited 行经 retry 端点重置回
 // pending 原行重跑——不建新行，批次卡/聚焦视图/进度徽章随原行实时更新（旧方案新建行挂原批，
 // 原失败行永不更新，批次徽章永远停在「失败」）。在途/succeeded 行 server 端逐个跳过。
-// 无错误弹窗：结果以列表为准（调用方 finally refresh/reload）。
+// 返回统计供调用方 toast：alreadyOk=库内已有字幕直接标记成功（免重采），dispatched=重新下发。
 // 顺带在用户手势内请求通知授权——重试后跑完要能弹系统提醒。
-export async function resubmitTasks(list: CollectTask[]): Promise<void> {
+export async function resubmitTasks(list: CollectTask[]): Promise<{ dispatched: number; alreadyOk: number }> {
   const ids = list.filter(retryable).map((t) => t.id);
-  if (ids.length === 0) return;
+  if (ids.length === 0) return { dispatched: 0, alreadyOk: 0 };
   requestTaskNotifyPermission();
-  await retryCollectTasks(ids);
+  const r = await retryCollectTasks(ids);
+  const alreadyOk = r.tasks.filter((t) => t.status === 'succeeded').length; // already_collected 短路
+  return { dispatched: r.retried - alreadyOk, alreadyOk };
+}
+
+// 重试结果 → toast 文案（两页共用）
+export function retrySummary({ dispatched, alreadyOk }: { dispatched: number; alreadyOk: number }): string {
+  if (dispatched > 0 && alreadyOk > 0) return `已重新下发 ${dispatched} 个任务；${alreadyOk} 个库内已有字幕，直接标记成功`;
+  if (alreadyOk > 0) return `${alreadyOk} 个任务库内已有字幕，已直接标记成功（免重采）`;
+  if (dispatched > 0) return `已重试 ${dispatched} 个任务（扩展在线即开始采集）`;
+  return '没有可重试的任务（可能已在队列中）';
 }
 
 export function formatTs(ts: number | null | undefined): string {
@@ -57,6 +67,7 @@ export function resultSummary(task: CollectTask): string {
     const r = JSON.parse(task.result) as { captured?: number; tracks?: number; reason?: string };
     if (r.reason === 'no_subtitle') return '视频无字幕轨';
     if (r.reason === 'pot_limited') return '字幕受限（pot），0 轨入库';
+    if (r.reason === 'already_collected') return `库内已有字幕（${r.tracks} 轨），重试免重采`; // retryTask 查库短路
     if (typeof r.captured === 'number') return `采到 ${r.captured} 轨字幕`; // YouTube 回执
     if (typeof r.tracks === 'number') return `采到 ${r.tracks} 轨字幕`;     // B 站回执
   } catch { /* 非预期结构忽略 */ }

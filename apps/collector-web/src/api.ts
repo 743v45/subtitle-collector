@@ -215,14 +215,15 @@ export async function createCollectTasksBatch(
 
 // 重试任务（2026-08-22 原地重置，取代「重试建新任务并入原批」方案）：failed/limited 行重置回
 // pending 原行重跑——不建新行，批次卡/聚焦视图/进度徽章随原行实时更新（新行方案旧失败行
-// 永不更新，批次徽章永远停在「失败」）。非可重试行（在途/succeeded/不存在）server 逐个跳过。
-export async function retryCollectTasks(ids: number[]): Promise<{ retried: number }> {
+// 永不更新，批次徽章永远停在「失败」）。库内已有字幕轨的（already_collected）server 直接
+// 置 succeeded 免重采；非可重试行（在途/succeeded/不存在）逐个跳过。
+export async function retryCollectTasks(ids: number[]): Promise<{ retried: number; tasks: CollectTask[] }> {
   const r = await fetch(`${BASE}/api/collect-tasks/retry`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ ids }),
   });
-  return ensureOk(r, (j) => ({ retried: j.retried ?? 0 }));
+  return ensureOk(r, (j) => ({ retried: j.retried ?? 0, tasks: j.tasks ?? [] }));
 }
 
 export async function setReporting(clientId: string, enabled: boolean): Promise<boolean> {

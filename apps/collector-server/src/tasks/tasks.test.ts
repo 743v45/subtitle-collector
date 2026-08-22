@@ -255,6 +255,32 @@ test('retryTask：succeeded/pending/dispatched/不存在 均拒绝（返回 null
   } finally { cleanup(); }
 });
 
+test('retryTask：库内已有字幕轨 → 直接置 succeeded 免重采（不重置 pending 不派发）', () => {
+  const { db, cleanup } = setupDb();
+  try {
+    // 视频已入库且有 1 轨字幕,任务行挂在 failed（回执迟到/超时误杀但扩展实际落库的场景）
+    ingestVideo(db, {
+      source: 'youtube',
+      video: { source_vid: 'llwTBpPqo9A', title: '已落库', creator: { source_uid: 'uc123', name: 'UP' }, extra: {}, duration: 100, published_at: 1 },
+      tracks: [{ lan: 'en', track_type: 1, versions: [{ origin: 'external', payload: { body: [] }, source_url: 'https://a' }] }],
+    });
+    const t = createTask(db, { source: 'youtube', source_vid: 'llwTBpPqo9A', url: 'https://www.youtube.com/watch?v=llwTBpPqo9A' });
+    db.prepare("UPDATE collect_tasks SET status = 'failed', error = 'YouTube 采集超时（45s）', finished_at = 1 WHERE id = ?").run(t.id);
+
+    const rt = retryTask(db, t.id)!;
+    assert.equal(rt.status, 'succeeded'); // 短路：库内有轨直接成功,不重新采集
+    assert.ok(rt.finished_at != null);
+    const r = JSON.parse(rt.result!) as { reason: string; tracks: number };
+    assert.equal(r.reason, 'already_collected');
+    assert.equal(r.tracks, 1);
+
+    // limited = 0 轨入库：库内无轨不会被短路 → 正常重置 pending 重新采集
+    const t2 = createTask(db, { source: 'youtube', source_vid: 'gaDdrDdczO4', url: 'https://www.youtube.com/watch?v=gaDdrDdczO4' });
+    db.prepare("UPDATE collect_tasks SET status = 'limited', finished_at = 1 WHERE id = ?").run(t2.id);
+    assert.equal(retryTask(db, t2.id)!.status, 'pending');
+  } finally { cleanup(); }
+});
+
 // ── expandUpperVideos：经扩展 WS 代理拉 UP 全量列表 + 标注已采 ──
 
 // fake requestCommand：模拟真实扩展契约（background.js list-upper-videos action 读

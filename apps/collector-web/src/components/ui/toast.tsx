@@ -29,7 +29,8 @@ export function ToastProvider({ children }: { children: ReactNode }) {
   return (
     <ToastCtx.Provider value={{ toast }}>
       {children}
-      <div className="pointer-events-none fixed bottom-4 right-4 z-50 flex flex-col gap-2">
+      {/* 页面中上（顶部居中）：任务提交/重试/删除等操作反馈位——页面下方滚动再深也始终可见 */}
+      <div className="pointer-events-none fixed left-1/2 top-4 z-50 flex -translate-x-1/2 flex-col items-center gap-2">
         {items.map((t) => (
           <div
             key={t.id}

@@ -110,6 +110,7 @@ export async function handleTasksHttp(req: IncomingMessage, res: ServerResponse,
 
   // 重试（2026-08-22 原地重置,取代「重试并入原批次」建新行方案）：failed/limited 行重置回 pending
   // 原行重跑——批次卡/聚焦视图随原行实时更新（新行方案旧失败行永不更新,批次徽章停在「失败」）。
+  // 库内已有字幕轨的视频直接置 succeeded（already_collected,免重采）。
   // 路由在 /batch 之后、数字 id 之前（对齐 /batch 注释）。
   if (pathname === '/api/collect-tasks/retry') {
     if (req.method !== 'POST') { json(res, 405, { ok: false, error: 'method not allowed' }); return; }

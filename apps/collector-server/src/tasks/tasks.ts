@@ -332,11 +332,25 @@ export function deleteTask(db: Database.Database, id: number): boolean {
 // 「失败」,聚焦视图同一视频出现 failed+succeeded 两行）。仅终态未成功可重置：succeeded 重采走
 // 建新任务（保留成功历史）;pending/dispatched 在途不可重入。error/result/finished_at/client_id
 // 一并清空回到全新 pending 态（旧执行结果不作残留）。
+//
+// 查库短路（同日）：重试前先查该视频库内字幕轨数——已有轨（此前某次采集实际成功落库,
+// 只是回执迟到/改判前的行还挂在 failed/limited）→ 直接置 succeeded（result 带
+// already_collected + 轨数）不派发不重采；无轨（limited=0 轨入库,failed 可能未入库）
+// 才重置 pending 重新采集。
 export function retryTask(db: Database.Database, id: number): CollectTask | null {
-  const hit = db.prepare(
-    "UPDATE collect_tasks SET status = 'pending', error = NULL, result = NULL, finished_at = NULL, client_id = NULL WHERE id = ? AND status IN ('failed', 'limited')",
-  ).run(id);
-  if (hit.changes === 0) return null; // 不存在 / 非可重试状态：静默跳过（批量重试里混入在途行不报错）
+  const task = db.prepare('SELECT * FROM collect_tasks WHERE id = ?').get(id) as CollectTask | undefined;
+  if (!task || (task.status !== 'failed' && task.status !== 'limited')) return null; // 不存在/非可重试：静默跳过
+  const tracks = (db.prepare(
+    'SELECT COUNT(*) AS n FROM subtitle_tracks st JOIN videos v ON v.id = st.video_id WHERE v.source = ? AND v.source_vid = ?',
+  ).get(task.source, task.source_vid) as { n: number }).n;
+  if (tracks > 0) {
+    db.prepare("UPDATE collect_tasks SET status = 'succeeded', error = NULL, result = ?, finished_at = ? WHERE id = ?")
+      .run(JSON.stringify({ reason: 'already_collected', tracks }), Date.now(), id);
+  } else {
+    db.prepare(
+      "UPDATE collect_tasks SET status = 'pending', error = NULL, result = NULL, finished_at = NULL, client_id = NULL WHERE id = ?",
+    ).run(id);
+  }
   pushTask(db, id);
   return getTask(db, id);
 }

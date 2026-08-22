@@ -9,7 +9,8 @@ import { useAsync } from '@/lib/useAsync';
 import { navigate } from '../router';
 import { Loader2, Search, Send } from 'lucide-react';
 import type { CollectTask, UpperVideoItem } from '../types';
-import { BatchTaskCard, TaskRow, resubmitTasks } from '@/components/TaskCards';
+import { BatchTaskCard, TaskRow, resubmitTasks, retrySummary } from '@/components/TaskCards';
+import { useToast } from '@/components/ui/toast';
 import { isActiveStatus, requestTaskNotifyPermission, sendTaskDoneNotification, terminalTransitions } from '@/lib/taskNotify';
 
 const REFRESH_MS = 2000;
@@ -57,6 +58,7 @@ function fmtUpperDate(sec: number | null): string {
 }
 
 function UpperBatchSection({ onTasksChanged }: { onTasksChanged: () => void }) {
+  const toast = useToast();
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -133,11 +135,15 @@ function UpperBatchSection({ onTasksChanged }: { onTasksChanged: () => void }) {
     try {
       // mid 随批落任务行（2026-08-22）：当前拉取的 UP 归属——未入库/失败任务也能在历史页按 UP 筛
       const r = await createCollectTasksBatch([...selected], 'bilibili', parseUpperMid(input) ?? undefined);
-      setSubmitMsg({ ok: true, text: `已创建 ${r.created} 个任务${r.skipped ? `，跳过 ${r.skipped} 个（已在队列）` : ''}` });
+      const text = `已创建 ${r.created} 个任务${r.skipped ? `，跳过 ${r.skipped} 个（已在队列）` : ''}`;
+      setSubmitMsg({ ok: true, text });
+      toast(text, 'success'); // 中上 toast：列表在下方/已切走时也能看到任务已下发
       setSelected(new Set());
       onTasksChanged();
     } catch (e: any) {
-      setSubmitMsg({ ok: false, text: String(e?.message ?? e) });
+      const text = String(e?.message ?? e);
+      setSubmitMsg({ ok: false, text });
+      toast(`批量提交失败：${text}`, 'error');
     } finally {
       setSubmitting(false);
     }
@@ -290,6 +296,7 @@ function FilterPill({ active, onClick, children }: { active: boolean; onClick: (
 }
 
 export function CollectPage() {
+  const toast = useToast();
   const [text, setText] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -342,9 +349,11 @@ export function CollectPage() {
     try {
       await createCollectTask(text.trim());
       setText('');
+      toast('已提交采集任务', 'success');
       refresh();
     } catch (e: any) {
       setErr(String(e?.message ?? e));
+      toast(`提交失败：${String(e?.message ?? e)}`, 'error');
     } finally {
       setSubmitting(false);
     }
@@ -356,7 +365,9 @@ export function CollectPage() {
     setTasks((prev) => prev.filter((t) => t.id !== id));
     try {
       await deleteCollectTask(id);
+      toast('已删除任务', 'success');
     } catch {
+      toast('删除失败，已恢复列表', 'error');
       refresh();
     } finally {
       deletingRef.current.delete(id);
@@ -365,27 +376,33 @@ export function CollectPage() {
 
   // 删除整个批次:级联删全部成员(含在途——与单删「任意状态可删」语义一致)。
   // 逐条容错:404=成员已被别处删视为已达成,其他失败也不中止,尽量删完;
-  // 收尾移除登记并统一 refresh,失败成员经此恢复可见(不做错误弹窗)。
+  // 收尾移除登记并统一 refresh,失败成员经此恢复可见。
   const removeBatch = async (batchId: string) => {
     const ids = tasks.filter((t) => t.batch_id === batchId).map((t) => t.id);
     for (const id of ids) deletingRef.current.add(id);
     setTasks((prev) => prev.filter((t) => t.batch_id !== batchId));
+    let failed = 0;
     for (const id of ids) {
       try {
         await deleteCollectTask(id);
       } catch {
-        /* 单条失败继续下一个;真值以收尾 refresh 为准 */
+        failed++; /* 单条失败继续下一个;真值以收尾 refresh 为准 */
       }
     }
     for (const id of ids) deletingRef.current.delete(id);
+    if (failed === 0) toast(`已删除批次（${ids.length} 个任务）`, 'success');
+    else toast(`删除批次完成（失败 ${failed} 个，已恢复列表）`, 'error');
     refresh();
   };
 
   // 重试:failed/limited 任务原地重置——resubmitTasks 经 retry 端点把原行重置回 pending 重跑
-  // (不建新行,批次卡/进度随原行更新;在途行 server 跳过)。无错误弹窗:结果以列表为准。
+  // (不建新行,批次卡/进度随原行更新;库内已有字幕的 server 直接置成功免重采)。
   const retry = async (list: CollectTask[]) => {
     try {
-      await resubmitTasks(list);
+      const r = await resubmitTasks(list);
+      toast(retrySummary(r), r.dispatched + r.alreadyOk > 0 ? 'success' : 'default');
+    } catch (e: any) {
+      toast(`重试失败：${String(e?.message ?? e)}`, 'error');
     } finally {
       refresh();
     }

@@ -18,7 +18,8 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { cn } from '@/lib/utils';
 import { ChevronLeft, ChevronRight, RotateCcw, X } from 'lucide-react';
 import { useRoute, useQueryUpdater, navigate } from '../router';
-import { BatchTaskCard, TaskRow, retryable, resubmitTasks } from '@/components/TaskCards';
+import { BatchTaskCard, TaskRow, retryable, resubmitTasks, retrySummary } from '@/components/TaskCards';
+import { useToast } from '@/components/ui/toast';
 import { isActiveStatus, sendTaskDoneNotification, terminalTransitions } from '@/lib/taskNotify';
 import { taskHistoryFromQuery, isMidLike } from '../taskHistoryFilterUrl';
 import type { CollectTask, CollectTaskStatus } from '../types';
@@ -46,6 +47,7 @@ const DAY_MS = 86_400_000;
 export function TasksHistoryPage() {
   const route = useRoute();
   const updateQuery = useQueryUpdater();
+  const toast = useToast();
   const f = taskHistoryFromQuery(route.query);
 
   // 筛选变更（resetPage：任一筛选变化回第 1 页）
@@ -131,25 +133,35 @@ export function TasksHistoryPage() {
     try {
       await deleteCollectTask(id);
       setTotal((t) => Math.max(0, t - 1));
-    } catch { /* 失败:重新拉真值 */ void reload(); }
-    finally { deletingRef.current.delete(id); }
+      toast('已删除任务', 'success');
+    } catch {
+      toast('删除失败，已恢复列表', 'error');
+      void reload(); // 失败:重新拉真值
+    } finally { deletingRef.current.delete(id); }
   };
 
   const removeBatch = async (batchId: string) => {
     const ids = tasks.filter((t) => t.batch_id === batchId).map((t) => t.id);
     for (const id of ids) deletingRef.current.add(id);
     setTasks((prev) => prev.filter((t) => t.batch_id !== batchId));
+    let failed = 0;
     for (const id of ids) {
-      try { await deleteCollectTask(id); setTotal((t) => Math.max(0, t - 1)); } catch { /* 继续删 */ }
+      try { await deleteCollectTask(id); setTotal((t) => Math.max(0, t - 1)); } catch { failed++; /* 继续删 */ }
     }
     for (const id of ids) deletingRef.current.delete(id);
+    if (failed === 0) toast(`已删除批次（${ids.length} 个任务）`, 'success');
+    else toast(`删除批次完成（失败 ${failed} 个，已恢复列表）`, 'error');
     void reload();
   };
 
   // 重试:经 resubmitTasks 原地重置原任务行——聚焦视图里该行立刻回排队中,轮询随之启动
+  // (库内已有字幕的 server 直接置成功免重采,toast 区分下发/短路数量)
   const retry = async (list: CollectTask[]) => {
     try {
-      await resubmitTasks(list);
+      const r = await resubmitTasks(list);
+      toast(retrySummary(r), r.dispatched + r.alreadyOk > 0 ? 'success' : 'default');
+    } catch (e: any) {
+      toast(`重试失败：${String(e?.message ?? e)}`, 'error');
     } finally { void reload(); }
   };
 
