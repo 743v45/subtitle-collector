@@ -4,6 +4,7 @@
 // （#/history?creator=某UP&range=7d&status=failed&page=3——刷新/分享还原视图）。
 // UP 筛选双来源：任务行 creator_uid 冗余列（批量提交/重采/ingest 回填,未入库任务也命中）+
 // 入库后视频归属;q 的标题段仅覆盖已入库任务,vid 段（搜 BV 号）覆盖全部任务。
+// 有进行中任务时 2s 轮询同步状态（同采集页节拍,全终态即停）,重试提交后无需手动刷新。
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { createCollectTasksBatch, deleteCollectTask, listCollectTasksPage, type TaskHistoryFilter } from '../api';
 import { Badge } from '@/components/ui/badge';
@@ -20,6 +21,7 @@ import { taskHistoryFromQuery, isMidLike } from '../taskHistoryFilterUrl';
 import type { CollectTask, CollectTaskStatus } from '../types';
 
 const PAGE_SIZE = 50;
+const REFRESH_MS = 2000; // 有进行中任务时的轮询节拍,对齐 CollectPage
 
 // 状态筛选档位:全部 / 进行中 / 已完成 / 受限 / 失败(进行中含排队,与列表语义一致)
 const FILTERS: ReadonlyArray<{ key: string; label: string; statuses: readonly CollectTaskStatus[] | null }> = [
@@ -88,7 +90,7 @@ export function TasksHistoryPage() {
   const [tasks, setTasks] = useState<CollectTask[]>([]);
   const [total, setTotal] = useState(0);
   const aliveRef = useRef(true);
-  // 在途待删(删除乐观移除期间防刷新写回,同采集页语义;历史页无轮询,仅删除往返窗口)
+  // 在途待删(删除乐观移除期间防刷新写回,同采集页语义;轮询带回的这些 id 同样不写回)
   const deletingRef = useRef(new Set<number>());
 
   const queryKey = route.query.toString();
@@ -152,6 +154,16 @@ export function TasksHistoryPage() {
       })
       .catch(() => { /* 静默 */ });
   };
+
+  // 有进行中任务时 2s 轮询(对齐采集页节拍;重试/他处提交的新任务状态自动同步,如
+  // 重试成功后「进行中→已完成」)。全终态即停——本页是全量分页查询,不常驻打服务端。
+  // reload 捕获的 f.page/reqFilter 均由 queryKey 派生,queryKey 不变则闭包不过期。
+  const hasActive = tasks.some((t) => t.status === 'pending' || t.status === 'dispatched');
+  useEffect(() => {
+    if (!hasActive) return;
+    const t = setInterval(() => reload(), REFRESH_MS);
+    return () => clearInterval(t);
+  }, [hasActive, queryKey]); // eslint-disable-line react-hooks/exhaustive-deps -- 条件轮询:起止只看在途有无,翻页/改筛选经 queryKey 重建
 
   // 分组渲染(同采集页:batch_id 聚卡,单成员批次走单任务行)
   const listNodes: Array<ReactNode> = [];
