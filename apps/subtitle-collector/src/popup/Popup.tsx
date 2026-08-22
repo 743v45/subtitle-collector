@@ -538,28 +538,16 @@ function FooterActions({
   );
 }
 
-// 采集任务进度卡（2026-08-21）：useCollectTasks 快照 + TASK_UPDATE 推送驱动。
-// 有在途（pending/dispatched）才显示；全终态后保留 30s（用户看到最终结果再收起）。
+// 采集任务进度卡（2026-08-21；2026-08-22 改常驻+默认折叠）。
+// 常驻：有任务即一直显示（废除原「全终态 30s 后自动收起」——任务历史持续可见）；
+// 默认折叠：每次打开 popup 只显摘要行（进行/成功/失败计数），点击展开——不跨次记忆
+// （useState 初值折叠,popup 每次打开都是新窗口,不用 storage）。
 // 批量任务按 batch_id 聚成一行「n/m」（成员由 server 列表返回；批次被 >limit 新任务遮蔽出
 // 列表窗口时可能不全，分母取该批最大 batch_total——创建期推送携带递增实时值，见 BatchOrTaskRow），
 // 单任务独占一行；在途组置顶（创建序），终态按完成序跟随；最多 10 行，超出折叠计数。
 function CollectTasksCard({ tasks }: { tasks: CollectTask[] | null }) {
-  const hasActive = !!tasks?.some((t) => t.status === 'pending' || t.status === 'dispatched');
-  const [lastActiveAt, setLastActiveAt] = useState(0); // 最后「有在途」时刻（30s 保留窗口起算点）
-  const [visible, setVisible] = useState(false);
-  useEffect(() => {
-    // 依赖 tasks：hasActive 期间每次任务数据变化（推送/10s 轮询）都刷新——批量采集历时分钟级，
-    // 只依赖 hasActive 会让时刻冻结在批次开始，最后一个成员转终态时保留窗口算出 0、卡片立即消失；
-    // 全终态翻转的那次变化不再刷新，但上一次刷新距最终时刻 ≤10s（轮询周期），窗口足够看到终态
-    if (hasActive) setLastActiveAt(Date.now());
-  }, [hasActive, tasks]);
-  useEffect(() => {
-    if (hasActive) { setVisible(true); return; }
-    if (!visible) return; // 打开时即无在途：不显示（不凭空弹出历史列表）
-    const t = setTimeout(() => setVisible(false), Math.max(0, lastActiveAt + 30_000 - Date.now()));
-    return () => clearTimeout(t);
-  }, [hasActive, visible, lastActiveAt, tasks]);
-  if (!visible || !tasks) return null;
+  const [collapsed, setCollapsed] = useState(true);
+  if (!tasks || tasks.length === 0) return null;
 
   // 分组：batch_id 相同聚成批次；null 各自成行。组序键 = 组内最小 id（批次创建位）。
   const groups = new Map<string, CollectTask[]>();
@@ -586,19 +574,25 @@ function CollectTasksCard({ tasks }: { tasks: CollectTask[] | null }) {
 
   return (
     <Card>
-      <CardContent className="space-y-1.5 p-3">
-        <div className="flex items-center justify-between text-xs">
-          <span className="font-medium">采集任务</span>
-          <span className="text-[10px] tabular-nums text-muted-foreground">
-            {activeCount > 0 && <span className="text-sky-600">{activeCount} 进行 </span>}
-            <span>{okCount} 成功</span>
-            {failCount > 0 && <span className="text-destructive"> {failCount} 失败</span>}
-          </span>
-        </div>
-        {shown.map((row) => (
-          <BatchOrTaskRow key={row.items[0].batch_id ?? row.items[0].id} items={row.items} active={row.active} />
-        ))}
-        {hidden > 0 && <div className="text-[10px] text-muted-foreground">还有 {hidden} 条未展开</div>}
+      <CardContent className="p-3">
+        <Collapsible open={!collapsed} onOpenChange={(o) => setCollapsed(!o)}>
+          {/* 摘要行（始终可见）：chevron + 标题 + 进行/成功/失败计数（折叠态也有全貌） */}
+          <CollapsibleTrigger className="flex w-full items-center gap-2 text-left text-xs">
+            <ChevronIcon className={cn('h-3 w-3 shrink-0 transition-transform', !collapsed && 'rotate-90')} />
+            <span className="shrink-0 font-medium">采集任务</span>
+            <span className="ml-auto shrink-0 text-[10px] tabular-nums text-muted-foreground">
+              {activeCount > 0 && <span className="text-sky-600">{activeCount} 进行 </span>}
+              <span>{okCount} 成功</span>
+              {failCount > 0 && <span className="text-destructive"> {failCount} 失败</span>}
+            </span>
+          </CollapsibleTrigger>
+          <CollapsibleContent className="space-y-1.5 pt-1.5">
+            {shown.map((row) => (
+              <BatchOrTaskRow key={row.items[0].batch_id ?? row.items[0].id} items={row.items} active={row.active} />
+            ))}
+            {hidden > 0 && <div className="text-[10px] text-muted-foreground">还有 {hidden} 条未展开</div>}
+          </CollapsibleContent>
+        </Collapsible>
       </CardContent>
     </Card>
   );

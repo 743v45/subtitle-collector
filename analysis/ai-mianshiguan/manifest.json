@@ -1,0 +1,264 @@
+{
+  "generated_at": 1787366932423,
+  "filters": {
+    "creator": "AI深度幻觉",
+    "hasSubtitle": true
+  },
+  "total_matched": 12,
+  "exported": 12,
+  "limit": 500,
+  "videos": [
+    {
+      "id": 3672,
+      "source": "bilibili",
+      "source_vid": "BV1QYo6B3EdV",
+      "title": "面试官问：Skill太多塞System Prompt怎么办？",
+      "creator_name": "AI深度幻觉",
+      "creator_source_uid": "3706960039905959",
+      "duration": 503,
+      "published_at": 1777261720000,
+      "first_seen_at": 1787366160246,
+      "track_count": 1,
+      "subtitle": {
+        "file": "videos/BV1QYo6B3EdV.txt",
+        "lan": "ai-zh",
+        "lan_doc": "中文",
+        "track_type": 1,
+        "version_id": 10016,
+        "origin": "external"
+      },
+      "pot_limited": false
+    },
+    {
+      "id": 3673,
+      "source": "bilibili",
+      "source_vid": "BV1b69gB5E3h",
+      "title": "面试官问：如何评估RAG系统的效果？",
+      "creator_name": "AI深度幻觉",
+      "creator_source_uid": "3706960039905959",
+      "duration": 743,
+      "published_at": 1775230281000,
+      "first_seen_at": 1787366837488,
+      "track_count": 1,
+      "subtitle": {
+        "file": "videos/BV1b69gB5E3h.txt",
+        "lan": "ai-zh",
+        "lan_doc": "中文",
+        "track_type": 1,
+        "version_id": 10017,
+        "origin": "external"
+      },
+      "pot_limited": false
+    },
+    {
+      "id": 3674,
+      "source": "bilibili",
+      "source_vid": "BV1BmQvBZEQf",
+      "title": "面试官问：MCP 还是 CLI？",
+      "creator_name": "AI深度幻觉",
+      "creator_source_uid": "3706960039905959",
+      "duration": 845,
+      "published_at": 1776151454000,
+      "first_seen_at": 1787366837920,
+      "track_count": 1,
+      "subtitle": {
+        "file": "videos/BV1BmQvBZEQf.txt",
+        "lan": "ai-zh",
+        "lan_doc": "中文",
+        "track_type": 1,
+        "version_id": 10018,
+        "origin": "external"
+      },
+      "pot_limited": false
+    },
+    {
+      "id": 3675,
+      "source": "bilibili",
+      "source_vid": "BV1xZdbBaEFY",
+      "title": "面试官问：一个完整的Agent架构包括哪些部分？",
+      "creator_name": "AI深度幻觉",
+      "creator_source_uid": "3706960039905959",
+      "duration": 596,
+      "published_at": 1776311263000,
+      "first_seen_at": 1787366838303,
+      "track_count": 1,
+      "subtitle": {
+        "file": "videos/BV1xZdbBaEFY.txt",
+        "lan": "ai-zh",
+        "lan_doc": "中文",
+        "track_type": 1,
+        "version_id": 10019,
+        "origin": "external"
+      },
+      "pot_limited": false
+    },
+    {
+      "id": 3676,
+      "source": "bilibili",
+      "source_vid": "BV17UdqB6Ekc",
+      "title": "面试官问：Transformer 是啥？",
+      "creator_name": "AI深度幻觉",
+      "creator_source_uid": "3706960039905959",
+      "duration": 678,
+      "published_at": 1776391422000,
+      "first_seen_at": 1787366838570,
+      "track_count": 1,
+      "subtitle": {
+        "file": "videos/BV17UdqB6Ekc.txt",
+        "lan": "ai-zh",
+        "lan_doc": "中文",
+        "track_type": 1,
+        "version_id": 10020,
+        "origin": "external"
+      },
+      "pot_limited": false
+    },
+    {
+      "id": 3677,
+      "source": "bilibili",
+      "source_vid": "BV14zdnBkE2H",
+      "title": "面试官问：如何设计Agent上下文维护方案？",
+      "creator_name": "AI深度幻觉",
+      "creator_source_uid": "3706960039905959",
+      "duration": 464,
+      "published_at": 1776491772000,
+      "first_seen_at": 1787366839001,
+      "track_count": 1,
+      "subtitle": {
+        "file": "videos/BV14zdnBkE2H.txt",
+        "lan": "ai-zh",
+        "lan_doc": "中文",
+        "track_type": 1,
+        "version_id": 10021,
+        "origin": "external"
+      },
+      "pot_limited": false
+    },
+    {
+      "id": 3678,
+      "source": "bilibili",
+      "source_vid": "BV1U8owBfE2g",
+      "title": "面试官问：线上 Agent 翻车了，怎么查根因？",
+      "creator_name": "AI深度幻觉",
+      "creator_source_uid": "3706960039905959",
+      "duration": 495,
+      "published_at": 1776645589000,
+      "first_seen_at": 1787366839432,
+      "track_count": 1,
+      "subtitle": {
+        "file": "videos/BV1U8owBfE2g.txt",
+        "lan": "ai-zh",
+        "lan_doc": "中文",
+        "track_type": 1,
+        "version_id": 10022,
+        "origin": "external"
+      },
+      "pot_limited": false
+    },
+    {
+      "id": 3679,
+      "source": "bilibili",
+      "source_vid": "BV1NHoUBQEwE",
+      "title": "面试官问：Agent 规划器怎么避免路径震荡？",
+      "creator_name": "AI深度幻觉",
+      "creator_source_uid": "3706960039905959",
+      "duration": 528,
+      "published_at": 1777086029000,
+      "first_seen_at": 1787366839873,
+      "track_count": 1,
+      "subtitle": {
+        "file": "videos/BV1NHoUBQEwE.txt",
+        "lan": "ai-zh",
+        "lan_doc": "中文",
+        "track_type": 1,
+        "version_id": 10023,
+        "origin": "external"
+      },
+      "pot_limited": false
+    },
+    {
+      "id": 3680,
+      "source": "bilibili",
+      "source_vid": "BV1tM9UBSEdg",
+      "title": "面试官问：怎么设计企业智能客服 Agent？",
+      "creator_name": "AI深度幻觉",
+      "creator_source_uid": "3706960039905959",
+      "duration": 664,
+      "published_at": 1777421878000,
+      "first_seen_at": 1787366840214,
+      "track_count": 1,
+      "subtitle": {
+        "file": "videos/BV1tM9UBSEdg.txt",
+        "lan": "ai-zh",
+        "lan_doc": "中文",
+        "track_type": 1,
+        "version_id": 10024,
+        "origin": "external"
+      },
+      "pot_limited": false
+    },
+    {
+      "id": 3681,
+      "source": "bilibili",
+      "source_vid": "BV1o49YBHEFd",
+      "title": "面试官问：Dense 和 MoE 区别在哪？",
+      "creator_name": "AI深度幻觉",
+      "creator_source_uid": "3706960039905959",
+      "duration": 540,
+      "published_at": 1777535402000,
+      "first_seen_at": 1787366840646,
+      "track_count": 1,
+      "subtitle": {
+        "file": "videos/BV1o49YBHEFd.txt",
+        "lan": "ai-zh",
+        "lan_doc": "中文",
+        "track_type": 1,
+        "version_id": 10025,
+        "origin": "external"
+      },
+      "pot_limited": false
+    },
+    {
+      "id": 3682,
+      "source": "bilibili",
+      "source_vid": "BV16s9qBuEo8",
+      "title": "面试官问：Agent Benchmark 怎么造？",
+      "creator_name": "AI深度幻觉",
+      "creator_source_uid": "3706960039905959",
+      "duration": 404,
+      "published_at": 1777590839000,
+      "first_seen_at": 1787366841040,
+      "track_count": 1,
+      "subtitle": {
+        "file": "videos/BV16s9qBuEo8.txt",
+        "lan": "ai-zh",
+        "lan_doc": "中文",
+        "track_type": 1,
+        "version_id": 10026,
+        "origin": "external"
+      },
+      "pot_limited": false
+    },
+    {
+      "id": 3683,
+      "source": "bilibili",
+      "source_vid": "BV1LFLT6nEDB",
+      "title": "面试官问：如何设计企业内部文档问答 RAG？",
+      "creator_name": "AI深度幻觉",
+      "creator_source_uid": "3706960039905959",
+      "duration": 379,
+      "published_at": 1779147978000,
+      "first_seen_at": 1787366841447,
+      "track_count": 1,
+      "subtitle": {
+        "file": "videos/BV1LFLT6nEDB.txt",
+        "lan": "ai-zh",
+        "lan_doc": "中文",
+        "track_type": 1,
+        "version_id": 10027,
+        "origin": "external"
+      },
+      "pot_limited": false
+    }
+  ]
+}
