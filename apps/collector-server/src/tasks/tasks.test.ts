@@ -464,6 +464,26 @@ test('listTasks 多维：未入库任务契约——标题维度筛不中/UP 归
   } finally { cleanup(); }
 });
 
+test('listTasks 多维：batchScope 批量/单点过滤（batch_id 空/非空，t.* 列覆盖未入库任务）', () => {
+  const { db, cleanup, ids } = setupFilterDb();
+  try {
+    // batch：只留批次成员（3 条 batch-test-1），与状态组合时补全跨状态拉齐整批
+    const batch = listTasks(db, 50, 0, { batchScope: 'batch' });
+    assert.equal(batch.total, 3);
+    assert.deepEqual(vids(batch.items).sort(), ['BV1ALPHA0001', 'BV1NOBAT001x', 'BV1NOBAT002x'].sort());
+
+    // single：只留单点任务（含未入库的 nolib/yt；种子无批次 → 无补全）
+    const single = listTasks(db, 50, 0, { batchScope: 'single' });
+    assert.equal(single.total, 3);
+    assert.deepEqual(vids(single.items).sort(), ['BV1BETA00001', 'BV1NOLIB0001', 'dQw4w9WgXcQ'].sort());
+
+    // 与状态维度组合：pending 的单点任务只有 nolib（nobat1 是 pending 但属批次）
+    const pendingSingle = listTasks(db, 50, 0, { batchScope: 'single', status: ['pending'] });
+    assert.equal(pendingSingle.total, 1);
+    assert.equal(pendingSingle.items[0].id, ids.nolib);
+  } finally { cleanup(); }
+});
+
 test('listTasks 多维：任务行 creator_uid 冗余列——未入库/失败任务按 UP 筛得中（盲区修复）', () => {
   const { db, cleanup } = setupFilterDb();
   try {

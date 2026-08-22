@@ -15,11 +15,12 @@ export interface TaskHistoryQueryState {
   sinceDate: string;   // YYYY-MM-DD（custom 档）
   untilDate: string;
   batchId: string;
+  batch: '' | 'batch' | 'single'; // 批量/单点档：batch=批量提交(batch_id 非空)，single=单条/旧任务
   page: number;
 }
 
 export const TASK_HISTORY_DEFAULTS: TaskHistoryQueryState = {
-  status: '', source: '', creator: '', q: '', range: '', sinceDate: '', untilDate: '', batchId: '', page: 1,
+  status: '', source: '', creator: '', q: '', range: '', sinceDate: '', untilDate: '', batchId: '', batch: '', page: 1,
 };
 
 const RANGE_PRESETS: readonly string[] = ['today', '7d', '30d'];
@@ -45,6 +46,7 @@ export function taskHistoryFromQuery(q: URLSearchParams): TaskHistoryQueryState 
     sinceDate: q.get('since_date') ?? '',
     untilDate: q.get('until_date') ?? '',
     batchId: q.get('batch_id') ?? '',
+    batch: q.get('batch') === 'batch' || q.get('batch') === 'single' ? q.get('batch') as TaskHistoryQueryState['batch'] : '',
     page: Number.isInteger(pageRaw) && pageRaw > 1 ? pageRaw : 1,
   };
 }
@@ -62,6 +64,7 @@ export function taskHistoryToQuery(s: TaskHistoryQueryState): URLSearchParams {
     u.set('range', s.range);
   }
   if (s.batchId) u.set('batch_id', s.batchId);
+  if (s.batch) u.set('batch', s.batch);
   if (s.page > 1) u.set('page', String(s.page));
   return u;
 }

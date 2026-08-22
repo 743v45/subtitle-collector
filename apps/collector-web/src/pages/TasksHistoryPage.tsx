@@ -81,6 +81,7 @@ export function TasksHistoryPage() {
     status: filter.statuses,
     source: f.source === 'bilibili' || f.source === 'youtube' ? f.source : undefined,
     batchId: f.batchId || undefined,
+    batchScope: f.batch || undefined,
     creator: f.creator && !isMidLike(f.creator) ? f.creator : undefined,
     creatorUid: f.creator && isMidLike(f.creator) ? f.creator : undefined,
     q: f.q || undefined,
@@ -202,7 +203,7 @@ export function TasksHistoryPage() {
 
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
   const canRetryAll = tasks.some(retryable);
-  const anySecondary = !!(f.creator || f.q || f.range || f.source || f.batchId);
+  const anySecondary = !!(f.creator || f.q || f.range || f.source || f.batchId || f.batch);
 
   function resetAll() {
     setCreatorInput('');
@@ -236,6 +237,19 @@ export function TasksHistoryPage() {
             <SelectItem value="__all">全部平台</SelectItem>
             <SelectItem value="bilibili">哔哩哔哩</SelectItem>
             <SelectItem value="youtube">YouTube</SelectItem>
+          </SelectContent>
+        </Select>
+        <Select
+          value={f.batch || '__all'}
+          onValueChange={(v) => setFilter({ batch: v === '__all' ? null : v })}
+        >
+          <SelectTrigger className="w-[110px]">
+            <SelectValue placeholder="方式" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="__all">全部方式</SelectItem>
+            <SelectItem value="batch">批量采集</SelectItem>
+            <SelectItem value="single">单点采集</SelectItem>
           </SelectContent>
         </Select>
         <Input

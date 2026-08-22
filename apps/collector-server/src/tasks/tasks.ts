@@ -336,6 +336,7 @@ export interface TaskListFilter {
   status?: readonly TaskStatus[];
   source?: 'bilibili' | 'youtube';
   batchId?: string;
+  batchScope?: 'batch' | 'single'; // 批量/单点档：batch=batch_id 非空（批量提交），single=空（单条/旧任务）
   creator?: string;    // UP 名模糊（归属关联的 creators.name LIKE）
   creatorUid?: string; // UP mid/channelId 精确（t.creator_uid 冗余列或入库归属）
   q?: string;          // 库内标题模糊（videos.title LIKE）+ vid 段匹配（t.source_vid LIKE，搜 BV 号）
@@ -360,6 +361,8 @@ export function listTasks(
   }
   if (filter.source) { conds.push('t.source = ?'); params.push(filter.source); }
   if (filter.batchId) { conds.push('t.batch_id = ?'); params.push(filter.batchId); }
+  if (filter.batchScope === 'batch') conds.push('t.batch_id IS NOT NULL');
+  if (filter.batchScope === 'single') conds.push('t.batch_id IS NULL');
   if (filter.creator) {
     conds.push('(ct.name LIKE ? OR c.name LIKE ?)');
     params.push(`%${filter.creator}%`, `%${filter.creator}%`);

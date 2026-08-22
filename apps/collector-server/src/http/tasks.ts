@@ -13,8 +13,8 @@ import { toInt } from './filter.js';
 //                                  重试并入原批次（非 UUID 400）
 // GET    /api/collect-tasks        任务列表:limit(默认20)或 page+page_size 分页 + 多维筛选
 //                                  (采集页 limit=30 最近列表;历史页 page/page_size+筛选全量分页)
-//                                  筛选参数:status(CSV) / source / batch_id / creator(UP名模糊) /
-//                                  creator_uid(mid 精确) / q(库内标题) / since / until(毫秒,created_at)
+//                                  筛选参数:status(CSV) / source / batch_id / batch(batch|single 批量/单点档) /
+//                                  creator(UP名模糊) / creator_uid(mid 精确) / q(库内标题) / since / until(毫秒,created_at)
 //                                  creator/q 只覆盖已入库视频的任务(join 元数据);非法值忽略不抛错
 // GET    /api/collect-tasks/:id    单任务状态（手机每 2s 轮询直到终态）
 // DELETE /api/collect-tasks/:id    删除任务（采集页删除按钮,任意状态可删）
@@ -66,6 +66,8 @@ export async function handleTasksHttp(req: IncomingMessage, res: ServerResponse,
       if (sourceParam === 'bilibili' || sourceParam === 'youtube') filter.source = sourceParam;
       const batchId = url.searchParams.get('batch_id');
       if (batchId) filter.batchId = batchId;
+      const batchScope = url.searchParams.get('batch');
+      if (batchScope === 'batch' || batchScope === 'single') filter.batchScope = batchScope;
       const creator = url.searchParams.get('creator');
       if (creator) filter.creator = creator;
       const creatorUid = url.searchParams.get('creator_uid');

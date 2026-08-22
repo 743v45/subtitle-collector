@@ -146,6 +146,7 @@ export interface TaskHistoryFilter {
   status?: readonly CollectTaskStatus[] | null;
   source?: 'bilibili' | 'youtube';
   batchId?: string;
+  batchScope?: 'batch' | 'single';
   creator?: string;
   creatorUid?: string;
   q?: string;
@@ -162,6 +163,7 @@ export async function listCollectTasksPage(
   if (filter.status?.length) q.set('status', filter.status.join(','));
   if (filter.source) q.set('source', filter.source);
   if (filter.batchId) q.set('batch_id', filter.batchId);
+  if (filter.batchScope) q.set('batch', filter.batchScope);
   if (filter.creator) q.set('creator', filter.creator);
   if (filter.creatorUid) q.set('creator_uid', filter.creatorUid);
   if (filter.q) q.set('q', filter.q);

@@ -17,9 +17,17 @@ test('roundtrip：全量非默认值 → query → 还原相等', () => {
   const s: TaskHistoryQueryState = {
     status: 'failed,limited', source: 'youtube', creator: '张三', q: '关键词',
     range: 'custom', sinceDate: '2026-01-01', untilDate: '2026-02-01',
-    batchId: 'b-123', page: 3,
+    batchId: 'b-123', batch: 'single', page: 3,
   };
   assert.deepEqual(taskHistoryFromQuery(taskHistoryToQuery(s)), s);
+});
+
+test('batch 批量/单点档：写 batch 参数；空档/非法值省略回落', () => {
+  const u = taskHistoryToQuery({ ...DEFAULTS, batch: 'batch' });
+  assert.equal(u.get('batch'), 'batch');
+  assert.equal(taskHistoryToQuery({ ...DEFAULTS }).get('batch'), null); // 空档省略
+  assert.equal(taskHistoryFromQuery(new URLSearchParams('batch=bogus')).batch, ''); // 非法值回落空档
+  assert.equal(taskHistoryFromQuery(new URLSearchParams('batch=single')).batch, 'single');
 });
 
 test('creator 判别：纯数字写 creator_uid（无 creator），文本写 creator', () => {
