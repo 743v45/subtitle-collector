@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { createCollectTask, createCollectTasksBatch, deleteCollectTask, expandUpperVideos, getCollectTimeout, setCollectTimeout, listCollectTasks, getStatsOverview } from '../api';
+import { createCollectTask, createCollectTasksBatch, deleteCollectTask, expandUpperVideos, listCollectTasks, getStatsOverview } from '../api';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -295,61 +295,7 @@ function FilterPill({ active, onClick, children }: { active: boolean; onClick: (
   );
 }
 
-// ── 采集超时配置（2026-08-22，按平台分档）──
-// youtube=扩展无进展窗口（持续无新进展判超时,慢视频轨加载极慢时调大,如反复「YouTube 采集超时（45s）」
-// 的长视频）;bilibili=server 等回执预算（扩展纯 API 拉取无自限）。秒输入/毫秒存储,范围 [15,600]s;
-// 保存后立即生效（server 派发时直读 settings 并随命令下发扩展,窗口调大对已在途的任务无效）。
-function CollectTimeoutConfig() {
-  const toast = useToast();
-  const { data } = useAsync(() => getCollectTimeout(), []);
-  const [yt, setYt] = useState<string | null>(null);
-  const [bili, setBili] = useState<string | null>(null);
-  const [saving, setSaving] = useState(false);
-  useEffect(() => {
-    if (data && yt === null) {
-      setYt(String(Math.round(data.youtube / 1000)));
-      setBili(String(Math.round(data.bilibili / 1000)));
-    }
-  }, [data]); // eslint-disable-line react-hooks/exhaustive-deps -- 初次加载回填一次
-  if (!data || yt === null || bili === null) return null;
-
-  const save = async () => {
-    const y = Number(yt), b = Number(bili);
-    if (!Number.isInteger(y) || !Number.isInteger(b) || y < 15 || y > 600 || b < 15 || b > 600) {
-      toast('超时须为 15–600 的整数秒', 'error');
-      return;
-    }
-    setSaving(true);
-    try {
-      await setCollectTimeout({ youtube: y * 1000, bilibili: b * 1000 });
-      toast('已保存采集超时（对之后派发的任务生效）', 'success');
-    } catch (e: any) {
-      toast(`保存失败：${String(e?.message ?? e)}`, 'error');
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  return (
-    <div className="flex flex-wrap items-center gap-x-2 gap-y-1 rounded-md border bg-muted/30 px-3 py-2 text-sm text-muted-foreground">
-      <span>采集超时</span>
-      <label className="flex items-center gap-1" title="扩展侧无进展窗口：导航后持续无新进展（就绪/轨数不变）此时长才判超时。反复 45s 超时的慢视频调大它">
-        YouTube
-        <Input className="h-7 w-16" type="number" min={15} max={600} value={yt} onChange={(e) => setYt(e.target.value)} />
-        s
-      </label>
-      <label className="flex items-center gap-1" title="server 等扩展回执的总预算（B 站扩展为纯 API 拉取，无自限窗口）">
-        B站
-        <Input className="h-7 w-16" type="number" min={15} max={600} value={bili} onChange={(e) => setBili(e.target.value)} />
-        s
-      </label>
-      <Button size="sm" className="h-7 px-3" disabled={saving} onClick={() => void save()}>
-        {saving ? <Loader2 className="size-3.5 animate-spin" /> : null}
-        保存
-      </Button>
-    </div>
-  );
-}
+// ── 采集超时配置已挪独立设置页（2026-08-22,SettingsPage）——系统配置集中,不散进功能页 ──
 
 export function CollectPage() {
   const toast = useToast();
@@ -504,9 +450,6 @@ export function CollectPage() {
 
       {/* 库摘要行：采集完成后数字随之变化,点击进看板看全量统计 */}
       <LibrarySummary refreshKey={statsTick} />
-
-      {/* 采集超时配置（按平台分档,保存后下次派发生效） */}
-      <CollectTimeoutConfig />
 
       {/* 提交区：大输入框（手机粘贴分享文本）+ 提交按钮 */}
       <div className="space-y-2">

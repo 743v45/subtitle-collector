@@ -10,16 +10,17 @@ import { CreatorsPage } from './pages/CreatorsPage';
 import { CreatorDetailPage } from './pages/CreatorDetailPage';
 import { ChangesLog } from './pages/ChangesLog';
 import { TasksHistoryPage } from './pages/TasksHistoryPage';
+import { SettingsPage } from './pages/SettingsPage';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { cn } from '@/lib/utils';
 import { navigate, useRoute, type Tab } from './router';
 import {
-  BarChart3, Film, FolderTree, History, Inbox, MonitorSmartphone, MoreHorizontal, ScrollText, Tags, Users,
+  BarChart3, Film, FolderTree, History, Inbox, MonitorSmartphone, MoreHorizontal, ScrollText, Settings, Tags, Users,
   type LucideIcon,
 } from 'lucide-react';
 
-// 导航分级：移动端底部 bar 只放高频 3 格,低频 5 格收进「更多」弹层;桌面顶部单行全量。
+// 导航分级：移动端底部 bar 只放高频 3 格,低频格收进「更多」弹层;桌面顶部单行全量。
 const TABS: { key: Tab; label: string; icon: LucideIcon }[] = [
   { key: 'collect', label: '采集', icon: Inbox },
   { key: 'history', label: '历史', icon: History },
@@ -30,6 +31,7 @@ const TABS: { key: Tab; label: string; icon: LucideIcon }[] = [
   { key: 'tags', label: '标签', icon: Tags },
   { key: 'clients', label: '客户端', icon: MonitorSmartphone },
   { key: 'changes', label: '日志', icon: ScrollText },
+  { key: 'settings', label: '设置', icon: Settings },
 ];
 const PRIMARY_KEYS: ReadonlySet<Tab> = new Set(['collect', 'videos', 'stats']);
 const PRIMARY_TABS = TABS.filter((t) => PRIMARY_KEYS.has(t.key));
@@ -60,6 +62,8 @@ export default function App() {
     <TagsPage />
   ) : tab === 'changes' ? (
     <ChangesLog />
+  ) : tab === 'settings' ? (
+    <SettingsPage />
   ) : tab === 'creators' ? (
     creatorView != null
       ? <CreatorDetailPage
