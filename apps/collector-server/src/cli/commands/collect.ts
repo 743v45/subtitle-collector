@@ -15,7 +15,7 @@ import { openReadonlyDb } from '../db.js';
 
 /** 采集类命令默认超时：对齐 server 调度器分档（tasks.ts commandTimeoutMs——bilibili 90s / youtube 180s），
  *  覆盖扩展全链路（导航+多请求+宽限+关 tab）；低于扩展实际耗时会把仍在执行的任务判成失败。 */
-const DEFAULT_COLLECT_TIMEOUT_MS = 180000;
+export const DEFAULT_COLLECT_TIMEOUT_MS = 180000;
 
 /** ServerClient 最小接口（便于测试注入 mock）。 */
 export interface CollectClient {
@@ -638,9 +638,9 @@ export async function collectFind(
  * - `no online client`（扩展未连）→ `ARGS`（退 2）。
  * - 其他：`RUNTIME`（退 1）。
  *
- * 返回 `never`：所有分支均经 emitError（process.exit）终结。
+ * 返回 `never`：所有分支均经 emitError（process.exit）终结。export 供 collect-yt-search.ts 复用（错误归一口径单一来源）。
  */
-function handleHttpError(err: unknown): never {
+export function handleHttpError(err: unknown): never {
   if (err instanceof ServerUnreachableError) {
     emitError(err.message, 'SERVER_UNREACHABLE');
   }

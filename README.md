@@ -16,7 +16,7 @@ B 站**字幕（subtitle）**相关浏览器扩展与配套服务的 monorepo（
 - ✅ **UP 主批量**：`collect upper-videos <mid>` / `collect new-videos <mid>` / `collect discover <mid...>` + popup「UP 全部视频」卡勾选批量
 - ✅ **YouTube 频道批量**：popup 频道卡（`@handle/**` 任意子页识别，ytInitialData + InnerTube 全量分页，勾选批量 navigate 采集）+ CLI `collect yt-videos <@handle|UCxxx|URL> [--since-days N] [--collect]`
 - ✅ **合集批量**：popup 合集卡（视频属合集时列出全集 `seasons_archives_list` 全量分页，勾选批量采集上报）
-- ✅ **搜索批量**：`collect search <keyword>` / `collect find <keyword>`（粉丝数/发布时间/播放量等条件过滤）
+- ✅ **搜索批量**：`collect search <keyword>` / `collect find <keyword>`（粉丝数/发布时间/播放量等条件过滤）；YouTube 关键词搜索 `collect yt-search <keyword> [--order relevance|newest|views] [--since-days N] [--collect]`（候选 + 未入库串行采集）
 - ✅ 充电专属视频采集 + 付费标记（`videos list --paid`）
 - ✅ **已采集视频刷新**：视频详情页「刷新字幕」按钮 / 采集页与历史页任务行刷新图标，一键重采（ingest 按 body_hash 幂等去重，内容未变零新增），任务行显示「已刷新：新增 X 版 / 无新增」；UP 批量勾选含已采视频时提交按钮提示将刷新
 - ✅ 客户端任务派发管控：popup/options「仅上报状态」开关（关后调度器不向该客户端派采集任务，保持连接上报；多客户端时任务派给其他机器，全关留 pending）+ web 客户端页 / CLI `clients task-dispatch <id> <on|off>` 远程切换 + `clients list` 可见状态

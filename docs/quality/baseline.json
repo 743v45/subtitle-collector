@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-08-23T13:21:39.922Z",
+  "generatedAt": "2026-08-23T18:17:46.516Z",
   "rules": {
     "complexity": 15,
     "maxLines": 400
@@ -98,8 +98,8 @@
       "complexity": 21
     },
     "apps/subtitle-collector/background.js": {
-      "complexity": 165,
-      "maxLines": 1266
+      "complexity": 168,
+      "maxLines": 1291
     },
     "apps/subtitle-collector/content-yt.js": {
       "complexity": 40,

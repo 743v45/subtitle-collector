@@ -70,6 +70,7 @@ export async function main(): Promise<void> {
       { buildClientsCommand },
       { buildServerCommand },
       { buildCollectCommand },
+      { buildYtSearchCommand },
       { buildSubCommand },
       { buildTagsCommand },
     ] = await Promise.all([
@@ -81,6 +82,7 @@ export async function main(): Promise<void> {
       import('./commands/clients.js'),
       import('./commands/server.js'),
       import('./commands/collect.js'),
+      import('./commands/collect-yt-search.js'),
       import('./commands/sub.js'),
       import('./commands/tags.js'),
     ]);
@@ -91,7 +93,11 @@ export async function main(): Promise<void> {
     program.addCommand(buildStatsCommand());    // stats overview / stats count --by
     program.addCommand(buildClientsCommand());  // clients list / reporting / command
     program.addCommand(buildServerCommand());   // server ping / status / start / stop
-    program.addCommand(buildCollectCommand());  // collect search / subtitle / dedupe
+    // collect search / subtitle / dedupe；yt-search 子命令在 collect 组装后挂载
+    //（collect-yt-search.ts 复用 collect.ts 导出件，反向 import 会成环——在 main 组装层接线）
+    const collectCmd = buildCollectCommand();
+    collectCmd.addCommand(buildYtSearchCommand());
+    program.addCommand(collectCmd);
     program.addCommand(buildSubCommand());   // sub search（字幕正文片段检索）
     program.addCommand(buildTagsCommand());  // tags list / apply / remove（视频标签）
 

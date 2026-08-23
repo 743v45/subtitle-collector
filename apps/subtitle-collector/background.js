@@ -8,6 +8,9 @@ import { buildIngestPayload, normalizeUrl, normalizeTags } from "./ingest-payloa
 import {
   parseYtChannelHtml, parseYtBrowseResponse, channelVideosUrl,
 } from "./yt-channel.mjs";
+import {
+  runYtSearchAction, YT_INNERTUBE_KEY_FALLBACK, YT_CLIENT_VERSION_FALLBACK,
+} from "./yt-search.mjs";
 import { createPendingQueue } from "./pending-ingests.mjs";
 import { pruneExpired } from "./storage-prune.mjs";
 import { selectStaleFetches } from "./fetch-resume.mjs";
@@ -232,23 +235,30 @@ function fmtLength(sec) {
 const ytChannelInflight = new Map(); // storage key → true（重复触发复用同一任务）
 const YT_CHANNEL_TTL_MS = 3600 * 1000;
 const YT_CHANNEL_PAGE_GAP_MS = 500; // 页间节流防风控
-// InnerTube WEB 客户端公开默认（页面抠不到 clientVersion 时兜底；key 是长期稳定的公开 WEB key）
-const YT_INNERTUBE_KEY_FALLBACK = 'AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8';
-const YT_CLIENT_VERSION_FALLBACK = '2.20240101.00.00';
 
 function ytChannelKey(ident) {
   return `ytChannelVideos:${ident.channelId ?? ident.handle ?? ident.custom}`;
+}
+
+// YouTube 页面 HTML 拉取（yt-search action 首页依赖；SSR HTML 请求不受 InnerTube Origin 校验，
+// background 直拉即可）。UA 对齐页面请求，Accept-Language 英文（相对时间/计数文本按英文解析优先）。
+async function ytFetchPage(url) {
+  const res = await fetch(url, {
+    headers: { 'User-Agent': navigator.userAgent, 'Accept-Language': 'en-US,en;q=0.9' },
+  });
+  return { status: res.status, text: res.ok ? await res.text() : null };
 }
 
 // 续页经页面运行时（2026-08-21 修 browse 403）：MV3 SW 跨源 POST 自动带
 // Origin: chrome-extension://…（浏览器强制，header 盖不掉），YouTube InnerTube 对该 Origin 403；
 // 页面 tab 上下文 fetch 的 Origin 是 youtube.com → 200。对齐 collectYoutubeViaNavigate 先例
 //（YouTube 字幕 URL 同理必须靠页面运行时）。func 经 executeScript 序列化注入，args 传参，不能引外部闭包。
-async function ytBrowseViaTab(tabId, inntertubeKey, clientVersion, token) {
+// endpoint ∈ 'browse' | 'search'（频道续页 / 搜索续页同一 InnerTube 通道，2026-08-24 搜索复用参数化）。
+async function ytInnertubeViaTab(tabId, endpoint, inntertubeKey, clientVersion, token) {
   const [res] = await chrome.scripting.executeScript({
     target: { tabId },
-    func: async (key, ver, tok) => {
-      const r = await fetch(`https://www.youtube.com/youtubei/v1/browse?key=${key}`, {
+    func: async (ep, key, ver, tok) => {
+      const r = await fetch(`https://www.youtube.com/youtubei/v1/${ep}?key=${key}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -259,7 +269,7 @@ async function ytBrowseViaTab(tabId, inntertubeKey, clientVersion, token) {
       const json = await r.json().catch(() => null);
       return { status: r.status, json };
     },
-    args: [inntertubeKey, clientVersion, token],
+    args: [endpoint, inntertubeKey, clientVersion, token],
   });
   return res?.result ?? { status: 0, json: null };
 }
@@ -320,7 +330,7 @@ async function fetchAllYtChannelVideos(ident, refresh = false) {
     let token = first.continuation;
     while (token) {
       if (!ytTab) ytTab = await ensureYoutubeTab(url);
-      const page = await ytBrowseViaTab(ytTab.tabId, inntertubeKey, clientVersion, token);
+      const page = await ytInnertubeViaTab(ytTab.tabId, 'browse', inntertubeKey, clientVersion, token);
       if (page.status !== 200 || !page.json) throw new Error(`browse HTTP ${page.status || 'parse'}`);
       const parsed = parseYtBrowseResponse(page.json);
       let added = 0;
@@ -776,6 +786,21 @@ async function connect() {
               cache_status: r.status,
             },
           }));
+        } catch (err) {
+          ws.send(JSON.stringify({ type: "result", id: msg.id, ok: false, error: String(err.message || err) }));
+        }
+      } else if (msg.action === "yt-search") {
+        // YouTube 关键词搜索（CLI collect yt-search 用，2026-08-24）：编排/解析/tab 管理全在
+        // yt-search.mjs 的 runYtSearchAction（可测），此处只注入 chrome 依赖。同步回执（类
+        // bilibili search），无 storage 缓存——即席查询不占配额。
+        try {
+          const data = await runYtSearchAction(msg, {
+            fetchHtml: ytFetchPage,
+            ensureTab: ensureYoutubeTab,
+            innertubeViaTab: ytInnertubeViaTab,
+            closeTab: async (tabId) => { try { await chrome.tabs.remove(tabId); } catch {} },
+          });
+          ws.send(JSON.stringify({ type: "result", id: msg.id, ok: true, data }));
         } catch (err) {
           ws.send(JSON.stringify({ type: "result", id: msg.id, ok: false, error: String(err.message || err) }));
         }
