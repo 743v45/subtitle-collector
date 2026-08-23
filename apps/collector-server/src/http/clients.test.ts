@@ -23,11 +23,11 @@ function setup() {
     });
   });
 }
-function wsConnect(port: number, clientId: string, enabled: boolean): Promise<WebSocket> {
+function wsConnect(port: number, clientId: string, enabled: boolean, acceptsTasks: boolean = true): Promise<WebSocket> {
   return new Promise((resolve) => {
     const ws = new WebSocket(`ws://127.0.0.1:${port}/ext`);
     ws.once('open', () => {
-      ws.send(JSON.stringify({ type: 'hello', ext_version: '0.1.0', token: 'test-token', client_id: clientId, reporting_enabled: enabled }));
+      ws.send(JSON.stringify({ type: 'hello', ext_version: '0.1.0', token: 'test-token', client_id: clientId, reporting_enabled: enabled, task_dispatch_enabled: acceptsTasks }));
       resolve(ws);
     });
   });
@@ -80,6 +80,80 @@ test('POST 离线 client → 404；enabled 非布尔 → 400', async () => {
     await new Promise(r => setTimeout(r, 50));
     const r2 = await httpReq(ctx.port, 'POST', '/api/clients/ext-A/reporting', { enabled: 'oops' });
     assert.equal(r2.status, 400);
+    ws.close();
+  } finally { ctx.cleanup(); }
+});
+
+// ── 任务派发开关（2026-08-23 仅上报状态）：hello 上报 + listClients 带出 + 远程切换端点 ──
+
+test('GET /api/clients：hello 带 task_dispatch_enabled → listClients 透传；缺省视为接受', async () => {
+  const ctx = await setup();
+  try {
+    const wsOff = await wsConnect(ctx.port, 'ext-off', true, false); // 仅上报客户端
+    // 旧扩展形态：hello 不带 task_dispatch_enabled 字段（缺省 fail-open 视为接受）
+    const wsOld = await new Promise<WebSocket>((resolve) => {
+      const ws = new WebSocket(`ws://127.0.0.1:${ctx.port}/ext`);
+      ws.once('open', () => {
+        ws.send(JSON.stringify({ type: 'hello', ext_version: '0.1.0', token: 'test-token', client_id: 'ext-old', reporting_enabled: true }));
+        resolve(ws);
+      });
+    });
+    await new Promise(r => setTimeout(r, 50));
+    const r = await httpReq(ctx.port, 'GET', '/api/clients');
+    assert.equal(r.status, 200);
+    const byId = Object.fromEntries(r.json.clients.map((c: any) => [c.client_id, c]));
+    assert.equal(byId['ext-off'].task_dispatch_enabled, false);
+    assert.equal(byId['ext-old'].task_dispatch_enabled, true, '字段缺省（旧扩展）→ 接受');
+    wsOff.close(); wsOld.close();
+  } finally { ctx.cleanup(); }
+});
+
+test('POST /api/clients/:id/task-dispatch：定向关，等回执后返回新状态并落连接表', async () => {
+  const ctx = await setup();
+  try {
+    const ws = await wsConnect(ctx.port, 'ext-A', true);
+    ws.on('message', (d) => {
+      const m = JSON.parse(d.toString());
+      if (m.action === 'set-task-dispatch') ws.send(JSON.stringify({ type: 'result', id: m.id, ok: true, data: { task_dispatch_enabled: m.enabled } }));
+    });
+    await new Promise(r => setTimeout(r, 50));
+    const r = await httpReq(ctx.port, 'POST', '/api/clients/ext-A/task-dispatch', { enabled: false });
+    assert.equal(r.status, 200);
+    assert.equal(r.json.task_dispatch_enabled, false);
+    // server 连接表同步更新：listClients 立即可见（调度器可派池据同一数据源过滤）
+    const r2 = await httpReq(ctx.port, 'GET', '/api/clients');
+    assert.equal(r2.json.clients[0].task_dispatch_enabled, false);
+    ws.close();
+  } finally { ctx.cleanup(); }
+});
+
+test('POST /api/clients/:id/task-dispatch：离线 404；enabled 非布尔 400', async () => {
+  const ctx = await setup();
+  try {
+    const r1 = await httpReq(ctx.port, 'POST', '/api/clients/ext-NONE/task-dispatch', { enabled: true });
+    assert.equal(r1.status, 404);
+    const ws = await wsConnect(ctx.port, 'ext-A', true);
+    await new Promise(r => setTimeout(r, 50));
+    const r2 = await httpReq(ctx.port, 'POST', '/api/clients/ext-A/task-dispatch', { enabled: 'oops' });
+    assert.equal(r2.status, 400);
+    ws.close();
+  } finally { ctx.cleanup(); }
+});
+
+test('task-dispatch-state 消息：popup 本地切换 → server 连接表即时更新', async () => {
+  const ctx = await setup();
+  try {
+    const ws = await wsConnect(ctx.port, 'ext-A', true);
+    await new Promise(r => setTimeout(r, 50));
+    ws.send(JSON.stringify({ type: 'task-dispatch-state', enabled: false }));
+    await new Promise(r => setTimeout(r, 50));
+    const r = await httpReq(ctx.port, 'GET', '/api/clients');
+    assert.equal(r.json.clients[0].task_dispatch_enabled, false);
+    // 再切回：非 true 严格解析（对齐 reporting-state），true 恢复
+    ws.send(JSON.stringify({ type: 'task-dispatch-state', enabled: true }));
+    await new Promise(r => setTimeout(r, 50));
+    const r2 = await httpReq(ctx.port, 'GET', '/api/clients');
+    assert.equal(r2.json.clients[0].task_dispatch_enabled, true);
     ws.close();
   } finally { ctx.cleanup(); }
 });

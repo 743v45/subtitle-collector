@@ -315,8 +315,7 @@ function fakePagedCommand(pages: Record<number, any>): UpperExpandDeps {
   };
 }
 
-test('expandUpperVideos：分页循环拉全量（page 参数对齐扩展契约）+ 已采标注', async () => {
-  const { db, cleanup } = setupDb();
+test('expandUpperVideos：分页循环拉全量（page 参数对齐扩展契约）+ 已采标注', async () => {  const { db, cleanup } = setupDb();
   try {
     // 库里已有 BV2（该 UP 已采 1 条）
     db.prepare("INSERT INTO creators (source, source_uid, name, first_seen_at, updated_at) VALUES ('bilibili', '296399504', 'UP甲', 1, 1)").run();
@@ -391,9 +390,53 @@ test('expandUpperVideos：扩展离线抛错；单页回执失败抛错', async 
   } finally { cleanup(); }
 });
 
+// ── expandUpperVideos 客户端选择（2026-08-23 任务派发池）：优先可派池，池空回退任意在线 ──
+
+test('expandUpperVideos：优先选接受任务派发的客户端（批量编排落在采集机，不占仅上报客户端）', async () => {
+  const { db, cleanup } = setupDb();
+  try {
+    const used: string[] = [];
+    const deps: UpperExpandDeps = {
+      // 仅上报客户端排在首位：也不能被 clients[0] 直选（它是用户的日常机，列表拉取的
+      // B 站 API 配额/风控压力应落在专职采集机上）
+      listClients: () => [{ client_id: 'ext-off', task_dispatch_enabled: false }, { client_id: 'ext-on' }],
+      requestCommand: async (cid) => {
+        used.push(cid);
+        return { ok: true, result: { ok: true, data: { total: 1, items: [{ bvid: 'BV1xx411c7mD', title: 't' }] } } };
+      },
+      sleep: async () => {},
+      pageGapMs: 0,
+    };
+    const r = await expandUpperVideos(db, '296399504', deps);
+    assert.equal(r.total, 1);
+    assert.deepEqual(used, ['ext-on'], '应选可派池内的 ext-on 而非首位的 ext-off');
+  } finally { cleanup(); }
+});
+
+test('expandUpperVideos：池空（全仅上报）回退任意在线（纯 API 查询无标签页干扰，不必拒绝）', async () => {
+  const { db, cleanup } = setupDb();
+  try {
+    const used: string[] = [];
+    const deps: UpperExpandDeps = {
+      listClients: () => [{ client_id: 'ext-off', task_dispatch_enabled: false }],
+      requestCommand: async (cid) => {
+        used.push(cid);
+        return { ok: true, result: { ok: true, data: { total: 1, items: [{ bvid: 'BV1xx411c7mD', title: 't' }] } } };
+      },
+      sleep: async () => {},
+      pageGapMs: 0,
+    };
+    const r = await expandUpperVideos(db, '296399504', deps);
+    assert.equal(r.total, 1);
+    assert.deepEqual(used, ['ext-off'], '唯一在线客户端虽仅上报，列表查询仍可用它');
+  } finally { cleanup(); }
+});
+
 // ── pickClientForTask：任务归属（2026-08-21 多客户端 sticky;2026-08-22 加上次执行者软偏好）──
 // 语义：creator 在线 → 永远归 creator（忙则 wait 本轮跳过，不给别人）；无 creator →
 // 上次执行者在线且空闲 → 回原扩展（忙/离线不等待）→ 都没有 → 任意空闲。
+// 2026-08-23 加任务派发池：仅上报（task_dispatch_enabled=false）客户端不入池——
+// creator/执行者/任意空闲三级选择全在池内进行；字段缺省视为接受（旧扩展 fail-open）。
 
 test('pickClientForTask：creator 在线 → 归 creator（即便别人空闲/曾是执行者）', () => {
   const clients = [{ client_id: 'ext-A' }, { client_id: 'ext-B' }];
@@ -433,6 +476,38 @@ test('pickClientForTask：无 creator 无执行者（CLI/旧任务）→ 任意�
 
 test('pickClientForTask：全忙 → null', () => {
   assert.equal(pickClientForTask({ creator_client_id: null, client_id: 'ext-A' }, [{ client_id: 'ext-A' }], new Map([['ext-A', 1]])), null);
+});
+
+// ── 任务派发池（2026-08-23 仅上报状态）：仅上报客户端从三级选择中全部剔除 ──
+
+test('pickClientForTask：creator 仅上报 → 视同不可派，回落任意空闲（不 wait）', () => {
+  // 关掉接任务的意图就是「别在我这台跑」——任务该去别的机器，而非等创建者恢复
+  const clients = [{ client_id: 'ext-A', task_dispatch_enabled: false }, { client_id: 'ext-B' }];
+  assert.deepEqual(pickClientForTask({ creator_client_id: 'ext-A', client_id: null }, clients, new Map()), { clientId: 'ext-B' });
+});
+
+test('pickClientForTask：上次执行者仅上报 → 回落任意空闲（软偏好不越权）', () => {
+  const clients = [{ client_id: 'ext-A' }, { client_id: 'ext-B', task_dispatch_enabled: false }];
+  assert.deepEqual(pickClientForTask({ creator_client_id: null, client_id: 'ext-B' }, clients, new Map()), { clientId: 'ext-A' });
+});
+
+test('pickClientForTask：仅上报客户端不被「任意空闲」选中（跳过取池内首个）', () => {
+  const clients = [
+    { client_id: 'ext-A', task_dispatch_enabled: false },
+    { client_id: 'ext-B', task_dispatch_enabled: false },
+    { client_id: 'ext-C' },
+  ];
+  assert.deepEqual(pickClientForTask({ creator_client_id: null, client_id: null }, clients, new Map()), { clientId: 'ext-C' });
+});
+
+test('pickClientForTask：全部仅上报 → null（任务留 pending 等恢复，对齐扩展全离线行为）', () => {
+  const clients = [{ client_id: 'ext-A', task_dispatch_enabled: false }];
+  assert.equal(pickClientForTask({ creator_client_id: 'ext-A', client_id: null }, clients, new Map()), null);
+});
+
+test('pickClientForTask：字段缺省（旧扩展 hello 不带 / 测试 mock 只给 client_id）→ 视为接受', () => {
+  const clients = [{ client_id: 'ext-A' }, { client_id: 'ext-B', task_dispatch_enabled: true }];
+  assert.deepEqual(pickClientForTask({ creator_client_id: 'ext-A', client_id: null }, clients, new Map()), { clientId: 'ext-A' });
 });
 
 test('createTasksBatch：creator_client_id 透传到任务行；不传为 null', () => {

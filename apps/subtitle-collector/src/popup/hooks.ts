@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { CLIENT_ID_KEY, REPORTING_KEY } from '../../reporting.mjs';
+import { TASK_DISPATCH_KEY } from '../../task-dispatch.mjs';
 import { API_BASE } from '../../config.js';
 import {
   SERVERS_KEY,
@@ -681,6 +682,28 @@ export function useReporting(): { enabled: boolean | null; setEnabled: (v: boole
   const set = useCallback((v: boolean) => {
     setEnabled(v);
     chrome.runtime.sendMessage({ type: 'SET_REPORTING', enabled: v });
+  }, []);
+  return { enabled, setEnabled: set };
+}
+
+// —— 任务派发开关（2026-08-23 仅上报状态）：默认开（!==false），切换发 SET_TASK_DISPATCH ——
+// 与 useReporting 的差异：监听 storage.onChanged——server 远程切换（set-task-dispatch 改
+// storage）时 popup 开着也能实时翻转开关，不等到下次打开 popup 才见到新状态。
+export function useTaskDispatch(): { enabled: boolean | null; setEnabled: (v: boolean) => void } {
+  const [enabled, setEnabled] = useState<boolean | null>(null);
+  useEffect(() => {
+    chrome.storage.local.get([TASK_DISPATCH_KEY], (items) => {
+      setEnabled(items[TASK_DISPATCH_KEY] !== false);
+    });
+    const onChanged = (changes: Record<string, { newValue?: unknown }>, area: string) => {
+      if (area === 'local' && changes[TASK_DISPATCH_KEY]) setEnabled(changes[TASK_DISPATCH_KEY].newValue !== false);
+    };
+    chrome.storage.onChanged.addListener(onChanged);
+    return () => chrome.storage.onChanged.removeListener(onChanged);
+  }, []);
+  const set = useCallback((v: boolean) => {
+    setEnabled(v);
+    chrome.runtime.sendMessage({ type: 'SET_TASK_DISPATCH', enabled: v });
   }, []);
   return { enabled, setEnabled: set };
 }

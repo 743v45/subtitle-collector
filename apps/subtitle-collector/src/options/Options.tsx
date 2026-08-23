@@ -3,7 +3,7 @@ import { cn } from '@/lib/utils';
 import { Badge } from '@/components/ui/badge';
 import { Switch } from '@/components/ui/switch';
 import { Button } from '@/components/ui/button';
-import { useServerConfig, useReporting, useConnectionStatus, useClientId } from '../popup/hooks';
+import { useServerConfig, useReporting, useTaskDispatch, useConnectionStatus, useClientId } from '../popup/hooks';
 import { parseServerUrl, maskServerUrl, isLocalServer } from '../../servers.mjs';
 import { resolveConnDisplay } from '../../connection-mode.mjs';
 
@@ -379,6 +379,39 @@ function ReportingPanel() {
           </>
         )}
       </div>
+      <TaskDispatchPanel />
+    </div>
+  );
+}
+
+// —— 任务派发开关（2026-08-23 仅上报状态）：多客户端时让日常机只上报不接活 ——
+// 与 popup 底部开关同 key（taskDispatchEnabled）同链路（SET_TASK_DISPATCH → task-dispatch-state）；
+// hook 带 storage.onChanged 监听，server 远程切换后两处 UI 同步翻转。
+function TaskDispatchPanel() {
+  const { enabled, setEnabled } = useTaskDispatch();
+  return (
+    <div className="space-y-2 rounded-md border p-3">
+      <div className="text-sm font-medium">任务派发</div>
+      <div className="flex items-center gap-3">
+        {enabled === null ? (
+          <span className="text-sm text-muted-foreground">读取中…</span>
+        ) : (
+          <>
+            <Switch
+              checked={enabled}
+              onCheckedChange={setEnabled}
+              checkedLabel="接任务"
+              uncheckedLabel="仅上报"
+              className="data-[state=checked]:bg-brand"
+            />
+            <span className="text-sm">{enabled ? '接受 server 派发的采集任务' : '仅上报状态：server 不向本机派发采集任务'}</span>
+          </>
+        )}
+      </div>
+      <p className="text-xs text-muted-foreground">
+        多客户端场景：日常用的机器关掉后，采集任务只派给其他在线客户端（本机保持连接上报，被动采集不受影响）。
+        全部客户端都关时任务留在 pending，恢复接任务后自动派发。
+      </p>
     </div>
   );
 }

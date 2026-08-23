@@ -18,6 +18,7 @@ interface ExtConn {
   extVersion: string | null;
   clientId: string | null;
   reportingEnabled: boolean;
+  taskDispatchEnabled: boolean; // 2026-08-23 仅上报状态：false = 调度器不派任务（hello 上报，popup 本地切发 task-dispatch-state）
 }
 
 const connections = new Map<string, ExtConn>(); // key = clientId（hello 后入表）
@@ -38,7 +39,7 @@ export function attachWsServer(httpServer: Server, _db: Database.Database, expec
   });
 
   wss.on('connection', (ws: WebSocket) => {
-    const conn: ExtConn = { ws, extVersion: null, clientId: null, reportingEnabled: true };
+    const conn: ExtConn = { ws, extVersion: null, clientId: null, reportingEnabled: true, taskDispatchEnabled: true };
     // 心跳：连接建立 isAlive=true，收到 pong 翻回 true；sweep 周期内无 pong → terminate（清理半开连接）
     const live = ws as WebSocket & { isAlive: boolean };
     live.isAlive = true;
@@ -66,6 +67,7 @@ export function attachWsServer(httpServer: Server, _db: Database.Database, expec
         ws.send(JSON.stringify({ type: 'hello-ack', ok: true }));
         conn.clientId = typeof msg.client_id === 'string' && msg.client_id ? msg.client_id : null;
         conn.reportingEnabled = msg.reporting_enabled !== false; // 缺省 true
+        conn.taskDispatchEnabled = msg.task_dispatch_enabled !== false; // 缺省 true（旧扩展 fail-open）
         if (conn.clientId) {
           const prev = connections.get(conn.clientId);
           if (prev && prev.ws !== ws && prev.ws.readyState === WebSocket.OPEN) prev.ws.close(4000, 'replaced');
@@ -83,6 +85,12 @@ export function attachWsServer(httpServer: Server, _db: Database.Database, expec
 
       if (msg.type === 'reporting-state') {
         conn.reportingEnabled = msg.enabled === true;
+        return;
+      }
+
+      if (msg.type === 'task-dispatch-state') {
+        // popup 本地切任务派发开关后的状态同步（对齐 reporting-state：显式推送严格解析）
+        conn.taskDispatchEnabled = msg.enabled === true;
         return;
       }
 
@@ -181,10 +189,10 @@ export function broadcastEvent(msg: Record<string, unknown>): void {
   }
 }
 
-export function listClients(): Array<{ client_id: string; ext_version: string | null; reporting_enabled: boolean; connected: true }> {
+export function listClients(): Array<{ client_id: string; ext_version: string | null; reporting_enabled: boolean; task_dispatch_enabled: boolean; connected: true }> {
   return [...connections.values()]
     .filter(c => c.clientId && c.ws.readyState === WebSocket.OPEN)
-    .map(c => ({ client_id: c.clientId!, ext_version: c.extVersion, reporting_enabled: c.reportingEnabled, connected: true }));
+    .map(c => ({ client_id: c.clientId!, ext_version: c.extVersion, reporting_enabled: c.reportingEnabled, task_dispatch_enabled: c.taskDispatchEnabled, connected: true }));
 }
 
 export function sendToClient(clientId: string, cmd: { id: string; action: string; [k: string]: unknown }): boolean {
@@ -242,6 +250,31 @@ export async function requestReportingChange(
         const conn = connections.get(clientId);
         if (conn) conn.reportingEnabled = msg?.data?.reporting_enabled === true;
         resolve({ ok: true, reporting_enabled: msg?.data?.reporting_enabled === true });
+      },
+      timer,
+    });
+  });
+}
+
+// 远程切任务派发开关（对齐 requestReportingChange：发 set-task-dispatch，等 result 回执后
+// 更新连接表）。扩展回执 data.task_dispatch_enabled 为新状态。
+export async function requestTaskDispatchChange(
+  clientId: string,
+  enabled: boolean,
+  timeoutMs = 5000,
+): Promise<{ ok: true; task_dispatch_enabled: boolean } | { ok: false; code: 'offline' | 'timeout' }> {
+  const id = randomUUID();
+  const sent = sendToClient(clientId, { id, action: 'set-task-dispatch', enabled });
+  if (!sent) return { ok: false, code: 'offline' };
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => {
+      if (pending.has(id)) { pending.delete(id); resolve({ ok: false, code: 'timeout' }); }
+    }, timeoutMs);
+    pending.set(id, {
+      resolve: (msg: any) => {
+        const conn = connections.get(clientId);
+        if (conn) conn.taskDispatchEnabled = msg?.data?.task_dispatch_enabled === true;
+        resolve({ ok: true, task_dispatch_enabled: msg?.data?.task_dispatch_enabled === true });
       },
       timer,
     });

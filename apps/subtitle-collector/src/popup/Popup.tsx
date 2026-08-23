@@ -9,6 +9,7 @@ import {
   useLocalCollected,
   useClientId,
   useReporting,
+  useTaskDispatch,
   useSeasonVideos,
   useServerConfig,
   useUpperAllVideos,
@@ -125,6 +126,7 @@ export function Popup() {
   const conn = useConnectionStatus();
   const standalone = conn.mode === 'standalone';
   const reporting = useReporting();
+  const taskDispatch = useTaskDispatch();
   const serverCfg = useServerConfig();
   // 当前激活 server 名（ConnDot hover 用：已连接时看连的哪个 server）
   const activeServerName = serverCfg.servers.find((s) => s.id === serverCfg.activeServerId)?.name ?? null;
@@ -292,6 +294,7 @@ export function Popup() {
       )}
       <FooterActions
         reporting={reporting}
+        taskDispatch={taskDispatch}
         onReport={onReport}
         isVideoPage={isVideoPage}
         reportStatus={reportStatus}
@@ -478,9 +481,11 @@ function LoginBadge({ login }: { login: LoginState }) {
   );
 }
 
-// 底部操作：上报开关（开=自动 / 关=手动）+ 手动补采（视频页）。无外部文字 label。
+// 底部操作：上报开关（开=自动 / 关=手动）+ 任务派发开关（开=接任务 / 关=仅上报）+ 手动补采（视频页）。
+// 上报 Switch 无外部文字 label；任务派发 Switch 带 label（语义不自明，hover title 详解）。
 function FooterActions({
   reporting,
+  taskDispatch,
   onReport,
   isVideoPage,
   reportStatus,
@@ -488,6 +493,7 @@ function FooterActions({
   standalone,
 }: {
   reporting: { enabled: boolean | null; setEnabled: (v: boolean) => void };
+  taskDispatch: { enabled: boolean | null; setEnabled: (v: boolean) => void };
   onReport: () => void;
   isVideoPage: boolean;
   reportStatus: 'idle' | 'reporting' | 'success' | 'failed';
@@ -505,6 +511,19 @@ function FooterActions({
           checkedLabel="自动"
           uncheckedLabel="手动"
           disabled={standalone}
+          className="data-[state=checked]:bg-brand"
+        />
+      )}
+      {taskDispatch.enabled === null ? (
+        <StatusPlaceholder className="h-6 w-16" />
+      ) : (
+        <Switch
+          checked={taskDispatch.enabled}
+          onCheckedChange={taskDispatch.setEnabled}
+          checkedLabel="接任务"
+          uncheckedLabel="仅上报"
+          disabled={standalone}
+          title={standalone ? '纯扩展模式：不连 server，无任务可派' : '关闭后 server 不再向本机派发采集任务（保持连接上报状态）'}
           className="data-[state=checked]:bg-brand"
         />
       )}

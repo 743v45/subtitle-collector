@@ -58,6 +58,12 @@ export class ServerClient {
     return this.requestJson('POST', `/api/clients/${encodeURIComponent(clientId)}/reporting`, { enabled });
   }
 
+  // 切任务派发开关：POST /api/clients/:id/task-dispatch { enabled }。off = 仅上报状态
+  //（server 调度器不再给该客户端派采集任务，保持连接上报）。
+  async setTaskDispatch(clientId: string, enabled: boolean): Promise<unknown> {
+    return this.requestJson('POST', `/api/clients/${encodeURIComponent(clientId)}/task-dispatch`, { enabled });
+  }
+
   // 下发命令：POST /api/clients/:id/command { action, ...params, timeout? }。
   // timeout 透传给 server 端等待扩展回执的超时（毫秒）。
   async sendCommand(

@@ -49,7 +49,7 @@ collector-cli --db <repo>/data/bilibili-collector.db stats overview
 | `stats overview` / `stats count --by <kind> --top <n>` | DB 只读 | 总览 / 分组计数 |
 | `sub search <关键词>` | DB 只读 | 字幕正文检索:`--ctx --regex --max-videos --full`;AI 打标的数据源 |
 | `tags list/apply/remove` | list 读 DB;apply/remove 走 server | `tags apply <bvid...> --names <csv> --source manual\|batch\|ai`(打标即建标) |
-| `clients list/reporting/command` | server HTTP | 扩展客户端管控;`command <id> <action> --timeout <ms>` |
+| `clients list/reporting/task-dispatch/command` | server HTTP | 扩展客户端管控;`reporting <id> <on\|off>` 切上报 / `task-dispatch <id> <on\|off>` 切任务派发(off=仅上报状态,调度器不派任务);`command <id> <action> --timeout <ms>` |
 | `server ping/status/start/stop` | 本地 | 探活 / 起停(pid 文件;`start --no-detached --port`) |
 | `collect …`(11 子命令) | server→扩展 | 见下方 |
 

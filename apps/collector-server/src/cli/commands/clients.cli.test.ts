@@ -6,6 +6,7 @@
 // | 轮次 | 范围 | 结果 | 备注 |
 // |---|---|---|---|
 // | R1 | list/reporting/command 成功 + 状态码归一化（404→NOT_FOUND，5xx→RUNTIME，不可达→SERVER_UNREACHABLE）+ state/timeout ARGS | 通过 | |
+// | R2 | task-dispatch（2026-08-23 仅上报状态）成功 + ARGS + 404 | 通过 | 与 reporting 同构 |
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -141,6 +142,39 @@ test('clients reporting：不可达 → SERVER_UNREACHABLE 退 3', async () => {
   const r = await cli(args(DEAD, ['clients', 'reporting', 'ext-1', 'off']));
   assert.equal(r.code, 3);
   assert.equal(JSON.parse(r.out).code, 'SERVER_UNREACHABLE');
+});
+
+// ── clients task-dispatch（2026-08-23 仅上报状态）──
+
+test('clients task-dispatch <id> off：POST body {enabled:false}，退 0', async () => {
+  const srv = await startMockServer(() => ({ status: 200, json: { ok: true, client_id: 'ext-1', task_dispatch_enabled: false } }));
+  try {
+    const r = await cli(args(srv.url, ['clients', 'task-dispatch', 'ext-1', 'off']));
+    assert.equal(r.code, 0);
+    assert.deepEqual(JSON.parse(r.out), { ok: true, client_id: 'ext-1', task_dispatch_enabled: false });
+    assert.equal(srv.reqs[0]!.path, '/api/clients/ext-1/task-dispatch');
+    assert.deepEqual(srv.reqs[0]!.body, { enabled: false });
+  } finally { await srv.close(); }
+});
+
+test('clients task-dispatch：state 非 on|off → ARGS 退 2（不发请求）', async () => {
+  const srv = await startMockServer(() => ({ status: 200, json: { ok: true } }));
+  try {
+    const r = await cli(args(srv.url, ['clients', 'task-dispatch', 'ext-1', 'bogus']));
+    assert.equal(r.code, 2);
+    assert.equal(JSON.parse(r.out).code, 'ARGS');
+    assert.match(r.err, /invalid task-dispatch state "bogus"/);
+    assert.equal(srv.reqs.length, 0);
+  } finally { await srv.close(); }
+});
+
+test('clients task-dispatch：404 → NOT_FOUND 退 5', async () => {
+  const srv = await startMockServer(() => ({ status: 404, json: { error: 'client not online' } }));
+  try {
+    const r = await cli(args(srv.url, ['clients', 'task-dispatch', 'ext-9', 'off']));
+    assert.equal(r.code, 5);
+    assert.equal(JSON.parse(r.out).code, 'NOT_FOUND');
+  } finally { await srv.close(); }
 });
 
 // ── clients command ──

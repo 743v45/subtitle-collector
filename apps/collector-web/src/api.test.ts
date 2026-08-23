@@ -5,6 +5,7 @@
 // | 轮次 | 范围 | 结果 | 备注 |
 // |---|---|---|---|
 // | R1 | ensureOk 四分支 + 全端点 URL 组装/解包 | 通过 | 204 须 null body（jsdom Response 限制），删除类端点回 {} |
+// | R2 | setTaskDispatch（2026-08-23 仅上报状态） | 通过 | 与 setReporting 同构 |
 import { test, expect, vi, afterEach } from 'vitest';
 import * as api from './api';
 import type { VideoDetail } from './types';
@@ -279,6 +280,15 @@ test('setReporting：clientId 编码 + body {enabled}', async () => {
   await expect(api.setReporting('client/1', false)).resolves.toBe(false);
   const { url, init } = lastCall();
   expect(url).toBe('/api/clients/client%2F1/reporting');
+  expect(init?.method).toBe('POST');
+  expect(JSON.parse(String(init?.body))).toEqual({ enabled: false });
+});
+
+test('setTaskDispatch：clientId 编码 + body {enabled}', async () => {
+  fetchMock.mockResolvedValueOnce(ok({ task_dispatch_enabled: false }));
+  await expect(api.setTaskDispatch('client/1', false)).resolves.toBe(false);
+  const { url, init } = lastCall();
+  expect(url).toBe('/api/clients/client%2F1/task-dispatch');
   expect(init?.method).toBe('POST');
   expect(JSON.parse(String(init?.body))).toEqual({ enabled: false });
 });

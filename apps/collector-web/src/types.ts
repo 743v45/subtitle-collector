@@ -66,6 +66,7 @@ export interface ClientInfo {
   client_id: string;
   ext_version: string | null;
   reporting_enabled: boolean;
+  task_dispatch_enabled: boolean; // false = 仅上报状态：调度器不给该客户端派采集任务
   connected: true;
 }
 

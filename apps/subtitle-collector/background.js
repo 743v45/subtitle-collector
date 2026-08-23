@@ -1,5 +1,6 @@
 import { parseServerUrl, resolveActiveServer, normalizeServers, genServerId, SERVERS_KEY, ACTIVE_SERVER_KEY, DEFAULT_SERVER_URL, DEFAULT_SERVER_NAME } from "./servers.mjs";
 import { shouldReport, genClientId, CLIENT_ID_KEY, REPORTING_KEY } from "./reporting.mjs";
+import { shouldAcceptTasks, TASK_DISPATCH_KEY, TASK_DISPATCH_DISABLED_ERROR } from "./task-dispatch.mjs";
 import { resolveConnectionMode, isStandalone, CONNECTION_MODE_KEY, MODE_SERVER, MODE_STANDALONE } from "./connection-mode.mjs";
 import { extractKeysFromNav } from "./wbi.js";
 import { biliFetch, formatSearchResult, fetchSubtitleView } from "./bili-fetch.js";
@@ -16,6 +17,7 @@ const EXT_VERSION = chrome.runtime.getManifest().version;
 let ws = null;
 let reconnectAttempts = 0;
 let reportingEnabled = true; // 内存态；启动从 storage 载入，默认 true（fail-open）
+let taskDispatchEnabled = true; // 内存态；任务派发开关（false=仅上报状态），启动从 storage 载入，默认 true（fail-open）
 let clientId = null;         // 内存态；启动载入或首次生成
 let connectionMode = MODE_SERVER; // 内存态；启动载入，默认 server（向后兼容）。standalone=纯扩展：不连不上报
 let activeServer = null;          // 内存态；当前激活 server 的解析结果（{wsUrl,httpBase,pingUrl,token}）。启动载入 / SET_ACTIVE_SERVER 切换
@@ -379,11 +381,11 @@ async function resumeStaleFetches() {
   }
 }
 
-// 启动载入持久态：clientId（无则生成并回写）、reportingEnabled（默认 true）、connectionMode（默认 server）
+// 启动载入持久态：clientId（无则生成并回写）、reportingEnabled（默认 true）、connectionMode（默认 server）、taskDispatchEnabled（默认 true）
 async function loadPersistedState() {
   // 旧版整表 pendingIngests 数组 → 逐键队列（升级瞬间不丢已离线暂存的 payload）
   await ingestQueue.migrateLegacy();
-  const items = await chrome.storage.local.get([CLIENT_ID_KEY, REPORTING_KEY, CONNECTION_MODE_KEY, SERVERS_KEY, ACTIVE_SERVER_KEY]);
+  const items = await chrome.storage.local.get([CLIENT_ID_KEY, REPORTING_KEY, TASK_DISPATCH_KEY, CONNECTION_MODE_KEY, SERVERS_KEY, ACTIVE_SERVER_KEY]);
   if (items[CLIENT_ID_KEY]) {
     clientId = items[CLIENT_ID_KEY];
   } else {
@@ -391,6 +393,7 @@ async function loadPersistedState() {
     await chrome.storage.local.set({ [CLIENT_ID_KEY]: clientId });
   }
   reportingEnabled = shouldReport(items[REPORTING_KEY]); // undefined → true
+  taskDispatchEnabled = shouldAcceptTasks(items[TASK_DISPATCH_KEY]); // undefined → true
   connectionMode = resolveConnectionMode(items[CONNECTION_MODE_KEY]); // undefined → server
   // servers：旧版/首装无 → 初始化内置「本地 collector」（DEFAULT_SERVER_URL，行为同旧版连 127.0.0.1:21527）
   let servers = normalizeServers(items[SERVERS_KEY]);
@@ -411,6 +414,13 @@ async function applyReporting(enabled) {
   reportingEnabled = enabled === true;
   await chrome.storage.local.set({ [REPORTING_KEY]: reportingEnabled });
   return reportingEnabled;
+}
+
+// 统一更新任务派发开关（仅上报状态）：内存 + storage（对齐 applyReporting）
+async function applyTaskDispatch(enabled) {
+  taskDispatchEnabled = enabled === true;
+  await chrome.storage.local.set({ [TASK_DISPATCH_KEY]: taskDispatchEnabled });
+  return taskDispatchEnabled;
 }
 
 // 统一更新连接模式：内存 + storage（归一后落盘，防脏值）。不在此处切连/断连——由 SET_CONNECTION_MODE 调用方按返回值决定。
@@ -458,7 +468,7 @@ async function connect() {
     reconnectAttempts = 0;
     // token 可选（server 端可不要 token）：有则放 hello（兼容 server 从 hello body 取 token）；
     // wsUrl 原样含 ?token= query，兼容 server 从握手 URL 取 token——双兼容。
-    const hello = { type: "hello", ext_version: EXT_VERSION, client_id: clientId, reporting_enabled: reportingEnabled };
+    const hello = { type: "hello", ext_version: EXT_VERSION, client_id: clientId, reporting_enabled: reportingEnabled, task_dispatch_enabled: taskDispatchEnabled };
     if (activeServer.token) hello.token = activeServer.token;
     ws.send(JSON.stringify(hello));
     // flushPendingIngests 移到 hello-ack：鉴权通过后才补发（未握手发 ingest 会被 server 丢，server.ts:44 守卫）
@@ -542,6 +552,11 @@ async function connect() {
           ws.send(JSON.stringify({ type: "result", id: msg.id, ok: false, error: String(err.message || err) }));
         }
       } else if (msg.action === "fetch-subtitle") {
+        // 仅上报状态防御：本机开关本机说了算——旧 server 不识别 hello 新字段照派 / 旁路派发时按此回执
+        if (!taskDispatchEnabled) {
+          ws.send(JSON.stringify({ type: "result", id: msg.id, ok: false, error: TASK_DISPATCH_DISABLED_ERROR }));
+          return;
+        }
         const vidKey = `bilibili:${msg.bvid}`;
         if (inFlightCollects.has(vidKey)) {
           ws.send(JSON.stringify({ type: "result", id: msg.id, ok: false, error: "duplicate in-flight: 同视频采集正在执行" }));
@@ -638,6 +653,11 @@ async function connect() {
           inFlightCollects.delete(vidKey);
         }
       } else if (msg.action === "fetch-youtube-subtitle") {
+        // 仅上报状态防御（同 fetch-subtitle）：拒绝后任务落 failed，error 文案指向开关而非重试
+        if (!taskDispatchEnabled) {
+          ws.send(JSON.stringify({ type: "result", id: msg.id, ok: false, error: TASK_DISPATCH_DISABLED_ERROR }));
+          return;
+        }
         // YouTube 主动采集（手机/网页任务驱动）：导航到视频页,复用 content-yt 被动采集链路
         // （inject-yt 读 captionTracks + 拦 timedtext → content-yt 归一化 → INGEST 入库）,
         // 编排层只负责「导航 + 等就绪 + 等采集完成 + 汇总回执」。
@@ -817,6 +837,11 @@ async function connect() {
         const newEnabled = await applyReporting(msg.enabled === true);
         ws.send(JSON.stringify({ type: "result", id: msg.id, ok: true, data: { reporting_enabled: newEnabled } }));
         // set-reporting 路径不发 reporting-state：server 作为发起方据 result 更新状态
+      } else if (msg.action === "set-task-dispatch") {
+        // server 远程切任务派发开关（CLI clients task-dispatch / web 客户端页）
+        const newEnabled = await applyTaskDispatch(msg.enabled === true);
+        ws.send(JSON.stringify({ type: "result", id: msg.id, ok: true, data: { task_dispatch_enabled: newEnabled } }));
+        // 同 set-reporting：不发 task-dispatch-state，server 作为发起方据 result 更新状态
       } else {
         // needs_update：server 下发了本版本不认识的 action（新 server + 旧扩展），
         // 让 server/CLI 据此提示升级扩展，而非记为普通 failed
@@ -949,6 +974,15 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         ws.send(JSON.stringify({ type: "reporting-state", enabled }));
       }
       sendResponse({ ok: true, reporting_enabled: enabled });
+    });
+    return true;
+  } else if (msg?.type === "SET_TASK_DISPATCH") {
+    // popup/options 本地切任务派发开关 → 发 task-dispatch-state 同步 server 连接表（对齐 SET_REPORTING）
+    applyTaskDispatch(msg.enabled === true).then((enabled) => {
+      if (ws?.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: "task-dispatch-state", enabled }));
+      }
+      sendResponse({ ok: true, task_dispatch_enabled: enabled });
     });
     return true;
   } else if (msg?.type === "SET_CONNECTION_MODE") {

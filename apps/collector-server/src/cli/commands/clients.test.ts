@@ -8,6 +8,7 @@ import assert from 'node:assert/strict';
 import {
   clientsList,
   clientsReporting,
+  clientsTaskDispatch,
   clientsCommand,
   type CommandParams,
 } from './clients.js';
@@ -17,6 +18,7 @@ import type { ServerClient } from '../http.js';
 interface FakeCalls {
   listClients: number;
   setReporting: Array<{ clientId: string; enabled: boolean }>;
+  setTaskDispatch: Array<{ clientId: string; enabled: boolean }>;
   sendCommand: Array<{
     clientId: string;
     action: string;
@@ -28,6 +30,7 @@ interface FakeCalls {
 interface FakeOverrides {
   listClients?: () => Promise<unknown[]>;
   setReporting?: (clientId: string, enabled: boolean) => Promise<unknown>;
+  setTaskDispatch?: (clientId: string, enabled: boolean) => Promise<unknown>;
   sendCommand?: (
     clientId: string,
     action: string,
@@ -44,7 +47,7 @@ function makeFakeClient(overrides: FakeOverrides = {}): {
   client: ServerClient;
   calls: FakeCalls;
 } {
-  const calls: FakeCalls = { listClients: 0, setReporting: [], sendCommand: [] };
+  const calls: FakeCalls = { listClients: 0, setReporting: [], setTaskDispatch: [], sendCommand: [] };
   const stub = {
     listClients:
       overrides.listClients ??
@@ -60,6 +63,12 @@ function makeFakeClient(overrides: FakeOverrides = {}): {
       (async (clientId: string, enabled: boolean) => {
         calls.setReporting.push({ clientId, enabled });
         return { ok: true, client_id: clientId, reporting_enabled: enabled };
+      }),
+    setTaskDispatch:
+      overrides.setTaskDispatch ??
+      (async (clientId: string, enabled: boolean) => {
+        calls.setTaskDispatch.push({ clientId, enabled });
+        return { ok: true, client_id: clientId, task_dispatch_enabled: enabled };
       }),
     sendCommand:
       overrides.sendCommand ??
@@ -117,6 +126,21 @@ test('clientsReporting: enabled=true 也能正确透传', async () => {
   const { client, calls } = makeFakeClient();
   await clientsReporting(client, 'ext-B', true);
   assert.deepEqual(calls.setReporting, [{ clientId: 'ext-B', enabled: true }]);
+});
+
+// ── clientsTaskDispatch（2026-08-23 仅上报状态）──
+
+test('clientsTaskDispatch: 透传 clientId/enabled，返回 server 体', async () => {
+  const { client, calls } = makeFakeClient();
+  const out = await clientsTaskDispatch(client, 'ext-A', false);
+  assert.deepEqual(calls.setTaskDispatch, [{ clientId: 'ext-A', enabled: false }]);
+  assert.deepEqual(out, { ok: true, client_id: 'ext-A', task_dispatch_enabled: false });
+});
+
+test('clientsTaskDispatch: enabled=true（恢复接任务）也能正确透传', async () => {
+  const { client, calls } = makeFakeClient();
+  await clientsTaskDispatch(client, 'ext-B', true);
+  assert.deepEqual(calls.setTaskDispatch, [{ clientId: 'ext-B', enabled: true }]);
 });
 
 // ── clientsCommand（核心：params 过滤） ──

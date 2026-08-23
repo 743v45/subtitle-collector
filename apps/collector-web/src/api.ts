@@ -252,6 +252,16 @@ export async function setReporting(clientId: string, enabled: boolean): Promise<
   return ensureOk(r, (j) => j.reporting_enabled);
 }
 
+// 切任务派发开关（off = 仅上报状态：调度器不给该客户端派采集任务，保持连接上报）。
+export async function setTaskDispatch(clientId: string, enabled: boolean): Promise<boolean> {
+  const r = await fetch(`${BASE}/api/clients/${encodeURIComponent(clientId)}/task-dispatch`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ enabled }),
+  });
+  return ensureOk(r, (j) => j.task_dispatch_enabled);
+}
+
 // ── 分类 ──
 export async function listCategories(scope?: 'agent' | 'human'): Promise<Category[]> {
   const q = scope ? `?scope=${scope}` : '';

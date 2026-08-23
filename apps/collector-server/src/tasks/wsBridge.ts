@@ -7,7 +7,7 @@
 
 /** tasks 层需要的 ws/server 能力（三函数签名与 ws/server.ts 保持一致）。 */
 export interface WsBridge {
-  listClients(): Array<{ client_id: string; ext_version: string | null; reporting_enabled: boolean; connected: true }>;
+  listClients(): Array<{ client_id: string; ext_version: string | null; reporting_enabled: boolean; task_dispatch_enabled: boolean; connected: true }>;
   requestCommand(
     clientId: string,
     action: string,

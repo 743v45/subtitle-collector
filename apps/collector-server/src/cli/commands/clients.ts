@@ -58,6 +58,19 @@ export async function clientsReporting(
 }
 
 /**
+ * `clients task-dispatch <id> <on|off>`：定向切任务派发开关（off = 仅上报状态），
+ * 返回 server 透传体。server `POST /api/clients/:id/task-dispatch` →
+ * `{ok, client_id, task_dispatch_enabled}`；off 后调度器不再给该客户端派采集任务。
+ */
+export async function clientsTaskDispatch(
+  client: ServerClient,
+  clientId: string,
+  enabled: boolean,
+): Promise<unknown> {
+  return client.setTaskDispatch(clientId, enabled);
+}
+
+/**
  * `clients command <id> <action> [--op --url --vid --timeout]`：下发命令并等扩展回执。
  * 只把用户实际传入的 op/url/vid 收进 params（undefined 不下发），再调 sendCommand。
  * server `POST /api/clients/:id/command` 错误码语义（HTTP 状态即结果）：
@@ -108,7 +121,7 @@ function handleHttpError(err: unknown): never {
  */
 export function buildClientsCommand(): Command {
   const cmd = new Command('clients');
-  cmd.description('客户端管控：列表 / 切上报开关 / 下发命令（经 server HTTP）');
+  cmd.description('客户端管控：列表 / 切上报开关 / 切任务派发 / 下发命令（经 server HTTP）');
 
   // clients list
   cmd
@@ -138,6 +151,25 @@ export function buildClientsCommand(): Command {
       const client = new ServerClient(ctx.serverUrl, ctx.token);
       try {
         const data = await clientsReporting(client, clientId, state === 'on');
+        emitResult(data, ctx.format);
+      } catch (err) {
+        handleHttpError(err);
+      }
+    });
+
+  // clients task-dispatch <client_id> <on|off>（2026-08-23 仅上报状态）
+  cmd
+    .command('task-dispatch <clientId> <state>')
+    .description('定向切任务派发开关：state ∈ on|off；off = 仅上报状态，调度器不再派采集任务（POST /api/clients/:id/task-dispatch）')
+    .action(async (clientId: string, state: string) => {
+      // 手动校验 state 取值（对齐 reporting：走 ARGS 语义退 2）
+      if (state !== 'on' && state !== 'off') {
+        emitError(`invalid task-dispatch state "${state}" (expected on|off)`, 'ARGS');
+      }
+      const ctx = getCliContext();
+      const client = new ServerClient(ctx.serverUrl, ctx.token);
+      try {
+        const data = await clientsTaskDispatch(client, clientId, state === 'on');
         emitResult(data, ctx.format);
       } catch (err) {
         handleHttpError(err);

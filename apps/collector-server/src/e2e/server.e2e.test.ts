@@ -14,6 +14,7 @@
 // |---|---|---|---|
 // | R1 | 探针：子进程起 main.ts + /ping + stdin 优雅退出 + c8 孙进程覆盖率透传 | 通过 | main.ts 71%（仅 /ping），覆盖率链路成立 |
 // | R2 | loopback 无 token：静态/403/404 + WS hello/非法 JSON/log/reporting-state + ingest/ingest-upper/坏 payload + HTTP 查询链（videos/tags/creators/stats/settings） + /api/clients command 四态 | 通过 | 首轮修正断言：evil Origin 走 403（Origin 守卫先于 401 鉴权） |
+// | R3 | /api/clients 期望补 task_dispatch_enabled（2026-08-23 仅上报状态；hello 缺省 → true 隐式覆盖） | 通过 | e2e 走真 server 起停，qa 并行下偶发超时 flaky 单跑复验 |
 // | R3 | 采集任务生命周期：单条→派发→succeeded、双击去重、失败分类（普通/needs_update/pot_limited）、retry（重置重跑/already_collected）、youtube watch/shorts、batch+历史筛选+删除、upper-videos/expand（含空页终止/整页重复停滞终止） | 通过 | B3 重写为「先设 handler 再建任务」受控时序（原写法命令到达时已被默认 handler 回执） |
 // | R4 | 超时与迟到改判：bilibili 超时 15s → failed「扩展执行超时」→ 迟到 result / 迟到 ingest 改判 succeeded + 心跳 sweep 存活断言 | 通过 | 观察窗 14s→17s：首轮 sweep（子进程 t≈30.7s）差 0.3s 未跑到 |
 // | R5 | token 鉴权：WS 错 token nack+close(4001)、暴露部署（0.0.0.0）HTTP 401/Bearer/同源/sec-fetch-site/evil-Host 403、缺 token 拒启动 | 通过 | |
@@ -325,7 +326,7 @@ describe('A. loopback 无 token：真 main.ts 子进程基础链路', () => {
   it('WS 握手与杂项消息：hello-ack 后 /api/clients 可见；非法 JSON / log / 无 id result 均被忽略不崩', async () => {
     let r = await api(srv.base, 'GET', '/api/clients');
     assert.equal(r.status, 200);
-    assert.deepEqual(r.json.clients, [{ client_id: 'ext-a', ext_version: '0.1.0-e2e', reporting_enabled: true, connected: true }]);
+    assert.deepEqual(r.json.clients, [{ client_id: 'ext-a', ext_version: '0.1.0-e2e', reporting_enabled: true, task_dispatch_enabled: true, connected: true }]);
 
     // 非法 JSON 帧：静默忽略
     ext.ws.send('this is not json {{{');

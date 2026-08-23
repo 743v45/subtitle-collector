@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-08-22T19:14:45.418Z",
+  "generatedAt": "2026-08-23T13:21:39.922Z",
   "rules": {
     "complexity": 15,
     "maxLines": 400
@@ -27,7 +27,7 @@
       "complexity": 19
     },
     "apps/collector-server/src/http/clients.ts": {
-      "complexity": 22
+      "complexity": 19
     },
     "apps/collector-server/src/http/creators.ts": {
       "complexity": 20
@@ -48,15 +48,15 @@
       "complexity": 28
     },
     "apps/collector-server/src/tasks/tasks.ts": {
-      "complexity": 30,
-      "maxLines": 570
+      "complexity": 31,
+      "maxLines": 579
     },
     "apps/collector-server/src/ws/server.ts": {
-      "complexity": 35
+      "complexity": 36
     },
     "apps/collector-web/src/api.ts": {
       "complexity": 26,
-      "maxLines": 412
+      "maxLines": 422
     },
     "apps/collector-web/src/components/TaskCards.tsx": {
       "complexity": 24
@@ -98,8 +98,8 @@
       "complexity": 21
     },
     "apps/subtitle-collector/background.js": {
-      "complexity": 162,
-      "maxLines": 1232
+      "complexity": 165,
+      "maxLines": 1266
     },
     "apps/subtitle-collector/content-yt.js": {
       "complexity": 40,
@@ -122,14 +122,14 @@
     },
     "apps/subtitle-collector/src/options/Options.tsx": {
       "complexity": 24,
-      "maxLines": 446
+      "maxLines": 479
     },
     "apps/subtitle-collector/src/popup/Popup.tsx": {
       "complexity": 34,
-      "maxLines": 1799
+      "maxLines": 1818
     },
     "apps/subtitle-collector/src/popup/hooks.ts": {
-      "maxLines": 911,
+      "maxLines": 934,
       "complexity": 19
     },
     "apps/subtitle-collector/yt-channel.mjs": {

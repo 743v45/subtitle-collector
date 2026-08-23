@@ -229,7 +229,7 @@ function normalizePic(p: unknown): string | null {
 
 // 依赖注入（测试 mock 用）；生产默认经 wsBridge 取真 WS 实现（ws/server.ts 加载时注册）。
 export interface UpperExpandDeps {
-  listClients?: () => Array<{ client_id: string }>;
+  listClients?: () => Array<{ client_id: string; task_dispatch_enabled?: boolean }>;
   requestCommand?: (
     clientId: string,
     action: string,
@@ -254,7 +254,11 @@ export async function expandUpperVideos(
 
   const clients = lsClients();
   if (clients.length === 0) throw new Error('扩展离线：UP 视频列表需经桌面扩展拉取（连上扩展后重试）');
-  const clientId = clients[0].client_id;
+  // 客户端选择（2026-08-23 任务派发池）：优先接受任务派发的客户端——批量采集编排尽量落在
+  // 专职采集机上（B 站 API 配额/风控压力同源）。池空（全仅上报）回退任意在线：
+  // list-upper-videos 是纯 API 代理查询，无标签页/UI 干扰，不必拒绝。
+  const pool = clients.filter((c) => c.task_dispatch_enabled !== false);
+  const clientId = (pool[0] ?? clients[0]).client_id;
 
   const items: UpperVideoItem[] = [];
   const seen = new Set<string>(); // bvid 去重（页间新投稿导致分页位移重叠时防重复）
@@ -464,21 +468,26 @@ export function resetDispatched(db: Database.Database): void {
 //   - 上次执行者（2026-08-22 软偏好）：重试/重新派发优先回到原扩展——各扩展环境/登录态不同,
 //     换机重跑同一视频结果可能漂移（实测 h4xhid52 抓到轨、换 8n2g7ny3 重跑变 pot_limited）;
 //     原执行者在线且空闲才选它,忙则回落任意空闲（软偏好不 wait,不空转——创建者是任务主人
-//     才值得等,执行者只是环境偏好）。
+//     才值得等,执行者只是环境偏好）；
+//   - 任务派发池（2026-08-23 仅上报状态）：task_dispatch_enabled=false 的客户端不入池,
+//     三级选择全在池内进行。创建者仅上报 → 视同不可派（与离线同语义,回落他人不 wait——
+//     用户关接任务的意图就是「别在我这台跑」）；全池空 → null（任务留 pending,对齐扩展
+//     全离线行为）。字段缺省视为接受（旧扩展 hello 不带,fail-open）。
 export function pickClientForTask(
   task: Pick<CollectTask, 'creator_client_id' | 'client_id'>,
-  clients: ReadonlyArray<{ client_id: string }>,
+  clients: ReadonlyArray<{ client_id: string; task_dispatch_enabled?: boolean }>,
   inFlight: ReadonlyMap<string, number>,
 ): { clientId: string } | 'wait' | null {
+  const pool = clients.filter((c) => c.task_dispatch_enabled !== false);
   if (task.creator_client_id) {
-    const creator = clients.find((c) => c.client_id === task.creator_client_id);
+    const creator = pool.find((c) => c.client_id === task.creator_client_id);
     if (creator) return inFlight.has(creator.client_id) ? 'wait' : { clientId: creator.client_id };
   }
   if (task.client_id) {
-    const last = clients.find((c) => c.client_id === task.client_id && !inFlight.has(c.client_id));
+    const last = pool.find((c) => c.client_id === task.client_id && !inFlight.has(c.client_id));
     if (last) return { clientId: last.client_id };
   }
-  const free = clients.find((c) => !inFlight.has(c.client_id));
+  const free = pool.find((c) => !inFlight.has(c.client_id));
   return free ? { clientId: free.client_id } : null;
 }
 
