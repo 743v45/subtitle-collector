@@ -118,10 +118,11 @@ CREATE TABLE IF NOT EXISTS tags (
 );
 
 -- 同一视频同标签名可多档并存（展示按 settings.tag_priority 取优先档）。
+-- system 档（2026-08-23）：系统自动状态标（如 no-subtitle），采集链路自动打/摘。
 CREATE TABLE IF NOT EXISTS video_tags (
   video_id    INTEGER NOT NULL REFERENCES videos(id),
   tag_id      INTEGER NOT NULL REFERENCES tags(id),
-  source      TEXT NOT NULL CHECK(source IN ('manual','batch','ai')),
+  source      TEXT NOT NULL CHECK(source IN ('manual','batch','ai','system')),
   created_at  INTEGER NOT NULL,
   UNIQUE(video_id, tag_id, source)
 );

@@ -78,10 +78,11 @@ export class ServerClient {
   }
 
   // 批量打标：POST /api/tags/apply（bvid 是 bilibili 的 source_vid，CLI 命令只支持 B 站对齐 collect 现状）。
+  // system 档（no-subtitle 状态标）由采集链路自动打，CLI apply 同样放行（回填脚本/agent 调度用）。
   async applyTags(
     bvids: string[],
     names: string[],
-    source: 'manual' | 'batch' | 'ai',
+    source: 'manual' | 'batch' | 'ai' | 'system',
   ): Promise<unknown> {
     return this.requestJson('POST', '/api/tags/apply', {
       items: bvids.map((bv) => ({ source: 'bilibili', source_vid: bv })),
@@ -90,11 +91,11 @@ export class ServerClient {
     });
   }
 
-  // 批量移除：POST /api/tags/remove（source 省略 = 删该名字全部三档）。
+  // 批量移除：POST /api/tags/remove（source 省略 = 删该名字全部四档）。
   async removeTags(
     bvids: string[],
     names: string[],
-    source?: 'manual' | 'batch' | 'ai',
+    source?: 'manual' | 'batch' | 'ai' | 'system',
   ): Promise<unknown> {
     const body: Record<string, unknown> = {
       items: bvids.map((bv) => ({ source: 'bilibili', source_vid: bv })),

@@ -1,5 +1,5 @@
 // HTTP handler：server 侧设置（settings KV）。
-// 路由：GET/PUT /api/settings/tag-priority（标签展示优先级，四档精确排列）
+// 路由：GET/PUT /api/settings/tag-priority（标签展示优先级，六档精确排列）
 //       GET/PUT /api/settings/collect-timeout（采集超时 {bilibili, youtube} 毫秒,
 //             youtube=扩展无进展窗口,bilibili=server 等回执预算;范围 [15s, 600s]）
 import type { IncomingMessage, ServerResponse } from 'node:http';
@@ -21,7 +21,7 @@ export async function handleSettingsHttp(req: IncomingMessage, res: ServerRespon
         const priority = setTagPriority(db, b.priority);
         json(res, 200, { ok: true, priority });
       } catch {
-        json(res, 400, { ok: false, error: 'priority must be an exact permutation of manual|batch|bili|ai' });
+        json(res, 400, { ok: false, error: 'priority must be an exact permutation of manual|batch|bili|season|ai|system' });
       }
       return;
     }

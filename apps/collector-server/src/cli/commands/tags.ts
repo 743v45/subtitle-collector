@@ -51,7 +51,8 @@ function parseNames(csv: string): string[] {
 }
 
 function isTagSource(v: string): v is TagSource {
-  return v === 'manual' || v === 'batch' || v === 'ai';
+  // 与 db/tags.ts 档位同步（2026-08-23 +system：系统状态标，采集链路自动打/摘，回填脚本也走 apply）
+  return v === 'manual' || v === 'batch' || v === 'ai' || v === 'system';
 }
 
 export function buildTagsCommand(): Command {
@@ -60,14 +61,14 @@ export function buildTagsCommand(): Command {
 
   cmd.command('list')
     .description('标签库列表（含各档计数；--source 过滤该档计数>0 的标签）')
-    .option('--source <source>', '档位过滤 manual|batch|ai')
+    .option('--source <source>', '档位过滤 manual|batch|ai|system')
     .option('--q <keyword>', '名称模糊')
     .option('--topN <n>', '最多返回条数（默认 500）', '500')
     .action((opts) => {
       const ctx = getCliContext();
       try {
         if (opts.source && !isTagSource(opts.source)) {
-          emitError(`--source 必须是 manual/batch/ai（bili 档只读视频自带，不独立成列）`, "ARGS");
+          emitError(`--source 必须是 manual/batch/ai/system（bili 档只读视频自带，不独立成列）`, "ARGS");
           return;
         }
         emitResult(tagsList(ctx.dbPath, {
@@ -83,10 +84,10 @@ export function buildTagsCommand(): Command {
   cmd.command('apply <bvid...>')
     .description('批量打标（打标即建标；视频需已入库）')
     .requiredOption('--names <csv>', '标签名，逗号分隔（如 "ai,面试题"）')
-    .option('--source <source>', '档位 manual|batch|ai（默认 manual）', 'manual')
+    .option('--source <source>', '档位 manual|batch|ai|system（默认 manual；system=系统状态标如 no-subtitle，采集链路自动打）', 'manual')
     .action(async (bvids: string[], opts) => {
       const ctx = getCliContext();
-      if (!isTagSource(opts.source)) { emitError('--source 必须是 manual|batch|ai', 'ARGS'); return; }
+      if (!isTagSource(opts.source)) { emitError('--source 必须是 manual|batch|ai|system', 'ARGS'); return; }
       const names = parseNames(opts.names);
       if (names.length === 0) { emitError('--names 不能为空', 'ARGS'); return; }
       try {
@@ -100,12 +101,12 @@ export function buildTagsCommand(): Command {
     });
 
   cmd.command('remove <bvid...>')
-    .description('批量移除标签（--source 省略删该名字全部三档）')
+    .description('批量移除标签（--source 省略删该名字全部四档）')
     .requiredOption('--names <csv>', '标签名，逗号分隔')
-    .option('--source <source>', '只删该档 manual|batch|ai（省略删全档）')
+    .option('--source <source>', '只删该档 manual|batch|ai|system（省略删全档）')
     .action(async (bvids: string[], opts) => {
       const ctx = getCliContext();
-      if (opts.source && !isTagSource(opts.source)) { emitError('--source 必须是 manual|batch|ai', 'ARGS'); return; }
+      if (opts.source && !isTagSource(opts.source)) { emitError('--source 必须是 manual|batch|ai|system', 'ARGS'); return; }
       const names = parseNames(opts.names);
       if (names.length === 0) { emitError('--names 不能为空', 'ARGS'); return; }
       try {

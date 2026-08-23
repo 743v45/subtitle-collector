@@ -16,30 +16,30 @@ function freshDb() {
 test('getTagPriority：缺行回落默认 manual>batch>bili>season>ai', () => {
   const { db, dir } = freshDb();
   try {
-    assert.deepEqual(getTagPriority(db), ['manual', 'batch', 'bili', 'season', 'ai']);
+    assert.deepEqual(getTagPriority(db), ['manual', 'batch', 'bili', 'season', 'ai', 'system']);
   } finally { db.close(); rmSync(dir, { recursive: true, force: true }); }
 });
 
 test('setTagPriority：写读往返 + 持久化', () => {
   const { db, dir } = freshDb();
   try {
-    const custom = ['ai', 'manual', 'bili', 'season', 'batch'];
+    const custom = ['ai', 'manual', 'bili', 'season', 'batch', 'system'];
     setTagPriority(db, custom);
     assert.deepEqual(getTagPriority(db), custom);
     // 重复写覆盖（upsert）
-    setTagPriority(db, ['batch', 'ai', 'manual', 'season', 'bili']);
-    assert.deepEqual(getTagPriority(db), ['batch', 'ai', 'manual', 'season', 'bili']);
+    setTagPriority(db, ['batch', 'ai', 'manual', 'season', 'system', 'bili']);
+    assert.deepEqual(getTagPriority(db), ['batch', 'ai', 'manual', 'season', 'system', 'bili']);
   } finally { db.close(); rmSync(dir, { recursive: true, force: true }); }
 });
 
-test('setTagPriority：非五档精确排列抛错', () => {
+test('setTagPriority：非六档精确排列抛错', () => {
   const { db, dir } = freshDb();
   try {
-    assert.throws(() => setTagPriority(db, ['manual', 'batch', 'bili', 'season']));          // 少一档
-    assert.throws(() => setTagPriority(db, ['manual', 'batch', 'bili', 'season', 'ai', 'x'])); // 多一项
-    assert.throws(() => setTagPriority(db, ['manual', 'batch', 'bili', 'season', 'season'])); // 重复
+    assert.throws(() => setTagPriority(db, ['manual', 'batch', 'bili', 'season', 'ai']));          // 少一档
+    assert.throws(() => setTagPriority(db, ['manual', 'batch', 'bili', 'season', 'ai', 'system', 'x'])); // 多一项
+    assert.throws(() => setTagPriority(db, ['manual', 'batch', 'bili', 'season', 'system', 'system'])); // 重复
     assert.throws(() => setTagPriority(db, 'manual'));                                         // 非数组
-    assert.throws(() => setTagPriority(db, ['manual', 'batch', 'bili', 'season', 'nope']));   // 非法档名
+    assert.throws(() => setTagPriority(db, ['manual', 'batch', 'bili', 'season', 'ai', 'nope']));   // 非法档名
   } finally { db.close(); rmSync(dir, { recursive: true, force: true }); }
 });
 
@@ -47,10 +47,10 @@ test('getTagPriority：DB 值损坏/非法 → 回落默认不炸', () => {
   const { db, dir } = freshDb();
   try {
     db.prepare('INSERT INTO settings (key, value) VALUES (?, ?)').run('tag_priority', '{broken json');
-    assert.deepEqual(getTagPriority(db), ['manual', 'batch', 'bili', 'season', 'ai']);
+    assert.deepEqual(getTagPriority(db), ['manual', 'batch', 'bili', 'season', 'ai', 'system']);
     // 合法 JSON 但非排列
     db.prepare('UPDATE settings SET value = ? WHERE key = ?').run('["only","manual"]', 'tag_priority');
-    assert.deepEqual(getTagPriority(db), ['manual', 'batch', 'bili', 'season', 'ai']);
+    assert.deepEqual(getTagPriority(db), ['manual', 'batch', 'bili', 'season', 'ai', 'system']);
   } finally { db.close(); rmSync(dir, { recursive: true, force: true }); }
 });
 
@@ -58,7 +58,7 @@ test('getTagPriority：四档时代存量（无 season）→ 回落新默认（�
   const { db, dir } = freshDb();
   try {
     db.prepare('INSERT INTO settings (key, value) VALUES (?, ?)').run('tag_priority', '["ai","manual","bili","batch"]');
-    assert.deepEqual(getTagPriority(db), ['manual', 'batch', 'bili', 'season', 'ai']);
+    assert.deepEqual(getTagPriority(db), ['manual', 'batch', 'bili', 'season', 'ai', 'system']);
   } finally { db.close(); rmSync(dir, { recursive: true, force: true }); }
 });
 

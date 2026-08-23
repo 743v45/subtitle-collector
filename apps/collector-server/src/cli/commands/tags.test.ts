@@ -47,10 +47,10 @@ test('tagsList：默认全档计数（含 0 使用标签），返回 {items, tot
     assert.equal(r.total, 3);
     const ai = r.items.find((t) => t.name === 'ai');
     assert.ok(ai, 'ai 标签应在列');
-    assert.deepEqual(ai.counts, { manual: 1, batch: 1, ai: 0, total: 2 });
+    assert.deepEqual(ai.counts, { manual: 1, batch: 1, ai: 0, system: 0, total: 2 });
     const unused = r.items.find((t) => t.name === '未用标签');
     assert.ok(unused, '0 使用标签默认在列（标签库可复用）');
-    assert.deepEqual(unused.counts, { manual: 0, batch: 0, ai: 0, total: 0 });
+    assert.deepEqual(unused.counts, { manual: 0, batch: 0, ai: 0, system: 0, total: 0 });
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 

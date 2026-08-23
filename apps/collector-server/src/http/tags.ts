@@ -28,13 +28,13 @@ function parseApplyBody(b: unknown, needSource: boolean): { refs: VideoRef[]; na
   if (names.length === 0) return { error: 'names must contain at least one non-empty string' };
   if (needSource) {
     if (body.source === 'bili') return { error: 'bili tags are read-only (from video extra)' };
-    if (!isTagSource(body.source)) return { error: 'source must be manual|batch|ai' };
+    if (!isTagSource(body.source)) return { error: 'source must be manual|batch|ai|system' };
     return { refs, names, source: body.source };
   }
   // remove：source 可省略（删全档）；给了就必须合法
   if (body.source !== undefined) {
     if (body.source === 'bili') return { error: 'bili tags are read-only (from video extra)' };
-    if (!isTagSource(body.source)) return { error: 'source must be manual|batch|ai' };
+    if (!isTagSource(body.source)) return { error: 'source must be manual|batch|ai|system' };
     return { refs, names, source: body.source };
   }
   return { refs, names };

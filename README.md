@@ -20,13 +20,14 @@ B 站**字幕（subtitle）**相关浏览器扩展与配套服务的 monorepo（
 - ✅ 充电专属视频采集 + 付费标记（`videos list --paid`）
 - ✅ **已采集视频刷新**：视频详情页「刷新字幕」按钮 / 采集页与历史页任务行刷新图标，一键重采（ingest 按 body_hash 幂等去重，内容未变零新增），任务行显示「已刷新：新增 X 版 / 无新增」；UP 批量勾选含已采视频时提交按钮提示将刷新
 - ✅ 客户端任务派发管控：popup/options「仅上报状态」开关（关后调度器不向该客户端派采集任务，保持连接上报；多客户端时任务派给其他机器，全关留 pending）+ web 客户端页 / CLI `clients task-dispatch <id> <on|off>` 远程切换 + `clients list` 可见状态
-- 🚧 无字幕视频兜底：subtitle-extractor 浏览器本地 Whisper 转写（旁挂手动工具，未集成入库链路——转写产物暂无回流 bundle 的桥）
+- ✅ **无字幕标记**：采集确认无字幕（UP 未传 CC 且平台未生成 AI 字幕）自动打 `no-subtitle` 系统档标签（`videos list --tag no-subtitle` 圈定），采到字幕轨时自动摘标——历史存量回填 `scripts/backfill-no-subtitle-tags.mjs`
+- 🚧 无字幕视频兜底：subtitle-extractor 浏览器本地 Whisper 转写（旁挂手动工具，未集成入库链路——转写产物暂无回流 bundle 的桥）；📋 远期改为服务端 ASR 批量转写 `no-subtitle` 标圈定的视频（落地前置：✅ 无字幕标记已就位）
 
 ### 查询与导出（✅）
 
 - ✅ web 后台：视频库**列表布局**（一行一视频：平台图标+标题 / 创作者 / 播放 / 时长 / 轨道数 / 发布时间 / 分区 / 标签列，窄屏自动折叠次要列）、多维筛选搜索（关键词、字幕正文、**多标签下拉多选**、标签档位、分区、时间、时长/播放区间等；全部 URL query 承载，刷新/分享还原，视频详情的轨/版本选择亦进 URL）、UP 主 / 分类管理 / 采集日志；**原站外链跳转**（视频标题旁 ↗ 开 B 站/YouTube 视频页、UP 名/创作者 ↗ 开空间页/频道页，覆盖视频库/详情/创作者/任务卡各处，站内详情整行点击不受影响）
 - ✅ 采集任务历史页多维查询：按 UP（名字模糊 / mid 精确；任务行 UP 归属冗余——批量提交/重采/ingest 回填，未入库/失败任务也命中）、时间范围（今天 / 近7天 / 近30天 / 自定义）、平台、采集方式（批量/单点）、标题/关键词（vid 段搜 BV 号）、批次聚焦筛选；URL query 承载，可刷新/分享还原；重试并入原批次（聚焦视图实时看重试行，不另开新批）、任务全部到终态时浏览器系统通知（提交/重试后切走标签页，跑完即被提醒）
-- ✅ 视频标签五档：manual/batch/ai（落表）+ bili（视频自带）/ **season（合集，只读实时读 extra.ugc_season.title）**，tag_priority 可调 + 按档位过滤/聚合
+- ✅ 视频标签六档：manual/batch/ai/system（落表，system=系统状态标如 no-subtitle，采集链路自动打/摘）+ bili（视频自带）/ **season（合集，只读实时读 extra.ugc_season.title）**，tag_priority 可调 + 按档位过滤/聚合
 - ✅ 字幕正文全文检索：`sub search <keyword>`（带时间戳定位片段）
 - ✅ 导出：`export subtitle`（srt/vtt/txt/json）、`export videos`（csv/ndjson/table）
 

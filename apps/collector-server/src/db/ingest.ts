@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+import { unmarkNoSubtitle } from './tags.js';
 
 // creator 契约（与扩展侧共同约定）：payload 不携带 creator（或 source_uid 为 null/undefined/空串）时，
 // server 不 upsert creator 行——新视频 creator_id 写 null（schema 允许）；重采 UPDATE 保留旧归属

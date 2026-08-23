@@ -440,7 +440,7 @@ describe('A. loopback 无 token：真 main.ts 子进程基础链路', () => {
     r = await api(srv.base, 'GET', '/api/settings/collect-timeout');
     assert.deepEqual({ bilibili: r.json.bilibili, youtube: r.json.youtube }, { bilibili: 90_000, youtube: 45_000 });
     r = await api(srv.base, 'GET', '/api/settings/tag-priority');
-    assert.equal(r.json.priority.length, 5);
+    assert.equal(r.json.priority.length, 6);
   });
 
   it('clients command 四态：成功 200 透传 result、扩展失败 502、离线 404、回执超时 504；reporting 开关同步', async () => {

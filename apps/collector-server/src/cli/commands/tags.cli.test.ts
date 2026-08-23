@@ -91,8 +91,8 @@ test('tags list：返回 {items,total}，含各档计数，退 0', async () => {
     const data = JSON.parse(r.out);
     assert.equal(data.total, 2);
     const byName = Object.fromEntries(data.items.map((t: { name: string }) => [t.name, t]));
-    assert.deepEqual(byName['面试题'].counts, { manual: 0, batch: 0, ai: 1, total: 1 });
-    assert.deepEqual(byName['精选'].counts, { manual: 1, batch: 0, ai: 0, total: 1 });
+    assert.deepEqual(byName['面试题'].counts, { manual: 0, batch: 0, ai: 1, system: 0, total: 1 });
+    assert.deepEqual(byName['精选'].counts, { manual: 1, batch: 0, ai: 0, system: 0, total: 1 });
   } finally { db.close(); rmSync(dir, { recursive: true, force: true }); }
 });
 
