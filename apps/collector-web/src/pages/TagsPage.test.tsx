@@ -18,11 +18,11 @@ function ok(json: unknown, status = 200): Response {
 
 const fetchMock = vi.fn();
 
-function tag(id: number, name: string, counts = { manual: 1, batch: 2, ai: 3, total: 6 }): TagItem {
+function tag(id: number, name: string, counts = { manual: 1, batch: 2, ai: 3, system: 0, total: 6 }): TagItem {
   return { id, name, created_at: 1_700_000_000_000, counts };
 }
 const TAGS: TagItem[] = [tag(1, '游戏'), tag(2, '音乐')];
-const DEFAULT_PRIORITY: TagSource[] = ['manual', 'batch', 'bili', 'season', 'ai'];
+const DEFAULT_PRIORITY: TagSource[] = ['manual', 'batch', 'bili', 'season', 'ai', 'system'];
 
 function defaultRoutes(items: TagItem[] = TAGS, priority: TagSource[] = DEFAULT_PRIORITY) {
   return (url: string, init?: RequestInit): Response | null => {
@@ -65,7 +65,7 @@ test('渲染：优先级五档（服务端序）+ 标签行计数 + bili 档不�
 
 test('服务端优先级：非默认序回显', async () => {
   fetchMock.mockImplementation((url: string) => {
-    const r = defaultRoutes(TAGS, ['ai', 'manual', 'season', 'bili', 'batch'])(url);
+    const r = defaultRoutes(TAGS, ['ai', 'manual', 'season', 'bili', 'batch', 'system'])(url);
     return r ? Promise.resolve(r) : Promise.reject(new Error('x'));
   });
   render(<ToastProvider><TagsPage /></ToastProvider>);
@@ -81,7 +81,7 @@ test('上移/下移：本地重排 + 保存按钮启用 + 边界禁用', async (
   const upButtons = screen.getAllByRole('button', { name: '上移' });
   const downButtons = screen.getAllByRole('button', { name: '下移' });
   expect(upButtons[0]).toBeDisabled(); // 第一行
-  expect(downButtons[4]).toBeDisabled(); // 最后一行（五档）
+  expect(downButtons[5]).toBeDisabled(); // 最后一行（六档）
   fireEvent.click(upButtons[1]); // 批量 上移
   expect(screen.getByRole('button', { name: '保存排序' })).toBeEnabled();
   // 首行变成 批量
@@ -92,7 +92,7 @@ test('上移/下移：本地重排 + 保存按钮启用 + 边界禁用', async (
 test('moveItem 无操作：from===to / 越界不改序', async () => {
   render(<ToastProvider><TagsPage /></ToastProvider>);
   await screen.findByText('展示优先级');
-  fireEvent.click(screen.getAllByRole('button', { name: '下移' })[4]); // 越界（最后一行下移被禁，直接调用 disabled click 不触发）
+  fireEvent.click(screen.getAllByRole('button', { name: '下移' })[5]); // 越界（最后一行下移被禁，直接调用 disabled click 不触发）
   expect(screen.getByRole('button', { name: '保存排序' })).toBeDisabled();
 });
 
@@ -122,7 +122,7 @@ test('保存排序：PUT 新序 + toast + 编辑态复位；失败 toast', async
   fireEvent.click(screen.getByRole('button', { name: '保存排序' }));
   expect(await screen.findByText('已保存排序')).toBeInTheDocument();
   const putCall = fetchMock.mock.calls.find((c) => (c[1] as RequestInit | undefined)?.method === 'PUT')!;
-  expect(JSON.parse(String(putCall[1].body))).toEqual({ priority: ['batch', 'manual', 'bili', 'season', 'ai'] });
+  expect(JSON.parse(String(putCall[1].body))).toEqual({ priority: ['batch', 'manual', 'bili', 'season', 'ai', 'system'] });
   // 复位：保存按钮重新禁用
   await waitFor(() => expect(screen.getByRole('button', { name: '保存排序' })).toBeDisabled());
 

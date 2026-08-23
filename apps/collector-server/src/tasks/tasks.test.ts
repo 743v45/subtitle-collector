@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import type Database from 'better-sqlite3';
 import { openDb, migrate } from '../db/migrate.js';
 import { ingestVideo } from '../db/ingest.js';
-import { extractVideoUrl, expandShortLink, parseVideoUrl, createTask, createTasksBatch, findActiveTask, pickClientForTask, commandTimeoutMs, expandUpperVideos, getTask, retryTask, listTasks, resetDispatched, type FetchLike, type UpperExpandDeps } from './tasks.js';
+import { extractVideoUrl, expandShortLink, parseVideoUrl, createTask, createTasksBatch, findActiveTask, pickClientForTask, commandTimeoutMs, expandUpperVideos, getTask, retryTask, listTasks, resetDispatched, attachTaskScheduler, kickTaskScheduler, type FetchLike, type UpperExpandDeps } from './tasks.js';
 import { registerWsBridge, type WsBridge } from './wsBridge.js';
 
 // 测试桥注册：tasks.ts 不再 import ws/server（分层规则 server-tasks-no-upward），pushTask 经
@@ -808,5 +808,40 @@ test('listTasks 多维：items 带 creator_name（已入库有名，未入库 nu
     assert.equal(all.items.find((t) => t.id === ids.yt)!.creator_name, null);
     // 单查/getTask 同形状
     assert.equal(getTask(db, ids.alphaBatch)!.creator_name, 'Alpha UP');
+  } finally { cleanup(); }
+});
+
+// ── dispatchTask 打标（2026-08-23）：bilibili no_subtitle 回执 → 自动打 no-subtitle 系统标 ──
+// 前提：pending 的 bilibili 任务 + 视频元信息已入库（扩展 ingest 先行）；操作：调度器派发，mock 回执 reason=no_subtitle；
+// 断言：任务终态 succeeded 且视频带 no-subtitle system 档标（远期 ASR 定位锚点）；youtube 回执不打（无此语义）。
+test('dispatchTask：bilibili no_subtitle 回执 → succeeded + no-subtitle 系统标', async () => {
+  const { db, cleanup } = setupDb();
+  // mock 桥：requestCommand 返回确认无字幕回执
+  registerWsBridge({
+    listClients: () => [{ client_id: 'ext-ns', ext_version: null, reporting_enabled: true, task_dispatch_enabled: true, connected: true }],
+    requestCommand: async () => ({ ok: true, result: { ok: true, data: { reason: 'no_subtitle', tracks: 0, ingested: true } } }),
+    broadcastEvent: () => {},
+  } satisfies WsBridge);
+  try {
+    // 视频行先入库（扩展链路：fetch-subtitle 无字幕时也 ingest 元信息）
+    ingestVideo(db, {
+      source: 'bilibili',
+      video: { source_vid: 'BV1ns', title: '无字幕视频', extra: {}, duration: 5, published_at: 1700000000000 },
+      tracks: [],
+    });
+    createTask(db, { source: 'bilibili', source_vid: 'BV1ns', url: 'https://b23.tv/x' }, 'ext-ns');
+    attachTaskScheduler(db);
+    kickTaskScheduler(); // 调度器无首跑（SWEEP_MS 定时 + kick 驱动），kick 触发立即派发
+    // 轮询等调度器异步完成派发（串行链：dispatch → 回执 → 打标，正常毫秒级，上限 2s 防挂）
+    for (let i = 0; i < 40; i++) {
+      const t = getTask(db, (db.prepare('SELECT id FROM collect_tasks').get() as { id: number }).id);
+      if (t?.status === 'succeeded') break;
+      await new Promise((r) => setTimeout(r, 50));
+    }
+    const tagged = db.prepare(
+      `SELECT 1 FROM video_tags vt JOIN tags t ON t.id = vt.tag_id JOIN videos v ON v.id = vt.video_id
+       WHERE v.source_vid = 'BV1ns' AND t.name = 'no-subtitle' AND vt.source = 'system'`,
+    ).get();
+    assert.equal(tagged != null, true, 'no_subtitle 回执后带 no-subtitle system 标');
   } finally { cleanup(); }
 });

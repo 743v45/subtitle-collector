@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { openDb, migrate, runMigrations } from './migrate.js';
 import { ingestVideo, ingestUpper } from './ingest.js';
+import { markNoSubtitle } from './tags.js';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -658,3 +659,53 @@ test('ingestUpper 最小请求（只带 uid）→ 全字段 NULL 建行；补 na
     assert.equal(row2.name, null, '列被置回 NULL');
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
+
+// ── no-subtitle 摘标（2026-08-23）：ingest 新增轨 > 0 时自动摘 system 档状态标 ──
+// 前提：视频带 no-subtitle 系统标（此前确认无字幕）；操作：重采 ingest 带新轨；
+// 断言：标被自动摘除（--tag no-subtitle 圈出的恒为真无轨）；skipped-only 不摘（内容未变不算新增）。
+test('ingest 新增字幕轨：自动摘 no-subtitle 系统标；无新增轨不动标', () => {
+  const { db, dir } = freshDb();
+  try {
+    // 步骤1：首次 ingest 仅元信息（模拟确认无字幕后的入库）
+    ingestVideo(db, {
+      source: 'bilibili',
+      video: { source_vid: 'BVns', title: 't', extra: {}, duration: 10, published_at: 1700000000000 },
+      tracks: [],
+    });
+    markNoSubtitle(db, { source: 'bilibili', source_vid: 'BVns' });
+    assert.equal(hasNoSubtitleTag(db), true, '前提：标已打上');
+
+    // 步骤2：重采 ingest 带一轨新版本 → inserted=1 → 标应被摘
+    const r = ingestVideo(db, {
+      source: 'bilibili',
+      video: { source_vid: 'BVns', title: 't', extra: {}, duration: 10, published_at: 1700000000000 },
+      tracks: [
+        { lan: 'zh', lan_doc: '中文', track_type: 1,
+          versions: [{ origin: 'external', payload: { body: [] }, source_url: 'https://x' }] },
+      ],
+    });
+    assert.equal(r.inserted_tracks, 1);
+    assert.equal(hasNoSubtitleTag(db), false, '新增轨后标被自动摘除');
+
+    // 步骤3：第三次 ingest 同内容（skipped-only，inserted=0）→ 不动标（此时无标，验证点为不报错不误写）
+    const r3 = ingestVideo(db, {
+      source: 'bilibili',
+      video: { source_vid: 'BVns', title: 't', extra: {}, duration: 10, published_at: 1700000000000 },
+      tracks: [
+        { lan: 'zh', lan_doc: '中文', track_type: 1,
+          versions: [{ origin: 'external', payload: { body: [] }, source_url: 'https://x' }] },
+      ],
+    });
+    assert.equal(r3.inserted_tracks, 0);
+    assert.equal(hasNoSubtitleTag(db), false, 'skipped-only 不重新打标');
+  } finally { db.close(); rmSync(dir, { recursive: true, force: true }); }
+});
+
+// 辅助：查视频当前是否带 no-subtitle 标（任意档）
+function hasNoSubtitleTag(db: ReturnType<typeof openDb>): boolean {
+  const row = db.prepare(
+    `SELECT 1 FROM video_tags vt JOIN tags t ON t.id = vt.tag_id JOIN videos v ON v.id = vt.video_id
+     WHERE v.source_vid = 'BVns' AND t.name = 'no-subtitle'`,
+  ).get();
+  return row != null;
+}

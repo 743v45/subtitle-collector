@@ -21,7 +21,8 @@ let batchTags = null;
 if (!bvids.length) { console.error('用法: collect-batch.mjs <bvid...> | --file <file> [--tag "a,b"]'); process.exit(1); }
 const tagNames = batchTags ? batchTags.split(',').map((s) => s.trim()).filter(Boolean) : [];
 
-const CLI_DIR = '/Users/taevas/code/mymy/bilibili-extensions/apps/collector-server';
+// 仓库根相对定位（脚本在 scripts/ 下），避免硬编码绝对路径换环境即挂
+const CLI_DIR = new URL('../apps/collector-server/', import.meta.url).pathname;
 const env = { ...process.env };
 const t0 = Date.now();
 const el = (m) => console.log(`[${Math.round((Date.now() - t0) / 1000)}s] ${m}`);
@@ -54,12 +55,12 @@ for (let i = 0; i < bvids.length; i++) {
       }
       el(`  ✗ [${i + 1}/${bvids.length}] ${bv} → ${err}`);
       done.fail++; fails.push(`${bv}: ${err}`);
-    } else if (r.data?.reason === 'no_subtitle') {
+    } else if (r.reason === 'no_subtitle') {
       el(`  ○ [${i + 1}/${bvids.length}] ${bv} 无字幕（跳过） ${Date.now() - st}ms`);
       done.noSubtitle++;
       collectedVids.push(bv); // video 行已入库，同样打标（防重采语义保留）
     } else {
-      el(`  ✓ [${i + 1}/${bvids.length}] ${bv} 采到 ${r.data?.tracks ?? '?'} 轨 ${Date.now() - st}ms`);
+      el(`  ✓ [${i + 1}/${bvids.length}] ${bv} 采到 ${r.tracks ?? '?'} 轨 ${Date.now() - st}ms`);
       done.ok++;
       collectedVids.push(bv);
     }

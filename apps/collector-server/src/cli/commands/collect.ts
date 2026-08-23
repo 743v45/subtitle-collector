@@ -12,6 +12,7 @@ import {
 import { emitResult, emitError } from '../output.js';
 import { getCliContext } from '../context.js';
 import { openReadonlyDb } from '../db.js';
+import { NO_SUBTITLE_TAG } from '../../db/tags.js';
 
 /** 采集类命令默认超时：对齐 server 调度器分档（tasks.ts commandTimeoutMs——bilibili 90s / youtube 180s），
  *  覆盖扩展全链路（导航+多请求+宽限+关 tab）；低于扩展实际耗时会把仍在执行的任务判成失败。 */
@@ -696,6 +697,11 @@ export function buildCollectCommand(): Command {
       try {
         const clientId = await resolveClientId(client as CollectClient, opts.client);
         const data = await collectSubtitle(client as CollectClient, clientId, bvid, opts.timeout);
+        // 确认无字幕（扩展回执 reason=no_subtitle）→ 打 no-subtitle 系统标（远期 ASR 音频转字幕的定位锚点）。
+        // 打标失败不阻断结果输出（视频行已入库；标可由下次重采或回填脚本补）。
+        if ((data as { result?: { reason?: string } })?.result?.reason === 'no_subtitle') {
+          try { await client.applyTags([bvid], [NO_SUBTITLE_TAG], 'system'); } catch { /* 下次补 */ }
+        }
         emitResult(data, ctx.format);
       } catch (err) {
         handleHttpError(err);
@@ -969,6 +975,7 @@ export function buildCollectCommand(): Command {
         // --collect：对最终候选串行采字幕入库（sleep>=1s 防风控；失败分类见 classifyCollectError）。
         if (opts.collect && data.items.length > 0) {
           const collected: Array<{ bvid: string; ok: boolean; reason?: string }> = [];
+          const noSubtitleBvids: string[] = []; // 确认无字幕清单，收尾一次性打 no-subtitle 系统标
           for (const it of data.items) {
             let extError: string | undefined;
             let sdata: { reason?: string; tracks?: number } | undefined;
@@ -978,12 +985,17 @@ export function buildCollectCommand(): Command {
             } catch (err) {
               extError = classifyCollectError(err, it.bvid);
             }
+            if (!extError && sdata?.reason === 'no_subtitle') noSubtitleBvids.push(it.bvid);
             collected.push({
               bvid: it.bvid,
               ok: !extError && sdata?.reason !== 'no_subtitle',
               reason: extError ?? sdata?.reason,
             });
             await new Promise((r) => setTimeout(r, Math.max(sleepMs, 1000)));
+          }
+          // no-subtitle 系统标：远期 ASR 定位锚点。批量一次打，失败不阻断（可重采/回填补）。
+          if (noSubtitleBvids.length > 0) {
+            try { await client.applyTags(noSubtitleBvids, [NO_SUBTITLE_TAG], 'system'); } catch { /* 下次补 */ }
           }
           (data as FindResult & { collected?: unknown }).collected = collected;
         }

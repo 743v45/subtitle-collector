@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { openDb, migrate } from './migrate.js';
 import {
   listTags, applyVideoTags, removeVideoTags, renameTag, deleteTag,
-  getVideoTagsByVideoIds, getVideoTagsForDetail,
+  getVideoTagsByVideoIds, getVideoTagsForDetail, markNoSubtitle, unmarkNoSubtitle,
 } from './tags.js';
 import { ingestVideo } from './ingest.js';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -59,7 +59,7 @@ test('applyVideoTags：打标即建标 + 多档并存 + 幂等', () => {
     const tags = listTags(db);
     assert.equal(tags.length, 2);
     const ai = tags.find((t) => t.name === 'ai')!;
-    assert.deepEqual(ai.counts, { manual: 0, batch: 2, ai: 2, total: 4 });
+    assert.deepEqual(ai.counts, { manual: 0, batch: 2, ai: 2, system: 0, total: 4 });
   } finally { db.close(); rmSync(dir, { recursive: true, force: true }); }
 });
 
@@ -172,5 +172,49 @@ test('removeVideoTags：视频不存在 / names 全空白 → {removed:0, missin
     r = removeVideoTags(db, [{ source: 'bilibili', source_vid: 'BV1a' }], ['  ']);
     assert.equal(r.removed, 0);
     assert.equal(getVideoTagsForDetail(db, 1).length, 1, '已有关系不受影响');
+  } finally { db.close(); rmSync(dir, { recursive: true, force: true }); }
+});
+
+// ── system 档（2026-08-23 no-subtitle 系统状态标）──
+// 前提：视频已入库（seedVideos）；操作：markNoSubtitle 打标 → listTags 计数含 system 档；
+// 断言：counts.system 精确计数、--source system 过滤命中、manual 档同名标互不串档。
+test('system 档：markNoSubtitle 打标 + listTags counts 四档计数 + 按档过滤', () => {
+  const { db, dir } = freshDb();
+  try {
+    seedVideos(db);
+    // 操作：两个视频打 no-subtitle 系统标，另一个打 batch 档同名外的标做对照
+    assert.equal(markNoSubtitle(db, { source: 'bilibili', source_vid: 'BV1a' }), 1);
+    assert.equal(markNoSubtitle(db, { source: 'bilibili', source_vid: 'BV1b' }), 1);
+    applyVideoTags(db, [{ source: 'bilibili', source_vid: 'BV1a' }], ['人工标'], 'manual');
+
+    const all = listTags(db);
+    const ns = all.find((t) => t.name === 'no-subtitle')!;
+    // 断言：system 档计数 2，total 含 system；manual/batch/ai 档不受影响
+    assert.equal(ns.counts.system, 2);
+    assert.equal(ns.counts.total, 2);
+    assert.equal(ns.counts.manual, 0);
+    // 按档过滤：--source system 命中 no-subtitle，人工标不进（该档计数 0）
+    const sysOnly = listTags(db, { source: 'system' });
+    assert.equal(sysOnly.some((t) => t.name === 'no-subtitle'), true);
+    assert.equal(sysOnly.some((t) => t.name === '人工标'), false);
+  } finally { db.close(); rmSync(dir, { recursive: true, force: true }); }
+});
+
+// 前提：视频带 no-subtitle 系统标；操作：unmarkNoSubtitle 摘标；断言：幂等（再摘 0）、manual 档同名标不被误删。
+test('system 档：unmarkNoSubtitle 只摘 system 档 + 幂等', () => {
+  const { db, dir } = freshDb();
+  try {
+    seedVideos(db);
+    const ref = { source: 'bilibili', source_vid: 'BV1a' };
+    markNoSubtitle(db, ref);
+    // 同名标再打一份 manual 档（同名跨档并存是既有语义，摘 system 不得波及）
+    applyVideoTags(db, [ref], ['no-subtitle'], 'manual');
+
+    assert.equal(unmarkNoSubtitle(db, ref), 1);
+    // 断言：manual 档同名标保留
+    const detail = getVideoTagsForDetail(db, 1);
+    assert.deepEqual(detail, [{ name: 'no-subtitle', source: 'manual' }]);
+    // 幂等：无 system 档可摘 → 0
+    assert.equal(unmarkNoSubtitle(db, ref), 0);
   } finally { db.close(); rmSync(dir, { recursive: true, force: true }); }
 });

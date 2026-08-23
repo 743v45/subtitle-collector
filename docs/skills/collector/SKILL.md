@@ -48,12 +48,12 @@ collector-cli --db <repo>/data/bilibili-collector.db stats overview
 | `export bundle` | DB 只读 | 分析原料包:`--out <dir> --track <lan> --limit <n>` + videos list 全套过滤 → manifest.json + videos/*.txt + ANALYZE.md |
 | `stats overview` / `stats count --by <kind> --top <n>` | DB 只读 | 总览 / 分组计数 |
 | `sub search <关键词>` | DB 只读 | 字幕正文检索:`--ctx --regex --max-videos --full`;AI 打标的数据源 |
-| `tags list/apply/remove` | list 读 DB;apply/remove 走 server | `tags apply <bvid...> --names <csv> --source manual\|batch\|ai`(打标即建标) |
+| `tags list/apply/remove` | list 读 DB;apply/remove 走 server | `tags apply <bvid...> --names <csv> --source manual\|batch\|ai\|system`(打标即建标;system=系统状态档如 no-subtitle,采集链路自动打/摘) |
 | `clients list/reporting/task-dispatch/command` | server HTTP | 扩展客户端管控;`reporting <id> <on\|off>` 切上报 / `task-dispatch <id> <on\|off>` 切任务派发(off=仅上报状态,调度器不派任务);`command <id> <action> --timeout <ms>` |
 | `server ping/status/start/stop` | 本地 | 探活 / 起停(pid 文件;`start --no-detached --port`) |
 | `collect …`(11 子命令) | server→扩展 | 见下方 |
 
-collect 子命令速记:`search <关键词>` 搜候选(不入库)/ `subtitle <bvid>` 采单个入库 / `dedupe <bvid...>` 批量判重 / `season` 整合集 / `upper-info <mid>` UP 资料入库 / `upper-videos <mid> --all` 拉列表 / `new-videos <mid>` / `discover <mid...>` 多 UP 发现 / `find <关键词> --min-fans --since-days` 条件检索 / `yt-videos <handle> --since-days --collect` YouTube。采集默认超时 180s(覆盖扩展全链路)。
+collect 子命令速记:`search <关键词>` 搜候选(不入库)/ `subtitle <bvid>` 采单个入库(确认无字幕自动打 no-subtitle 系统标;采到轨自动摘) / `dedupe <bvid...>` 批量判重 / `season` 整合集 / `upper-info <mid>` UP 资料入库 / `upper-videos <mid> --all` 拉列表 / `new-videos <mid>` / `discover <mid...>` 多 UP 发现 / `find <关键词> --min-fans --since-days` 条件检索 / `yt-videos <handle> --since-days --collect` YouTube。采集默认超时 180s(覆盖扩展全链路)。
 
 **排序语义**:`--sort first_seen`(入库时间)vs `published_at`(发布时间)——用户说「最近」先确认指哪个;无法确认时默认 `first_seen`(查询主语是「库」,最近入库)。
 
@@ -62,6 +62,7 @@ collect 子命令速记:`search <关键词>` 搜候选(不入库)/ `subtitle <bv
 | 脚本 | 用途 |
 |---|---|
 | `scripts/collect-batch.mjs` | bvid 列表串行采集(sleep 1s 防风控) |
+| `scripts/backfill-no-subtitle-tags.mjs` | 历史存量回填 no-subtitle 系统标(collect_tasks 有据部分;`--db` 绝对路径 `--dry-run` 试跑) |
 | `scripts/collect-uppers.mts` | 多 UP 主批量:`pnpm collect-uppers <mid...> [--size 30] [--dry-run] [--since <unix秒>] [--category <名>]` |
 | `scripts/youtube-collect-videos.mjs` | 列频道近 N 月视频(stdout 给 videoId 列表;`[fetch]/[parse]/[filter]` 分步 stderr 日志) |
 | `scripts/youtube-collect-subs.mjs` | 采 YouTube 字幕(英文+中文翻译,stdin 读 videoId) |

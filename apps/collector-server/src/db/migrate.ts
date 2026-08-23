@@ -154,6 +154,27 @@ export const MIGRATIONS: readonly MigrationStep[] = [
        WHERE creator_uid IS NULL`,
     ],
   },
+  {
+    version: 12,
+    note: 'video_tags.source CHECK 放行 system 档（2026-08-23 no-subtitle 系统状态标；此前 INSERT OR IGNORE 会静默吞 CHECK 违反→打标 inserted=0）。SQLite 无法 ALTER CHECK，学 v9 单事务表重建；中断回滚重放幂等',
+    statements: [
+      `BEGIN IMMEDIATE;
+       CREATE TABLE video_tags_v12 (
+         video_id    INTEGER NOT NULL REFERENCES videos(id),
+         tag_id      INTEGER NOT NULL REFERENCES tags(id),
+         source      TEXT NOT NULL CHECK(source IN ('manual','batch','ai','system')),
+         created_at  INTEGER NOT NULL,
+         UNIQUE(video_id, tag_id, source)
+       );
+       INSERT INTO video_tags_v12 (video_id, tag_id, source, created_at)
+         SELECT video_id, tag_id, source, created_at FROM video_tags;
+       DROP TABLE video_tags;
+       ALTER TABLE video_tags_v12 RENAME TO video_tags;
+       CREATE INDEX idx_video_tags_video ON video_tags(video_id);
+       CREATE INDEX idx_video_tags_tag ON video_tags(tag_id, source);
+       COMMIT;`,
+    ],
+  },
 ];
 
 export function runMigrations(db: Database.Database): void {

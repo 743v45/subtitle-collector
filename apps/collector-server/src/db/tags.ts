@@ -1,14 +1,15 @@
 // 视频标签 DB 层：标签库（tags）+ 视频-标签关系（video_tags）。
-// 四档来源中 manual/batch/ai 落本表（source 列区分，多档并存）；
+// 五档来源中 manual/batch/ai/system 落本表（source 列区分，多档并存）；
 // bili 档（B 站自带）不落表，实时读 videos.extra 的 tags JSON（见 http/queries.ts 富化）。
+// system 档（2026-08-23）：系统自动状态标（如 no-subtitle「确认无字幕」），采集链路自动打/摘，不打不显示于手动打标选项。
 // 打标即建标：applyVideoTags 内 upsert tags 行（INSERT OR IGNORE + 查 id），对齐 setCreatorCategory 哲学。
 import type Database from 'better-sqlite3';
 
-export type TagSource = 'manual' | 'batch' | 'ai';
-export const TAG_SOURCES: readonly TagSource[] = ['manual', 'batch', 'ai'] as const;
+export type TagSource = 'manual' | 'batch' | 'ai' | 'system';
+export const TAG_SOURCES: readonly TagSource[] = ['manual', 'batch', 'ai', 'system'] as const;
 
 export function isTagSource(v: unknown): v is TagSource {
-  return v === 'manual' || v === 'batch' || v === 'ai';
+  return v === 'manual' || v === 'batch' || v === 'ai' || v === 'system';
 }
 
 export interface TagRow {
@@ -18,11 +19,11 @@ export interface TagRow {
 }
 
 export interface TagWithCounts extends TagRow {
-  counts: { manual: number; batch: number; ai: number; total: number };
+  counts: { manual: number; batch: number; ai: number; system: number; total: number };
 }
 
 // 标签库列表：实时计数（3376 视频规模 COUNT 毫秒级，不冗余 usage_count）。
-// counts 恒为三档全量；?source=ai 过滤「该档计数 >0」的标签（按档位分开可查），
+// counts 恒为四档全量；?source=ai 过滤「该档计数 >0」的标签（按档位分开可查），
 // 排序也按该档计数（省略 source 时按 total）。
 export function listTags(db: Database.Database, opts: { source?: TagSource; q?: string; topN?: number } = {}): TagWithCounts[] {
   const conds: string[] = [];
@@ -30,22 +31,23 @@ export function listTags(db: Database.Database, opts: { source?: TagSource; q?: 
   if (opts.q) { conds.push("t.name LIKE ?"); vals.push(`%${opts.q}%`); }
   const where = conds.length ? `WHERE ${conds.join(' AND ')}` : '';
   const counted = opts.source ?? 'total';
-  const totalExpr = counted === 'total' ? '(c_manual + c_batch + c_ai)' : `c_${counted}`;
+  const totalExpr = counted === 'total' ? '(c_manual + c_batch + c_ai + c_system)' : `c_${counted}`;
   const rows = db.prepare(
     `SELECT t.id, t.name, t.created_at,
        SUM(CASE WHEN vt.source = 'manual' THEN 1 ELSE 0 END) AS c_manual,
        SUM(CASE WHEN vt.source = 'batch'  THEN 1 ELSE 0 END) AS c_batch,
-       SUM(CASE WHEN vt.source = 'ai'     THEN 1 ELSE 0 END) AS c_ai
+       SUM(CASE WHEN vt.source = 'ai'     THEN 1 ELSE 0 END) AS c_ai,
+       SUM(CASE WHEN vt.source = 'system' THEN 1 ELSE 0 END) AS c_system
      FROM tags t
      LEFT JOIN video_tags vt ON vt.tag_id = t.id
      ${where}
      GROUP BY t.id, t.name, t.created_at
      ORDER BY ${totalExpr} DESC, t.name ASC
      LIMIT ?`,
-  ).all(...vals, opts.topN ?? 500) as Array<TagRow & { c_manual: number; c_batch: number; c_ai: number }>;
+  ).all(...vals, opts.topN ?? 500) as Array<TagRow & { c_manual: number; c_batch: number; c_ai: number; c_system: number }>;
   const mapped = rows.map((r) => ({
     id: r.id, name: r.name, created_at: r.created_at,
-    counts: { manual: r.c_manual, batch: r.c_batch, ai: r.c_ai, total: r.c_manual + r.c_batch + r.c_ai },
+    counts: { manual: r.c_manual, batch: r.c_batch, ai: r.c_ai, system: r.c_system, total: r.c_manual + r.c_batch + r.c_ai + r.c_system },
   }));
   // 默认列表含 0 使用标签（标签库可复用，空标签留着下次直接用）；
   // 显式 ?source= 时只列该档 >0 的（按档位分开可查）。
@@ -159,4 +161,23 @@ export function getVideoTagsForDetail(db: Database.Database, videoId: number): A
   return (db.prepare(
     `SELECT t.name, vt.source FROM video_tags vt JOIN tags t ON t.id = vt.tag_id WHERE vt.video_id = ? ORDER BY vt.source, t.name`,
   ).all(videoId) as Array<{ name: string; source: TagSource }>);
+}
+
+// ── no-subtitle 系统状态标（2026-08-23，远期 ASR 音频转字幕的定位锚点，见 README Feature 列表）──
+// 语义：fetch-subtitle 执行回执 reason=no_subtitle（UP 未传 CC 且平台未生成 AI 字幕）→ 打标；
+//       后续 ingest 实际新增字幕轨 → 摘标。与「从未尝试采集」的无轨视频区分，供 ASR 批量圈定。
+export const NO_SUBTITLE_TAG = 'no-subtitle';
+
+// 确认无字幕打标：视频须已入库（fetch-subtitle 的 ingest 先行，元信息已落 videos 表）。
+// 返回实际写入的关系数（幂等，已带标返回 0）。
+export function markNoSubtitle(db: Database.Database, ref: VideoRef): number {
+  const r = applyVideoTags(db, [ref], [NO_SUBTITLE_TAG], 'system');
+  return r.inserted;
+}
+
+// 采到字幕摘标：ingest 新增轨数 > 0 时调用（标失效必须摘，保证 --tag no-subtitle 圈出的恒为真无轨）。
+// 返回实际删除的关系数（无标返回 0）。
+export function unmarkNoSubtitle(db: Database.Database, ref: VideoRef): number {
+  const r = removeVideoTags(db, [ref], [NO_SUBTITLE_TAG], 'system');
+  return r.removed;
 }

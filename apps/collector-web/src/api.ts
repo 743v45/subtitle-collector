@@ -293,19 +293,20 @@ export async function deleteCategory(id: number): Promise<void> {
 }
 
 // ── 标签 ──
-// 标签库条目（bili 档来自视频自带、无独立实体，counts 只含三档）
+// 标签库条目（bili 档来自视频自带、无独立实体，counts 含四档：manual/batch/ai/system）
 export interface TagItem {
   id: number;
   name: string;
   created_at: number;
-  counts: { manual: number; batch: number; ai: number; total: number };
+  counts: { manual: number; batch: number; ai: number; system: number; total: number };
 }
 // 打标目标视频（source=平台，source_vid=平台内视频 ID）
 export interface TagTarget { source: string; source_vid: string; }
-// 可写入档位（bili 不可手动打标，服务端 400）
+// 可写入档位（bili 只读不可打；system 系统状态标由采集链路自动打/摘，web 不提供手打入口）
 export type TagWriteSource = 'manual' | 'batch' | 'ai';
 
-export async function listTags(params: { source?: TagWriteSource; q?: string; topN?: number } = {}): Promise<TagItem[]> {
+// 列表过滤是读侧：六档全合法（含 system 档标签按档计数过滤）
+export async function listTags(params: { source?: TagSource; q?: string; topN?: number } = {}): Promise<TagItem[]> {
   const u = new URLSearchParams();
   if (params.source) u.set('source', params.source);
   if (params.q) u.set('q', params.q);

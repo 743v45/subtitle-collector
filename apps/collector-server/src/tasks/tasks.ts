@@ -2,6 +2,7 @@ import type Database from 'better-sqlite3';
 import { randomUUID } from 'node:crypto';
 import { getWsBridge } from './wsBridge.js';
 import { DEFAULT_COLLECT_TIMEOUT_MS, getCollectTimeout, type CollectTimeoutMs } from '../db/settings.js';
+import { markNoSubtitle } from '../db/tags.js';
 import { inFlight } from './inflight.js';
 
 // ── 采集任务系统：手机/网页提交 → server 派发给桌面扩展 → 扩展采集回执 ──
@@ -542,6 +543,11 @@ export function attachTaskScheduler(db: Database.Database): void {
       db2.prepare("UPDATE collect_tasks SET status = ?, result = ?, finished_at = ? WHERE id = ?")
         .run(status, JSON.stringify(data), Date.now(), taskId);
       pushTask(db2, taskId);
+      // 确认无字幕（bilibili fetch-subtitle 回执）→ 打 no-subtitle 系统标（远期 ASR 定位锚点；
+      // 视频元信息行已由扩展 ingest 先行落库，打标必命中）。失败静默——状态行已更新，标可回填。
+      if (task.source === 'bilibili' && data?.reason === 'no_subtitle') {
+        try { markNoSubtitle(db2, { source: task.source, source_vid: task.source_vid }); } catch { /* 回填补 */ }
+      }
     } else {
       // 失败分类：未收到回执（offline/timeout）→ 连接层文案；收到失败回执 →
       // 扩展版本过旧（needs_update 分类，提示更新而非重试）/ 普通失败（扩展 error 原文）

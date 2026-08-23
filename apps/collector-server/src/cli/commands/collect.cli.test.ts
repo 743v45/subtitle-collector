@@ -772,3 +772,40 @@ test('collect find：实时查 fans 连接中断 → SERVER_UNREACHABLE 退 3（
     assert.equal(JSON.parse(r.out).code, 'SERVER_UNREACHABLE');
   } finally { await srv.close(); db.close(); rmSync(dir, { recursive: true, force: true }); }
 });
+
+// ── collect subtitle 自动打 no-subtitle 系统标（2026-08-23）──
+// 前提：fetch-subtitle 回执 reason=no_subtitle（视频元信息已 ingest）；操作：CLI 收到回执后应再 POST /api/tags/apply；
+// 断言：apply 请求体 names=['no-subtitle']、source='system'、items 含该 bvid；apply 失败不阻断结果输出（退 0）。
+test('collect subtitle：reason=no_subtitle → 自动 POST /api/tags/apply 打 no-subtitle system 标', async () => {
+  const srv = await startMockServer((req) => {
+    if (req.body?.action === 'fetch-subtitle') return { status: 200, json: { ok: true, client_id: 'ext-1', action: 'fetch-subtitle', result: { reason: 'no_subtitle', tracks: 0, ai_tracks: 0, ingested: true } } };
+    if (req.path === '/api/tags/apply') return { status: 200, json: { ok: true, inserted: 1 } };
+    return { status: 404 };
+  });
+  try {
+    const r = await cli(args(NO_DB, srv.url, ['collect', 'subtitle', 'BV1', '--client', 'ext-1']));
+    assert.equal(r.code, 0);
+    // 第二个请求是打标：system 档 no-subtitle
+    const applyReq = srv.reqs.find((q) => q.path === '/api/tags/apply');
+    assert.ok(applyReq, '发出了 /api/tags/apply');
+    assert.deepEqual(applyReq!.body, {
+      items: [{ source: 'bilibili', source_vid: 'BV1' }],
+      names: ['no-subtitle'],
+      source: 'system',
+    });
+  } finally { await srv.close(); }
+});
+
+// 前提：回执正常采到轨（无 no_subtitle）；操作：CLI 不应发 apply；断言：请求列表里无 /api/tags/apply。
+test('collect subtitle：正常采到轨 → 不打标（无 /api/tags/apply 请求）', async () => {
+  const srv = await startMockServer((req) => (
+    req.body?.action === 'fetch-subtitle'
+      ? { status: 200, json: { ok: true, client_id: 'ext-1', action: 'fetch-subtitle', result: { tracks: 1 } } }
+      : { status: 404 }
+  ));
+  try {
+    const r = await cli(args(NO_DB, srv.url, ['collect', 'subtitle', 'BV1', '--client', 'ext-1']));
+    assert.equal(r.code, 0);
+    assert.equal(srv.reqs.some((q) => q.path === '/api/tags/apply'), false, '正常轨不触发打标');
+  } finally { await srv.close(); }
+});

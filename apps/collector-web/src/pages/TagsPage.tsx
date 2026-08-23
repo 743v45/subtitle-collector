@@ -22,15 +22,16 @@ function fmtTime(ms: number): string {
   return new Date(ms).toLocaleString('zh-CN');
 }
 
-const DEFAULT_PRIORITY: TagSource[] = ['manual', 'batch', 'bili', 'season', 'ai'];
+const DEFAULT_PRIORITY: TagSource[] = ['manual', 'batch', 'bili', 'season', 'ai', 'system'];
 
 // 标签库档位过滤（bili/season 档来自视频自带 extra、无独立实体，不在过滤组）
-type LibraryScope = '' | 'manual' | 'batch' | 'ai';
+type LibraryScope = '' | 'manual' | 'batch' | 'ai' | 'system';
 const SCOPES: { value: LibraryScope; label: string }[] = [
   { value: '', label: '全部' },
   { value: 'manual', label: '手动' },
   { value: 'batch', label: '批量' },
   { value: 'ai', label: 'AI' },
+  { value: 'system', label: '系统' },
 ];
 
 export function TagsPage() {
@@ -204,6 +205,7 @@ export function TagsPage() {
               <TableHead className="text-right">手动</TableHead>
               <TableHead className="text-right">批量</TableHead>
               <TableHead className="text-right">AI</TableHead>
+              <TableHead className="text-right">系统</TableHead>
               <TableHead className="text-right">总计</TableHead>
               <TableHead>创建时间</TableHead>
               <TableHead className="text-right">操作</TableHead>
@@ -212,7 +214,7 @@ export function TagsPage() {
           <TableBody>
             {loading && Array.from({ length: 3 }).map((_, i) => (
               <TableRow key={`sk-${i}`}>
-                {Array.from({ length: 7 }).map((_, j) => (
+                {Array.from({ length: 8 }).map((_, j) => (
                   <TableCell key={j}><Skeleton className="h-4 w-16" /></TableCell>
                 ))}
               </TableRow>
@@ -234,6 +236,7 @@ export function TagsPage() {
                   <TableCell className="text-right tabular-nums">{t.counts.manual}</TableCell>
                   <TableCell className="text-right tabular-nums">{t.counts.batch}</TableCell>
                   <TableCell className="text-right tabular-nums">{t.counts.ai}</TableCell>
+                  <TableCell className="text-right tabular-nums">{t.counts.system}</TableCell>
                   <TableCell className="text-right tabular-nums">{t.counts.total}</TableCell>
                   <TableCell className="whitespace-nowrap text-xs tabular-nums text-muted-foreground">{fmtTime(t.created_at)}</TableCell>
                   <TableCell className="space-x-2 text-right">
