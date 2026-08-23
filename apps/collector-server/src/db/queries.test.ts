@@ -130,6 +130,30 @@ test('getVideo: B 站默认行为不变——zh CC > zh AI > en', () => {
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
+test('getVideo: zh-manual 补翻轨——AI中文之后、原文轨之前（advanced.ts 镜像同步）', () => {
+  const { db, dir } = freshDb();
+  try {
+    // 场景一（典型补翻目标）：英文视频无中文轨，fill 后 zh-manual 接管默认轨
+    ingestVideo(db, sampleReq('英文视频补翻', [
+      { lan: 'en', lan_doc: 'English CC', track_type: 2, versions: [{ origin: 'external', payload: { body: [] }, source_url: 'https://cc' }] },
+      { lan: 'zh-manual', lan_doc: '中文（补翻）', track_type: undefined, versions: [{ origin: 'manual', payload: { body: [] }, source_url: 'translate://en' }] },
+    ]));
+    const d = getVideo(db, 'bilibili', 'BV1');
+    if (!d) throw new Error('no detail');
+    assert.deepEqual(d.tracks.map((t) => t.lan_doc), ['中文（补翻）', 'English CC'], '补翻后默认轨变中文——补翻的目的');
+
+    // 场景二：有 AI 中文（track_type=1）时 AI 中文仍优先——zh-manual 档位在 AI中文(1) 之后
+    ingestVideo(db, sampleReq('重翻场景', [
+      { lan: 'zh', lan_doc: 'AI中文', track_type: 1, versions: [{ origin: 'external', payload: { body: [] }, source_url: 'https://ai' }] },
+      { lan: 'zh-manual', lan_doc: '中文（补翻）', track_type: undefined, versions: [{ origin: 'manual', payload: { body: [] }, source_url: 'translate://ai-en' }] },
+      { lan: 'en', lan_doc: 'English ASR', track_type: 1, versions: [{ origin: 'external', payload: { body: [] }, source_url: 'https://en' }] },
+    ], 'BV2'));
+    const d2 = getVideo(db, 'bilibili', 'BV2');
+    if (!d2) throw new Error('no detail');
+    assert.deepEqual(d2.tracks.map((t) => t.lan_doc), ['AI中文', '中文（补翻）', 'English ASR']);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
 test('getVideo: 每个 track 内各自有 default version（不跨轨串台）— Critical C1', () => {
   const { db, dir } = freshDb();
   try {

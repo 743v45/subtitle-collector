@@ -25,6 +25,11 @@ export function setQuiet(v: boolean): void {
   quiet = v;
 }
 
+// stderr 人类日志（quiet 时抑制）——命令层过程性提示用（如 translate 的候选计数/轨定位日志）。
+export function logInfo(message: string): void {
+  if (!quiet) process.stderr.write(`${message}\n`);
+}
+
 // 从 data 中提取 items 数组：list 类结果形如 {total,page,size,items}。
 function extractItems(data: unknown): unknown[] | null {
   if (data && typeof data === 'object' && Array.isArray((data as { items?: unknown }).items)) {

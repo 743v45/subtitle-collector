@@ -115,6 +115,14 @@ export class ServerClient {
     return this.requestJson('POST', '/api/collect-tasks/batch', body);
   }
 
+  // 补翻写回：POST /api/translate/fill。lines 是逐行译文（一行 ↔ 源字幕一行），
+  // 行对齐校验与时间轴拷贝在 server 端完成（server 侧 http/translate.ts）。
+  async translateFill(source: string, sourceVid: string, fromLan: string, lines: string[]): Promise<unknown> {
+    return this.requestJson('POST', '/api/translate/fill', {
+      source, source_vid: sourceVid, from_lan: fromLan, lines,
+    });
+  }
+
   // 统一请求：fetch + JSON 解析 + 错误归一化。
   // 连不上 → ServerUnreachableError；非 2xx → ServerResponseError；2xx → 解析后的 JSON（无 body 时返回 null）。
   private async requestJson(method: 'GET' | 'POST' | 'PATCH' | 'DELETE', path: string, body?: Record<string, unknown>): Promise<unknown> {

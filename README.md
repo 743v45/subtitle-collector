@@ -30,6 +30,7 @@ B 站**字幕（subtitle）**相关浏览器扩展与配套服务的 monorepo（
 - ✅ 视频标签六档：manual/batch/ai/system（落表，system=系统状态标如 no-subtitle，采集链路自动打/摘）+ bili（视频自带）/ **season（合集，只读实时读 extra.ugc_season.title）**，tag_priority 可调 + 按档位过滤/聚合
 - ✅ 字幕正文全文检索：`sub search <keyword>`（带时间戳定位片段）
 - ✅ 导出：`export subtitle`（srt/vtt/txt/json）、`export videos`（csv/ndjson/table）
+- ✅ **补翻中文翻译** `translate`：无中文轨（有其他语言轨）视频的三步工作流——`translate pending` 查缺口（带各源语言行数）→ `translate source` 取逐行待翻文本 → 会话内大模型翻译 → `translate fill` 写回 `zh-manual` 轨（行数对齐校验 + 时间轴从源轨拷贝；补翻后默认轨变中文，export/bundle 自动受益）
 
 ### 批量提取分析（🚧 当前最大缺口，消费端）
 

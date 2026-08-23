@@ -72,6 +72,7 @@ export async function main(): Promise<void> {
       { buildCollectCommand },
       { buildSubCommand },
       { buildTagsCommand },
+      { buildTranslateCommand },
     ] = await Promise.all([
       import('./commands/videos.js'),
       import('./commands/versions.js'),
@@ -83,6 +84,7 @@ export async function main(): Promise<void> {
       import('./commands/collect.js'),
       import('./commands/sub.js'),
       import('./commands/tags.js'),
+      import('./commands/translate.js'),
     ]);
     program.addCommand(buildVideosCommand());   // videos list / get / get-by-id
     program.addCommand(buildVersionsCommand()); // versions get
@@ -94,6 +96,7 @@ export async function main(): Promise<void> {
     program.addCommand(buildCollectCommand());  // collect search / subtitle / dedupe
     program.addCommand(buildSubCommand());   // sub search（字幕正文片段检索）
     program.addCommand(buildTagsCommand());  // tags list / apply / remove（视频标签）
+    program.addCommand(buildTranslateCommand()); // translate pending / source / fill（补翻工作流）
 
     await program.parseAsync(process.argv);
   } catch (err) {

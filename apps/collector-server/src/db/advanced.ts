@@ -259,9 +259,9 @@ export function listVideosFiltered(db: Database.Database, filter: ListFilter): P
 }
 
 // 优先级 / is_default 逻辑镜像 queries.ts getVideo，保持一致（queries.ts 的私有 helper 不导出，这里原地复刻一份）。
-// 默认轨优先级：原文人工 CC > 原文 ASR > 翻译轨(type=3) > 其他——翻译轨（YouTube tlang 机翻）
-// 排在所有原文轨之后，典型英文视频默认正文不再落机翻中文；zh CC / zh AI 细分保持 B 站行为不变。
+// 默认轨优先级：原文人工 CC > 原文 ASR > 翻译轨(type=3) > 其他——翻译轨（YouTube tlang 机翻）排在所有原文轨之后，zh CC / zh AI 细分保持 B 站行为不变。
 const trackPriority = (lan: string | null, track_type: number | null): number => {
+  if (lan === 'zh-manual') return 1.5; // 补翻中文（translate fill 写入）：AI中文之后、原文轨之前——与 queries.ts 镜像同步
   const isZh = !!lan && lan.toLowerCase().includes('zh');
   const isEn = !!lan && lan.toLowerCase().includes('en');
   if (isZh && track_type === 2) return 0; // CC中文（原文人工 CC）

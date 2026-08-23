@@ -181,50 +181,66 @@ export function ingestVideo(db: Database.Database, req: IngestRequest): IngestRe
        WHERE source = ? AND source_vid = ? AND creator_uid IS NULL`,
     ).run(r.source, r.video.source_vid);
 
-    // 3. track upsert
-    const trackSel = db.prepare('SELECT id FROM subtitle_tracks WHERE video_id = ? AND lan IS ? AND track_type IS ?');
-    const trackIns = db.prepare('INSERT INTO subtitle_tracks (video_id, lan, lan_doc, track_type) VALUES (?, ?, ?, ?)');
-    const trackUpd = db.prepare('UPDATE subtitle_tracks SET lan_doc = ? WHERE id = ?');
-
-    // 4. version 写入（按 origin 分支去重）
-    //    - external/asr：按 (track_id, origin, asr_engine, body_hash) 先 SELECT，命中跳过（幂等去重）。
-    //      去重键用字幕体 hash 而非 source_url——source_url 是带会话签名的临时 URL
-    //      （YouTube timedtext 的 signature/expire/pot、B 站 AI 字幕同理），跨会话必不同，
-    //      用它去重会让重采必插重复行。内容真变化（hash 不同）→ 新版本行，符合版本语义。
-    //      存量行 body_hash 为 NULL：NULL = ? 不成立，天然不参与去重（成为孤立历史行）。
-    //    - manual：始终 INSERT 新行（人工导入不去重，保留每次导入的快照）
-    const verSel = db.prepare('SELECT id FROM subtitle_versions WHERE track_id = ? AND origin = ? AND coalesce(asr_engine,\'\') = coalesce(?,\'\') AND body_hash = ?');
-    const verIns = db.prepare('INSERT INTO subtitle_versions (track_id, origin, payload, body_size, body_hash, source_url, asr_engine, captured_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)');
-
-    let inserted = 0;
-    let skipped = 0;
-    for (const t of r.tracks) {
-      let trackId: number;
-      const exTrack = trackSel.get(videoId, t.lan ?? null, t.track_type ?? null) as { id: number } | undefined;
-      if (!exTrack) {
-        const info = trackIns.run(videoId, t.lan ?? null, t.lan_doc ?? null, t.track_type ?? null);
-        trackId = Number(info.lastInsertRowid);
-      } else {
-        trackId = exTrack.id;
-        if (t.lan_doc != null) trackUpd.run(t.lan_doc, trackId);
-      }
-      for (const v of t.versions) {
-        const payloadStr = JSON.stringify(v.payload);
-        const bodyHash = createHash('sha256').update(payloadStr).digest('hex');
-        if (v.origin !== 'manual') {
-          // external/asr：去重——命中现有行则跳过
-          const ex = verSel.get(trackId, v.origin, v.asr_engine ?? null, bodyHash) as { id: number } | undefined;
-          if (ex) { skipped++; continue; }
-        }
-        // manual（或 external/asr 首次）：始终 INSERT 新行
-        verIns.run(trackId, v.origin, payloadStr, payloadStr.length, bodyHash, v.source_url ?? null, v.asr_engine ?? null, now);
-        inserted++;
-      }
-    }
+    const { inserted, skipped } = insertTracksVersions(db, videoId, r.tracks, now);
+    // 实际新增字幕轨 → 摘 no-subtitle 系统标（此前确认无字幕的视频重采到了轨，标失效必须摘，
+    // 保证 --tag no-subtitle 圈出的恒为真无轨；同事务内，标随轨原子翻转）。
+    if (inserted > 0) unmarkNoSubtitle(db, { source: r.source, source_vid: r.video.source_vid });
     return { inserted, skipped };
   });
   const { inserted, skipped } = tx(req);
   return { source: req.source, source_vid: req.video.source_vid, inserted_tracks: inserted, skipped_tracks: skipped };
+}
+
+// track+version 写入（ingestVideo 步骤 3/4 抽出，2026-08-23）：translate fill（http/translate.ts）
+// 复用同一写入路径——补翻轨走 origin='manual' 的既有语义（不去重、保留每次导入快照）。
+// 不开事务：调用方负责包事务（ingestVideo 的 tx / fill handler 的 tx），本函数只保证语句序列。
+export function insertTracksVersions(
+  db: Database.Database,
+  videoId: number,
+  tracks: IngestTrack[],
+  now: number,
+): { inserted: number; skipped: number } {
+  // 3. track upsert
+  const trackSel = db.prepare('SELECT id FROM subtitle_tracks WHERE video_id = ? AND lan IS ? AND track_type IS ?');
+  const trackIns = db.prepare('INSERT INTO subtitle_tracks (video_id, lan, lan_doc, track_type) VALUES (?, ?, ?, ?)');
+  const trackUpd = db.prepare('UPDATE subtitle_tracks SET lan_doc = ? WHERE id = ?');
+
+  // 4. version 写入（按 origin 分支去重）
+  //    - external/asr：按 (track_id, origin, asr_engine, body_hash) 先 SELECT，命中跳过（幂等去重）。
+  //      去重键用字幕体 hash 而非 source_url——source_url 是带会话签名的临时 URL
+  //      （YouTube timedtext 的 signature/expire/pot、B 站 AI 字幕同理），跨会话必不同，
+  //      用它去重会让重采必插重复行。内容真变化（hash 不同）→ 新版本行，符合版本语义。
+  //      存量行 body_hash 为 NULL：NULL = ? 不成立，天然不参与去重（成为孤立历史行）。
+  //    - manual：始终 INSERT 新行（人工导入不去重，保留每次导入的快照）
+  const verSel = db.prepare('SELECT id FROM subtitle_versions WHERE track_id = ? AND origin = ? AND coalesce(asr_engine,\'\') = coalesce(?,\'\') AND body_hash = ?');
+  const verIns = db.prepare('INSERT INTO subtitle_versions (track_id, origin, payload, body_size, body_hash, source_url, asr_engine, captured_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)');
+
+  let inserted = 0;
+  let skipped = 0;
+  for (const t of tracks) {
+    let trackId: number;
+    const exTrack = trackSel.get(videoId, t.lan ?? null, t.track_type ?? null) as { id: number } | undefined;
+    if (!exTrack) {
+      const info = trackIns.run(videoId, t.lan ?? null, t.lan_doc ?? null, t.track_type ?? null);
+      trackId = Number(info.lastInsertRowid);
+    } else {
+      trackId = exTrack.id;
+      if (t.lan_doc != null) trackUpd.run(t.lan_doc, trackId);
+    }
+    for (const v of t.versions) {
+      const payloadStr = JSON.stringify(v.payload);
+      const bodyHash = createHash('sha256').update(payloadStr).digest('hex');
+      if (v.origin !== 'manual') {
+        // external/asr：去重——命中现有行则跳过
+        const ex = verSel.get(trackId, v.origin, v.asr_engine ?? null, bodyHash) as { id: number } | undefined;
+        if (ex) { skipped++; continue; }
+      }
+      // manual（或 external/asr 首次）：始终 INSERT 新行
+      verIns.run(trackId, v.origin, payloadStr, payloadStr.length, bodyHash, v.source_url ?? null, v.asr_engine ?? null, now);
+      inserted++;
+    }
+  }
+  return { inserted, skipped };
 }
 
 // ── P2: UP 主资料 upsert（独立于 ingestVideo，只写 creators）──

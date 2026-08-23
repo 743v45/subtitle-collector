@@ -1,4 +1,5 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
+import type Database from 'better-sqlite3';
 import { readFileSync, existsSync } from 'node:fs';
 import { join, extname } from 'node:path';
 import { openDb, migrate, runMigrations } from './db/migrate.js';
@@ -9,6 +10,7 @@ import { handleCategoriesHttp } from './http/categories.js';
 import { handleCreatorsHttp } from './http/creators.js';
 import { handleStatsHttp } from './http/stats.js';
 import { handleTagsHttp } from './http/tags.js';
+import { handleTranslateHttp } from './http/translate.js';
 import { handleSettingsHttp } from './http/settings.js';
 import { handleTasksHttp } from './http/tasks.js';
 import { runHandler, httpAuthOk, httpOriginAllowed } from './http/http-util.js';
@@ -76,6 +78,21 @@ function serveStatic(req: IncomingMessage, res: ServerResponse) {
   res.end(readFileSync(fp));
 }
 
+// /api/* 路由分发表（createServer 回调按序前缀匹配）。clients handler 原生两参，包一层统一签名；
+// /api/upper-videos/expand（按 UP 批量的列表拉取）复用 tasks handler——批量采集域。
+const API_ROUTES: Array<[prefix: string, handler: (req: IncomingMessage, res: ServerResponse, db: Database.Database) => Promise<void> | void]> = [
+  ['/api/clients', (req, res) => handleClientsHttp(req, res)],
+  ['/api/collect-tasks', (req, res, db) => handleTasksHttp(req, res, db)],
+  ['/api/upper-videos', (req, res, db) => handleTasksHttp(req, res, db)],
+  ['/api/categories', (req, res, db) => handleCategoriesHttp(req, res, db)],
+  ['/api/creators', (req, res, db) => handleCreatorsHttp(req, res, db)],
+  ['/api/stats', (req, res, db) => handleStatsHttp(req, res, db)],
+  ['/api/tags', (req, res, db) => handleTagsHttp(req, res, db)],
+  ['/api/translate', (req, res, db) => handleTranslateHttp(req, res, db)],
+  ['/api/settings', (req, res, db) => handleSettingsHttp(req, res, db)],
+  ['/api/', (req, res, db) => handleQueryHttp(req, res, db)],
+];
+
 const httpServer = createServer((req, res) => {
   if (req.url === '/ping') { res.writeHead(200, { 'Content-Type': 'application/json' }); res.end('{"ok":true}'); return; }
   if (!originAllowed(req)) { res.writeHead(403, { 'Content-Type': 'application/json' }); res.end('{"ok":false,"error":"forbidden"}'); return; } // C2
@@ -93,17 +110,11 @@ const httpServer = createServer((req, res) => {
     return;
   }
   // runHandler 兜底：handler 抛错（含非法 JSON 的 HttpError）只影响该请求，
-  // 不再以 unhandledRejection 崩掉整个进程（连带全部 WS 连接）
-  if (req.url?.startsWith('/api/clients')) { void runHandler(res, () => handleClientsHttp(req, res)); return; }
-  if (req.url?.startsWith('/api/collect-tasks')) { void runHandler(res, () => handleTasksHttp(req, res, db)); return; }
-  // /api/upper-videos/expand（按 UP 批量的列表拉取，handler 在 http/tasks.ts——批量采集域）
-  if (req.url?.startsWith('/api/upper-videos')) { void runHandler(res, () => handleTasksHttp(req, res, db)); return; }
-  if (req.url?.startsWith('/api/categories')) { void runHandler(res, () => handleCategoriesHttp(req, res, db)); return; }
-  if (req.url?.startsWith('/api/creators')) { void runHandler(res, () => handleCreatorsHttp(req, res, db)); return; }
-  if (req.url?.startsWith('/api/stats')) { void runHandler(res, () => handleStatsHttp(req, res, db)); return; }
-  if (req.url?.startsWith('/api/tags')) { void runHandler(res, () => handleTagsHttp(req, res, db)); return; }
-  if (req.url?.startsWith('/api/settings')) { void runHandler(res, () => handleSettingsHttp(req, res, db)); return; }
-  if (req.url?.startsWith('/api/')) { void runHandler(res, () => handleQueryHttp(req, res, db)); return; }
+  // 不再以 unhandledRejection 崩掉整个进程（连带全部 WS 连接）。
+  // 分发表驱动（顺序即匹配优先级）：前缀专属 handler 在前，/api/ 兜底（handleQueryHttp）最后。
+  for (const [prefix, handler] of API_ROUTES) {
+    if (req.url?.startsWith(prefix)) { void runHandler(res, () => handler(req, res, db)); return; }
+  }
   // 静态托管 collector-web 产物（非 /ping 非 /api/ 的请求）——C2 校验已在上方通过
   if (req.url && !req.url.startsWith('/api/') && req.url !== '/ping') { serveStatic(req, res); return; }
   res.writeHead(404); res.end('not found');

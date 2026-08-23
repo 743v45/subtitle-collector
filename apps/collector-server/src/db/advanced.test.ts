@@ -233,6 +233,26 @@ test('getVideoByDbId: 翻译轨(type=3) 排在原文 CC/ASR 之后（与 queries
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
+test('getVideoByDbId: zh-manual 补翻轨排在原文 CC/ASR 之前、AI中文之后（与 queries.getVideo 镜像一致）', () => {
+  const { db, dir } = freshDb();
+  try {
+    ingestVideo(db, {
+      source: 'youtube',
+      video: { source_vid: 'yt2', title: '补翻目标视频', creator: { source_uid: 'UC1', name: 'ch' }, extra: {}, duration: 60, published_at: 1 },
+      tracks: [
+        { lan: 'en', lan_doc: 'English CC', track_type: 2, versions: [{ origin: 'external', payload: { body: [] }, source_url: 'https://cc' }] },
+        { lan: 'zh', lan_doc: 'AI中文', track_type: 1, versions: [{ origin: 'external', payload: { body: [] }, source_url: 'https://ai' }] },
+        { lan: 'zh-manual', lan_doc: '中文（补翻）', track_type: undefined, versions: [{ origin: 'manual', payload: { body: [] }, source_url: 'translate://en' }] },
+      ],
+    });
+    const vid = (db.prepare("SELECT id FROM videos WHERE source_vid = 'yt2'").get() as { id: number }).id;
+    const d = getVideoByDbId(db, vid);
+    if (!d) throw new Error('no detail');
+    assert.deepEqual(d.tracks.map((t) => t.lan_doc), ['AI中文', '中文（补翻）', 'English CC'],
+      'zh-manual 档位：AI中文(1) 之后、英文 CC(2) 之前——补翻后默认轨变中文');
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
 test('getChanges: entity / entity_id / field 过滤 + 分页', () => {
   const { db, dir, ids } = setup();
   try {

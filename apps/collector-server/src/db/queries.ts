@@ -40,6 +40,7 @@ export interface VideoDetail { video: Record<string, unknown>; tracks: TrackRow[
 // 默认正文不再落机翻中文；zh CC / zh AI 两档细分保持 B 站默认行为不变。
 // advanced.ts 有同名镜像实现，两处需同步改。
 const trackPriority = (lan: string | null, track_type: number | null): number => {
+  if (lan === 'zh-manual') return 1.5; // 补翻中文（translate fill 写入）：AI中文之后、原文轨之前——补翻完成后默认轨变中文
   const isZh = !!lan && lan.toLowerCase().includes('zh');
   const isEn = !!lan && lan.toLowerCase().includes('en');
   if (isZh && track_type === 2) return 0; // CC中文（原文人工 CC）

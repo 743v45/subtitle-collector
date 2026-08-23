@@ -78,18 +78,18 @@ test('tags API 全链路：apply → list → rename → 优先级 → 单视频
     assert.equal(r.status, 200);
     assert.equal(r.json.inserted, 1);
 
-    // 6. 优先级 GET/PUT（五档，含只读 season）
+    // 6. 优先级 GET/PUT（六档，含只读 season/system）
     r = await call(port, 'GET', '/api/settings/tag-priority');
-    assert.deepEqual(r.json.priority, ['manual', 'batch', 'bili', 'season', 'ai']);
-    r = await call(port, 'PUT', '/api/settings/tag-priority', { priority: ['ai', 'manual', 'bili', 'season', 'batch'] });
+    assert.deepEqual(r.json.priority, ['manual', 'batch', 'bili', 'season', 'ai', 'system']);
+    r = await call(port, 'PUT', '/api/settings/tag-priority', { priority: ['ai', 'manual', 'bili', 'season', 'batch', 'system'] });
     assert.equal(r.status, 200);
     r = await call(port, 'PUT', '/api/settings/tag-priority', { priority: ['manual', 'batch'] });
     assert.equal(r.status, 400);
-    // 四档（缺 season）不再合法 → 400
-    r = await call(port, 'PUT', '/api/settings/tag-priority', { priority: ['manual', 'batch', 'bili', 'ai'] });
+    // 五档（缺 system）不再合法 → 400
+    r = await call(port, 'PUT', '/api/settings/tag-priority', { priority: ['manual', 'batch', 'bili', 'season', 'ai'] });
     assert.equal(r.status, 400);
     // 回默认
-    await call(port, 'PUT', '/api/settings/tag-priority', { priority: ['manual', 'batch', 'bili', 'season', 'ai'] });
+    await call(port, 'PUT', '/api/settings/tag-priority', { priority: ['manual', 'batch', 'bili', 'season', 'ai', 'system'] });
 
     // 7. rename：撞名 409
     const tagId = aiTag.id;
@@ -140,14 +140,14 @@ test('富化：列表 tag_details 按优先级 winner dedupe + 优先级翻转 +
     assert.deepEqual(item.tags, ['人工智能', 'B站自带']);
 
     // 翻转优先级（ai 最高）→ 人工智能 winner 变 ai（后端 dedupe 生效，前端零逻辑）
-    await call(port, 'PUT', '/api/settings/tag-priority', { priority: ['ai', 'batch', 'bili', 'season', 'manual'] });
+    await call(port, 'PUT', '/api/settings/tag-priority', { priority: ['ai', 'batch', 'bili', 'season', 'system', 'manual'] });
     r = await call(port, 'GET', '/api/videos?source=bilibili&source_vid=BV1&size=50');
     item = r.json.items.find((i: any) => i.source_vid === 'BV1');
     assert.deepEqual(item.tag_details, [
       { name: '人工智能', source: 'ai' },
       { name: 'B站自带', source: 'bili' },
     ]);
-    await call(port, 'PUT', '/api/settings/tag-priority', { priority: ['manual', 'batch', 'bili', 'season', 'ai'] });
+    await call(port, 'PUT', '/api/settings/tag-priority', { priority: ['manual', 'batch', 'bili', 'season', 'ai', 'system'] });
 
     // 详情：全档不去重（manual + ai 两条都在，按优先级排）+ bili 档来自 extra（回归：extra 是 JSON 字符串须 parse）
     r = await call(port, 'GET', '/api/videos/bilibili/BV1');

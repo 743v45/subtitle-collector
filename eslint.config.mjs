@@ -9,6 +9,9 @@ export default [
     ignores: [
       '**/node_modules/**',
       '**/dist/**',
+      // .claude/worktrees/** 是会话级临时 worktree（自带独立分支，不属于本仓源码面），
+      // 静态台账扫描（quality-baseline）经 ESLint 快照取数，须一并排除防误登记
+      '.claude/**',
       'apps/subtitle-extractor/**',
       // 测试文件对两条静态规则豁免（质量由覆盖率指标管）
       '**/*.test.*',

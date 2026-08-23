@@ -1,6 +1,6 @@
 # 多步任务编排(playbooks)
 
-五个高频任务的多步编排。单命令选项细节以 `--help` 为准(SKILL.md 兜底纪律)。
+六个高频任务的多步编排。单命令选项细节以 `--help` 为准(SKILL.md 兜底纪律)。
 
 ## 1. 链路体检(采集前的必经检查)
 
@@ -69,3 +69,19 @@ collector-cli tags list --source ai
 
 - 先 `sub search` 读字幕正文判断视频归属 → `tags apply` 打标(打标即建标,视频需已入库)→ `tags list` 核对。
 - `tags remove <bvid...> --names <csv>`;`--source` 省略时删该名字全部三档。
+
+## 6. 补翻工作流(无中文轨视频补中文翻译)
+
+消费端能力(供会话内大模型调用,对齐 AI 打标「系统出工具、智能在会话」)。三步闭环:
+
+```collector-cli
+collector-cli --db <repo>/data/bilibili-collector.db translate pending --from ai-en --size 5
+collector-cli --db <repo>/data/bilibili-collector.db translate source <bvid> --from ai-en
+collector-cli --server <生产server> translate fill <bvid> --from ai-en --file zh.txt
+```
+
+- ① `translate pending` 查缺口:有轨但无任何中文轨(zh/zh-Hant/zh-Hans/ai-zh/zh-manual 全无)的视频,每项带各源语言轨行数——据此挑视频挑语言。
+- ② `translate source` 取原料:stdout 逐行 `行号\t原文`(纯文本直写,可重定向);行数即翻译契约。
+- ③ 会话内翻译产出 zh.txt(每行一条译文,可保留行号前缀;空行占位不可省),`translate fill` 写回:行数校验+时间轴从源轨拷贝,落 `zh-manual` 轨(origin=manual 不去重,重复 fill 堆版本快照)。
+- fill 走 server HTTP(对齐 tags apply 先例)——`--db` 用于 pending/source 与行数预校验,`--server` 决定写哪个库,两者指向同一库。
+- 补翻后该视频默认轨变中文(trackPriority zh-manual 档),`export subtitle`/`export bundle` 自动受益。
