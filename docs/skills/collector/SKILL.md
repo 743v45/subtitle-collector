@@ -52,9 +52,9 @@ collector-cli --db <repo>/data/bilibili-collector.db stats overview
 | `tags list/apply/remove` | list 读 DB;apply/remove 走 server | `tags apply <bvid...> --names <csv> --source manual\|batch\|ai\|system`(打标即建标;system=系统状态档如 no-subtitle,采集链路自动打/摘) |
 | `clients list/reporting/task-dispatch/command` | server HTTP | 扩展客户端管控;`reporting <id> <on\|off>` 切上报 / `task-dispatch <id> <on\|off>` 切任务派发(off=仅上报状态,调度器不派任务);`command <id> <action> --timeout <ms>` |
 | `server ping/status/start/stop` | 本地 | 探活 / 起停(pid 文件;`start --no-detached --port`) |
-| `collect …`(11 子命令) | server→扩展 | 见下方 |
+| `collect …`(12 子命令) | server→扩展 | 见下方 |
 
-collect 子命令速记:`search <关键词>` 搜候选(不入库)/ `subtitle <bvid>` 采单个入库(确认无字幕自动打 no-subtitle 系统标;采到轨自动摘) / `dedupe <bvid...>` 批量判重 / `season` 整合集 / `upper-info <mid>` UP 资料入库 / `upper-videos <mid> --all` 拉列表 / `new-videos <mid>` / `discover <mid...>` 多 UP 发现 / `find <关键词> --min-fans --since-days` 条件检索 / `yt-videos <handle> --since-days --collect` YouTube。采集默认超时 180s(覆盖扩展全链路)。
+collect 子命令速记:`search <关键词>` 搜候选(不入库)/ `subtitle <bvid>` 采单个入库(确认无字幕自动打 no-subtitle 系统标;采到轨自动摘) / `dedupe <bvid...>` 批量判重 / `season` 整合集 / `upper-info <mid>` UP 资料入库 / `upper-videos <mid> --all` 拉列表 / `new-videos <mid>` / `discover <mid...>` 多 UP 发现 / `find <关键词> --min-fans --since-days` 条件检索 / `yt-videos <handle> --since-days --collect` YouTube 频道 / `yt-search <关键词> --order --since-days --collect` YouTube 搜索。采集默认超时 180s(覆盖扩展全链路)。
 
 **排序语义**:`--sort first_seen`(入库时间)vs `published_at`(发布时间)——用户说「最近」先确认指哪个;无法确认时默认 `first_seen`(查询主语是「库」,最近入库)。
 

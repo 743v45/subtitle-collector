@@ -36,7 +36,11 @@ CLI 路(推荐,入库统一):
 ```collector-cli
 collector-cli collect yt-videos <@handle或UCxxx> --since-days 90
 collector-cli collect yt-videos <@handle> --since-days 90 --collect
+collector-cli collect yt-search <关键词> --order newest --since-days 30
+collector-cli collect yt-search <关键词> --collect
 ```
+
+`yt-search` 关键词搜候选(类 B 站 `find`,`--order relevance|newest|views` 默认相关性);`--collect` 对未入库串行采集。回执带 `diag` 解析命中计数(lockup/renderer),0 命中或报错先看它再排查。
 
 脚本路(独立产出文件,适合给下游消费):
 
