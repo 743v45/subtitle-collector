@@ -241,26 +241,12 @@ export function collectNosub(
 }
 
 // ── YouTube 频道（2026-08-21）：CLI 参数解析 + 全量列表 + 逐条采集 ──
-
-/** 频道标识（扩展 list-yt-channel-videos action 的 ident 参数）。 */
-export interface YtChannelIdent { handle?: string; channelId?: string; custom?: string; }
-
-/** CLI 参数（@handle / UCxxx / 频道页 URL）→ ident。非法抛错（命令注册层转 ARGS）。 */
-export function parseYtChannelArg(arg: string): YtChannelIdent {
-  const a = arg.trim();
-  if (/^@[\w.-]{3,30}$/.test(a)) return { handle: a };
-  if (/^UC[\w-]{22}$/.test(a)) return { channelId: a };
-  try {
-    const u = new URL(a);
-    if (u.hostname === 'youtube.com' || u.hostname.endsWith('.youtube.com')) {
-      const seg = u.pathname.split('/').filter(Boolean);
-      if (seg[0] && /^@[\w.-]{3,30}$/.test(seg[0])) return { handle: seg[0] };
-      if (seg[0] === 'channel' && seg[1] && /^UC[\w-]{22}$/.test(seg[1])) return { channelId: seg[1] };
-      if ((seg[0] === 'c' || seg[0] === 'user') && seg[1] && /^[\w.-]+$/.test(seg[1])) return { custom: seg[1] };
-    }
-  } catch { /* 非 URL → 落到下面统一报错 */ }
-  throw new Error(`无法识别的频道参数：${arg}（支持 @handle / UC 开头 channelId / 频道页 URL）`);
-}
+// 2026-08-24 解析下沉 tasks/tasks.ts（http 的 /api/upper-videos/expand YouTube 分支复用），
+// 此处 import 供本文件使用并 re-export 保持 CLI 外部接口不变。
+import { parseYtChannelArg } from '../../tasks/tasks.js';
+import type { YtChannelIdent } from '../../tasks/tasks.js';
+export { parseYtChannelArg };
+export type { YtChannelIdent };
 
 /** 单条 YouTube 频道视频（list-yt-channel-videos 扩展回执 data.items 形状）。 */
 export interface YtChannelVideoItem {

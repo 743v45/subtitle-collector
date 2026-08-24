@@ -14,7 +14,7 @@ B 站**字幕（subtitle）**相关浏览器扩展与配套服务的 monorepo（
 
 - ✅ **单视频**：浏览被动入库（打开 B 站视频页自动采）+ 手动补采 `collect subtitle <bvid>`
 - ✅ **UP 主批量**：`collect upper-videos <mid>` / `collect new-videos <mid>` / `collect discover <mid...>` + popup「UP 全部视频」卡勾选批量
-- ✅ **YouTube 频道批量**：popup 频道卡（`@handle/**` 任意子页识别，ytInitialData + InnerTube 全量分页，勾选批量 navigate 采集）+ CLI `collect yt-videos <@handle|UCxxx|URL> [--since-days N] [--collect]`
+- ✅ **YouTube 频道批量**：popup 频道卡（`@handle/**` 任意子页识别，ytInitialData + InnerTube 全量分页，勾选批量 navigate 采集）+ CLI `collect yt-videos <@handle|UCxxx|URL> [--since-days N] [--collect]` + **web 采集页「按 UP / 频道批量」**（2026-08-24：`@handle`/`UC…`/频道链接展开勾选批量，`/api/upper-videos/expand` 双平台——YouTube 复用扩展 `list-yt-channel-videos` 一次全量回执，顺带落频道 creator 最小行供历史页按 UP 筛）
 - ✅ **合集批量**：popup 合集卡（视频属合集时列出全集 `seasons_archives_list` 全量分页，勾选批量采集上报）
 - ✅ **搜索批量**：`collect search <keyword>` / `collect find <keyword>`（粉丝数/发布时间/播放量等条件过滤）；YouTube 关键词搜索 `collect yt-search <keyword> [--order relevance|newest|views] [--since-days N] [--collect]`（候选 + 未入库串行采集）
 - ✅ 充电专属视频采集 + 付费标记（`videos list --paid`）
@@ -22,8 +22,8 @@ B 站**字幕（subtitle）**相关浏览器扩展与配套服务的 monorepo（
 - ✅ 客户端任务派发管控：popup/options「仅上报状态」开关（关后调度器不向该客户端派采集任务，保持连接上报；多客户端时任务派给其他机器，全关留 pending）+ web 客户端页 / CLI `clients task-dispatch <id> <on|off>` 远程切换 + `clients list` 可见状态
 - ✅ 客户端命名：popup 底栏「改名」（id 不变，名字本地落盘并经 hello/client-name-state 同步 server `clients` 注册表持久化，清空保存即删除）；web 客户端页 / CLI `clients list` 显示名字、在线/离线时长，**列表含离线客户端**（server 重启不丢，旧 client_id 会留存）
 - ✅ **无字幕标记**：采集确认无字幕（UP 未传 CC 且平台未生成 AI 字幕，两平台对齐）自动打 `no-subtitle` 系统档标签（`videos list --tag no-subtitle` 圈定），采到字幕轨时自动摘标——历史存量回填 `scripts/backfill-no-subtitle-tags.mjs`（两平台）
-- 🚧 **web 采集页 YouTube 按 UP 批量**：`/collect` 页「按 UP 批量」现仅 B 站（space.bilibili.com 链接识别）；YouTube 对等入口需 server `/api/upper-videos/expand` 频道对等端点 + 扩展 ingest-upper 频道统计上报（2026-08-24 平台区分批定档：下一个任务做，与扩展 YouTube 侧能力补齐捆绑）
 - 🚧 无字幕视频兜底：subtitle-extractor 浏览器本地 Whisper 转写（旁挂手动工具，未集成入库链路——转写产物暂无回流 bundle 的桥）；📋 远期改为服务端 ASR 批量转写 `no-subtitle` 标圈定的视频（落地前置：✅ 无字幕标记已就位）
+- 📋 YouTube 频道完整统计入库（订阅数等 about 页指标；web 频道批量已落 creator 最小行 channelId+名称）
 
 ### 查询与导出（✅）
 

@@ -331,7 +331,7 @@ test('expandUpperVideos：分页循环拉全量（page 参数对齐扩展契约�
         { bvid: 'BV3xx411c7mD', title: '视频三', created: 1700000200, play: 300, length: '7:00' }, // 无 pic → null
       ] },
     });
-    const r = await expandUpperVideos(db, '296399504', deps);
+    const r = await expandUpperVideos(db, { source: 'bilibili', mid: '296399504' }, deps);
     assert.equal(r.total, 3);
     assert.equal(r.items.length, 3);
     assert.deepEqual(r.items.map((x) => x.collected), [false, true, false]);
@@ -365,7 +365,7 @@ test('expandUpperVideos：分页重叠（页间新投稿位移）按 bvid 去重
       4: { total: 3, items: page1 },
       5: { total: 3, items: page1 },
     });
-    const r = await expandUpperVideos(db, '296399504', deps);
+    const r = await expandUpperVideos(db, { source: 'bilibili', mid: '296399504' }, deps);
     const bvids = r.items.map((x) => x.bvid);
     assert.equal(new Set(bvids).size, bvids.length, '结果必须无重复 bvid');
     assert.deepEqual(bvids.sort(), ['BV1aa411c7mD', 'BV1bb411c7mD', 'BV1cc411c7mD']);
@@ -376,16 +376,87 @@ test('expandUpperVideos：扩展离线抛错；单页回执失败抛错', async 
   const { db, cleanup } = setupDb();
   try {
     await assert.rejects(
-      expandUpperVideos(db, '296399504', { listClients: () => [], requestCommand: async () => ({ ok: false, code: 'offline' as const }), sleep: async () => {} }),
+      expandUpperVideos(db, { source: 'bilibili', mid: '296399504' }, { listClients: () => [], requestCommand: async () => ({ ok: false, code: 'offline' as const }), sleep: async () => {} }),
       /扩展离线/,
     );
     await assert.rejects(
-      expandUpperVideos(db, '296399504', {
+      expandUpperVideos(db, { source: 'bilibili', mid: '296399504' }, {
         listClients: () => [{ client_id: 'ext-A' }],
         requestCommand: async () => ({ ok: true, result: { ok: false, error: 'arc/search -412' } }),
         sleep: async () => {},
       }),
       /-412/,
+    );
+  } finally { cleanup(); }
+});
+
+// ── YouTube 频道展开（2026-08-24 web 批量入口）：一次 list-yt-channel-videos 全量回执 ──
+// 断言：vid→bvid 映射、collected 按 youtube 命中、creator 最小行落库（不存在时）、channel 回传。
+test('expandUpperVideos YouTube：全量回执映射 + collected 标注 + creator 最小行 + channel 回传', async () => {
+  const { db, cleanup } = setupDb();
+  try {
+    // 库里已有 ytvid1（该频道已采 1 条）
+    db.prepare("INSERT INTO creators (source, source_uid, name, first_seen_at, updated_at) VALUES ('youtube', 'UCtest_channel_id_000001', '频道已有行', 1, 1)").run();
+    const cid = (db.prepare("SELECT id FROM creators WHERE source_uid='UCtest_channel_id_000001'").get() as { id: number }).id;
+    db.prepare("INSERT INTO videos (source, source_vid, creator_id, title, first_seen_at, updated_at) VALUES ('youtube', 'ytvid00001', ?, '已采', 1, 1)").run(cid);
+
+    const calls: Array<{ action: string; params: Record<string, unknown> }> = [];
+    const deps: UpperExpandDeps = {
+      listClients: () => [{ client_id: 'ext-A' }],
+      requestCommand: async (_cid, action, params) => {
+        calls.push({ action, params });
+        return {
+          ok: true as const,
+          result: { ok: true, data: {
+            channel_id: 'UCtest_channel_id_000001',
+            channel_name: '测试频道',
+            total: 2,
+            items: [
+              { vid: 'ytvid00001', title: '已采', created: 1700000000, play: 100, length: '5:30' },
+              { vid: 'ytvid00002', title: '未采', created: 1700000100, play: 200, length: '6:00' },
+            ],
+          } },
+        };
+      },
+      sleep: async () => {},
+    };
+    const r = await expandUpperVideos(db, { source: 'youtube', ident: { channelId: 'UCtest_channel_id_000001' } }, deps);
+    assert.equal(r.total, 2);
+    assert.deepEqual(r.items.map((x) => x.bvid), ['ytvid00001', 'ytvid00002']);
+    assert.deepEqual(r.items.map((x) => x.collected), [true, false]);
+    assert.deepEqual(r.channel, { id: 'UCtest_channel_id_000001', name: '测试频道' });
+    // 契约：action=list-yt-channel-videos + ident 透传 + refresh=true（web 展开绕过 1h 缓存）
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].action, 'list-yt-channel-videos');
+    assert.deepEqual(calls[0].params.ident, { channelId: 'UCtest_channel_id_000001' });
+    assert.equal(calls[0].params.refresh, true);
+    // creator 已存在 → 名字不被覆盖（最小行只建不更新）
+    assert.equal((db.prepare("SELECT name FROM creators WHERE source_uid='UCtest_channel_id_000001'").get() as { name: string }).name, '频道已有行');
+  } finally { cleanup(); }
+});
+
+test('expandUpperVideos YouTube：creator 不存在 → 落最小行（批量任务的 UP 筛选归属）；回执失败抛错', async () => {
+  const { db, cleanup } = setupDb();
+  try {
+    const deps: UpperExpandDeps = {
+      listClients: () => [{ client_id: 'ext-A' }],
+      requestCommand: async () => ({
+        ok: true as const,
+        result: { ok: true, data: { channel_id: 'UCnew_channel_id_0000002', channel_name: '新频道', total: 1, items: [{ vid: 'ytvid0000A', title: 'x' }] } },
+      }),
+      sleep: async () => {},
+    };
+    await expandUpperVideos(db, { source: 'youtube', ident: { handle: '@newch' } }, deps);
+    const row = db.prepare("SELECT source, name FROM creators WHERE source_uid='UCnew_channel_id_0000002'").get() as { source: string; name: string };
+    assert.deepEqual(row, { source: 'youtube', name: '新频道' });
+
+    await assert.rejects(
+      expandUpperVideos(db, { source: 'youtube', ident: { handle: '@bad' } }, {
+        listClients: () => [{ client_id: 'ext-A' }],
+        requestCommand: async () => ({ ok: true, result: { ok: false, error: 'yt-channel 拉取失败' } }),
+        sleep: async () => {},
+      }),
+      /拉取失败/,
     );
   } finally { cleanup(); }
 });
@@ -407,7 +478,7 @@ test('expandUpperVideos：优先选接受任务派发的客户端（批量编排
       sleep: async () => {},
       pageGapMs: 0,
     };
-    const r = await expandUpperVideos(db, '296399504', deps);
+    const r = await expandUpperVideos(db, { source: 'bilibili', mid: '296399504' }, deps);
     assert.equal(r.total, 1);
     assert.deepEqual(used, ['ext-on'], '应选可派池内的 ext-on 而非首位的 ext-off');
   } finally { cleanup(); }
@@ -426,7 +497,7 @@ test('expandUpperVideos：池空（全仅上报）回退任意在线（纯 API �
       sleep: async () => {},
       pageGapMs: 0,
     };
-    const r = await expandUpperVideos(db, '296399504', deps);
+    const r = await expandUpperVideos(db, { source: 'bilibili', mid: '296399504' }, deps);
     assert.equal(r.total, 1);
     assert.deepEqual(used, ['ext-off'], '唯一在线客户端虽仅上报，列表查询仍可用它');
   } finally { cleanup(); }

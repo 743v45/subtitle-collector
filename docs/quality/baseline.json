@@ -1,12 +1,12 @@
 {
-  "generatedAt": "2026-08-24T07:16:43.982Z",
+  "generatedAt": "2026-08-24T12:57:52.578Z",
   "rules": {
     "complexity": 15,
     "maxLines": 400
   },
   "files": {
     "apps/collector-server/src/cli/commands/collect.ts": {
-      "maxLines": 1017,
+      "maxLines": 1003,
       "complexity": 21
     },
     "apps/collector-server/src/cli/commands/server.ts": {
@@ -42,18 +42,18 @@
       "complexity": 27
     },
     "apps/collector-server/src/http/tasks.ts": {
-      "complexity": 68
+      "complexity": 75
     },
     "apps/collector-server/src/tasks/tasks.ts": {
-      "complexity": 31,
-      "maxLines": 585
+      "complexity": 30,
+      "maxLines": 664
     },
     "apps/collector-server/src/ws/server.ts": {
       "complexity": 29
     },
     "apps/collector-web/src/api.ts": {
       "complexity": 26,
-      "maxLines": 434
+      "maxLines": 440
     },
     "apps/collector-web/src/components/TaskCards.tsx": {
       "complexity": 24
@@ -65,8 +65,8 @@
       "complexity": 18
     },
     "apps/collector-web/src/pages/CollectPage.tsx": {
-      "complexity": 16,
-      "maxLines": 495
+      "complexity": 18,
+      "maxLines": 513
     },
     "apps/collector-web/src/pages/CreatorDetailPage.tsx": {
       "complexity": 29

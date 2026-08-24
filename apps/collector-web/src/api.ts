@@ -188,16 +188,22 @@ export async function deleteCollectTask(id: number): Promise<void> {
   await ensureOk(r, () => undefined);
 }
 
-// ── 按 UP 批量采集（2026-08-19）──
-// UP 全部视频列表：server 经扩展 WS 代理分页拉取（arc/search）+ 查库标注已采。
+// ── 按 UP/频道批量采集（2026-08-19；2026-08-24 双平台）──
+// UP/频道全部视频列表：server 经扩展 WS 代理拉取（B 站 arc/search 逐页 / YouTube 频道一次全量）+ 查库标注已采。
+// YouTube 返回附带 channel（id=channelId、name=频道名——批量提交作 creatorUid 归属）。
 // 扩展离线 / 拉取失败 → 抛错（ensureOk 带 server error 文案）。
-export async function expandUpperVideos(mid: string): Promise<{ total: number; items: UpperVideoItem[] }> {
+export async function expandUpperVideos(
+  opts: { source: 'bilibili'; mid: string } | { source: 'youtube'; channel: string },
+): Promise<{ total: number; items: UpperVideoItem[]; channel?: { id: string | null; name: string | null } }> {
+  const body = opts.source === 'youtube'
+    ? { source: 'youtube', channel: opts.channel }
+    : { source: 'bilibili', mid: opts.mid };
   const r = await fetch(`${BASE}/api/upper-videos/expand`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ mid }),
+    body: JSON.stringify(body),
   });
-  return ensureOk(r, (j) => ({ total: j.total ?? 0, items: j.items ?? [] }));
+  return ensureOk(r, (j) => ({ total: j.total ?? 0, items: j.items ?? [], channel: j.channel ?? undefined }));
 }
 
 // 批量建采集任务（popup/web 勾选批量共用端点；pending/dispatched 任务去重跳过）。

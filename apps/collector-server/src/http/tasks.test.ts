@@ -725,3 +725,47 @@ test('GET 多维筛选：items 行带 creator_name（已入库有名，未入库
     assert.equal(list.json.items.find((i: any) => i.source_vid === 'BV1NOLIB0001').creator_name, null);
   } finally { ctx.cleanup(); }
 });
+
+// ── /api/upper-videos/expand YouTube 分支（2026-08-24 web 频道批量入口）──
+// 扩展模拟：对 list-yt-channel-videos 回全量回执。断言：200 + items + channel 回传；
+// 缺 channel / 无法识别的 channel → 400（参数在 server 单点解析）。
+test('POST /api/upper-videos/expand：YouTube channel 展开（合法 200 / 缺参 400 / 无法识别 400）', async () => {
+  const ctx = await setup();
+  let ws: WebSocket | null = null;
+  try {
+    ws = await new Promise<WebSocket>((resolve) => {
+      const w = new WebSocket(`ws://127.0.0.1:${ctx.port}/ext`);
+      w.once('open', () => {
+        w.send(JSON.stringify({ type: 'hello', ext_version: '0.1.0', token: 'test-token', client_id: 'ext-YT', reporting_enabled: true }));
+        w.on('message', (d) => {
+          const m = JSON.parse(d.toString());
+          if (m.action === 'list-yt-channel-videos') {
+            w.send(JSON.stringify({ type: 'result', id: m.id, ok: true, data: {
+              channel_id: 'UCtest_channel_id_000001', channel_name: '测试频道', total: 1,
+              items: [{ vid: 'ytvid00001', title: '频道视频', created: 1700000000, play: 10, length: '1:00' }],
+            } }));
+          }
+        });
+        setTimeout(() => resolve(w), 50);
+      });
+    });
+    // 合法 @handle → 200，items/channel 回传，creator 最小行已落库
+    const ok1 = await httpReq(ctx.port, 'POST', '/api/upper-videos/expand', { source: 'youtube', channel: '@testch' });
+    assert.equal(ok1.status, 200);
+    assert.equal(ok1.json.total, 1);
+    assert.equal(ok1.json.items[0].bvid, 'ytvid00001');
+    assert.equal(ok1.json.channel.id, 'UCtest_channel_id_000001');
+    const creator = ctx.db.prepare("SELECT source, name FROM creators WHERE source_uid = 'UCtest_channel_id_000001'").get() as { source: string; name: string };
+    assert.deepEqual(creator, { source: 'youtube', name: '测试频道' });
+
+    // 缺 channel → 400；无法识别 → 400（parseYtChannelArg 抛错文案透传）
+    const bad1 = await httpReq(ctx.port, 'POST', '/api/upper-videos/expand', { source: 'youtube' });
+    assert.equal(bad1.status, 400);
+    const bad2 = await httpReq(ctx.port, 'POST', '/api/upper-videos/expand', { source: 'youtube', channel: 'not-a-channel' });
+    assert.equal(bad2.status, 400);
+    assert.match(bad2.json.error, /无法识别的频道参数/);
+  } finally {
+    ws?.close();
+    ctx.cleanup();
+  }
+});

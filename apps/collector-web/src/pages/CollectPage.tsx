@@ -39,16 +39,25 @@ function LibrarySummary({ refreshKey }: { refreshKey: number }) {
   );
 }
 
-// ── 按 UP 批量（2026-08-19）：输入 UID/空间链接 → server 经扩展拉全量 → 过滤+勾选 → 批量建任务 ──
-// 输入解析：裸数字 UID 或 space.bilibili.com/{mid} 链接（含 /upload/video 子路径）。
-function parseUpperMid(text: string): string | null {
+// ── 按 UP/频道批量（2026-08-19；2026-08-24 双平台）：输入 UID/空间链接/频道标识 → server 经扩展拉全量 → 过滤+勾选 → 批量建任务 ──
+// 输入解析（粗判路由，细解析在 server）：裸数字 UID / space.bilibili.com/{mid} → B 站；
+// @handle / UC 开头 channelId / youtube.com|youtu.be 链接 → YouTube 频道。
+type UpperTarget = { source: 'bilibili'; mid: string } | { source: 'youtube'; channel: string };
+
+function parseUpperTarget(text: string): UpperTarget | null {
   const t = text.trim();
-  if (/^\d+$/.test(t)) return t;
+  if (!t) return null;
+  if (/^\d+$/.test(t)) return { source: 'bilibili', mid: t };
+  if (/^UC[\w-]{22}$/.test(t)) return { source: 'youtube', channel: t };
+  if (/^@[\w.-]{3,30}$/.test(t)) return { source: 'youtube', channel: t };
   try {
     const u = new URL(t);
     if (u.hostname === 'space.bilibili.com') {
       const seg = u.pathname.split('/').filter(Boolean)[0];
-      if (seg && /^\d+$/.test(seg)) return seg;
+      if (seg && /^\d+$/.test(seg)) return { source: 'bilibili', mid: seg };
+    }
+    if (u.hostname === 'youtube.com' || u.hostname.endsWith('.youtube.com') || u.hostname === 'youtu.be') {
+      return { source: 'youtube', channel: t };
     }
   } catch { /* 非 URL 忽略 */ }
   return null;
@@ -64,7 +73,9 @@ function UpperBatchSection({ onTasksChanged }: { onTasksChanged: () => void }) {
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
-  const [data, setData] = useState<{ total: number; items: UpperVideoItem[] } | null>(null);
+  const [data, setData] = useState<{ total: number; items: UpperVideoItem[]; channel?: { id: string | null; name: string | null } } | null>(null);
+  // 当前拉取目标（提交批量时定 source/creatorUid）：load 成功时记忆，input 变更不重置（旧列表仍可提交）
+  const [target, setTarget] = useState<UpperTarget | null>(null);
   // 过滤（档位化对齐 popup）+ 勾选
   const [statusFilter, setStatusFilter] = useState<'all' | 'uncollected' | 'collected'>('all');
   const [timeDays, setTimeDays] = useState(0);
@@ -103,18 +114,20 @@ function UpperBatchSection({ onTasksChanged }: { onTasksChanged: () => void }) {
 
   const load = async () => {
     if (loading) return;
-    const mid = parseUpperMid(input);
-    if (!mid) { setErr('输入 UP 的数字 UID 或空间页链接（如 https://space.bilibili.com/296399504）'); return; }
+    const tgt = parseUpperTarget(input);
+    if (!tgt) { setErr('输入 UP 的数字 UID / 空间页链接，或 YouTube 频道 @handle / UC 开头 ID / 频道页链接'); return; }
     setLoading(true);
     setErr(null);
     setSubmitMsg(null);
     try {
-      const r = await expandUpperVideos(mid);
+      const r = await expandUpperVideos(tgt);
       setData(r);
+      setTarget(tgt);
       setSelected(new Set());
     } catch (e: any) {
       setErr(String(e?.message ?? e));
       setData(null);
+      setTarget(null);
     } finally {
       setLoading(false);
     }
@@ -135,8 +148,11 @@ function UpperBatchSection({ onTasksChanged }: { onTasksChanged: () => void }) {
     setSubmitting(true);
     setSubmitMsg(null);
     try {
-      // mid 随批落任务行（2026-08-22）：当前拉取的 UP 归属——未入库/失败任务也能在历史页按 UP 筛
-      const r = await createCollectTasksBatch([...selected], 'bilibili', parseUpperMid(input) ?? undefined);
+      // UP/频道归属随批落任务行（2026-08-22）：B 站 mid / YouTube channelId（展开回执带，无则 undefined）——
+      // 未入库/失败任务也能在历史页按 UP 筛
+      const source = target?.source ?? 'bilibili';
+      const creatorUid = target?.source === 'bilibili' ? target.mid : data?.channel?.id ?? undefined;
+      const r = await createCollectTasksBatch([...selected], source, creatorUid);
       const text = `已创建 ${r.created} 个任务${r.skipped ? `，跳过 ${r.skipped} 个（已在队列）` : ''}`;
       setSubmitMsg({ ok: true, text });
       toast(text, 'success'); // 中上 toast：列表在下方/已切走时也能看到任务已下发
@@ -154,11 +170,11 @@ function UpperBatchSection({ onTasksChanged }: { onTasksChanged: () => void }) {
   return (
     <Card>
       <CardContent className="space-y-3 p-3">
-        <div className="text-sm font-medium">按 UP 批量</div>
+        <div className="text-sm font-medium">按 UP / 频道批量</div>
         <div className="flex gap-2">
           <Input
             className="h-10 flex-1"
-            placeholder="UP UID 或空间页链接（需桌面扩展在线）"
+            placeholder="B 站 UID / 空间链接，或 YouTube 频道 @handle / UC… / 频道页链接（需桌面扩展在线）"
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={(e) => { if (e.key === 'Enter') void load(); }}
@@ -174,6 +190,8 @@ function UpperBatchSection({ onTasksChanged }: { onTasksChanged: () => void }) {
           <>
             {/* 摘要 + 过滤条 */}
             <div className="flex flex-wrap items-center gap-1.5 text-sm text-muted-foreground">
+              {/* YouTube 展开带频道名（归属可见）；B 站用 mid */}
+              {data.channel?.name && <span className="text-foreground">{data.channel.name} · </span>}
               <span>共 <span className="tabular-nums text-foreground">{data.total}</span> 条</span>
               <span>· <span className="tabular-nums text-foreground">{collectedCount}</span> 已采</span>
               {(

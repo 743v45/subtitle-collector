@@ -260,10 +260,10 @@ function setupUpper(expand: unknown = { total: 4, items: upperItems }) {
 test('按 UP 批量：非法输入 → 提示不发请求；数字 UID / 空间链接都能解析', async () => {
   const calls = setupUpper();
   await screen.findByText('还没有采集任务。粘贴一个视频链接试试。');
-  const upperInput = screen.getByPlaceholderText('UP UID 或空间页链接（需桌面扩展在线）');
+  const upperInput = screen.getByPlaceholderText('B 站 UID / 空间链接，或 YouTube 频道 @handle / UC… / 频道页链接（需桌面扩展在线）');
   fireEvent.change(upperInput, { target: { value: '不是UID' } });
   fireEvent.click(screen.getByRole('button', { name: '拉取' }));
-  expect(await screen.findByText(/输入 UP 的数字 UID 或空间页链接/)).toBeInTheDocument();
+  expect(await screen.findByText('输入 UP 的数字 UID / 空间页链接，或 YouTube 频道 @handle / UC 开头 ID / 频道页链接')).toBeInTheDocument();
   expect(calls.find((c) => c.url.includes('expand'))).toBe(undefined);
 
   fireEvent.change(upperInput, { target: { value: 'https://space.bilibili.com/296399504/upload/video' } });
@@ -271,13 +271,13 @@ test('按 UP 批量：非法输入 → 提示不发请求；数字 UID / 空间�
   expect(await screen.findByText('已采视频')).toBeInTheDocument();
   const expandCall = calls.find((c) => c.url.includes('expand'))!;
   expect(expandCall.init?.method).toBe('POST');
-  expect(JSON.parse(String(expandCall.init?.body))).toEqual({ mid: '296399504' });
+  expect(JSON.parse(String(expandCall.init?.body))).toEqual({ source: 'bilibili', mid: '296399504' });
 });
 
 test('按 UP 批量：拉取失败 → 错误文案；列表渲染（摘要/过滤 pill/封面占位/日期）', async () => {
   setupUpper(new Response(JSON.stringify({ ok: false, error: '扩展离线' }), { status: 503, headers: { 'content-type': 'application/json' } }));
   await screen.findByText('还没有采集任务。粘贴一个视频链接试试。');
-  fireEvent.change(screen.getByPlaceholderText('UP UID 或空间页链接（需桌面扩展在线）'), { target: { value: '296399504' } });
+  fireEvent.change(screen.getByPlaceholderText('B 站 UID / 空间链接，或 YouTube 频道 @handle / UC… / 频道页链接（需桌面扩展在线）'), { target: { value: '296399504' } });
   fireEvent.click(screen.getByRole('button', { name: '拉取' }));
   expect(await screen.findByText(/扩展离线/)).toBeInTheDocument();
 
@@ -285,7 +285,7 @@ test('按 UP 批量：拉取失败 → 错误文案；列表渲染（摘要/过�
   vi.unstubAllGlobals();
   setupUpper();
   await screen.findByText('还没有采集任务。粘贴一个视频链接试试。');
-  fireEvent.change(screen.getByPlaceholderText('UP UID 或空间页链接（需桌面扩展在线）'), { target: { value: '296399504' } });
+  fireEvent.change(screen.getByPlaceholderText('B 站 UID / 空间链接，或 YouTube 频道 @handle / UC… / 频道页链接（需桌面扩展在线）'), { target: { value: '296399504' } });
   fireEvent.click(screen.getByRole('button', { name: '拉取' }));
   expect(await screen.findByText('已采视频')).toBeInTheDocument();
   // 摘要行数据经 pill 名断言（共 4 条文本跨嵌套 span，不适合 getByText）
@@ -300,7 +300,7 @@ test('按 UP 批量：拉取失败 → 错误文案；列表渲染（摘要/过�
 test('按 UP 批量：过滤 pill 组合（状态/时间/播放）与缺数据计数', async () => {
   setupUpper();
   await screen.findByText('还没有采集任务。粘贴一个视频链接试试。');
-  fireEvent.change(screen.getByPlaceholderText('UP UID 或空间页链接（需桌面扩展在线）'), { target: { value: '296399504' } });
+  fireEvent.change(screen.getByPlaceholderText('B 站 UID / 空间链接，或 YouTube 频道 @handle / UC… / 频道页链接（需桌面扩展在线）'), { target: { value: '296399504' } });
   fireEvent.click(screen.getByRole('button', { name: '拉取' }));
   expect(await screen.findByText('已采视频')).toBeInTheDocument();
 
@@ -339,7 +339,7 @@ test('按 UP 批量：过滤 pill 组合（状态/时间/播放）与缺数据�
 test('按 UP 批量：勾选 + 全选未采 + 批量提交（POST vids/source/creator_uid + toast）', async () => {
   const calls = setupUpper();
   await screen.findByText('还没有采集任务。粘贴一个视频链接试试。');
-  fireEvent.change(screen.getByPlaceholderText('UP UID 或空间页链接（需桌面扩展在线）'), { target: { value: '296399504' } });
+  fireEvent.change(screen.getByPlaceholderText('B 站 UID / 空间链接，或 YouTube 频道 @handle / UC… / 频道页链接（需桌面扩展在线）'), { target: { value: '296399504' } });
   fireEvent.click(screen.getByRole('button', { name: '拉取' }));
   expect(await screen.findByText('已采视频')).toBeInTheDocument();
 
@@ -362,7 +362,7 @@ test('按 UP 批量：批量提交失败 → 错误 toast；>50 confirm 取消/�
   }));
   const calls = setupUpper({ total: 51, items: many });
   await screen.findByText('还没有采集任务。粘贴一个视频链接试试。');
-  fireEvent.change(screen.getByPlaceholderText('UP UID 或空间页链接（需桌面扩展在线）'), { target: { value: '296399504' } });
+  fireEvent.change(screen.getByPlaceholderText('B 站 UID / 空间链接，或 YouTube 频道 @handle / UC… / 频道页链接（需桌面扩展在线）'), { target: { value: '296399504' } });
   fireEvent.click(screen.getByRole('button', { name: '拉取' }));
   expect(await screen.findByText('视频0')).toBeInTheDocument();
   fireEvent.click(screen.getByRole('button', { name: '全选未采' }));
@@ -435,4 +435,40 @@ test('轮询：2s 重拉；pending→succeeded 全终态 → 系统通知 + 摘�
   expect(screen.getByRole('button', { name: /库内 13 视频/ })).toBeInTheDocument();
 
   delete g.Notification;
+});
+
+// ── YouTube 频道批量（2026-08-24）：@handle 展开 → 频道名/列表渲染 → 勾选批量提交（source/creator_uid 跟随）──
+test('YouTube 频道批量：@handle 展开 + 频道名摘要 + 批量提交 source=youtube/creator_uid=channelId', async () => {
+  const calls = setupUpper({ total: 2, channel: { id: 'UCtest_channel_id_000001', name: '测试频道' }, items: [
+    { bvid: 'ytvid00001', title: '频道视频一', created: 1700000000, play: 10, length: '1:00', pic: null, collected: false },
+    { bvid: 'ytvid00002', title: '频道视频二', created: null, play: null, length: null, pic: null, collected: true },
+  ] });
+  await screen.findByText('还没有采集任务。粘贴一个视频链接试试。');
+  fireEvent.change(screen.getByPlaceholderText(/YouTube 频道/), { target: { value: '@testch' } });
+  fireEvent.click(screen.getByRole('button', { name: '拉取' }));
+  // 频道名进摘要行；列表渲染（摘要行文本拆多个 span，用子串断言；total 由 items/body 断言覆盖）
+  expect(await screen.findByText(/测试频道 ·/)).toBeInTheDocument();
+  expect(screen.getByText('频道视频一')).toBeInTheDocument();
+  expect(screen.getByText('频道视频一')).toBeInTheDocument();
+  // 展开请求体：平台 + 原始频道输入透传（细解析在 server）
+  const expandCall = calls.find((c) => c.url.includes('expand'))!;
+  expect(JSON.parse(String(expandCall.init?.body))).toEqual({ source: 'youtube', channel: '@testch' });
+
+  // 频道页 URL 也路由到 YouTube（60-61 分支：youtube.com 域名识别）
+  fireEvent.change(screen.getByPlaceholderText(/YouTube 频道/), { target: { value: 'https://www.youtube.com/@testch/videos' } });
+  fireEvent.click(screen.getByRole('button', { name: '拉取' }));
+  expect(await screen.findByText(/测试频道 ·/)).toBeInTheDocument();
+  expect(JSON.parse(String(calls.filter((c) => c.url.includes('expand')).at(-1)!.init?.body))).toEqual({ source: 'youtube', channel: 'https://www.youtube.com/@testch/videos' });
+
+  // 勾选未采视频 → 批量提交：vids 按 YouTube ID、source=youtube、creator_uid=channelId（展开回执）
+  fireEvent.click(screen.getAllByRole('checkbox')[0]!); // ytvid00001（未采）
+  fireEvent.click(screen.getByRole('button', { name: /批量采集/ }));
+  // 文案在 submitMsg 行与 toast 双份（对齐既有用例），完整串含跳过数
+  expect((await screen.findAllByText(/已创建 2 个任务，跳过 1 个（已在队列）/)).length).toBeGreaterThanOrEqual(1);
+  const batchCall = calls.find((c) => c.url.includes('/api/collect-tasks/batch'))!;
+  expect(JSON.parse(String(batchCall.init?.body))).toEqual({
+    vids: ['ytvid00001'],
+    source: 'youtube',
+    creator_uid: 'UCtest_channel_id_000001',
+  });
 });

@@ -235,12 +235,16 @@ test('deleteCollectTask：DELETE 且失败上抛（await 不吞）', async () =>
   await expect(api.deleteCollectTask(4)).rejects.toThrow('HTTP 404：不存在');
 });
 
-test('expandUpperVideos：POST {mid}，total/items 回落', async () => {
+test('expandUpperVideos：双平台 body 形状（bilibili {source,mid} / youtube {source,channel}）+ channel 回传', async () => {
   fetchMock.mockResolvedValueOnce(ok({ items: [{ bvid: 'BV1' }] }));
-  await expect(api.expandUpperVideos('123')).resolves.toEqual({ total: 0, items: [{ bvid: 'BV1' }] });
+  await expect(api.expandUpperVideos({ source: 'bilibili', mid: '123' })).resolves.toEqual({ total: 0, items: [{ bvid: 'BV1' }], channel: undefined });
   const { url, init } = lastCall();
   expect(url).toBe('/api/upper-videos/expand');
-  expect(JSON.parse(String(init?.body))).toEqual({ mid: '123' });
+  expect(JSON.parse(String(init?.body))).toEqual({ source: 'bilibili', mid: '123' });
+
+  fetchMock.mockResolvedValueOnce(ok({ total: 2, items: [{ bvid: 'ytvid00001' }], channel: { id: 'UCx', name: '频道' } }));
+  await expect(api.expandUpperVideos({ source: 'youtube', channel: '@ch' })).resolves.toEqual({ total: 2, items: [{ bvid: 'ytvid00001' }], channel: { id: 'UCx', name: '频道' } });
+  expect(JSON.parse(String(lastCall().init?.body))).toEqual({ source: 'youtube', channel: '@ch' });
 });
 
 test('createCollectTasksBatch：带 creatorUid 进 body', async () => {

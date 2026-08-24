@@ -1,6 +1,6 @@
 import { type IncomingMessage, type ServerResponse } from 'node:http';
 import type Database from 'better-sqlite3';
-import { extractVideoUrl, expandShortLink, parseVideoUrl, createTask, createTasksBatch, findActiveTask, expandUpperVideos, getTask, deleteTask, retryTask, listTasks, kickTaskScheduler, type FetchLike, type TaskListFilter, type TaskStatus } from '../tasks/tasks.js';
+import { extractVideoUrl, expandShortLink, parseVideoUrl, createTask, createTasksBatch, findActiveTask, expandUpperVideos, parseYtChannelArg, getTask, deleteTask, retryTask, listTasks, kickTaskScheduler, type FetchLike, type TaskListFilter, type TaskStatus } from '../tasks/tasks.js';
 import { json, readJsonBody } from './http-util.js';
 import { toInt } from './filter.js';
 
@@ -19,7 +19,8 @@ import { toInt } from './filter.js';
 //                                  creator/q 只覆盖已入库视频的任务(join 元数据);非法值忽略不抛错
 // GET    /api/collect-tasks/:id    单任务状态（手机每 2s 轮询直到终态）
 // DELETE /api/collect-tasks/:id    删除任务（采集页删除按钮,任意状态可删）
-// POST   /api/upper-videos/expand  { mid } → 经扩展 WS 代理拉 UP 全部视频 + 标注已采（web「按 UP 批量」用）
+// POST   /api/upper-videos/expand  { mid } | { source:'youtube', channel } → 经扩展 WS 代理拉
+//                                  UP/频道全部视频 + 标注已采（web「按 UP 批量」用，2026-08-24 双平台）
 export async function handleTasksHttp(req: IncomingMessage, res: ServerResponse, db: Database.Database): Promise<void> {
   const url = new URL(req.url ?? '/', 'http://localhost');
   const pathname = url.pathname;
@@ -126,15 +127,28 @@ export async function handleTasksHttp(req: IncomingMessage, res: ServerResponse,
     return;
   }
 
-  // UP 全部视频列表（经扩展代理拉取；main.ts 把 /api/upper-videos 前缀路由到本 handler）
+  // UP/频道全部视频列表（经扩展代理拉取；main.ts 把 /api/upper-videos 前缀路由到本 handler）
+  // 2026-08-24 双平台：body { source: 'bilibili', mid } | { source: 'youtube', channel: <@handle|UCxxx|URL> }；
+  // source 缺省 bilibili（兼容旧 web 只传 mid 的调用）。
   if (pathname === '/api/upper-videos/expand') {
     if (req.method !== 'POST') { json(res, 405, { ok: false, error: 'method not allowed' }); return; }
     const body = await readJsonBody(req);
-    const mid = typeof body?.mid === 'string' ? body.mid.trim() : '';
-    if (!/^\d+$/.test(mid)) { json(res, 400, { ok: false, error: 'mid（B 站用户数字 ID）required' }); return; }
+    const source = body?.source === 'youtube' ? 'youtube' : 'bilibili';
     try {
-      const r = await expandUpperVideos(db, mid);
-      json(res, 200, { ok: true, ...r });
+      if (source === 'youtube') {
+        // 频道参数解析在 server 单点完成（tasks.parseYtChannelArg），web 只传原始输入
+        const channel = typeof body?.channel === 'string' ? body.channel.trim() : '';
+        if (!channel) { json(res, 400, { ok: false, error: 'channel（@handle / UC 开头 channelId / 频道页 URL）required' }); return; }
+        let ident: { handle?: string; channelId?: string; custom?: string };
+        try { ident = parseYtChannelArg(channel); } catch (e) { json(res, 400, { ok: false, error: String((e as Error).message) }); return; }
+        const r = await expandUpperVideos(db, { source: 'youtube', ident });
+        json(res, 200, { ok: true, ...r });
+      } else {
+        const mid = typeof body?.mid === 'string' ? body.mid.trim() : '';
+        if (!/^\d+$/.test(mid)) { json(res, 400, { ok: false, error: 'mid（B 站用户数字 ID）required' }); return; }
+        const r = await expandUpperVideos(db, { source: 'bilibili', mid });
+        json(res, 200, { ok: true, ...r });
+      }
     } catch (e) {
       // 扩展离线/超时/风控 → 503（可重试的临时态）
       json(res, 503, { ok: false, error: String((e as Error)?.message ?? e) });

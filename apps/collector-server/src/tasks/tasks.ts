@@ -209,18 +209,45 @@ export function createTasksBatch(
   return { created, skipped };
 }
 
-// ── UP 全部视频列表（web 端「按 UP 批量」用，server 经扩展 WS 代理拉取）──
-// server 不直连 B 站（无浏览器 cookie/wbi 环境且数据中心 IP 易风控），分页循环复用扩展的
-// list-upper-videos action（background.js arc/search 封装），页间节流对齐 popup 全量拉取的 500ms。
+// ── UP/频道全部视频列表（web 端「按 UP 批量」用，server 经扩展 WS 代理拉取；2026-08-24 两平台）──
+// server 不直连平台（无浏览器 cookie/wbi 环境且数据中心 IP 易风控），复用扩展 action：
+// bilibili 逐页 list-upper-videos（background.js arc/search 封装，页间节流对齐 popup 的 500ms）；
+// youtube 一次 list-yt-channel-videos（扩展内全量分页 + 1h 缓存，refresh 绕过）。
 export interface UpperVideoItem {
-  bvid: string;
+  bvid: string;          // 平台内视频 ID：B 站 BV 号 / YouTube 11 位 ID（沿用字段名兼容渲染层）
   title: string;
   created: number | null;
   play: number | null;
   length: string | null; // arc/search 原样 "MM:SS" / "HH:MM:SS"
   pic: string | null;    // 封面 URL（"//" 协议头相对形式归一为 https:）
-  collected: boolean;    // 已入库（videos 表命中）
+  collected: boolean;    // 已入库（videos 表按平台命中）
 }
+
+// ── YouTube 频道标识与参数解析（2026-08-24 从 cli/commands/collect.ts 下沉，http 端点复用）──
+/** 频道标识（扩展 list-yt-channel-videos action 的 ident 参数）。 */
+export interface YtChannelIdent { handle?: string; channelId?: string; custom?: string; }
+
+/** 用户输入（@handle / UCxxx / 频道页 URL）→ ident。无法识别抛错（调用方转 400/ARGS）。 */
+export function parseYtChannelArg(arg: string): YtChannelIdent {
+  const a = arg.trim();
+  if (/^@[\w.-]{3,30}$/.test(a)) return { handle: a };
+  if (/^UC[\w-]{22}$/.test(a)) return { channelId: a };
+  try {
+    const u = new URL(a);
+    if (u.hostname === 'youtube.com' || u.hostname.endsWith('.youtube.com')) {
+      const seg = u.pathname.split('/').filter(Boolean);
+      if (seg[0] && /^@[\w.-]{3,30}$/.test(seg[0])) return { handle: seg[0] };
+      if (seg[0] === 'channel' && seg[1] && /^UC[\w-]{22}$/.test(seg[1])) return { channelId: seg[1] };
+      if ((seg[0] === 'c' || seg[0] === 'user') && seg[1] && /^[\w.-]+$/.test(seg[1])) return { custom: seg[1] };
+    }
+  } catch { /* 非 URL → 落到下面统一报错 */ }
+  throw new Error(`无法识别的频道参数：${arg}（支持 @handle / UC 开头 channelId / 频道页 URL）`);
+}
+
+/** expand 查询（联合类型分平台）：B 站按 mid 逐页；YouTube 按 ident 一次全量。 */
+export type ExpandUpperQuery =
+  | { source: 'bilibili'; mid: string }
+  | { source: 'youtube'; ident: YtChannelIdent };
 
 // 封面 URL 归一：arc/search 的 pic 常为 "//i2.hdslb.com/..." 协议头相对形式，补 https:
 function normalizePic(p: unknown): string | null {
@@ -242,12 +269,69 @@ export interface UpperExpandDeps {
 }
 
 const UPPER_PAGE_TIMEOUT_MS = 30_000; // 单页（30 条）30s 上限，全量循环整体不设超时
+const YT_CHANNEL_TIMEOUT_MS = 180_000; // YouTube 全量分页在扩展内完成（大频道十几秒），对齐 CLI 默认采集超时
+
+// collected 标注：videos 表按平台 source_vid IN 分批查（SQLite 绑定变量上限兜底 chunk 500）
+function markCollected(db: Database.Database, items: UpperVideoItem[], source: 'bilibili' | 'youtube'): void {
+  for (let i = 0; i < items.length; i += 500) {
+    const chunk = items.slice(i, i + 500);
+    const ph = chunk.map(() => '?').join(',');
+    const rows = db.prepare(
+      `SELECT source_vid FROM videos WHERE source = ? AND source_vid IN (${ph})`,
+    ).all(source, ...chunk.map((x) => x.bvid)) as Array<{ source_vid: string }>;
+    const hit = new Set(rows.map((row) => row.source_vid));
+    for (const it of chunk) it.collected = hit.has(it.bvid);
+  }
+}
+
+// YouTube 频道展开：一次 list-yt-channel-videos 全量回执（扩展内分页 + 1h 缓存，refresh 绕过）。
+// 顺带落 creator 最小行（source_uid=channelId + name）——库里无该频道才写，批量任务的 UP 筛选归属；
+// 完整频道统计（订阅数等）需 about 页抓取，扩展侧后续补（见 README 待建）。
+async function expandYtChannelVideos(
+  db: Database.Database,
+  ident: YtChannelIdent,
+  reqCmd: NonNullable<UpperExpandDeps['requestCommand']>,
+  clientId: string,
+): Promise<{ total: number; items: UpperVideoItem[]; channel: { id: string | null; name: string | null } }> {
+  const r = await reqCmd(clientId, 'list-yt-channel-videos', { ident, refresh: true }, YT_CHANNEL_TIMEOUT_MS);
+  if (!r.ok) throw new Error(r.code === 'offline' ? '扩展离线（拉取中断）' : '扩展执行超时');
+  const result = r.result ?? {};
+  if (result.ok === false) throw new Error(String(result.error ?? 'list-yt-channel-videos 失败'));
+  const data = result.data ?? {};
+  const raw: Array<{ vid?: unknown; title?: unknown; created?: unknown; play?: unknown; length?: unknown; pic?: unknown }> =
+    Array.isArray(data.items) ? data.items : [];
+  const items: UpperVideoItem[] = [];
+  for (const v of raw) {
+    if (typeof v?.vid !== 'string') continue;
+    items.push({
+      bvid: v.vid,
+      title: typeof v.title === 'string' ? v.title : '',
+      created: typeof v.created === 'number' ? v.created : null,
+      play: typeof v.play === 'number' ? v.play : null,
+      length: typeof v.length === 'string' ? v.length : null,
+      pic: normalizePic(v.pic),
+      collected: false,
+    });
+  }
+  const channelId = typeof data.channel_id === 'string' && data.channel_id ? data.channel_id : null;
+  const channelName = typeof data.channel_name === 'string' && data.channel_name ? data.channel_name : null;
+  if (channelId) {
+    const exists = db.prepare("SELECT 1 FROM creators WHERE source = 'youtube' AND source_uid = ?").get(channelId);
+    if (!exists) {
+      const now = Date.now();
+      db.prepare('INSERT INTO creators (source, source_uid, name, first_seen_at, updated_at) VALUES (?, ?, ?, ?, ?)')
+        .run('youtube', channelId, channelName, now, now);
+    }
+  }
+  markCollected(db, items, 'youtube');
+  return { total: typeof data.total === 'number' ? data.total : items.length, items, channel: { id: channelId, name: channelName } };
+}
 
 export async function expandUpperVideos(
   db: Database.Database,
-  mid: string,
+  query: ExpandUpperQuery,
   deps: UpperExpandDeps = {},
-): Promise<{ total: number; items: UpperVideoItem[] }> {
+): Promise<{ total: number; items: UpperVideoItem[]; channel?: { id: string | null; name: string | null } }> {
   const lsClients = deps.listClients ?? getWsBridge().listClients;
   const reqCmd = deps.requestCommand ?? getWsBridge().requestCommand;
   const sleep = deps.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
@@ -257,10 +341,14 @@ export async function expandUpperVideos(
   if (clients.length === 0) throw new Error('扩展离线：UP 视频列表需经桌面扩展拉取（连上扩展后重试）');
   // 客户端选择（2026-08-23 任务派发池）：优先接受任务派发的客户端——批量采集编排尽量落在
   // 专职采集机上（B 站 API 配额/风控压力同源）。池空（全仅上报）回退任意在线：
-  // list-upper-videos 是纯 API 代理查询，无标签页/UI 干扰，不必拒绝。
+  // list-upper-videos / list-yt-channel-videos 是纯 API 代理查询，无标签页/UI 干扰，不必拒绝。
   const pool = clients.filter((c) => c.task_dispatch_enabled !== false);
   const clientId = (pool[0] ?? clients[0]).client_id;
 
+  // 平台分派：YouTube 一次全量回执（扩展内分页），B 站走下方逐页循环
+  if (query.source === 'youtube') return expandYtChannelVideos(db, query.ident, reqCmd, clientId);
+
+  const mid = query.mid;
   const items: UpperVideoItem[] = [];
   const seen = new Set<string>(); // bvid 去重（页间新投稿导致分页位移重叠时防重复）
   let total = 0;
@@ -296,16 +384,7 @@ export async function expandUpperVideos(
     await sleep(gap); // 页间节流防风控
   }
 
-  // 标注已采：videos 表 source_vid IN 分批查（SQLite 绑定变量上限兜底 chunk 500）
-  for (let i = 0; i < items.length; i += 500) {
-    const chunk = items.slice(i, i + 500);
-    const ph = chunk.map(() => '?').join(',');
-    const rows = db.prepare(
-      `SELECT source_vid FROM videos WHERE source = 'bilibili' AND source_vid IN (${ph})`,
-    ).all(...chunk.map((x) => x.bvid)) as Array<{ source_vid: string }>;
-    const hit = new Set(rows.map((row) => row.source_vid));
-    for (const it of chunk) it.collected = hit.has(it.bvid);
-  }
+  markCollected(db, items, 'bilibili');
   return { total, items };
 }
 
