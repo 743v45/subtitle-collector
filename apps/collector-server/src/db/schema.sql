@@ -159,3 +159,13 @@ CREATE TABLE IF NOT EXISTS collect_tasks (
   finished_at INTEGER
 );
 CREATE INDEX IF NOT EXISTS idx_tasks_status ON collect_tasks(status, created_at);
+
+-- 客户端注册表（popup 可命名；client_id 8 位短 id 由扩展生成且不变，name 可改可清除）。
+-- 持久层：在线态在 ws/server.ts 内存 connections（重启即失），本表保名字与时间线不丢。
+-- GET /api/clients 合并两源出全量：connected_at 起「在线时长」，last_seen_at 起「离线时长」。
+CREATE TABLE IF NOT EXISTS clients (
+  client_id     TEXT PRIMARY KEY,
+  name          TEXT,
+  first_seen_at INTEGER NOT NULL, -- server 首次见到该 client_id（hello upsert 插入时）
+  last_seen_at  INTEGER NOT NULL  -- 最近一次连接建立/断开时刻（hello upsert / close touch）
+);

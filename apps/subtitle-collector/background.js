@@ -1,5 +1,5 @@
 import { parseServerUrl, resolveActiveServer, normalizeServers, genServerId, SERVERS_KEY, ACTIVE_SERVER_KEY, DEFAULT_SERVER_URL, DEFAULT_SERVER_NAME } from "./servers.mjs";
-import { shouldReport, genClientId, CLIENT_ID_KEY, REPORTING_KEY } from "./reporting.mjs";
+import { shouldReport, genClientId, normalizeClientName, CLIENT_ID_KEY, CLIENT_NAME_KEY, REPORTING_KEY } from "./reporting.mjs";
 import { shouldAcceptTasks, TASK_DISPATCH_KEY, TASK_DISPATCH_DISABLED_ERROR } from "./task-dispatch.mjs";
 import { resolveConnectionMode, isStandalone, CONNECTION_MODE_KEY, MODE_SERVER, MODE_STANDALONE } from "./connection-mode.mjs";
 import { extractKeysFromNav } from "./wbi.js";
@@ -22,6 +22,7 @@ let reconnectAttempts = 0;
 let reportingEnabled = true; // 内存态；启动从 storage 载入，默认 true（fail-open）
 let taskDispatchEnabled = true; // 内存态；任务派发开关（false=仅上报状态），启动从 storage 载入，默认 true（fail-open）
 let clientId = null;         // 内存态；启动载入或首次生成
+let clientName = null;       // 内存态；客户端名字（popup 可改名，id 不变），启动从 storage 载入，null=未命名
 let connectionMode = MODE_SERVER; // 内存态；启动载入，默认 server（向后兼容）。standalone=纯扩展：不连不上报
 let activeServer = null;          // 内存态；当前激活 server 的解析结果（{wsUrl,httpBase,pingUrl,token}）。启动载入 / SET_ACTIVE_SERVER 切换
 let activeServerId = null;        // 内存态；当前激活 server entry.id（WS_STATUS 回执、popup 乐观更新用）
@@ -391,17 +392,18 @@ async function resumeStaleFetches() {
   }
 }
 
-// 启动载入持久态：clientId（无则生成并回写）、reportingEnabled（默认 true）、connectionMode（默认 server）、taskDispatchEnabled（默认 true）
+// 启动载入持久态：clientId（无则生成并回写）、clientName（null=未命名）、reportingEnabled（默认 true）、connectionMode（默认 server）、taskDispatchEnabled（默认 true）
 async function loadPersistedState() {
   // 旧版整表 pendingIngests 数组 → 逐键队列（升级瞬间不丢已离线暂存的 payload）
   await ingestQueue.migrateLegacy();
-  const items = await chrome.storage.local.get([CLIENT_ID_KEY, REPORTING_KEY, TASK_DISPATCH_KEY, CONNECTION_MODE_KEY, SERVERS_KEY, ACTIVE_SERVER_KEY]);
+  const items = await chrome.storage.local.get([CLIENT_ID_KEY, CLIENT_NAME_KEY, REPORTING_KEY, TASK_DISPATCH_KEY, CONNECTION_MODE_KEY, SERVERS_KEY, ACTIVE_SERVER_KEY]);
   if (items[CLIENT_ID_KEY]) {
     clientId = items[CLIENT_ID_KEY];
   } else {
     clientId = genClientId();
     await chrome.storage.local.set({ [CLIENT_ID_KEY]: clientId });
   }
+  clientName = normalizeClientName(items[CLIENT_NAME_KEY]); // undefined/null/旧脏值 → null
   reportingEnabled = shouldReport(items[REPORTING_KEY]); // undefined → true
   taskDispatchEnabled = shouldAcceptTasks(items[TASK_DISPATCH_KEY]); // undefined → true
   connectionMode = resolveConnectionMode(items[CONNECTION_MODE_KEY]); // undefined → server
@@ -478,7 +480,7 @@ async function connect() {
     reconnectAttempts = 0;
     // token 可选（server 端可不要 token）：有则放 hello（兼容 server 从 hello body 取 token）；
     // wsUrl 原样含 ?token= query，兼容 server 从握手 URL 取 token——双兼容。
-    const hello = { type: "hello", ext_version: EXT_VERSION, client_id: clientId, reporting_enabled: reportingEnabled, task_dispatch_enabled: taskDispatchEnabled };
+    const hello = { type: "hello", ext_version: EXT_VERSION, client_id: clientId, client_name: clientName, reporting_enabled: reportingEnabled, task_dispatch_enabled: taskDispatchEnabled };
     if (activeServer.token) hello.token = activeServer.token;
     ws.send(JSON.stringify(hello));
     // flushPendingIngests 移到 hello-ack：鉴权通过后才补发（未握手发 ingest 会被 server 丢，server.ts:44 守卫）
@@ -1010,6 +1012,12 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       sendResponse({ ok: true, task_dispatch_enabled: enabled });
     });
     return true;
+  } else if (msg?.type === "SET_CLIENT_NAME") {
+    // popup 改名（id 不变）：归一 → 内存 + storage 落盘 → client-name-state 同步 server（null=清除）
+    clientName = normalizeClientName(msg.name);
+    chrome.storage.local.set({ [CLIENT_NAME_KEY]: clientName });
+    if (ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: "client-name-state", name: clientName }));
+    sendResponse({ ok: true, client_name: clientName });
   } else if (msg?.type === "SET_CONNECTION_MODE") {
     const newMode = resolveConnectionMode(msg.mode);
     applyConnectionMode(newMode).then(async (mode) => {

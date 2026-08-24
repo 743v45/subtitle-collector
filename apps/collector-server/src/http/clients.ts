@@ -1,4 +1,5 @@
 import { type IncomingMessage, type ServerResponse } from 'node:http';
+import type Database from 'better-sqlite3';
 import { listClients, requestReportingChange, requestTaskDispatchChange, requestCommand } from '../ws/server.js';
 import { json, readJsonBody } from './http-util.js';
 
@@ -24,11 +25,12 @@ async function handleTogglePost(
   json(res, 200, { client_id: clientId, ...r }); // r 含 ok:true + 新状态字段（reporting_enabled / task_dispatch_enabled）
 }
 
-export async function handleClientsHttp(req: IncomingMessage, res: ServerResponse): Promise<void> {
+export async function handleClientsHttp(req: IncomingMessage, res: ServerResponse, db: Database.Database): Promise<void> {
   const url = new URL(req.url ?? '/', 'http://localhost');
   const pathname = url.pathname;
 
-  if (pathname === '/api/clients') { json(res, 200, { ok: true, clients: listClients() }); return; }
+  // 全量视图：DB 注册表（含离线，名字/时间线持久）合并内存在线态（2026-08-24 客户端命名）
+  if (pathname === '/api/clients') { json(res, 200, { ok: true, clients: listClients(db) }); return; }
 
   // 两开关端点（CLI clients reporting / task-dispatch、web 客户端页）共用同构处理
   const toggles: Array<[RegExp, (clientId: string, enabled: boolean) => Promise<ToggleResult>]> = [

@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { shouldReport, genClientId, CLIENT_ID_KEY, REPORTING_KEY } from '../reporting.mjs';
+import { shouldReport, genClientId, normalizeClientName, CLIENT_ID_KEY, CLIENT_NAME_KEY, REPORTING_KEY } from '../reporting.mjs';
 
 test('shouldReport：true/未设→上报，false→不上报（fail-open）', () => {
   assert.equal(shouldReport(true), true);
@@ -37,5 +37,27 @@ test('genClientId 兜底路径：crypto 缺失时走 Math.random（确定性桩�
 
 test('storage key 常量稳定（对齐协议）', () => {
   assert.equal(CLIENT_ID_KEY, 'clientId');
+  assert.equal(CLIENT_NAME_KEY, 'clientName');
   assert.equal(REPORTING_KEY, 'reportingEnabled');
+});
+
+test('normalizeClientName：trim / 空→null / 非字符串→null（未命名语义）', () => {
+  assert.equal(normalizeClientName('  书房 iMac  '), '书房 iMac', '两侧空白 trim');
+  assert.equal(normalizeClientName('   '), null, '纯空白 → null');
+  assert.equal(normalizeClientName(''), null, '空串 → null');
+  assert.equal(normalizeClientName(undefined), null, 'undefined → null');
+  assert.equal(normalizeClientName(null), null, 'null → null');
+  assert.equal(normalizeClientName(123), null, '非字符串 → null');
+});
+
+test('normalizeClientName：超长按 code points 截断到 32（中文/emoji 不劈半个字）', () => {
+  // ASCII 超长
+  assert.equal(normalizeClientName('a'.repeat(40)), 'a'.repeat(32), '40 → 截 32');
+  assert.equal(normalizeClientName('a'.repeat(32)), 'a'.repeat(32), '恰好 32 不动');
+  // emoji：UTF-16 里占 2 单元，按 code points 数不劈半个（截后 .length=64）
+  const emoji32 = '😀'.repeat(32);
+  assert.equal(normalizeClientName('😀'.repeat(40)), emoji32, '40 emoji → 32 emoji');
+  assert.equal(Array.from(normalizeClientName('😀'.repeat(40))).length, 32, 'code points 计数=32');
+  // 中文混排
+  assert.equal(normalizeClientName('字'.repeat(33)), '字'.repeat(32), '33 中文 → 32');
 });

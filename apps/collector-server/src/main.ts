@@ -78,10 +78,10 @@ function serveStatic(req: IncomingMessage, res: ServerResponse) {
   res.end(readFileSync(fp));
 }
 
-// /api/* 路由分发表（createServer 回调按序前缀匹配）。clients handler 原生两参，包一层统一签名；
+// /api/* 路由分发表（createServer 回调按序前缀匹配）；全部 handler 统一三参（req, res, db）。
 // /api/upper-videos/expand（按 UP 批量的列表拉取）复用 tasks handler——批量采集域。
 const API_ROUTES: Array<[prefix: string, handler: (req: IncomingMessage, res: ServerResponse, db: Database.Database) => Promise<void> | void]> = [
-  ['/api/clients', (req, res) => handleClientsHttp(req, res)],
+  ['/api/clients', handleClientsHttp],
   ['/api/collect-tasks', (req, res, db) => handleTasksHttp(req, res, db)],
   ['/api/upper-videos', (req, res, db) => handleTasksHttp(req, res, db)],
   ['/api/categories', (req, res, db) => handleCategoriesHttp(req, res, db)],

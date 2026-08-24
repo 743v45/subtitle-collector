@@ -35,8 +35,10 @@ const DEFAULT_COMMAND_TIMEOUT_MS = 5000;
 // ── 纯处理函数（可测：注入 ServerClient + 参数，返回结构化数据；不直接碰 stdout/exit） ──
 
 /**
- * `clients list`：取在线客户端列表，包裹成全局 list 规范 `{items, total}`。
- * server `GET /api/clients` → `{clients: [...]}`；`ServerClient.listClients` 已拆出数组。
+ * `clients list`：取客户端列表，包裹成全局 list 规范 `{items, total}`。
+ * server `GET /api/clients` → `{clients: [...]}`（2026-08-24 起为全量视图：DB 注册表
+ * 含离线客户端 + 在线态合并，字段含 client_name/connected/connected_at/last_seen_at）；
+ * `ServerClient.listClients` 已拆出数组。
  */
 export async function clientsList(
   client: ServerClient,
@@ -126,7 +128,7 @@ export function buildClientsCommand(): Command {
   // clients list
   cmd
     .command('list')
-    .description('列出在线客户端（GET /api/clients）')
+    .description('列出客户端（含离线：DB 注册表合并在线态，带名字与在线/离线时长；GET /api/clients）')
     .action(async () => {
       const ctx = getCliContext();
       const client = new ServerClient(ctx.serverUrl, ctx.token);

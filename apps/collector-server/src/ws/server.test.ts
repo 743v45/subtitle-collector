@@ -6,7 +6,7 @@ import { randomBytes } from 'node:crypto';
 import WebSocket from 'ws';
 import { openDb, migrate } from '../db/migrate.js';
 import { ingestVideo } from '../db/ingest.js';
-import { attachWsServer, broadcastCommand, listClients, sendToClient, requestReportingChange, requestCommand } from './server.js';
+import { attachWsServer, broadcastCommand, listClients, listOnlineClients, sendToClient, requestReportingChange, requestCommand } from './server.js';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -133,7 +133,7 @@ test('hello 带 client_id/reporting_enabled：服务端记录到 ExtConn，listC
     const ws = await connect(ctx.port);
     ws.send(JSON.stringify({ type: 'hello', ext_version: '0.1.0', token: 'test-token', client_id: 'ext-A', reporting_enabled: true }));
     await new Promise(r => setTimeout(r, 50));
-    const clients = listClients();
+    const clients = listClients(ctx.db);
     assert.equal(clients.length, 1);
     assert.equal(clients[0].client_id, 'ext-A');
     assert.equal(clients[0].reporting_enabled, true);
@@ -149,9 +149,9 @@ test('多客户端：两个不同 client_id 各自可见、互不干扰', async 
     const wsB = await connect(ctx.port);
     wsB.send(JSON.stringify({ type: 'hello', ext_version: '0.1.0', token: 'test-token', client_id: 'ext-B', reporting_enabled: false }));
     await new Promise(r => setTimeout(r, 60));
-    const ids = listClients().map(c => c.client_id).sort();
+    const ids = listClients(ctx.db).map(c => c.client_id).sort();
     assert.deepEqual(ids, ['ext-A', 'ext-B']);
-    const b = listClients().find(c => c.client_id === 'ext-B')!;
+    const b = listClients(ctx.db).find(c => c.client_id === 'ext-B')!;
     assert.equal(b.reporting_enabled, false);
     wsA.close(); wsB.close();
   } finally { ctx.cleanup(); }
@@ -193,7 +193,7 @@ test('reporting-state：扩展发此消息，服务端更新该 conn 状态', as
     await new Promise(r => setTimeout(r, 40));
     ws.send(JSON.stringify({ type: 'reporting-state', enabled: false }));
     await new Promise(r => setTimeout(r, 40));
-    const c = listClients().find(x => x.client_id === 'ext-A')!;
+    const c = listClients(ctx.db).find(x => x.client_id === 'ext-A')!;
     assert.equal(c.reporting_enabled, false);
     ws.close();
   } finally { ctx.cleanup(); }
@@ -214,7 +214,7 @@ test('requestReportingChange：下发 set-reporting 并等 result 回执，更�
     const r = await requestReportingChange('ext-A', false);
     assert.equal(r.ok, true);
     assert.equal(r.reporting_enabled, false);
-    const c = listClients().find(x => x.client_id === 'ext-A')!;
+    const c = listClients(ctx.db).find(x => x.client_id === 'ext-A')!;
     assert.equal(c.reporting_enabled, false);
     ws.close();
   } finally { ctx.cleanup(); }
@@ -340,18 +340,20 @@ test('心跳：半开连接（不回 pong）被 sweep 清理，正常连接保�
     wsA = await connect(ctx.port);
     wsA.send(JSON.stringify({ type: 'hello', ext_version: '0.1.0', token: 'test-token', client_id: 'ext-A', reporting_enabled: true }));
     await new Promise(r => setTimeout(r, 30));
-    assert.deepEqual(listClients().map(c => c.client_id).sort(), ['ext-A']);
+    assert.deepEqual(listOnlineClients().map(c => c.client_id).sort(), ['ext-A']);
 
     // 半开客户端 B：raw socket 发 hello 后静默
     halfSock = await connectHalfOpen(ctx.port, 'ext-half');
     await new Promise(r => setTimeout(r, 30));
-    assert.ok(listClients().map(c => c.client_id).includes('ext-half'), '半开连接应已进入 listClients');
+    assert.ok(listOnlineClients().map(c => c.client_id).includes('ext-half'), '半开连接应已进入在线池');
 
     // 等 ≥ 2 个心跳周期（B 连上后第一次 sweep 设 isAlive=false+ping，第二次 terminate）
     await new Promise(r => setTimeout(r, 300));
-    const ids = listClients().map(c => c.client_id).sort();
-    assert.ok(!ids.includes('ext-half'), '半开连接应被心跳清理');
+    const ids = listOnlineClients().map(c => c.client_id).sort();
+    assert.ok(!ids.includes('ext-half'), '半开连接应被心跳清出在线池');
     assert.ok(ids.includes('ext-A'), '正常连接应保留');
+    // 全量视图（listClients(ctx.db)）不受心跳影响：ext-half 留在 DB 注册表（含离线）
+    assert.ok(listClients(ctx.db).map(c => c.client_id).includes('ext-half'), '离线客户端仍留存 DB 注册表');
   } finally {
     halfSock?.destroy();
     wsA?.close();

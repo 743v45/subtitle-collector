@@ -50,7 +50,7 @@ collector-cli --db <repo>/data/bilibili-collector.db stats overview
 | `sub search <关键词>` | DB 只读 | 字幕正文检索:`--ctx --regex --max-videos --full`;AI 打标的数据源 |
 | `translate pending/source/fill` | pending/source 读 DB;fill 走 server | 补翻工作流(无中文轨视频):`pending` 查缺口(带各源语言行数)→ `source <bvid> --from <lan>` 取逐行待翻文本 → 会话内翻译 → `fill <bvid> --from <lan> --file <译文>` 写回 zh-manual 轨 |
 | `tags list/apply/remove` | list 读 DB;apply/remove 走 server | `tags apply <bvid...> --names <csv> --source manual\|batch\|ai\|system`(打标即建标;system=系统状态档如 no-subtitle,采集链路自动打/摘) |
-| `clients list/reporting/task-dispatch/command` | server HTTP | 扩展客户端管控;`reporting <id> <on\|off>` 切上报 / `task-dispatch <id> <on\|off>` 切任务派发(off=仅上报状态,调度器不派任务);`command <id> <action> --timeout <ms>` |
+| `clients list/reporting/task-dispatch/command` | server HTTP | 扩展客户端管控;`list` 含离线客户端(DB 注册表合并在线态,带 popup 改的名字与在线/离线时长);`reporting <id> <on\|off>` 切上报 / `task-dispatch <id> <on\|off>` 切任务派发(off=仅上报状态,调度器不派任务);`command <id> <action> --timeout <ms>` |
 | `server ping/status/start/stop` | 本地 | 探活 / 起停(pid 文件;`start --no-detached --port`) |
 | `collect …`(12 子命令) | server→扩展 | 见下方 |
 

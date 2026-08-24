@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-08-24T00:31:42.490Z",
+  "generatedAt": "2026-08-24T02:05:22.907Z",
   "rules": {
     "complexity": 15,
     "maxLines": 400
@@ -49,7 +49,7 @@
       "maxLines": 585
     },
     "apps/collector-server/src/ws/server.ts": {
-      "complexity": 36
+      "complexity": 29
     },
     "apps/collector-web/src/api.ts": {
       "complexity": 26,
@@ -96,7 +96,7 @@
     },
     "apps/subtitle-collector/background.js": {
       "complexity": 168,
-      "maxLines": 1291
+      "maxLines": 1299
     },
     "apps/subtitle-collector/content-yt.js": {
       "complexity": 40,
@@ -123,7 +123,7 @@
     },
     "apps/subtitle-collector/src/popup/Popup.tsx": {
       "complexity": 34,
-      "maxLines": 1818
+      "maxLines": 1773
     },
     "apps/subtitle-collector/src/popup/hooks.ts": {
       "maxLines": 894,

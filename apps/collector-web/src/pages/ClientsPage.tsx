@@ -7,13 +7,91 @@ import type { ClientInfo } from '../types';
 
 const REFRESH_MS = 3000;
 
+// 在线/离线时长（ms → 中文短句；轮询每 3s 随刷新重算）
+function fmtDuration(ms: number): string {
+  const s = Math.floor(ms / 1000);
+  if (s < 60) return '不到 1 分钟';
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m} 分钟`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h} 小时${m % 60 ? ` ${m % 60} 分` : ''}`;
+  const d = Math.floor(h / 24);
+  return `${d} 天${h % 24 ? ` ${h % 24} 小时` : ''}`;
+}
+
+// 单张客户端卡（2026-08-24 自 ClientsPage 抽出，偿还复杂度台账）：
+// 名字优先展示（popup 改名，id 不变）；在线/离线状态与时长；离线不渲染远程操作按钮（须在线 404）。
+function ClientCard({ c, now, busy, onToggleReporting, onToggleDispatch }: {
+  c: ClientInfo;
+  now: number;
+  busy: boolean;
+  onToggleReporting: (c: ClientInfo) => void;
+  onToggleDispatch: (c: ClientInfo) => void;
+}) {
+  // 两开关按钮的文案/图标/变体预计算（各以 1 个三元替代 4 个，降 ClientCard 复杂度）
+  const dispatchOn = c.task_dispatch_enabled === true;
+  const dispatchBtn = dispatchOn
+    ? { variant: 'outline' as const, icon: <Pause className="size-4" aria-hidden="true" />, label: '停派任务', title: '停派后调度器不再给该客户端派采集任务（仅保持连接上报）' }
+    : { variant: 'default' as const, icon: <Play className="size-4" aria-hidden="true" />, label: '恢复接任务', title: '恢复后调度器可正常派发采集任务' };
+  const reportingOn = c.reporting_enabled === true;
+  const reportingBtn = reportingOn
+    ? { variant: 'default' as const, icon: <Pause className="size-4" aria-hidden="true" />, label: '暂停自动上报', cls: 'bg-emerald-700 hover:bg-emerald-700/90' }
+    : { variant: 'outline' as const, icon: <Play className="size-4" aria-hidden="true" />, label: '恢复自动上报', cls: '' };
+  return (
+    <Card>
+      <div className="flex flex-row items-center justify-between gap-3 p-4">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2">
+            <div className="truncate text-base font-medium">{c.client_name ?? c.client_id}</div>
+            {c.client_name && (
+              <code className="shrink-0 font-mono text-xs text-muted-foreground">{c.client_id}</code>
+            )}
+            {dispatchOn === false && c.connected && (
+              <span
+                className="shrink-0 rounded bg-amber-100 px-1.5 py-0.5 text-xs font-medium text-amber-800 dark:bg-amber-900/40 dark:text-amber-300"
+                title="server 调度器不再给该客户端派采集任务（保持连接上报）"
+              >
+                仅上报状态
+              </span>
+            )}
+          </div>
+          <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+            <span className={c.connected ? 'text-emerald-600 dark:text-emerald-400' : 'text-muted-foreground/60'}>
+              {c.connected ? '●' : '○'}
+            </span>
+            {/* connected_at null 即离线（server 保证与 connected 一致）：在线时长从连接建立起算，离线从断开时刻起算 */}
+            {c.connected_at != null
+              ? <span>在线 {fmtDuration(now - c.connected_at)}</span>
+              : <span>离线 {fmtDuration(now - c.last_seen_at)} · 最后在线 {new Date(c.last_seen_at).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}</span>
+            }
+            <span>· 版本 {c.ext_version ?? '-'}</span>
+          </div>
+        </div>
+        {c.connected && (
+          <div className="flex shrink-0 items-center gap-2">
+            <Button variant={dispatchBtn.variant} size="sm" disabled={busy} onClick={() => onToggleDispatch(c)} title={dispatchBtn.title}>
+              {dispatchBtn.icon}{dispatchBtn.label}
+            </Button>
+            <Button variant={reportingBtn.variant} size="sm" disabled={busy} onClick={() => onToggleReporting(c)} className={reportingBtn.cls}>
+              {reportingBtn.icon}{reportingBtn.label}
+            </Button>
+          </div>
+        )}
+      </div>
+    </Card>
+  );
+}
+
 export function ClientsPage() {
   const [clients, setClients] = useState<ClientInfo[]>([]);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const aliveRef = useRef(true);
+  // 时长显示的基准时钟：随每轮刷新推进（refresh 是闭包外的 setNow，安全）
+  const [now, setNow] = useState(Date.now());
 
   const refresh = () => {
+    setNow(Date.now());
     listClients()
       .then((cs) => { if (aliveRef.current) { setClients(cs); setErr(null); } })
       .catch((e: any) => { if (aliveRef.current) setErr(String(e?.message ?? e)); });
@@ -51,59 +129,29 @@ export function ClientsPage() {
     }
   };
 
+  const online = clients.filter((c) => c.connected).length;
+
   return (
     <div className="space-y-3">
-      <div className="text-sm tabular-nums text-muted-foreground">在线客户端 {clients.length} 个 · 每 {REFRESH_MS / 1000}s 刷新</div>
+      <div className="text-sm tabular-nums text-muted-foreground">
+        客户端 {clients.length} 个 · 在线 {online} · 每 {REFRESH_MS / 1000}s 刷新
+      </div>
       {err && <div className="text-sm text-destructive">操作失败：{err}</div>}
       <div className="space-y-2">
         {clients.map((c) => (
-          <Card key={c.client_id}>
-            <div className="flex flex-row items-center justify-between gap-3 p-4">
-              <div className="min-w-0">
-                <div className="flex items-center gap-2">
-                  <div className="truncate font-mono text-base font-medium">{c.client_id}</div>
-                  {!c.task_dispatch_enabled && (
-                    <span
-                      className="shrink-0 rounded bg-amber-100 px-1.5 py-0.5 text-xs font-medium text-amber-800 dark:bg-amber-900/40 dark:text-amber-300"
-                      title="server 调度器不再给该客户端派采集任务（保持连接上报）"
-                    >
-                      仅上报状态
-                    </span>
-                  )}
-                </div>
-                <div className="text-xs text-muted-foreground">
-                  版本 {c.ext_version ?? '-'}
-                </div>
-              </div>
-              <div className="flex shrink-0 items-center gap-2">
-                <Button
-                  variant={c.task_dispatch_enabled ? 'outline' : 'default'}
-                  size="sm"
-                  disabled={busyId === c.client_id}
-                  onClick={() => toggleDispatch(c)}
-                  title={c.task_dispatch_enabled ? '停派后调度器不再给该客户端派采集任务（仅保持连接上报）' : '恢复后调度器可正常派发采集任务'}
-                >
-                  {c.task_dispatch_enabled ? <Pause className="size-4" aria-hidden="true" /> : <Play className="size-4" aria-hidden="true" />}
-                  {c.task_dispatch_enabled ? '停派任务' : '恢复接任务'}
-                </Button>
-                <Button
-                  variant={c.reporting_enabled ? 'default' : 'outline'}
-                  size="sm"
-                  disabled={busyId === c.client_id}
-                  onClick={() => toggle(c)}
-                  className={c.reporting_enabled ? 'bg-emerald-700 hover:bg-emerald-700/90' : ''}
-                >
-                  {c.reporting_enabled ? <Pause className="size-4" aria-hidden="true" /> : <Play className="size-4" aria-hidden="true" />}
-                  {c.reporting_enabled ? '暂停自动上报' : '恢复自动上报'}
-                </Button>
-              </div>
-            </div>
-          </Card>
+          <ClientCard
+            key={c.client_id}
+            c={c}
+            now={now}
+            busy={busyId === c.client_id}
+            onToggleReporting={toggle}
+            onToggleDispatch={toggleDispatch}
+          />
         ))}
         {clients.length === 0 && (
           <Card>
             <div className="p-6 text-center text-sm text-muted-foreground">
-              暂无在线客户端——打开桌面浏览器里的采集扩展并确认其已连接本服务后，会出现在这里
+              暂无已知客户端——打开桌面浏览器里的采集扩展并确认其已连接本服务后，会出现在这里
             </div>
           </Card>
         )}

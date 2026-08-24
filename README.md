@@ -20,6 +20,7 @@ B 站**字幕（subtitle）**相关浏览器扩展与配套服务的 monorepo（
 - ✅ 充电专属视频采集 + 付费标记（`videos list --paid`）
 - ✅ **已采集视频刷新**：视频详情页「刷新字幕」按钮 / 采集页与历史页任务行刷新图标，一键重采（ingest 按 body_hash 幂等去重，内容未变零新增），任务行显示「已刷新：新增 X 版 / 无新增」；UP 批量勾选含已采视频时提交按钮提示将刷新
 - ✅ 客户端任务派发管控：popup/options「仅上报状态」开关（关后调度器不向该客户端派采集任务，保持连接上报；多客户端时任务派给其他机器，全关留 pending）+ web 客户端页 / CLI `clients task-dispatch <id> <on|off>` 远程切换 + `clients list` 可见状态
+- ✅ 客户端命名：popup 底栏「改名」（id 不变，名字本地落盘并经 hello/client-name-state 同步 server `clients` 注册表持久化，清空保存即删除）；web 客户端页 / CLI `clients list` 显示名字、在线/离线时长，**列表含离线客户端**（server 重启不丢，旧 client_id 会留存）
 - ✅ **无字幕标记**：采集确认无字幕（UP 未传 CC 且平台未生成 AI 字幕）自动打 `no-subtitle` 系统档标签（`videos list --tag no-subtitle` 圈定），采到字幕轨时自动摘标——历史存量回填 `scripts/backfill-no-subtitle-tags.mjs`
 - 🚧 无字幕视频兜底：subtitle-extractor 浏览器本地 Whisper 转写（旁挂手动工具，未集成入库链路——转写产物暂无回流 bundle 的桥）；📋 远期改为服务端 ASR 批量转写 `no-subtitle` 标圈定的视频（落地前置：✅ 无字幕标记已就位）
 

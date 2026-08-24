@@ -3,6 +3,7 @@ import { WebSocketServer, WebSocket, type RawData } from 'ws';
 import type { IncomingMessage, Server } from 'node:http';
 import type Database from 'better-sqlite3';
 import { ingestVideo, ingestUpper, type IngestRequest, type IngestUpperRequest } from '../db/ingest.js';
+import { upsertClient, touchClientLastSeen, listKnownClients } from '../db/clients.js';
 import { notifyClientOnline, pushTask } from '../tasks/tasks.js';
 import { amendLateResult, amendLateIngest } from '../tasks/amend.js';
 import { releaseClient } from '../tasks/inflight.js';
@@ -17,6 +18,8 @@ interface ExtConn {
   ws: WebSocket;
   extVersion: string | null;
   clientId: string | null;
+  clientName: string | null; // 客户端名字（hello / client-name-state 上报；null=未命名或已清除）
+  connectedAt: number;       // 本次连接建立时刻（hello 握手时；「在线时长」起算点）
   reportingEnabled: boolean;
   taskDispatchEnabled: boolean; // 2026-08-23 仅上报状态：false = 调度器不派任务（hello 上报，popup 本地切发 task-dispatch-state）
 }
@@ -26,7 +29,37 @@ const connections = new Map<string, ExtConn>(); // key = clientId（hello 后入
 interface PendingEntry { resolve: (v: any) => void; timer: NodeJS.Timeout; }
 const pending = new Map<string, PendingEntry>();
 
-export function attachWsServer(httpServer: Server, _db: Database.Database, expectedToken?: string, heartbeatMs = 30000): void {
+// hello 握手处理（2026-08-24 自 attachWsServer 抽出，偿还复杂度台账）：
+// token 校验 → 解析身份/开关/名字（client_name 三态：string=名 / null=显式清除 /
+// undefined=旧扩展未上报，DB 旧名保留）→ 入连接表 → upsert 注册表 → kick 调度器。
+function handleHello(db: Database.Database, ws: WebSocket, conn: ExtConn, msg: any, expectedToken: string): void {
+  conn.extVersion = typeof msg.ext_version === 'string' ? msg.ext_version : null;
+  // WS 握手 token 校验：非空 token 必须匹配，不匹配 nack+close（防 WS CSRF，学 opencli）。
+  // 空 expectedToken = 无 token 模式 → 跳过校验，任何 hello 都 ack（COLLECTOR_TOKEN= 显式开放，适合内网）。
+  if (expectedToken && msg.token !== expectedToken) {
+    ws.send(JSON.stringify({ type: 'hello-nack', ok: false, error: 'bad token' }));
+    ws.close(4001, 'bad token');
+    console.warn(`[ws] hello 握手失败：token 不匹配（ext_version=${conn.extVersion ?? 'unknown'}）`);
+    return;
+  }
+  console.log(`[ws] hello 握手成功：ext_version=${conn.extVersion ?? 'unknown'}`);
+  ws.send(JSON.stringify({ type: 'hello-ack', ok: true }));
+  conn.clientId = typeof msg.client_id === 'string' && msg.client_id ? msg.client_id : null;
+  conn.reportingEnabled = msg.reporting_enabled !== false; // 缺省 true
+  conn.taskDispatchEnabled = msg.task_dispatch_enabled !== false; // 缺省 true（旧扩展 fail-open）
+  const reportedName = typeof msg.client_name === 'string' ? msg.client_name.trim() : null;
+  conn.clientName = reportedName || null; // 空串视同 null（显式清除）
+  conn.connectedAt = Date.now();
+  if (conn.clientId) {
+    const prev = connections.get(conn.clientId);
+    if (prev && prev.ws !== ws && prev.ws.readyState === WebSocket.OPEN) prev.ws.close(4000, 'replaced');
+    connections.set(conn.clientId, conn);
+    upsertClient(db, conn.clientId, msg.client_name === undefined ? undefined : conn.clientName);
+    notifyClientOnline(); // 扩展上线：kick 采集任务调度器（pending 任务可派发了）
+  }
+}
+
+export function attachWsServer(httpServer: Server, db: Database.Database, expectedToken?: string, heartbeatMs = 30000): void {
   const EXPECTED_TOKEN = expectedToken ?? process.env.COLLECTOR_TOKEN ?? ''; // 空 token = 未配置 → 不校验（无 token 模式，开放，适合内网）；非空 = 必须匹配
   const wss = new WebSocketServer({
     server: httpServer,
@@ -39,7 +72,7 @@ export function attachWsServer(httpServer: Server, _db: Database.Database, expec
   });
 
   wss.on('connection', (ws: WebSocket) => {
-    const conn: ExtConn = { ws, extVersion: null, clientId: null, reportingEnabled: true, taskDispatchEnabled: true };
+    const conn: ExtConn = { ws, extVersion: null, clientId: null, clientName: null, connectedAt: 0, reportingEnabled: true, taskDispatchEnabled: true };
     // 心跳：连接建立 isAlive=true，收到 pong 翻回 true；sweep 周期内无 pong → terminate（清理半开连接）
     const live = ws as WebSocket & { isAlive: boolean };
     live.isAlive = true;
@@ -54,26 +87,7 @@ export function attachWsServer(httpServer: Server, _db: Database.Database, expec
       if (msg.type !== 'hello' && !conn.extVersion) return;
 
       if (msg.type === 'hello') {
-        conn.extVersion = typeof msg.ext_version === 'string' ? msg.ext_version : null;
-        // WS 握手 token 校验：非空 token 必须匹配，不匹配 nack+close（防 WS CSRF，学 opencli）。
-        // 空 EXPECTED_TOKEN = 无 token 模式 → 跳过校验，任何 hello 都 ack（COLLECTOR_TOKEN= 显式开放，适合内网）。
-        if (EXPECTED_TOKEN && msg.token !== EXPECTED_TOKEN) {
-          ws.send(JSON.stringify({ type: 'hello-nack', ok: false, error: 'bad token' }));
-          ws.close(4001, 'bad token');
-          console.warn(`[ws] hello 握手失败：token 不匹配（ext_version=${conn.extVersion ?? 'unknown'}）`);
-          return;
-        }
-        console.log(`[ws] hello 握手成功：ext_version=${conn.extVersion ?? 'unknown'}`);
-        ws.send(JSON.stringify({ type: 'hello-ack', ok: true }));
-        conn.clientId = typeof msg.client_id === 'string' && msg.client_id ? msg.client_id : null;
-        conn.reportingEnabled = msg.reporting_enabled !== false; // 缺省 true
-        conn.taskDispatchEnabled = msg.task_dispatch_enabled !== false; // 缺省 true（旧扩展 fail-open）
-        if (conn.clientId) {
-          const prev = connections.get(conn.clientId);
-          if (prev && prev.ws !== ws && prev.ws.readyState === WebSocket.OPEN) prev.ws.close(4000, 'replaced');
-          connections.set(conn.clientId, conn);
-          notifyClientOnline(); // 扩展上线：kick 采集任务调度器（pending 任务可派发了）
-        }
+        handleHello(db, ws, conn, msg, EXPECTED_TOKEN);
         return;
       }
 
@@ -94,16 +108,24 @@ export function attachWsServer(httpServer: Server, _db: Database.Database, expec
         return;
       }
 
+      if (msg.type === 'client-name-state') {
+        // popup 改名推送（对齐 reporting-state）：更新连接表 + 落库。name null/空串 = 清除名字。
+        const name = typeof msg.name === 'string' && msg.name.trim() ? msg.name.trim() : null;
+        conn.clientName = name;
+        if (conn.clientId) upsertClient(db, conn.clientId, name);
+        return;
+      }
+
       if (msg.type === 'ingest' && msg.payload) {
         try {
-          const result = ingestVideo(_db, msg.payload as IngestRequest);
+          const result = ingestVideo(db, msg.payload as IngestRequest);
           ws.send(JSON.stringify({ type: 'ingest-ack', ok: true, ...result }));
           console.log(`[server] ingest source=${result.source} source_vid=${result.source_vid} 新增 ${result.inserted_tracks} 条版本 / 跳过 ${result.skipped_tracks} 条（已存在）`);
           // 迟到 INGEST 改判：超时落 failed 的任务，字幕轨稍后经被动链路实际入库 → 改判 succeeded
           //（与迟到 result 改判互补：扩展自限超时后无回执可等，只有 INGEST 证明数据落了）
-          const amended = amendLateIngest(_db, result);
+          const amended = amendLateIngest(db, result);
           if (amended != null) {
-            pushTask(_db, amended); // 改判后推送（与 amendLateResult 改判后的推送一致）
+            pushTask(db, amended); // 改判后推送（与 amendLateResult 改判后的推送一致）
             console.log(`[server] 迟到 ingest 改判超时任务 id=${amended} source=${result.source} source_vid=${result.source_vid} → succeeded`);
           }
         } catch (err) {
@@ -115,7 +137,7 @@ export function attachWsServer(httpServer: Server, _db: Database.Database, expec
 
       if (msg.type === 'ingest-upper' && msg.payload) {
         try {
-          const result = ingestUpper(_db, msg.payload as IngestUpperRequest);
+          const result = ingestUpper(db, msg.payload as IngestUpperRequest);
           ws.send(JSON.stringify({ type: 'ingest-upper-ack', ok: true, ...result }));
         } catch (err) {
           ws.send(JSON.stringify({ type: 'ingest-upper-ack', ok: false, error: (err as Error).message }));
@@ -134,9 +156,9 @@ export function attachWsServer(httpServer: Server, _db: Database.Database, expec
           // 扩展实际执行完成（可能已 INGEST 落库），failed 是假失败，用户按提示重试会重复采集
           const params = timedOutParams.get(msg.id)!;
           timedOutParams.delete(msg.id);
-          const amended = amendLateResult(_db, params, { ok: msg.ok === true, data: msg.data });
+          const amended = amendLateResult(db, params, { ok: msg.ok === true, data: msg.data });
           console.log(`[ext] 迟到 result id=${msg.id} ok=${msg.ok}${amended != null ? ' → 已改判超时任务为 succeeded' : ''}`);
-          if (amended != null) pushTask(_db, amended); // 改判后推送（popup 进度卡由失败翻绿）
+          if (amended != null) pushTask(db, amended); // 改判后推送（popup 进度卡由失败翻绿）
         } else {
           console.log(`[ext] result id=${msg.id} ok=${msg.ok}`);
         }
@@ -147,9 +169,14 @@ export function attachWsServer(httpServer: Server, _db: Database.Database, expec
     ws.on('close', () => {
       console.log(`[ws] close client_id=${conn.clientId ?? '(未握手)'}`);
       if (conn.clientId && connections.get(conn.clientId) === conn) connections.delete(conn.clientId);
-      // 释放调度器 inFlight 占位：断线扩展不再有在途命令，重连的同 client 立即可接新任务
-      //（否则占位要等命令超时，最长 180s）
-      if (conn.clientId) releaseClient(conn.clientId);
+      if (conn.clientId) {
+        // 断开时刻 =「离线时长」起算点（DB 留存）。尽力而为：进程退出/测试清理时 db 可能先关，
+        // 失败静默丢弃（last_seen_at 停留本次连接建立时刻，误差=连接存活时长，自用可接受）。
+        try { touchClientLastSeen(db, conn.clientId); } catch { /* db 已关竞态 */ }
+        // 释放调度器 inFlight 占位：断线扩展不再有在途命令，重连的同 client 立即可接新任务
+        //（否则占位要等命令超时，最长 180s）
+        releaseClient(conn.clientId);
+      }
     });
   });
 
@@ -189,10 +216,65 @@ export function broadcastEvent(msg: Record<string, unknown>): void {
   }
 }
 
-export function listClients(): Array<{ client_id: string; ext_version: string | null; reporting_enabled: boolean; task_dispatch_enabled: boolean; connected: true }> {
+// 仅在线客户端（调度器派发池 / wsBridge 用：离线客户端不可能接任务，语义必须保持纯在线）。
+export function listOnlineClients(): Array<{ client_id: string; ext_version: string | null; reporting_enabled: boolean; task_dispatch_enabled: boolean; connected: true }> {
   return [...connections.values()]
     .filter(c => c.clientId && c.ws.readyState === WebSocket.OPEN)
-    .map(c => ({ client_id: c.clientId!, ext_version: c.extVersion, reporting_enabled: c.reportingEnabled, task_dispatch_enabled: c.taskDispatchEnabled, connected: true }));
+    .map(c => ({ client_id: c.clientId!, ext_version: c.extVersion, reporting_enabled: c.reportingEnabled, task_dispatch_enabled: c.taskDispatchEnabled, connected: true as const }));
+}
+
+// GET /api/clients 的合并视图（2026-08-24 客户端命名）：DB 注册表全量（含离线）+ 内存在线态。
+// 在线客户端的名字取连接表现值（旧扩展连着时 hello 未带名，回落 DB 历史名）；离线时
+// reporting/task_dispatch 开关未知 → null（远端切换须在线，web 据此隐藏操作按钮）。
+export interface ClientRow {
+  client_id: string;
+  client_name: string | null;
+  ext_version: string | null;
+  reporting_enabled: boolean | null;
+  task_dispatch_enabled: boolean | null;
+  connected: boolean;
+  connected_at: number | null; // 本次连接建立时刻（离线 null；「在线时长」起算点）
+  first_seen_at: number;       // server 首次见到该 client_id
+  last_seen_at: number;        // 最近一次连接建立/断开时刻（「离线时长」起算点）
+}
+
+export function listClients(db: Database.Database): ClientRow[] {
+  const online = new Map<string, ExtConn>();
+  for (const c of connections.values()) {
+    if (c.clientId && c.ws.readyState === WebSocket.OPEN) online.set(c.clientId, c);
+  }
+  const known = listKnownClients(db);
+  const rows: ClientRow[] = known.map((k) => {
+    const c = online.get(k.client_id);
+    return {
+      client_id: k.client_id,
+      client_name: c?.clientName ?? k.name,
+      ext_version: c?.extVersion ?? null,
+      reporting_enabled: c ? c.reportingEnabled : null,
+      task_dispatch_enabled: c ? c.taskDispatchEnabled : null,
+      connected: !!c,
+      connected_at: c ? c.connectedAt : null,
+      first_seen_at: k.first_seen_at,
+      last_seen_at: k.last_seen_at,
+    };
+  });
+  // 防御：在线但不在 DB（hello 必 upsert，正常不可能；手工库/异常时兜底不漏显示）
+  for (const [id, c] of online) {
+    if (!known.some((k) => k.client_id === id)) {
+      rows.push({
+        client_id: id,
+        client_name: c.clientName,
+        ext_version: c.extVersion,
+        reporting_enabled: c.reportingEnabled,
+        task_dispatch_enabled: c.taskDispatchEnabled,
+        connected: true,
+        connected_at: c.connectedAt,
+        first_seen_at: c.connectedAt,
+        last_seen_at: c.connectedAt,
+      });
+    }
+  }
+  return rows;
 }
 
 export function sendToClient(clientId: string, cmd: { id: string; action: string; [k: string]: unknown }): boolean {
@@ -283,4 +365,5 @@ export async function requestTaskDispatchChange(
 
 // 模块加载即注册 ws 桥（函数声明有提升，此处引用安全）：tasks.ts 经 getWsBridge() 间接调用
 // 三函数，断开 tasks → ws 上跳依赖（分层规则 server-tasks-no-upward；见 tasks/wsBridge.ts 注释）。
-registerWsBridge({ listClients, requestCommand, broadcastEvent });
+// 桥上注册 listOnlineClients（纯在线语义：调度器派发池，与 HTTP 的 listClients(db) 全量合并视图区分）。
+registerWsBridge({ listClients: listOnlineClients, requestCommand, broadcastEvent });

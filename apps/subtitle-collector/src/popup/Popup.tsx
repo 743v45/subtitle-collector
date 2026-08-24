@@ -28,6 +28,8 @@ import {
   type YtChannelState,
 } from './hooks';
 import { useCreatorCollected } from './hooks-collected';
+// 客户端标识栏（改名入口）与 copyText 已拆至 ClientIdFoot.tsx（2026-08-24 偿还行数台账）
+import { ClientIdFoot, copyText } from './ClientIdFoot';
 import { LOGOS, type Platform, type StatIconName } from './platforms';
 import { fmtNum } from './format';
 import { cn } from '@/lib/utils';
@@ -67,28 +69,6 @@ const STAT_ICONS: Record<StatIconName, ComponentType<{ className?: string }>> = 
   share: ShareIcon,
   danmaku: DanmakuIcon,
 };
-
-// 复制到剪贴板：navigator.clipboard 优先，失败回退 execCommand（popup 失焦/老 Chrome 兼容）。
-async function copyText(text: string): Promise<boolean> {
-  try {
-    await navigator.clipboard.writeText(text);
-    return true;
-  } catch {
-    try {
-      const ta = document.createElement('textarea');
-      ta.value = text;
-      ta.style.position = 'fixed';
-      ta.style.opacity = '0';
-      document.body.appendChild(ta);
-      ta.select();
-      const ok = document.execCommand('copy');
-      document.body.removeChild(ta);
-      return ok;
-    } catch {
-      return false;
-    }
-  }
-}
 
 // 字幕复制格式记忆：启动从 storage 读，切换时回写。
 function useSubtitleFormat(): [SubtitleFormat, (f: SubtitleFormat) => void] {
@@ -698,28 +678,6 @@ function capturedLabel(t: CollectTask): string {
   } catch {
     return '';
   }
-}
-
-// 底部客户端 ID：极小灰字（不抢视线），点击复制 —— CLI 用此 id 寻址本机。
-function ClientIdFoot() {
-  const clientId = useClientId();
-  const [copied, setCopied] = useState(false);
-  if (!clientId) return null;
-  return (
-    <button
-      type="button"
-      onClick={async () => {
-        if (await copyText(clientId)) {
-          setCopied(true);
-          setTimeout(() => setCopied(false), 1500);
-        }
-      }}
-      title="客户端 ID（点击复制，CLI 用此 id 寻址本机）"
-      className="w-full text-center text-[10px] tabular-nums text-muted-foreground/50 transition-colors hover:text-muted-foreground"
-    >
-      {copied ? '已复制 ✓' : `ID ${clientId}`}
-    </button>
-  );
 }
 
 // loading/未知态占位：不渲染任何语义值，仅一条中性脉冲条，避免首帧默认值→真值的双次渲染闪烁。

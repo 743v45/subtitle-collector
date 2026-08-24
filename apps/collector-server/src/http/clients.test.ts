@@ -14,7 +14,7 @@ function setup() {
   const dir = mkdtempSync(join(tmpdir(), 'collector-clients-'));
   const db = openDb(join(dir, 'test.db'));
   migrate(db);
-  const httpServer = createServer((req, res) => handleClientsHttp(req, res));
+  const httpServer = createServer((req, res) => handleClientsHttp(req, res, db));
   return new Promise<{ port: number; cleanup: () => void }>((resolve) => {
     httpServer.listen(0, '127.0.0.1', () => {
       const port = (httpServer.address() as AddressInfo).port;
@@ -23,11 +23,15 @@ function setup() {
     });
   });
 }
-function wsConnect(port: number, clientId: string, enabled: boolean, acceptsTasks: boolean = true): Promise<WebSocket> {
+// clientName 三态（2026-08-24 客户端命名）：string=hello 带名 / null=hello 带 client_name:null（显式清除）/
+// undefined=hello 不带该字段（旧扩展形态，DB 旧名不动）
+function wsConnect(port: number, clientId: string, enabled: boolean, acceptsTasks: boolean = true, clientName?: string | null): Promise<WebSocket> {
   return new Promise((resolve) => {
     const ws = new WebSocket(`ws://127.0.0.1:${port}/ext`);
     ws.once('open', () => {
-      ws.send(JSON.stringify({ type: 'hello', ext_version: '0.1.0', token: 'test-token', client_id: clientId, reporting_enabled: enabled, task_dispatch_enabled: acceptsTasks }));
+      const hello: Record<string, unknown> = { type: 'hello', ext_version: '0.1.0', token: 'test-token', client_id: clientId, reporting_enabled: enabled, task_dispatch_enabled: acceptsTasks };
+      if (clientName !== undefined) hello.client_name = clientName;
+      ws.send(JSON.stringify(hello));
       resolve(ws);
     });
   });
@@ -155,6 +159,97 @@ test('task-dispatch-state 消息：popup 本地切换 → server 连接表即时
     const r2 = await httpReq(ctx.port, 'GET', '/api/clients');
     assert.equal(r2.json.clients[0].task_dispatch_enabled, true);
     ws.close();
+  } finally { ctx.cleanup(); }
+});
+
+// ── 客户端命名（2026-08-24 popup 改名，id 不变）：hello 上报名 + client-name-state 推送改名 + 离线留存 ──
+
+test('GET /api/clients：hello 带 client_name → 列表带名字与在线时间戳', async () => {
+  const ctx = await setup();
+  try {
+    const ws = await wsConnect(ctx.port, 'ext-A', true, true, '书房 iMac');
+    await new Promise(r => setTimeout(r, 50));
+    const r = await httpReq(ctx.port, 'GET', '/api/clients');
+    assert.equal(r.status, 200);
+    const c = r.json.clients[0];
+    assert.equal(c.client_id, 'ext-A');
+    assert.equal(c.client_name, '书房 iMac');
+    assert.equal(c.connected, true);
+    assert.equal(typeof c.connected_at, 'number', '「在线时长」起算点');
+    assert.equal(typeof c.first_seen_at, 'number');
+    assert.equal(typeof c.last_seen_at, 'number');
+    ws.close();
+  } finally { ctx.cleanup(); }
+});
+
+test('client-name-state：popup 改名推送 → 连接表 + DB 即时可见；null 清除', async () => {
+  const ctx = await setup();
+  try {
+    const ws = await wsConnect(ctx.port, 'ext-A', true, true, '旧名');
+    await new Promise(r => setTimeout(r, 50));
+    ws.send(JSON.stringify({ type: 'client-name-state', name: '新名' }));
+    await new Promise(r => setTimeout(r, 50));
+    let r = await httpReq(ctx.port, 'GET', '/api/clients');
+    assert.equal(r.json.clients[0].client_name, '新名');
+    // null = 清除名字（popup 清空保存）
+    ws.send(JSON.stringify({ type: 'client-name-state', name: null }));
+    await new Promise(r => setTimeout(r, 50));
+    r = await httpReq(ctx.port, 'GET', '/api/clients');
+    assert.equal(r.json.clients[0].client_name, null);
+    ws.close();
+  } finally { ctx.cleanup(); }
+});
+
+test('断开后客户端留存列表：connected:false + last_seen_at 刷新 + 开关未知 null', async () => {
+  const ctx = await setup();
+  try {
+    const ws = await wsConnect(ctx.port, 'ext-A', true, true, '书房');
+    await new Promise(r => setTimeout(r, 50));
+    const before = (await httpReq(ctx.port, 'GET', '/api/clients')).json.clients[0];
+    ws.close();
+    await new Promise(r => setTimeout(r, 80)); // 等 server 端 close handler（touch last_seen_at）
+    const r = await httpReq(ctx.port, 'GET', '/api/clients');
+    assert.equal(r.json.clients.length, 1, '离线客户端不消失（DB 注册表留存）');
+    const c = r.json.clients[0];
+    assert.equal(c.connected, false);
+    assert.equal(c.client_name, '书房', '名字留存');
+    assert.equal(c.connected_at, null);
+    assert.equal(c.reporting_enabled, null, '离线开关未知（远端切换须在线）');
+    assert.equal(c.task_dispatch_enabled, null);
+    assert.ok(c.last_seen_at >= before.last_seen_at, '断开时刻刷新 last_seen_at（「离线时长」起算点）');
+  } finally { ctx.cleanup(); }
+});
+
+test('旧扩展 hello 不带 client_name：重连不抹 DB 旧名（列表回落历史名）', async () => {
+  const ctx = await setup();
+  try {
+    const ws1 = await wsConnect(ctx.port, 'ext-A', true, true, '历史名');
+    await new Promise(r => setTimeout(r, 50));
+    ws1.close();
+    await new Promise(r => setTimeout(r, 80));
+    // 旧扩展形态重连：wsConnect 第 5 参缺省 → hello 不带 client_name 字段
+    const ws2 = await wsConnect(ctx.port, 'ext-A', true);
+    await new Promise(r => setTimeout(r, 50));
+    const r = await httpReq(ctx.port, 'GET', '/api/clients');
+    const c = r.json.clients[0];
+    assert.equal(c.connected, true);
+    assert.equal(c.client_name, '历史名', '连接表未带名 → 回落 DB 历史名');
+    ws2.close();
+  } finally { ctx.cleanup(); }
+});
+
+test('hello 带 client_name: null → 显式清除 DB 旧名', async () => {
+  const ctx = await setup();
+  try {
+    const ws1 = await wsConnect(ctx.port, 'ext-A', true, true, '要被抹的名');
+    await new Promise(r => setTimeout(r, 50));
+    ws1.close();
+    await new Promise(r => setTimeout(r, 80));
+    const ws2 = await wsConnect(ctx.port, 'ext-A', true, true, null); // 显式 null
+    await new Promise(r => setTimeout(r, 50));
+    const r = await httpReq(ctx.port, 'GET', '/api/clients');
+    assert.equal(r.json.clients[0].client_name, null, '显式 null 抹掉 DB 旧名');
+    ws2.close();
   } finally { ctx.cleanup(); }
 });
 

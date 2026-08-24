@@ -102,7 +102,7 @@ test('hash 直达 stats / clients / changes → 对应真实页面挂载', async
 
   window.history.replaceState(null, '', '#/clients');
   const c2 = render(<App />);
-  expect(await c2.findByText(/在线客户端 0 个/)).toBeInTheDocument();
+  expect(await c2.findByText(/客户端 0 个 · 在线 0/)).toBeInTheDocument();
   c2.unmount();
 
   window.history.replaceState(null, '', '#/changes');

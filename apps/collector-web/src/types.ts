@@ -64,10 +64,14 @@ export interface ChangeRow {
 
 export interface ClientInfo {
   client_id: string;
+  client_name: string | null; // popup 改名（id 不变；null=未命名或已清除）
   ext_version: string | null;
-  reporting_enabled: boolean;
-  task_dispatch_enabled: boolean; // false = 仅上报状态：调度器不给该客户端派采集任务
-  connected: true;
+  reporting_enabled: boolean | null; // 在线=实际开关；离线 null（远端切换须在线）
+  task_dispatch_enabled: boolean | null;
+  connected: boolean;              // false = 离线（DB 注册表留存，含历史客户端）
+  connected_at: number | null;     // 本次连接建立时刻（离线 null；「在线时长」起算点）
+  first_seen_at: number;           // server 首次见到该 client_id
+  last_seen_at: number;            // 最近连接建立/断开时刻（「离线时长」起算点）
 }
 
 // ── 采集任务（手机/网页提交 → server 派发扩展执行）──

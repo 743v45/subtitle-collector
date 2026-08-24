@@ -175,6 +175,18 @@ export const MIGRATIONS: readonly MigrationStep[] = [
        COMMIT;`,
     ],
   },
+  {
+    version: 13,
+    note: '建 clients 客户端注册表（popup 改名持久化：id 不变 name 可变可清除；GET /api/clients 合并 DB 持久层与内存在线态，含在线/离线时长）。CREATE IF NOT EXISTS 自身幂等',
+    statements: [
+      `CREATE TABLE IF NOT EXISTS clients (
+         client_id     TEXT PRIMARY KEY,
+         name          TEXT,
+         first_seen_at INTEGER NOT NULL,
+         last_seen_at  INTEGER NOT NULL
+       )`,
+    ],
+  },
 ];
 
 export function runMigrations(db: Database.Database): void {
