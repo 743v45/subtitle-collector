@@ -83,6 +83,8 @@ function UpperBatchSection({ onTasksChanged }: { onTasksChanged: () => void }) {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [submitting, setSubmitting] = useState(false);
   const [submitMsg, setSubmitMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  // 强制重采（2026-08-25）：默认关——已采（有字幕轨）的视频由 server 侧跳过；勾选后全量重采（字幕刷新）
+  const [force, setForce] = useState(false);
 
   const collectedCount = data ? data.items.filter((it) => it.collected).length : null;
 
@@ -152,8 +154,12 @@ function UpperBatchSection({ onTasksChanged }: { onTasksChanged: () => void }) {
       // 未入库/失败任务也能在历史页按 UP 筛
       const source = target?.source ?? 'bilibili';
       const creatorUid = target?.source === 'bilibili' ? target.mid : data?.channel?.id ?? undefined;
-      const r = await createCollectTasksBatch([...selected], source, creatorUid);
-      const text = `已创建 ${r.created} 个任务${r.skipped ? `，跳过 ${r.skipped} 个（已在队列）` : ''}`;
+      const r = await createCollectTasksBatch([...selected], source, creatorUid, force || undefined);
+      // 文案三态：已采跳过数（server 侧有轨默认跳过）单列，与「已在队列」区分开
+      const parts = [`已创建 ${r.created} 个任务`];
+      if (r.skipped) parts.push(`跳过 ${r.skipped} 个（已在队列）`);
+      if (r.skippedCollected) parts.push(`已采跳过 ${r.skippedCollected} 个（勾选「强制重采」可刷新）`);
+      const text = parts.join('，');
       setSubmitMsg({ ok: true, text });
       toast(text, 'success'); // 中上 toast：列表在下方/已切走时也能看到任务已下发
       setSelected(new Set());
@@ -277,6 +283,15 @@ function UpperBatchSection({ onTasksChanged }: { onTasksChanged: () => void }) {
                   清空
                 </Button>
               )}
+              <label className="ml-1 flex cursor-pointer items-center gap-1 text-xs text-muted-foreground" title="勾选后，已采到字幕的视频也会重新采集（字幕刷新场景）；默认只采未采与无字幕的">
+                <input
+                  type="checkbox"
+                  checked={force}
+                  onChange={() => setForce((v) => !v)}
+                  className="size-3 accent-primary"
+                />
+                强制重采
+              </label>
               <Button
                 size="sm"
                 className="ml-auto"

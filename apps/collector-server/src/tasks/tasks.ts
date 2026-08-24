@@ -191,22 +191,31 @@ export function createTasksBatch(
   source: 'bilibili' | 'youtube' = 'bilibili',
   creatorClientId: string | null = null,
   creatorUid: string | null = null, // UP 归属（B 站 mid / YouTube channelId；批量提交入口已知）
-): { created: CollectTask[]; skipped: string[] } {
+  force = false, // 2026-08-25：默认跳过「已有字幕轨」的入库视频（重采须显式 force）
+): { created: CollectTask[]; skipped: string[]; skippedCollected: string[] } {
   const re = VID_RE[source];
   const urlFor = (vid: string) =>
     source === 'youtube' ? `https://www.youtube.com/watch?v=${vid}` : `https://www.bilibili.com/video/${vid}`;
+  // 已有字幕轨判定（批量默认不重采的判据）：videos 行存在且至少一条 subtitle_tracks。
+  // 无字幕（no_subtitle/pot_limited 0 轨）不在跳过之列——后续平台可能出字幕，重试合理。
+  const hasSubtitle = force ? null : db.prepare(
+    `SELECT 1 FROM videos v WHERE v.source = ? AND v.source_vid = ?
+       AND EXISTS (SELECT 1 FROM subtitle_tracks st WHERE st.video_id = v.id)`,
+  );
   // 同批共享一个 batch_id：纯展示侧聚合标签（UI 分组成一个批量任务），无批次实体/状态。
   const batch = randomUUID();
   const created: CollectTask[] = [];
   const skipped: string[] = [];
+  const skippedCollected: string[] = [];
   const seen = new Set<string>();
   for (const vid of Array.isArray(vids) ? vids : []) {
     if (typeof vid !== 'string' || !re.test(vid) || seen.has(vid)) continue;
     seen.add(vid);
     if (findActiveTask(db, source, vid)) { skipped.push(vid); continue; }
+    if (hasSubtitle?.get(source, vid)) { skippedCollected.push(vid); continue; }
     created.push(createTask(db, { source, source_vid: vid, url: urlFor(vid) }, creatorClientId, batch, creatorUid));
   }
-  return { created, skipped };
+  return { created, skipped, skippedCollected };
 }
 
 // ── UP/频道全部视频列表（web 端「按 UP 批量」用，server 经扩展 WS 代理拉取；2026-08-24 两平台）──

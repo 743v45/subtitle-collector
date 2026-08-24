@@ -316,6 +316,35 @@ test('POST /api/collect-tasks/batch：source 缺省 bilibili（旧 {bvids} 语�
   } finally { ctx.cleanup(); }
 });
 
+// ── 已采跳过（2026-08-25）：有字幕轨的默认不建任务；force=true 强制重采 ──
+test('POST /api/collect-tasks/batch：有轨入库默认跳过（skipped_collected）+ force 强制重采', async () => {
+  const ctx = await setup();
+  try {
+    // 有轨入库视频（gaDdrDdczO4 已采到字幕轨）；F3lL98Pj90o 未入库
+    ingestVideo(ctx.db, {
+      source: 'youtube',
+      video: { source_vid: 'gaDdrDdczO4', title: '已采', creator: { source_uid: 'UC1', name: 'ch' }, extra: {}, duration: 60, published_at: 1 },
+      tracks: [{ lan: 'en', lan_doc: 'English', track_type: 2, versions: [{ origin: 'external', payload: { body: [] } }] }],
+    });
+    // 默认：跳过并计数返回，不建任务
+    const r1 = await httpReq(ctx.port, 'POST', '/api/collect-tasks/batch', {
+      vids: ['gaDdrDdczO4', 'F3lL98Pj90o'], source: 'youtube',
+    });
+    assert.equal(r1.status, 200);
+    assert.equal(r1.json.created, 1); // 只有未入库的 F3lL98Pj90o 建了任务
+    assert.equal(r1.json.skipped_collected, 1);
+    assert.deepEqual(r1.json.skipped_collected_vids, ['gaDdrDdczO4']);
+
+    // force=true：有轨的也建（字幕刷新）
+    const r2 = await httpReq(ctx.port, 'POST', '/api/collect-tasks/batch', {
+      vids: ['gaDdrDdczO4'], source: 'youtube', force: true,
+    });
+    assert.equal(r2.status, 200);
+    assert.equal(r2.json.created, 1);
+    assert.equal(r2.json.skipped_collected, 0);
+  } finally { ctx.cleanup(); }
+});
+
 test('POST /api/collect-tasks/batch：bvids 旧键 / camelCase clientId 均不认 → 400 / 视为未传', async () => {
   const ctx = await setup();
   try {

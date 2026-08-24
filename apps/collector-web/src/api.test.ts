@@ -249,13 +249,13 @@ test('expandUpperVideos：双平台 body 形状（bilibili {source,mid} / youtub
 
 test('createCollectTasksBatch：带 creatorUid 进 body', async () => {
   fetchMock.mockResolvedValueOnce(ok({ created: 2, skipped: 1 }));
-  await expect(api.createCollectTasksBatch(['a', 'b'], 'bilibili', '42')).resolves.toEqual({ created: 2, skipped: 1 });
+  await expect(api.createCollectTasksBatch(['a', 'b'], 'bilibili', '42')).resolves.toEqual({ created: 2, skipped: 1, skippedCollected: 0 });
   expect(JSON.parse(String(lastCall().init?.body))).toEqual({ vids: ['a', 'b'], source: 'bilibili', creator_uid: '42' });
 });
 
 test('createCollectTasksBatch：无 creatorUid 不写该键，回落 0', async () => {
   fetchMock.mockResolvedValueOnce(ok({}));
-  await expect(api.createCollectTasksBatch(['a'], 'youtube')).resolves.toEqual({ created: 0, skipped: 0 });
+  await expect(api.createCollectTasksBatch(['a'], 'youtube')).resolves.toEqual({ created: 0, skipped: 0, skippedCollected: 0 });
   expect(JSON.parse(String(lastCall().init?.body))).toEqual({ vids: ['a'], source: 'youtube' });
 });
 

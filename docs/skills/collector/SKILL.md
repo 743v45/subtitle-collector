@@ -62,7 +62,7 @@ docker exec collector-server node -e 'const db=require("better-sqlite3")("/data/
 | `server ping/status/start/stop` | 本地 | 探活 / 起停(pid 文件;`start --no-detached --port`) |
 | `collect …`(12 子命令) | server→扩展 | 见下方 |
 
-collect 子命令速记:`search <关键词>` 搜候选(不入库)/ `subtitle <vid> [--source bilibili|youtube]` 采单个入库(两平台回执 reason=no_subtitle 都自动打 no-subtitle 系统标;采到轨自动摘) / `dedupe <vid...> [--source <平台>]` 批量判重 / `season` 整合集 / `upper-info <mid>` UP 资料入库 / `upper-videos <mid> --all` 拉列表 / `new-videos <mid>` / `discover <mid...>` 多 UP 发现 / `find <关键词> --min-fans --since-days` 条件检索 / `yt-videos <handle> --since-days --collect` YouTube 频道 / `yt-search <关键词> --order --since-days --collect` YouTube 搜索。采集默认超时 180s(覆盖扩展全链路)。
+collect 子命令速记:`search <关键词>` 搜候选(不入库)/ `subtitle <vid> [--source bilibili|youtube]` 采单个入库(两平台回执 reason=no_subtitle 都自动打 no-subtitle 系统标;采到轨自动摘) / `dedupe <vid...> [--source <平台>]` 批量判重 / `season` 整合集 / `upper-info <mid>` UP 资料入库 / `upper-videos <mid> --all` 拉列表 / `new-videos <mid>` / `discover <mid...>` 多 UP 发现 / `find <关键词> --min-fans --since-days` 条件检索 / `yt-videos <handle> --since-days --collect [--force]` YouTube 频道(--collect 逐条采,已有字幕轨的默认跳过,--force 强制重采) / `yt-search <关键词> --order --since-days --collect` YouTube 搜索。采集默认超时 180s(覆盖扩展全链路)。**批量建任务端点同语义**:`POST /api/collect-tasks/batch {vids,source,force?}` 默认跳过已有字幕轨的入库视频(skipped_collected 返回),force=true 强制重采(2026-08-25)。
 
 **排序语义**:`--sort first_seen`(入库时间)vs `published_at`(发布时间)——用户说「最近」先确认指哪个;无法确认时默认 `first_seen`(查询主语是「库」,最近入库)。
 

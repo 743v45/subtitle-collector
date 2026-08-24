@@ -210,17 +210,20 @@ export async function expandUpperVideos(
 // body 统一 {vids, source}（2026-08-21 删除 bvids 旧键，两平台同格式）；web 入口只有 B 站按 UP 批量。
 // creatorUid（可选，2026-08-22）：批量入口已知的 UP 归属——任务行落冗余列，未入库/失败任务
 // 也能在历史页按 UP 筛（server 端靠它关掉「按 UP 找失败任务」的盲区）。
+// force（2026-08-25）：默认 false——已有字幕轨的入库视频 server 侧跳过（skippedCollected 计数返回）；
+// true = 强制重采（字幕刷新场景）。
 export async function createCollectTasksBatch(
   vids: string[],
   source: 'bilibili' | 'youtube',
   creatorUid?: string,
-): Promise<{ created: number; skipped: number }> {
+  force?: boolean,
+): Promise<{ created: number; skipped: number; skippedCollected: number }> {
   const r = await fetch(`${BASE}/api/collect-tasks/batch`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ vids, source, ...(creatorUid ? { creator_uid: creatorUid } : {}) }),
+    body: JSON.stringify({ vids, source, ...(creatorUid ? { creator_uid: creatorUid } : {}), ...(force ? { force: true } : {}) }),
   });
-  return ensureOk(r, (j) => ({ created: j.created ?? 0, skipped: j.skipped ?? 0 }));
+  return ensureOk(r, (j) => ({ created: j.created ?? 0, skipped: j.skipped ?? 0, skippedCollected: j.skipped_collected ?? 0 }));
 }
 
 // 重试任务（2026-08-22 原地重置，取代「重试建新任务并入原批」方案）：failed/limited 行重置回

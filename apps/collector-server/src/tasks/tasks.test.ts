@@ -209,6 +209,40 @@ test('createTasksBatch：批量建 pending 任务；pending/dispatched 去重，
   } finally { cleanup(); }
 });
 
+// ── 已采跳过（2026-08-25）：有字幕轨的默认不重采；无轨仍建任务；force 全建 ──
+test('createTasksBatch：有轨入库默认跳过（skippedCollected）、无轨建任务、force 全建', () => {
+  const { db, cleanup } = setupDb();
+  try {
+    // 有轨入库（BV1sub）与无轨入库（BV1nosub，no_subtitle/pot_limited 形态）
+    ingestVideo(db, {
+      source: 'bilibili',
+      video: { source_vid: 'BV1sub11c7mD', title: '有轨', creator: { source_uid: '1', name: 'up' }, extra: {}, duration: 1, published_at: 1 },
+      tracks: [{ lan: 'zh-Hans', lan_doc: 'CC中文', track_type: 2, versions: [{ origin: 'external', payload: { body: [] } }] }],
+    });
+    ingestVideo(db, {
+      source: 'bilibili',
+      video: { source_vid: 'BV1nosub11c7', title: '无轨', creator: { source_uid: '1', name: 'up' }, extra: {}, duration: 1, published_at: 1 },
+      tracks: [],
+    });
+
+    // 默认（force=false）：有轨跳过、无轨与未入库建任务
+    const r = createTasksBatch(db, ['BV1sub11c7mD', 'BV1nosub11c7', 'BV1new11c7mD']);
+    assert.deepEqual(r.skippedCollected, ['BV1sub11c7mD']);
+    assert.deepEqual(r.created.map((t) => t.source_vid).sort(), ['BV1new11c7mD', 'BV1nosub11c7']);
+    assert.deepEqual(r.skipped, []);
+
+    // force=true：有轨也建（字幕刷新场景）
+    const r2 = createTasksBatch(db, ['BV1sub11c7mD'], 'bilibili', null, null, true);
+    assert.equal(r2.created.length, 1);
+    assert.deepEqual(r2.skippedCollected, []);
+
+    // 清库后再验：跳过判据按平台隔离（同 vid 不同 source 不误伤——youtube 侧无此 BV 不跳）
+    const ry = createTasksBatch(db, ['BV1sub11c7mD'], 'youtube');
+    assert.equal(ry.skippedCollected.length, 0);
+    assert.equal(ry.created.length, 0); // BV 形态不满足 youtube VID_RE → 忽略
+  } finally { cleanup(); }
+});
+
 test('createTasksBatch：空数组 / 非数组输入零任务', () => {
   const { db, cleanup } = setupDb();
   try {

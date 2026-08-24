@@ -95,17 +95,27 @@ export async function handleTasksHttp(req: IncomingMessage, res: ServerResponse,
     //   - bvids 旧键彻底删除（旧格式 = {vids, source:'bilibili'}，语义已并入）→ 旧请求 400 可见
     //   - client_id（可选）snake_case 对齐 API 其余字段（source_vid/creator_client_id）：
     //     创建者扩展 ID —— sticky 派发（任务跟随创建者，离线降级任意）
+    // force（2026-08-25）：默认 false——已有字幕轨的入库视频跳过（skipped_collected 计数返回）；
+    //   true = 强制重采（字幕刷新场景，勾选已采视频提交即重采）。
     const source = body?.source === 'youtube' ? 'youtube' : 'bilibili';
     const vids = Array.isArray(body?.vids) ? body.vids : null;
     const clientId = typeof body?.client_id === 'string' && body.client_id ? body.client_id : null;
     // creator_uid（可选）：批量提交入口已知的 UP 归属（B 站 mid / YouTube channelId）——
     // 落任务行冗余列，未入库/失败任务也能在历史页按 UP 筛（不传则靠建任务查库/ingest 回填兜底）
     const creatorUid = typeof body?.creator_uid === 'string' && body.creator_uid ? body.creator_uid : null;
+    const force = body?.force === true;
     const label = source === 'youtube' ? 'YouTube 视频 ID（11 位）' : 'BV 号';
     if (!vids || vids.length === 0) { json(res, 400, { ok: false, error: `vids: string[] required（至少一个${label}）` }); return; }
-    const r = createTasksBatch(db, vids, source, clientId, creatorUid);
+    const r = createTasksBatch(db, vids, source, clientId, creatorUid, force);
     if (r.created.length > 0) kickTaskScheduler(); // 事件驱动：建任务立即尝试派发
-    json(res, 200, { ok: true, created: r.created.length, skipped: r.skipped.length, tasks: r.created });
+    json(res, 200, {
+      ok: true,
+      created: r.created.length,
+      skipped: r.skipped.length,
+      skipped_collected: r.skippedCollected.length,
+      ...(r.skippedCollected.length > 0 ? { skipped_collected_vids: r.skippedCollected } : {}),
+      tasks: r.created,
+    });
     return;
   }
 

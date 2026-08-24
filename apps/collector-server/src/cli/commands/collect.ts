@@ -269,7 +269,8 @@ export async function collectYtChannelVideos(
 }
 
 /** `collect yt-videos <key> --collect`：逐条采集未入库视频（fetch-youtube-subtitle navigate，串行 + sleep 防风控）。
- *  已入库（videos 表命中）跳过——判据对齐 collectDedupe（无字幕也入 videos）。返回逐条结果。
+ *  跳过判据（2026-08-25 对齐批量端点）：已有字幕轨的入库视频默认不重采（force=false）；
+ *  无字幕（0 轨入库）仍重试——后续平台可能出字幕；--force 全部重采（字幕刷新场景）。
  *  失败分类见 classifyCollectError：need_login/risk_control 硬停、其余扩展错误软记 reason、
  *  传输层错误整轮抛出。sleep 注入供测试（默认逐条间隔下限 1s 防风控）。 */
 export async function collectYtVideosRun(
@@ -280,10 +281,22 @@ export async function collectYtVideosRun(
   sleepMs: number,
   timeout: number,
   sleep: (ms: number) => Promise<void> = (ms) => new Promise((r) => setTimeout(r, ms)),
+  force = false,
 ): Promise<Array<{ vid: string; ok: boolean; reason?: string }>> {
-  const { missing } = collectDedupe(db, vids, 'youtube');
+  const { missing, collected } = collectDedupe(db, vids, 'youtube');
+  // 有轨的入库视频剔除（force=false 时）；无轨的并入重试清单
+  const targets = force ? [...missing, ...collected] : [...missing];
+  if (!force && collected.length > 0) {
+    const stmt = db.prepare(
+      `SELECT v.source_vid FROM videos v
+         WHERE v.source = 'youtube' AND v.source_vid = ?
+           AND EXISTS (SELECT 1 FROM subtitle_tracks st WHERE st.video_id = v.id)`,
+    );
+    const hasSub = new Set(collected.filter((vid) => stmt.get(vid)));
+    targets.push(...collected.filter((vid) => !hasSub.has(vid)));
+  }
   const out: Array<{ vid: string; ok: boolean; reason?: string }> = [];
-  for (const vid of missing) {
+  for (const vid of targets) {
     let data: { captured?: number; reason?: string } | undefined;
     let extError: string | undefined;
     try {
@@ -797,12 +810,13 @@ export function buildCollectCommand(): Command {
     .command('yt-videos <key>')
     .description('拉 YouTube 频道视频列表（@handle/UCxxx/频道页 URL；--collect 逐个采集未入库的字幕）')
     .option('--since-days <n>', '只保留近 N 天发布的视频（相对时间估算过滤；null 保留）', (v) => Number.parseInt(v, 10))
-    .option('--collect', '对未入库视频逐个采集字幕（串行 navigate 采集，每条约 1 分钟，慢但稳）')
+    .option('--collect', '对未入库视频逐个采集字幕（串行 navigate 采集，每条约 1 分钟，慢但稳）；已有字幕轨的默认跳过')
+    .option('--force', '--collect 强制重采：已有字幕轨的入库视频也重采（字幕刷新场景）')
     .option('--refresh', '绕过扩展侧 1h 缓存强制重拉列表')
     .option('--sleep <ms>', '--collect 逐条采集间隔毫秒（默认 1500）', (v) => Number.parseInt(v, 10), 1500)
     .option('--client <id>', '扩展 client_id（缺省取第一个在线）')
     .option('--timeout <ms>', '等扩展回执的超时毫秒（默认 180000，全量分页含节流需较久）', (v) => Number.parseInt(v, 10), 180000)
-    .action(async (key: string, opts: { sinceDays?: number; collect?: boolean; refresh?: boolean; sleep: number; client?: string; timeout: number }) => {
+    .action(async (key: string, opts: { sinceDays?: number; collect?: boolean; force?: boolean; refresh?: boolean; sleep: number; client?: string; timeout: number }) => {
       if (!Number.isFinite(opts.timeout) || opts.timeout <= 0) emitError(`invalid --timeout: ${opts.timeout}`, 'ARGS');
       if (opts.sinceDays != null && opts.sinceDays < 0) emitError(`invalid --since-days: ${opts.sinceDays}`, 'ARGS');
       let ident: YtChannelIdent;
@@ -838,7 +852,7 @@ export function buildCollectCommand(): Command {
           try { db = openReadonlyDb(ctx.dbPath); } catch (err) {
             emitError(err instanceof Error ? err.message : String(err), 'DB_UNREADABLE');
           }
-          const collected = await collectYtVideosRun(client as CollectClient, clientId, db, vids, opts.sleep, opts.timeout);
+          const collected = await collectYtVideosRun(client as CollectClient, clientId, db, vids, opts.sleep, opts.timeout, undefined, opts.force === true);
           const { collected: already } = collectDedupe(db, vids, 'youtube');
           emitResult({ ...collectedSummary, collected_now: collected.length, already_in_db: already.length, results: collected }, ctx.format);
         }

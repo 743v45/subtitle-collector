@@ -88,7 +88,8 @@ function setup(): { db: Database.Database; dbPath: string; dir: string } {
   ingestVideo(db, {
     source: 'youtube',
     video: { source_vid: 'YT1', title: 'yt old', creator: { source_uid: 'y1', name: 'Yt UP' }, extra: {}, duration: 100, published_at: 1 },
-    tracks: [],
+    // 有轨（--collect 默认跳过判据）；无轨用例在测试内另建 YT3
+    tracks: [{ lan: 'en', lan_doc: 'English', track_type: 2, versions: [{ origin: 'external', payload: { body: [] } }] }],
   });
   db.prepare("UPDATE creators SET fans = 5000 WHERE source = 'bilibili' AND source_uid = '1'").run();
   return { db, dbPath: join(dir, 'test.db'), dir };
@@ -430,12 +431,18 @@ test('collect yt-videos：非法频道参数 → ARGS 退 2；--since-days -1 �
   assert.equal(r3.code, 2);
 });
 
-test('collect yt-videos --collect：串行采未入库视频（已入库跳过），退 0', async () => {
+test('collect yt-videos --collect：串行采集（有轨入库跳过；无轨入库重试），退 0', async () => {
   const { db, dir, dbPath } = setup();
   const nowSec = Math.floor(Date.now() / 1000);
+  // 追加无轨入库视频 YT3（no_subtitle 形态——后续平台可能出字幕，默认重试）
+  ingestVideo(db, {
+    source: 'youtube',
+    video: { source_vid: 'YT3', title: 'yt nosub', creator: { source_uid: 'y1', name: 'Yt UP' }, extra: {}, duration: 50, published_at: 1 },
+    tracks: [],
+  });
   const srv = await startMockServer((req) => {
     if (req.body?.action === 'list-yt-channel-videos') {
-      return ytResp([{ vid: 'YT1', created: nowSec }, { vid: 'YT2', created: nowSec }]); // YT1 已入库，YT2 未采
+      return ytResp([{ vid: 'YT1', created: nowSec }, { vid: 'YT2', created: nowSec }, { vid: 'YT3', created: nowSec }]);
     }
     if (req.body?.action === 'fetch-youtube-subtitle') return ok({ captured: 3 });
     return { status: 404 };
@@ -444,10 +451,30 @@ test('collect yt-videos --collect：串行采未入库视频（已入库跳过�
     const r = await cli(args(dbPath, srv.url, ['collect', 'yt-videos', '@handle', '--collect', '--client', 'ext-1']));
     assert.equal(r.code, 0);
     const data = JSON.parse(r.out);
+    assert.equal(data.collected_now, 2);
+    assert.deepEqual(data.results.map((x: { vid: string }) => x.vid).sort(), ['YT2', 'YT3']);
+    // 有轨的 YT1 跳过；无轨 YT3 + 未采 YT2 各下发一次
+    const fetched = srv.reqs.filter((x) => x.body?.action === 'fetch-youtube-subtitle').map((x) => x.body!.videoId).sort();
+    assert.deepEqual(fetched, ['YT2', 'YT3']);
+  } finally { await srv.close(); db.close(); rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('collect yt-videos --collect --force：有轨入库也重采（字幕刷新）', async () => {
+  const { db, dir, dbPath } = setup();
+  const nowSec = Math.floor(Date.now() / 1000);
+  const srv = await startMockServer((req) => {
+    if (req.body?.action === 'list-yt-channel-videos') {
+      return ytResp([{ vid: 'YT1', created: nowSec }]);
+    }
+    if (req.body?.action === 'fetch-youtube-subtitle') return ok({ captured: 2 });
+    return { status: 404 };
+  });
+  try {
+    const r = await cli(args(dbPath, srv.url, ['collect', 'yt-videos', '@handle', '--collect', '--force', '--client', 'ext-1']));
+    assert.equal(r.code, 0);
+    const data = JSON.parse(r.out);
     assert.equal(data.collected_now, 1);
-    assert.equal(data.already_in_db, 1);
-    assert.deepEqual(data.results, [{ vid: 'YT2', ok: true }]);
-    // 只对未入库的 YT2 下发 fetch-youtube-subtitle
+    assert.deepEqual(data.results, [{ vid: 'YT1', ok: true }]);
     assert.equal(srv.reqs.filter((x) => x.body?.action === 'fetch-youtube-subtitle').length, 1);
   } finally { await srv.close(); db.close(); rmSync(dir, { recursive: true, force: true }); }
 });

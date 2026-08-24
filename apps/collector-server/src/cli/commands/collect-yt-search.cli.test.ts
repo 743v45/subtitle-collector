@@ -76,7 +76,8 @@ function setup(): { db: Database.Database; dbPath: string; dir: string } {
   ingestVideo(db, {
     source: 'youtube',
     video: { source_vid: 'YT1', title: '已采', creator: { source_uid: 'c1', name: 'Chan' }, duration: 60, published_at: 1 },
-    tracks: [],
+    // 有轨（--collect 默认跳过判据，2026-08-25）：无轨入库属 no_subtitle 形态会被重试
+    tracks: [{ lan: 'en', lan_doc: 'English', track_type: 2, versions: [{ origin: 'external', payload: { body: [] } }] }],
   });
   return { db, dbPath: join(dir, 'test.db'), dir };
 }

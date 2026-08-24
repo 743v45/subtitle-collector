@@ -283,7 +283,7 @@ test('按 UP 批量：拉取失败 → 错误文案；列表渲染（摘要/过�
 
   cleanup();
   vi.unstubAllGlobals();
-  setupUpper();
+  const calls = setupUpper();
   await screen.findByText('还没有采集任务。粘贴一个视频链接试试。');
   fireEvent.change(screen.getByPlaceholderText('B 站 UID / 空间链接，或 YouTube 频道 @handle / UC… / 频道页链接（需桌面扩展在线）'), { target: { value: '296399504' } });
   fireEvent.click(screen.getByRole('button', { name: '拉取' }));
@@ -298,7 +298,7 @@ test('按 UP 批量：拉取失败 → 错误文案；列表渲染（摘要/过�
 });
 
 test('按 UP 批量：过滤 pill 组合（状态/时间/播放）与缺数据计数', async () => {
-  setupUpper();
+  const calls = setupUpper();
   await screen.findByText('还没有采集任务。粘贴一个视频链接试试。');
   fireEvent.change(screen.getByPlaceholderText('B 站 UID / 空间链接，或 YouTube 频道 @handle / UC… / 频道页链接（需桌面扩展在线）'), { target: { value: '296399504' } });
   fireEvent.click(screen.getByRole('button', { name: '拉取' }));
@@ -470,5 +470,44 @@ test('YouTube 频道批量：@handle 展开 + 频道名摘要 + 批量提交 sou
     vids: ['ytvid00001'],
     source: 'youtube',
     creator_uid: 'UCtest_channel_id_000001',
+  });
+});
+
+// ── 已采跳过与强制重采（2026-08-25）：server 侧默认跳过有轨入库，勾选「强制重采」带 force ──
+test('批量提交：已采跳过计数提示；勾选强制重采 → body 带 force:true', async () => {
+  setupUpper();
+  await screen.findByText('还没有采集任务。粘贴一个视频链接试试。');
+  fireEvent.change(screen.getByPlaceholderText(/B 站 UID/), { target: { value: '296399504' } });
+  fireEvent.click(screen.getByRole('button', { name: '拉取' }));
+  expect(await screen.findByText('已采视频')).toBeInTheDocument();
+
+  // 勾选含已采视频 → 默认提交（无 force）：文案带「已采跳过」提示（mock skipped_collected=1）
+  vi.unstubAllGlobals();
+  const calls2: Array<{ url: string; init?: RequestInit }> = [];
+  vi.stubGlobal('fetch', vi.fn(async (input: any, init?: RequestInit) => {
+    const url = typeof input === 'string' ? input : input.url;
+    calls2.push({ url, init });
+    if (url.includes('/api/collect-tasks/batch')) {
+      return new Response(JSON.stringify({ ok: true, created: 1, skipped: 0, skipped_collected: 1 }), { status: 200, headers: { 'content-type': 'application/json' } });
+    }
+    const r = baseHandler()(url, init);
+    return r instanceof Response ? r : new Response(JSON.stringify(r ?? { ok: true }), { status: 200, headers: { 'content-type': 'application/json' } });
+  }));
+  // 全选未采 + 手动勾一个已采 → 提交
+  fireEvent.click(screen.getByRole('button', { name: '全选未采' }));
+  fireEvent.click(screen.getAllByRole('checkbox')[0]!); // 补勾已采的第一条
+  fireEvent.click(screen.getByRole('button', { name: /批量采集/ }));
+  expect((await screen.findAllByText(/已采跳过 1 个/)).length).toBeGreaterThanOrEqual(1);
+  const batch1 = calls2.find((c) => c.url.includes('/api/collect-tasks/batch'))!;
+  expect(JSON.parse(String(batch1.init?.body)).force).toBe(undefined);
+
+  // 勾选「强制重采」再提交 → body 带 force:true
+  fireEvent.click(screen.getByRole('button', { name: '全选未采' }));
+  fireEvent.click(screen.getByLabelText(/强制重采/));
+  fireEvent.click(screen.getByRole('button', { name: /批量采集/ }));
+  await waitFor(() => {
+    const batches = calls2.filter((c) => c.url.includes('/api/collect-tasks/batch'));
+    const last = batches.at(-1)!;
+    expect(JSON.parse(String(last.init?.body)).force).toBe(true);
   });
 });
