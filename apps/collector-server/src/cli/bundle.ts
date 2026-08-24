@@ -172,9 +172,11 @@ function videoHeader(v: BundleVideoEntry, sub: BundleSubtitleMeta): string {
   const pub = v.published_at != null ? new Date(v.published_at).toISOString().slice(0, 10) : '未知';
   const trackTypeLabel = sub.track_type === 2 ? 'CC' : sub.track_type === 1 ? 'AI' : sub.track_type === 3 ? '翻译' : '?';
   const trackLabel = sub.lan_doc && sub.lan ? `${sub.lan_doc}(${sub.lan}, ${trackTypeLabel})` : `${sub.lan ?? '(无lan)'}`;
+  // 平台 ID 前缀按 source 条件（B 站 BV 号 / YouTube 11 位 ID），不再一律写死「BV:」
+  const vidLabel = v.source === 'bilibili' ? 'BV' : v.source === 'youtube' ? 'YT' : v.source;
   return [
     `# ${v.title}`,
-    `UP: ${v.creator_name ?? '未知UP'}  时长: ${dur}  发布: ${pub}  BV: ${v.source_vid}`,
+    `UP: ${v.creator_name ?? '未知UP'}  时长: ${dur}  发布: ${pub}  ${vidLabel}: ${v.source_vid}`,
     `轨: ${trackLabel}  版本来源: ${sub.origin}`,
     '',
   ].join('\n');

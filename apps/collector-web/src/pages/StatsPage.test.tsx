@@ -4,10 +4,17 @@
 // | 轮次 | 范围 | 结果 | 备注 |
 // |---|---|---|---|
 // | R1 | overview + groupBy 切换 + 榜单 + 空错态 + 非法 groupBy 回落 | 通过 | fmtTime null → '-' |
-import { test, expect, vi, beforeEach, afterEach } from 'vitest';
+import { test, expect, vi, beforeEach, afterEach, beforeAll } from 'vitest';
 import { render, screen, fireEvent, cleanup, waitFor } from '@testing-library/react';
 import { StatsPage } from './StatsPage';
 import type { StatsOverview } from '../types';
+
+// Radix Select 在 jsdom 打开所需 polyfill（对齐 CreatorsPage.test 先例）
+beforeAll(() => {
+  window.HTMLElement.prototype.scrollIntoView = vi.fn();
+  (window.HTMLElement.prototype as unknown as { hasPointerCapture: () => boolean }).hasPointerCapture = vi.fn(() => false);
+  (window.HTMLElement.prototype as unknown as { releasePointerCapture: () => void }).releasePointerCapture = vi.fn();
+});
 
 function ok(json: unknown, status = 200): Response {
   return new Response(JSON.stringify(json), { status, headers: { 'Content-Type': 'application/json' } });
@@ -20,6 +27,9 @@ const OVERVIEW: StatsOverview = {
   today_videos: 5, first_seen_min: 1_700_000_000_000, first_seen_max: 1_710_000_000_000,
 };
 
+// overview 响应体（2026-08-24 形状）：total + by_source；mock 里 bilibili 与 total 同值
+const overviewBody = (o: StatsOverview) => ({ total: o, by_source: { bilibili: o } });
+
 function aggregate(items: Array<{ key: string; count: number }>) {
   return { items };
 }
@@ -27,7 +37,7 @@ function aggregate(items: Array<{ key: string; count: number }>) {
 beforeEach(() => {
   fetchMock.mockReset();
   fetchMock.mockImplementation((url: string) => {
-    if (url === '/api/stats?type=overview') return Promise.resolve(ok({ overview: OVERVIEW }));
+    if (url === '/api/stats?type=overview') return Promise.resolve(ok(overviewBody(OVERVIEW)));
     if (url.startsWith('/api/stats?')) return Promise.resolve(ok(aggregate([{ key: '主分区', count: 8 }, { key: '次分区', count: 3 }])));
     return Promise.reject(new Error(`unmatched: ${url}`));
   });
@@ -53,7 +63,7 @@ test('overview 数字卡 + 采集时间范围（null → -）', async () => {
   cleanup();
   fetchMock.mockImplementation((url: string) =>
     url === '/api/stats?type=overview'
-      ? Promise.resolve(ok({ overview: { ...OVERVIEW, first_seen_min: null, first_seen_max: null } }))
+      ? Promise.resolve(ok(overviewBody({ ...OVERVIEW, first_seen_min: null, first_seen_max: null })))
       : Promise.resolve(ok(aggregate([]))));
   render(<StatsPage />);
   await screen.findByText('123');
@@ -64,7 +74,7 @@ test('overview 失败：错误 + 重试恢复', async () => {
   let fail = true;
   fetchMock.mockImplementation((url: string) => {
     if (url === '/api/stats?type=overview' && fail) return Promise.resolve(new Response('x', { status: 500 }));
-    if (url === '/api/stats?type=overview') return Promise.resolve(ok({ overview: OVERVIEW }));
+    if (url === '/api/stats?type=overview') return Promise.resolve(ok(overviewBody(OVERVIEW)));
     return Promise.resolve(ok(aggregate([{ key: 'k', count: 1 }])));
   });
   render(<StatsPage />);
@@ -72,6 +82,70 @@ test('overview 失败：错误 + 重试恢复', async () => {
   fail = false;
   fireEvent.click(screen.getByRole('button', { name: '重试' }));
   expect(await screen.findByText('123')).toBeInTheDocument();
+});
+
+// ── 平台筛选联动（2026-08-24）：URL ?source= 驱动，卡片切 by_source 小节、聚合带 source 参数 ──
+test('平台筛选：source=youtube → 卡片换 by_source.youtube 数字、聚合请求带 source=youtube', async () => {
+  const YT: StatsOverview = { ...OVERVIEW, videos: 77, tracks: 88, creators: 3 };
+  fetchMock.mockImplementation((url: string) => {
+    if (url === '/api/stats?type=overview') {
+      return Promise.resolve(ok({ total: OVERVIEW, by_source: { bilibili: OVERVIEW, youtube: YT } }));
+    }
+    if (url.startsWith('/api/stats?')) return Promise.resolve(ok(aggregate([{ key: 'youtube', count: 77 }])));
+    return Promise.reject(new Error(`unmatched: ${url}`));
+  });
+  window.history.replaceState(null, '', '#/stats?source=youtube');
+  render(<StatsPage />);
+  // 卡片数字来自 by_source.youtube（tracks=88 唯一；videos=77 与聚合 count 同值用 getAllByText）
+  expect(await screen.findByText('88')).toBeInTheDocument();
+  expect(screen.getAllByText('77').length).toBeGreaterThan(0);
+  expect(screen.queryByText('123')).not.toBeInTheDocument(); // 全库数字不再出现
+  // 聚合请求带平台参数
+  await screen.findByText('youtube');
+  expect(String(fetchMock.mock.calls.find((c) => String(c[0]).includes('aggregate'))![0])).toContain('source=youtube');
+});
+
+// 平台无数据：by_source 缺该平台小节 → 空态文案（不渲染 0 卡）
+test('平台筛选：source=youtube 且 by_source 缺失 → 该平台暂无数据', async () => {
+  fetchMock.mockImplementation((url: string) => {
+    if (url === '/api/stats?type=overview') return Promise.resolve(ok(overviewBody(OVERVIEW))); // 只有 bilibili 小节
+    if (url.startsWith('/api/stats?')) return Promise.resolve(ok(aggregate([])));
+    return Promise.reject(new Error(`unmatched: ${url}`));
+  });
+  window.history.replaceState(null, '', '#/stats?source=youtube');
+  render(<StatsPage />);
+  expect(await screen.findByText('该平台暂无数据')).toBeInTheDocument();
+  expect(screen.queryByText('123')).not.toBeInTheDocument(); // 不回落全库数字
+});
+
+// groupBy=source 榜单：key 换中文平台名 + 行内平台图标；未知平台 key 原样（?? fallback）
+test('groupBy=source：按平台分组的榜单渲染（哔哩哔哩 中文化、未知 key 原样）', async () => {
+  fetchMock.mockImplementation((url: string) => {
+    if (url === '/api/stats?type=overview') return Promise.resolve(ok(overviewBody(OVERVIEW)));
+    if (url.startsWith('/api/stats?')) {
+      return Promise.resolve(ok(aggregate([{ key: 'bilibili', count: 123 }, { key: 'youtube', count: 45 }, { key: 'other', count: 1 }])));
+    }
+    return Promise.reject(new Error(`unmatched: ${url}`));
+  });
+  window.history.replaceState(null, '', '#/stats?groupBy=source');
+  render(<StatsPage />);
+  // key 'bilibili' 渲染为中文「哔哩哔哩」，原始 key 不再出现；未知平台 key 原样（fallback 分支）
+  expect(await screen.findByText('哔哩哔哩')).toBeInTheDocument();
+  expect(screen.getByText('YouTube')).toBeInTheDocument();
+  expect(screen.getByText('other')).toBeInTheDocument();
+  expect(screen.queryByText('bilibili')).not.toBeInTheDocument();
+  expect(String(fetchMock.mock.calls.find((c) => String(c[0]).includes('aggregate'))![0])).toContain('groupBy=source');
+});
+
+// 平台筛选 Select 交互：选 YouTube → URL 写 source=youtube 且按新平台重拉聚合
+test('平台筛选 Select：交互切换写 URL 并带参重拉', async () => {
+  window.history.replaceState(null, '', '#/stats');
+  render(<StatsPage />);
+  await screen.findByText('主分区');
+  fireEvent.click(screen.getByRole('combobox', { name: '平台筛选' }));
+  fireEvent.click(await screen.findByRole('option', { name: 'YouTube' }));
+  await waitFor(() => expect(window.location.hash).toBe('#/stats?source=youtube'));
+  await waitFor(() => expect(String(fetchMock.mock.calls.at(-1)![0])).toContain('source=youtube'));
 });
 
 test('榜单：排序编号 + 计数 + 最大值满宽档（w-[100%]）', async () => {
@@ -112,7 +186,7 @@ test('URL 带非法 groupBy → 回落 tname；合法值透传', async () => {
 test('track-type：1/2 键映射 AI 字幕/CC 字幕；未知键透传', async () => {
   window.history.replaceState(null, '', '#/stats?groupBy=track-type');
   fetchMock.mockImplementation((url: string) => {
-    if (url === '/api/stats?type=overview') return Promise.resolve(ok({ overview: OVERVIEW }));
+    if (url === '/api/stats?type=overview') return Promise.resolve(ok(overviewBody(OVERVIEW)));
     return Promise.resolve(ok(aggregate([{ key: '1', count: 5 }, { key: '2', count: 3 }, { key: '7', count: 1 }])));
   });
   render(<StatsPage />);
@@ -125,7 +199,7 @@ test('track-type：1/2 键映射 AI 字幕/CC 字幕；未知键透传', async (
 test('聚合失败：错误行 + 重试恢复；空数据提示', async () => {
   let fail = true;
   fetchMock.mockImplementation((url: string) => {
-    if (url === '/api/stats?type=overview') return Promise.resolve(ok({ overview: OVERVIEW }));
+    if (url === '/api/stats?type=overview') return Promise.resolve(ok(overviewBody(OVERVIEW)));
     if (fail) return Promise.resolve(new Response('x', { status: 500 }));
     return Promise.resolve(ok(aggregate([])));
   });
@@ -138,7 +212,7 @@ test('聚合失败：错误行 + 重试恢复；空数据提示', async () => {
 
 test('加载中：榜单骨架（overview 已到、aggregate pending）', async () => {
   fetchMock.mockImplementation((url: string) => {
-    if (url === '/api/stats?type=overview') return Promise.resolve(ok({ overview: OVERVIEW }));
+    if (url === '/api/stats?type=overview') return Promise.resolve(ok(overviewBody(OVERVIEW)));
     return new Promise<Response>(() => {});
   });
   render(<StatsPage />);

@@ -60,17 +60,19 @@ export interface ChangeRow {
   old_value: string | null;
   new_value: string | null;
   changed_at: number;
+  source?: string | null; // 派生列：entity 行所属平台（video/creator 可判，其余 null），非表列
 }
 
 export interface ChangeFilter {
   entity?: string;
   entity_id?: number;
   field?: string;
+  source?: string;   // 平台过滤（bilibili|youtube）：经 entity 行 JOIN 判定，change_log 表无 source 列
   since?: number;   // 毫秒，比对 changed_at
   until?: number;
 }
 
-export type StatsGroupBy = 'creator' | 'tname' | 'lang' | 'track-type' | 'tag';
+export type StatsGroupBy = 'creator' | 'tname' | 'lang' | 'track-type' | 'tag' | 'source';
 
 export interface KeyValue {
   key: string;
@@ -331,6 +333,14 @@ export function getChanges(
     conds.push('field = ?');
     params.push(filter.field);
   }
+  if (filter.source) {
+    // 平台过滤：change_log 无 source 列，经实体行判定（当前 entity 只写 video/creator 两类；
+    // 无法判平台的 entity 类型在平台过滤下不命中）
+    conds.push(
+      "((cl.entity = 'video' AND cl.entity_id IN (SELECT id FROM videos WHERE source = ?)) OR (cl.entity = 'creator' AND cl.entity_id IN (SELECT id FROM creators WHERE source = ?)))",
+    );
+    params.push(filter.source, filter.source);
+  }
   if (filter.since != null) {
     conds.push('changed_at >= ?');
     params.push(filter.since);
@@ -341,9 +351,16 @@ export function getChanges(
   }
   const where = conds.length ? 'WHERE ' + conds.join(' AND ') : '';
 
-  const totalRow = db.prepare(`SELECT COUNT(*) as c FROM change_log ${where}`).get(...params) as { c: number };
+  const totalRow = db.prepare(`SELECT COUNT(*) as c FROM change_log cl ${where}`).get(...params) as { c: number };
+  // source 为派生列（CASE 子查询带出），供展示层标平台；无平台语义的 entity 为 null
   const items = db.prepare(
-    `SELECT * FROM change_log ${where} ORDER BY changed_at DESC, id DESC LIMIT ? OFFSET ?`,
+    `SELECT cl.*,
+       CASE
+         WHEN cl.entity = 'video' THEN (SELECT source FROM videos WHERE id = cl.entity_id)
+         WHEN cl.entity = 'creator' THEN (SELECT source FROM creators WHERE id = cl.entity_id)
+         ELSE NULL
+       END AS source
+     FROM change_log cl ${where} ORDER BY changed_at DESC, id DESC LIMIT ? OFFSET ?`,
   ).all(...params, s, offset) as ChangeRow[];
   return { total: totalRow.c, page: p, size: s, items };
 }
@@ -362,6 +379,11 @@ export function aggregateStats(
       sql = `SELECT COALESCE(c.name, '(unknown)') as key, COUNT(*) as count
              FROM videos v LEFT JOIN creators c ON c.id = v.creator_id ${where}
              GROUP BY c.name ORDER BY count DESC, key ASC LIMIT ?`;
+      break;
+    case 'source':
+      sql = `SELECT COALESCE(v.source, '(unknown)') as key, COUNT(*) as count
+             FROM videos v LEFT JOIN creators c ON c.id = v.creator_id ${where}
+             GROUP BY v.source ORDER BY count DESC, key ASC LIMIT ?`;
       break;
     case 'tname':
       sql = `SELECT COALESCE(json_extract(v.extra, '$.tname'), '(unknown)') as key, COUNT(*) as count
@@ -450,20 +472,46 @@ export function latestTaskStatusByVideoIds(db: Database.Database, ids: number[])
 
 // 总览计数：视频/轨/版本/UP/语言/分区数 + first_seen 时间范围。
 // languages 取 subtitle_tracks.lan 去重计数；categories 取 extra.tname 去重计数。
-export function countOverview(db: Database.Database): Overview {
+// source 给定时全口径按平台收窄（轨/版本经 video_id 溯源归属平台）；两版 SQL 分支写死，防占位符错位。
+export function countOverview(db: Database.Database, source?: string): Overview {
   // 当日本地零点（ms epoch）：today_videos 的下界。跨时区按 server 本地时区算。
   const todayStart = new Date();
   todayStart.setHours(0, 0, 0, 0);
+  if (source == null) {
+    return db.prepare(`
+      SELECT
+        (SELECT COUNT(*) FROM videos) as videos,
+        (SELECT COUNT(*) FROM subtitle_tracks) as tracks,
+        (SELECT COUNT(*) FROM subtitle_versions) as versions,
+        (SELECT COUNT(*) FROM creators) as creators,
+        (SELECT COUNT(DISTINCT lan) FROM subtitle_tracks WHERE lan IS NOT NULL) as languages,
+        (SELECT COUNT(DISTINCT json_extract(extra, '$.tname')) FROM videos WHERE json_extract(extra, '$.tname') IS NOT NULL) as categories,
+        (SELECT COUNT(*) FROM videos WHERE first_seen_at >= ?) as today_videos,
+        (SELECT MIN(first_seen_at) FROM videos) as first_seen_min,
+        (SELECT MAX(first_seen_at) FROM videos) as first_seen_max
+    `).get(todayStart.getTime()) as Overview;
+  }
+  // 平台版：10 个占位符按出现顺序绑定（videos/tracks/versions/creators/languages/categories/today/min/max）
   return db.prepare(`
     SELECT
-      (SELECT COUNT(*) FROM videos) as videos,
-      (SELECT COUNT(*) FROM subtitle_tracks) as tracks,
-      (SELECT COUNT(*) FROM subtitle_versions) as versions,
-      (SELECT COUNT(*) FROM creators) as creators,
-      (SELECT COUNT(DISTINCT lan) FROM subtitle_tracks WHERE lan IS NOT NULL) as languages,
-      (SELECT COUNT(DISTINCT json_extract(extra, '$.tname')) FROM videos WHERE json_extract(extra, '$.tname') IS NOT NULL) as categories,
-      (SELECT COUNT(*) FROM videos WHERE first_seen_at >= ?) as today_videos,
-      (SELECT MIN(first_seen_at) FROM videos) as first_seen_min,
-      (SELECT MAX(first_seen_at) FROM videos) as first_seen_max
-  `).get(todayStart.getTime()) as Overview;
+      (SELECT COUNT(*) FROM videos WHERE source = ?) as videos,
+      (SELECT COUNT(*) FROM subtitle_tracks WHERE video_id IN (SELECT id FROM videos WHERE source = ?)) as tracks,
+      (SELECT COUNT(*) FROM subtitle_versions WHERE track_id IN (SELECT id FROM subtitle_tracks WHERE video_id IN (SELECT id FROM videos WHERE source = ?))) as versions,
+      (SELECT COUNT(*) FROM creators WHERE source = ?) as creators,
+      (SELECT COUNT(DISTINCT lan) FROM subtitle_tracks WHERE lan IS NOT NULL AND video_id IN (SELECT id FROM videos WHERE source = ?)) as languages,
+      (SELECT COUNT(DISTINCT json_extract(extra, '$.tname')) FROM videos WHERE json_extract(extra, '$.tname') IS NOT NULL AND source = ?) as categories,
+      (SELECT COUNT(*) FROM videos WHERE first_seen_at >= ? AND source = ?) as today_videos,
+      (SELECT MIN(first_seen_at) FROM videos WHERE source = ?) as first_seen_min,
+      (SELECT MAX(first_seen_at) FROM videos WHERE source = ?) as first_seen_max
+  `).get(source, source, source, source, source, source, todayStart.getTime(), source, source, source) as Overview;
+}
+
+// 分平台总览（overview 接口/命令用）：全库总 + 按库内出现的平台逐个收窄。
+// 平台集合动态取 DISTINCT（0 视频的平台不出现，避免硬编码枚举漂移）。
+export function countOverviewWithSources(db: Database.Database): { total: Overview; by_source: Record<string, Overview> } {
+  const total = countOverview(db);
+  const sources = db.prepare('SELECT DISTINCT source FROM videos ORDER BY source').all() as Array<{ source: string }>;
+  const by_source: Record<string, Overview> = {};
+  for (const { source } of sources) by_source[source] = countOverview(db, source);
+  return { total, by_source };
 }

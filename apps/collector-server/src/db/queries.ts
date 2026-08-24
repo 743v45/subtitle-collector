@@ -177,13 +177,14 @@ export interface CreatorListItem {
 
 export function listCreators(
   db: Database.Database,
-  filter: { q?: string; category?: string; scope?: 'agent' | 'human' },
+  filter: { q?: string; category?: string; scope?: 'agent' | 'human'; source?: string },
   page: number,
   size: number,
   sort: 'first_seen' | 'fans' | 'video_count' = 'first_seen',
 ): { total: number; items: CreatorListItem[] } {
   const where: string[] = []; const vals: unknown[] = [];
   if (filter.q) { where.push('(c.name LIKE ? OR c.source_uid LIKE ?)'); vals.push(`%${filter.q}%`, `%${filter.q}%`); }
+  if (filter.source) { where.push('c.source = ?'); vals.push(filter.source); }
   if (filter.category && filter.scope) {
     where.push(filter.scope === 'agent'
       ? "c.category_agent_id IN (SELECT id FROM categories WHERE name = ? AND scope = 'agent')"
@@ -264,3 +265,4 @@ export function setCreatorCategory(
   }
   return getCreatorBySourceUid(db, source, source_uid)!;
 }
+

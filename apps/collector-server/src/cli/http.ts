@@ -77,31 +77,34 @@ export class ServerClient {
     return this.requestJson('POST', `/api/clients/${encodeURIComponent(clientId)}/command`, body);
   }
 
-  // 批量打标：POST /api/tags/apply（bvid 是 bilibili 的 source_vid，CLI 命令只支持 B 站对齐 collect 现状）。
+  // 批量打标：POST /api/tags/apply。vid 是平台视频 ID（B 站 BV 号 / YouTube 11 位 ID），
+  // platform 缺省 bilibili（对齐 CLI --source 默认）。scope=档位。
   // system 档（no-subtitle 状态标）由采集链路自动打，CLI apply 同样放行（回填脚本/agent 调度用）。
   async applyTags(
-    bvids: string[],
+    vids: string[],
     names: string[],
-    source: 'manual' | 'batch' | 'ai' | 'system',
+    scope: 'manual' | 'batch' | 'ai' | 'system',
+    platform: 'bilibili' | 'youtube' = 'bilibili',
   ): Promise<unknown> {
     return this.requestJson('POST', '/api/tags/apply', {
-      items: bvids.map((bv) => ({ source: 'bilibili', source_vid: bv })),
+      items: vids.map((vid) => ({ source: platform, source_vid: vid })),
       names,
-      source,
+      scope,
     });
   }
 
-  // 批量移除：POST /api/tags/remove（source 省略 = 删该名字全部四档）。
+  // 批量移除：POST /api/tags/remove（scope 省略 = 删该名字全部四档）。
   async removeTags(
-    bvids: string[],
+    vids: string[],
     names: string[],
-    source?: 'manual' | 'batch' | 'ai' | 'system',
+    scope?: 'manual' | 'batch' | 'ai' | 'system',
+    platform: 'bilibili' | 'youtube' = 'bilibili',
   ): Promise<unknown> {
     const body: Record<string, unknown> = {
-      items: bvids.map((bv) => ({ source: 'bilibili', source_vid: bv })),
+      items: vids.map((vid) => ({ source: platform, source_vid: vid })),
       names,
     };
-    if (source !== undefined) body.source = source;
+    if (scope !== undefined) body.scope = scope;
     return this.requestJson('POST', '/api/tags/remove', body);
   }
 

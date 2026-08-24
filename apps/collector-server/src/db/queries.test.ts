@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { openDb, migrate, runMigrations } from './migrate.js';
 import { ingestVideo } from './ingest.js';
-import { listVideos, getVideo, getVersionPayload, getCreator, listCategories, createCategory, updateCategory, deleteCategory, listCreators, setCreatorCategory } from './queries.js';
+import { listVideos, getVideo, getVersionPayload, getCreator, listCategories, createCategory, updateCategory, deleteCategory, listCreators, setCreatorCategory, getCreatorBySourceUid } from './queries.js';
 
 function freshDb() {
   const dir = mkdtempSync(join(tmpdir(), 'collector-q-'));

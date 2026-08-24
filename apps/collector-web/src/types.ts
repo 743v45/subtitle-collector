@@ -60,6 +60,7 @@ export interface ChangeRow {
   old_value: string | null;
   new_value: string | null;
   changed_at: number;
+  source?: string | null; // 派生列：实体行所属平台（bilibili|youtube；不可判 null）
 }
 
 export interface ClientInfo {
@@ -139,7 +140,8 @@ export interface StatsOverview {
   first_seen_min: number | null; first_seen_max: number | null;
 }
 export interface KeyValue { key: string; count: number; }
-export type StatsGroupBy = 'creator' | 'tname' | 'lang' | 'track-type' | 'tag';
+// source=按平台分组（2026-08-24）；其余同 server StatsGroupBy
+export type StatsGroupBy = 'creator' | 'tname' | 'lang' | 'track-type' | 'tag' | 'source';
 
 // ── UP 主详情（对应 server getCreator / getCreatorBySourceUid）──
 export interface CreatorDetail {

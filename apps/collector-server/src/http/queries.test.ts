@@ -217,26 +217,26 @@ test('POST /api/videos/:s/:v/tags：视频不存在 404；body 各非法形态 4
   const s = await setup();
   try {
     // 视频不存在 → 404（打标挂在已入库视频上）
-    let r = await call(s.port, '/api/videos/bilibili/NOPE/tags', 'POST', { names: ['x'], source: 'manual' });
+    let r = await call(s.port, '/api/videos/bilibili/NOPE/tags', 'POST', { names: ['x'], scope: 'manual' });
     assert.equal(r.status, 404);
     assert.equal(r.json.error, 'video not found');
 
     // names 非数组 → 过滤后空 → 400
-    r = await call(s.port, '/api/videos/bilibili/BV1/tags', 'POST', { names: 'x', source: 'manual' });
+    r = await call(s.port, '/api/videos/bilibili/BV1/tags', 'POST', { names: 'x', scope: 'manual' });
     assert.equal(r.status, 400);
     assert.equal(r.json.error, 'names:string[] required');
     // names 空数组 → 400
-    r = await call(s.port, '/api/videos/bilibili/BV1/tags', 'POST', { names: [], source: 'manual' });
+    r = await call(s.port, '/api/videos/bilibili/BV1/tags', 'POST', { names: [], scope: 'manual' });
     assert.equal(r.status, 400);
     // names 全空白串 → 400
-    r = await call(s.port, '/api/videos/bilibili/BV1/tags', 'POST', { names: ['  '], source: 'manual' });
+    r = await call(s.port, '/api/videos/bilibili/BV1/tags', 'POST', { names: ['  '], scope: 'manual' });
     assert.equal(r.status, 400);
     // source 非法档 → 400
-    r = await call(s.port, '/api/videos/bilibili/BV1/tags', 'POST', { names: ['x'], source: 'bogus' });
+    r = await call(s.port, '/api/videos/bilibili/BV1/tags', 'POST', { names: ['x'], scope: 'bogus' });
     assert.equal(r.status, 400);
-    assert.equal(r.json.error, 'source must be manual|batch|ai');
+    assert.equal(r.json.error, 'scope must be manual|batch|ai|system');
     // 混入非 string 条目被滤掉，合法项照常打上
-    r = await call(s.port, '/api/videos/bilibili/BV1/tags', 'POST', { names: [42, '混入过滤', null], source: 'manual' });
+    r = await call(s.port, '/api/videos/bilibili/BV1/tags', 'POST', { names: [42, '混入过滤', null], scope: 'manual' });
     assert.equal(r.status, 200);
     assert.equal(r.json.inserted, 1);
   } finally { s.cleanup(); }
@@ -245,17 +245,17 @@ test('POST /api/videos/:s/:v/tags：视频不存在 404；body 各非法形态 4
 test('DELETE /api/videos/:s/:v/tags：缺 name 400；source 非法 400；省略 source 删全档', async () => {
   const s = await setup();
   try {
-    await call(s.port, '/api/videos/bilibili/BV1/tags', 'POST', { names: ['待删'], source: 'manual' });
-    await call(s.port, '/api/videos/bilibili/BV1/tags', 'POST', { names: ['待删'], source: 'ai' });
+    await call(s.port, '/api/videos/bilibili/BV1/tags', 'POST', { names: ['待删'], scope: 'manual' });
+    await call(s.port, '/api/videos/bilibili/BV1/tags', 'POST', { names: ['待删'], scope: 'ai' });
 
     // 缺 name → 400
     let r = await call(s.port, '/api/videos/bilibili/BV1/tags', 'DELETE');
     assert.equal(r.status, 400);
     assert.equal(r.json.error, 'name query param required');
     // source 非法 → 400
-    r = await call(s.port, '/api/videos/bilibili/BV1/tags?name=x&source=bogus', 'DELETE');
+    r = await call(s.port, '/api/videos/bilibili/BV1/tags?name=x&scope=bogus', 'DELETE');
     assert.equal(r.status, 400);
-    assert.equal(r.json.error, 'source must be manual|batch|ai');
+    assert.equal(r.json.error, 'scope must be manual|batch|ai|system');
     // 省略 source（?? undefined 分支）→ 删全档：manual + ai 两条关系都被删（库里已无残留）。
     // 注：removed 计数按「命中语句数」而非删掉的行数（removeVideoTags 的 info.changes>0 才 ++，
     // 一条无 source 的 DELETE 删多档同名只计 1）——疑似与 applyVideoTags 的 inserted（按行计）不对称，

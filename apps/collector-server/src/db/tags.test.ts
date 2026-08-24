@@ -63,7 +63,7 @@ test('applyVideoTags：打标即建标 + 多档并存 + 幂等', () => {
   } finally { db.close(); rmSync(dir, { recursive: true, force: true }); }
 });
 
-test('listTags：q 过滤 + source 档位过滤 + 排序', () => {
+test('listTags：q 过滤 + scope 档位过滤 + 排序', () => {
   const { db, dir } = freshDb();
   try {
     seedVideos(db);
@@ -73,13 +73,43 @@ test('listTags：q 过滤 + source 档位过滤 + 排序', () => {
 
     // q 模糊
     assert.deepEqual(listTags(db, { q: '面试' }).map((t) => t.name), ['面试题']);
-    // source=ai 只列 ai 档 >0 的标签：机器学习（ai=1）+ 面试题（ai=1）；counts 保持三档全量
-    const aiOnly = listTags(db, { source: 'ai' });
+    // scope=ai 只列 ai 档 >0 的标签：机器学习（ai=1）+ 面试题（ai=1）；counts 保持三档全量
+    const aiOnly = listTags(db, { scope: 'ai' });
     assert.deepEqual(aiOnly.map((t) => t.name).sort(), ['机器学习', '面试题']);
     assert.equal(aiOnly.find((t) => t.name === '面试题')!.counts.ai, 1);
     assert.equal(aiOnly.find((t) => t.name === '面试题')!.counts.manual, 1); // 全量计数含 manual
     // total 排序（默认）：面试题 total=2 > 机器学习 1
     assert.equal(listTags(db)[0].name, '面试题');
+  } finally { db.close(); rmSync(dir, { recursive: true, force: true }); }
+});
+
+// 平台过滤（2026-08-24）：source=bilibili|youtube 时计数只算该平台视频的关系。
+// 前提：同名标挂在两平台各一条视频上；断言：平台收窄计数各 1、全平台计数 2、无该平台关系的标签计数 0。
+test('listTags：source 平台过滤计数收窄（标签跨平台共用，计数按平台）', () => {
+  const { db, dir } = freshDb();
+  try {
+    seedVideos(db);
+    // YouTube 视频（复用 ingest 路径），与 B 站 BV1a 打同名标
+    ingestVideo(db, {
+      source: 'youtube',
+      video: {
+        source_vid: 'ytvid00001',
+        creator: { source_uid: 'UCxxx', name: 'channel' },
+        title: 'yt-t',
+        extra: {},
+        duration: 10, published_at: 1700000000000,
+      },
+      tracks: [],
+    });
+    applyVideoTags(db, [{ source: 'bilibili', source_vid: 'BV1a' }], ['双语标'], 'manual');
+    applyVideoTags(db, [{ source: 'youtube', source_vid: 'ytvid00001' }], ['双语标'], 'manual');
+
+    const bili = listTags(db, { source: 'bilibili' }).find((t) => t.name === '双语标')!;
+    assert.equal(bili.counts.manual, 1); // 只算 B 站那条关系
+    const yt = listTags(db, { source: 'youtube' }).find((t) => t.name === '双语标')!;
+    assert.equal(yt.counts.manual, 1);
+    const all = listTags(db).find((t) => t.name === '双语标')!;
+    assert.equal(all.counts.manual, 2); // 无平台过滤 = 全平台
   } finally { db.close(); rmSync(dir, { recursive: true, force: true }); }
 });
 
@@ -193,8 +223,8 @@ test('system 档：markNoSubtitle 打标 + listTags counts 四档计数 + 按档
     assert.equal(ns.counts.system, 2);
     assert.equal(ns.counts.total, 2);
     assert.equal(ns.counts.manual, 0);
-    // 按档过滤：--source system 命中 no-subtitle，人工标不进（该档计数 0）
-    const sysOnly = listTags(db, { source: 'system' });
+    // 按档过滤：scope=system 命中 no-subtitle，人工标不进（该档计数 0）
+    const sysOnly = listTags(db, { scope: 'system' });
     assert.equal(sysOnly.some((t) => t.name === 'no-subtitle'), true);
     assert.equal(sysOnly.some((t) => t.name === '人工标'), false);
   } finally { db.close(); rmSync(dir, { recursive: true, force: true }); }

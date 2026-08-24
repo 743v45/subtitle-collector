@@ -54,7 +54,7 @@ test('tagsList：默认全档计数（含 0 使用标签），返回 {items, tot
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
-test('tagsList：source 只列该档 >0；q 模糊；topN 截断', () => {
+test('tagsList：scope 只列该档 >0；q 模糊；topN 截断', () => {
   const { dbPath, dir } = setup();
   try {
     // 追加 ai 档（重开写连接打标后再关，tagsList 才走只读连接）
@@ -62,8 +62,8 @@ test('tagsList：source 只列该档 >0；q 模糊；topN 截断', () => {
     applyVideoTags(db, [{ source: 'bilibili', source_vid: 'BV1' }], ['面试题'], 'ai');
     db.close();
 
-    // 种子 ai 档全 0 → source=ai 过滤后为空；打上后仅「面试题」出现
-    const r = tagsList(dbPath, { source: 'ai' });
+    // 种子 ai 档全 0 → scope=ai 过滤后为空；打上后仅「面试题」出现
+    const r = tagsList(dbPath, { scope: 'ai' });
     assert.deepEqual(r.items.map((t) => t.name), ['面试题']);
 
     const q = tagsList(dbPath, { q: '面试' });
@@ -90,19 +90,24 @@ function fakeClient(): { client: ServerClient; calls: { apply: unknown[][]; remo
   return { client: stub as unknown as ServerClient, calls };
 }
 
-test('tagsApply：委托 client.applyTags(bvids, names, source) 并透传返回', async () => {
+test('tagsApply：委托 client.applyTags(vids, names, scope, platform) 并透传返回', async () => {
   const { client, calls } = fakeClient();
   const out = await tagsApply(client, ['BV1', 'BV2'], ['ai'], 'ai');
-  assert.deepEqual(calls.apply, [[['BV1', 'BV2'], ['ai'], 'ai']]);
+  assert.deepEqual(calls.apply, [[['BV1', 'BV2'], ['ai'], 'ai', 'bilibili']]); // platform 缺省 bilibili
   assert.deepEqual(out, { ok: true, inserted: 3 });
+  // 显式 YouTube：vid 按 11 位 ID 透传，platform 跟随
+  await tagsApply(client, ['ytvid00001'], ['ai'], 'ai', 'youtube');
+  assert.deepEqual(calls.apply[1], [['ytvid00001'], ['ai'], 'ai', 'youtube']);
 });
 
-test('tagsRemove：source 可选透传（省略 = 删全档）', async () => {
+test('tagsRemove：scope 可选透传（省略 = 删全档），platform 默认 bilibili', async () => {
   const { client, calls } = fakeClient();
   await tagsRemove(client, ['BV1'], ['ai']);
   await tagsRemove(client, ['BV1'], ['ai'], 'manual');
+  await tagsRemove(client, ['ytvid00001'], ['ai'], 'manual', 'youtube');
   assert.deepEqual(calls.remove, [
-    [['BV1'], ['ai'], undefined],
-    [['BV1'], ['ai'], 'manual'],
+    [['BV1'], ['ai'], undefined, 'bilibili'],
+    [['BV1'], ['ai'], 'manual', 'bilibili'],
+    [['ytvid00001'], ['ai'], 'manual', 'youtube'],
   ]);
 });

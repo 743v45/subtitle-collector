@@ -92,11 +92,13 @@ export async function getVersion(versionId: number): Promise<{ version: { id: nu
 // ── change_log（最近采集/变更流水）──
 export async function getChanges(params: {
   entity?: string;       // 'video' | 'creator'
+  source?: string;       // 平台过滤（bilibili|youtube，经实体行判定；items 带派生 source 列）
   page?: number;
   size?: number;
 }): Promise<{ total: number; items: ChangeRow[] }> {
   const u = new URLSearchParams();
   if (params.entity) u.set('entity', params.entity);
+  if (params.source) u.set('source', params.source);
   u.set('page', String(params.page ?? 1));
   u.set('size', String(params.size ?? 20));
   const r = await fetch(`${BASE}/api/changes?${u}`);
@@ -104,15 +106,17 @@ export async function getChanges(params: {
 }
 
 // ── 统计看板 ──
-export async function getStatsOverview(): Promise<StatsOverview> {
+// overview 含分平台小节（2026-08-24）：total=全库、by_source[platform]=按平台收窄（轨/版本经视频溯源）。
+export async function getStatsOverview(): Promise<{ total: StatsOverview; by_source: Record<string, StatsOverview> }> {
   const r = await fetch(`${BASE}/api/stats?type=overview`);
-  return ensureOk(r, (j) => j.overview);
+  return ensureOk(r, (j) => ({ total: j.total, by_source: j.by_source ?? {} }));
 }
 export async function getStatsAggregate(groupBy: StatsGroupBy, filter: VideoFilter = {}, topN?: number): Promise<KeyValue[]> {
   const u = new URLSearchParams({ type: 'aggregate', groupBy });
   if (filter.q) u.set('q', filter.q);
   if (filter.tag) u.set('tag', filter.tag);
   if (filter.tname) u.set('tname', filter.tname);
+  if (filter.source) u.set('source', filter.source); // 平台筛选联动聚合榜
   if (topN) u.set('topN', String(topN));
   const r = await fetch(`${BASE}/api/stats?${u}`);
   return ensureOk(r, (j) => j.items ?? []);
@@ -305,9 +309,11 @@ export interface TagTarget { source: string; source_vid: string; }
 // 可写入档位（bili 只读不可打；system 系统状态标由采集链路自动打/摘，web 不提供手打入口）
 export type TagWriteSource = 'manual' | 'batch' | 'ai';
 
-// 列表过滤是读侧：六档全合法（含 system 档标签按档计数过滤）
-export async function listTags(params: { source?: TagSource; q?: string; topN?: number } = {}): Promise<TagItem[]> {
+// 列表过滤是读侧：六档全合法（含 system 档标签按档计数过滤）。
+// 命名约定（2026-08-24 对齐 server）：scope=档位过滤；source=平台过滤（计数只算该平台视频）。
+export async function listTags(params: { scope?: TagSource; source?: string; q?: string; topN?: number } = {}): Promise<TagItem[]> {
   const u = new URLSearchParams();
+  if (params.scope) u.set('scope', params.scope);
   if (params.source) u.set('source', params.source);
   if (params.q) u.set('q', params.q);
   u.set('topN', String(params.topN ?? 500));
@@ -315,8 +321,9 @@ export async function listTags(params: { source?: TagSource; q?: string; topN?: 
   return ensureOk(r, (j) => j.items ?? []);
 }
 
-// 批量给一组视频打标；names 中不存在的标签会先落库（返回 inserted/missing 供提示）
-export async function applyTags(body: { items: TagTarget[]; names: string[]; source: TagWriteSource }): Promise<{ inserted: number; missing: number }> {
+// 批量给一组视频打标；names 中不存在的标签会先落库（返回 inserted/missing 供提示）。
+// items[].source=平台；scope=档位（历史字段名 source 已改，与平台撞名）。
+export async function applyTags(body: { items: TagTarget[]; names: string[]; scope: TagWriteSource }): Promise<{ inserted: number; missing: number }> {
   const r = await fetch(`${BASE}/api/tags/apply`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -325,8 +332,8 @@ export async function applyTags(body: { items: TagTarget[]; names: string[]; sou
   return ensureOk(r, (j) => ({ inserted: j.inserted, missing: j.missing }));
 }
 
-// 批量解除标签关联；source 省略时删全档
-export async function removeTags(body: { items: TagTarget[]; names: string[]; source?: TagSource }): Promise<{ removed: number; missing: number }> {
+// 批量解除标签关联；scope 省略时删全档
+export async function removeTags(body: { items: TagTarget[]; names: string[]; scope?: TagSource }): Promise<{ removed: number; missing: number }> {
   const r = await fetch(`${BASE}/api/tags/remove`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -366,20 +373,20 @@ export async function putTagPriority(priority: TagSource[]): Promise<void> {
   await ensureOk(r, () => undefined); // await：否则失败被吞成 floating promise，调用方以为保存成功
 }
 
-// 单视频打标（bili 档 400）
-export async function videoApplyTags(source: string, sourceVid: string, names: string[], tagSource: TagWriteSource): Promise<{ inserted: number }> {
+// 单视频打标（bili 档 400；body scope=档位）
+export async function videoApplyTags(source: string, sourceVid: string, names: string[], tagScope: TagWriteSource): Promise<{ inserted: number }> {
   const r = await fetch(`${BASE}/api/videos/${source}/${encodeURIComponent(sourceVid)}/tags`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ names, source: tagSource }),
+    body: JSON.stringify({ names, scope: tagScope }),
   });
   return ensureOk(r, (j) => ({ inserted: j.inserted }));
 }
 
-// 单视频解标；source 省略删全档
-export async function videoRemoveTags(source: string, sourceVid: string, name: string, tagSource?: TagSource): Promise<{ removed: number }> {
+// 单视频解标；scope 省略删全档
+export async function videoRemoveTags(source: string, sourceVid: string, name: string, tagScope?: TagSource): Promise<{ removed: number }> {
   const u = new URLSearchParams({ name });
-  if (tagSource) u.set('source', tagSource);
+  if (tagScope) u.set('scope', tagScope);
   const r = await fetch(`${BASE}/api/videos/${source}/${encodeURIComponent(sourceVid)}/tags?${u}`, { method: 'DELETE' });
   return ensureOk(r, (j) => ({ removed: j.removed }));
 }
@@ -389,6 +396,7 @@ export async function listCreators(params: {
   q?: string;
   category?: string;
   scope?: 'agent' | 'human';
+  source?: string;   // 平台过滤（bilibili|youtube）
   sort?: 'first_seen' | 'fans' | 'video_count';
   page?: number;
   size?: number;
@@ -397,6 +405,7 @@ export async function listCreators(params: {
   if (params.q) u.set('q', params.q);
   if (params.category) u.set('category', params.category);
   if (params.scope) u.set('scope', params.scope);
+  if (params.source) u.set('source', params.source);
   if (params.sort) u.set('sort', params.sort);
   u.set('page', String(params.page ?? 1));
   u.set('size', String(params.size ?? 20));
@@ -409,12 +418,14 @@ export async function getCreatorDetail(id: number): Promise<CreatorDetail> {
   return ensureOk(r, (j) => j.creator);
 }
 
+// 打分类：路径带平台段（2026-08-24）——uid 两平台命名空间独立，不带平台会写错行。
 export async function setCreatorCategory(
+  source: string,
   source_uid: string,
   scope: 'agent' | 'human',
   name: string,
 ): Promise<void> {
-  const r = await fetch(`${BASE}/api/creators/by-uid/${encodeURIComponent(source_uid)}/category`, {
+  const r = await fetch(`${BASE}/api/creators/by-uid/${source}/${encodeURIComponent(source_uid)}/category`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ scope, name }),

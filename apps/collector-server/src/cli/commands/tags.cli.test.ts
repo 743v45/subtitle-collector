@@ -96,10 +96,10 @@ test('tags list：返回 {items,total}，含各档计数，退 0', async () => {
   } finally { db.close(); rmSync(dir, { recursive: true, force: true }); }
 });
 
-test('tags list --source ai：只列该档 >0 的标签', async () => {
+test('tags list --scope ai：只列该档 >0 的标签', async () => {
   const { dir, dbPath } = setup();
   try {
-    const r = await cli(args(dbPath, DEAD, ['tags', 'list', '--source', 'ai']));
+    const r = await cli(args(dbPath, DEAD, ['tags', 'list', '--scope', 'ai']));
     assert.equal(r.code, 0);
     const data = JSON.parse(r.out);
     assert.deepEqual(data.items.map((t: { name: string }) => t.name), ['面试题']);
@@ -115,13 +115,25 @@ test('tags list --q：名称模糊过滤', async () => {
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
-test('tags list --source 非法 → ARGS 退 2', async () => {
+test('tags list --scope 非法 → ARGS 退 2', async () => {
   const { dir, dbPath } = setup();
   try {
-    const r = await cli(args(dbPath, DEAD, ['tags', 'list', '--source', 'bogus']));
+    const r = await cli(args(dbPath, DEAD, ['tags', 'list', '--scope', 'bogus']));
     assert.equal(r.code, 2);
     assert.equal(JSON.parse(r.out).code, 'ARGS');
-    assert.match(r.err, /--source 必须是 manual\/batch\/ai/);
+    assert.match(r.err, /--scope 必须是 manual\/batch\/ai/);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('tags list --source 非法平台 → ARGS 退 2；合法平台透传退 0', async () => {
+  const { dir, dbPath } = setup();
+  try {
+    const bad = await cli(args(dbPath, DEAD, ['tags', 'list', '--source', 'douyin']));
+    assert.equal(bad.code, 2);
+    assert.equal(JSON.parse(bad.out).code, 'ARGS');
+    assert.match(bad.err, /--source 必须是 bilibili\/youtube/);
+    const okRun = await cli(args(dbPath, DEAD, ['tags', 'list', '--source', 'youtube']));
+    assert.equal(okRun.code, 0); // 无 YouTube 关系 → 0 使用标签按平台收窄计数后仍列出（计数 0）
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
@@ -137,24 +149,49 @@ test('tags apply：POST /api/tags/apply body 形状正确，透传回执，退 0
   const { dir, dbPath } = setup();
   const srv = await startMockServer(() => ({ status: 200, json: { applied: 1, missing: [] } }));
   try {
-    const r = await cli(args(dbPath, srv.url, ['tags', 'apply', 'BV1', 'BV2', '--names', 'ai, 面试题', '--source', 'batch']));
+    const r = await cli(args(dbPath, srv.url, ['tags', 'apply', 'BV1', 'BV2', '--names', 'ai, 面试题', '--scope', 'batch']));
     assert.equal(r.code, 0);
     assert.deepEqual(JSON.parse(r.out), { applied: 1, missing: [] });
     assert.equal(srv.reqs[0]!.path, '/api/tags/apply');
-    // names 逗号拆分 + trim；items 逐 BV 映射 source=bilibili；source 档位透传
+    // names 逗号拆分 + trim；items 逐 vid 映射 source=bilibili（--source 缺省）；scope 档位透传
     assert.deepEqual(srv.reqs[0]!.body, {
       items: [{ source: 'bilibili', source_vid: 'BV1' }, { source: 'bilibili', source_vid: 'BV2' }],
       names: ['ai', '面试题'],
-      source: 'batch',
+      scope: 'batch',
     });
   } finally { await srv.close(); rmSync(dir, { recursive: true, force: true }); }
 });
 
-test('tags apply：--source 非法 → ARGS 退 2', async () => {
+test('tags apply --source youtube：items source 跟随平台（YouTube 打标通道）', async () => {
+  const { dir, dbPath } = setup();
+  const srv = await startMockServer(() => ({ status: 200, json: { inserted: 1, missing: [] } }));
+  try {
+    const r = await cli(args(dbPath, srv.url, ['tags', 'apply', 'ytvid00001', '--names', 'ai', '--scope', 'ai', '--source', 'youtube']));
+    assert.equal(r.code, 0);
+    assert.deepEqual(srv.reqs[0]!.body, {
+      items: [{ source: 'youtube', source_vid: 'ytvid00001' }],
+      names: ['ai'],
+      scope: 'ai',
+    });
+  } finally { await srv.close(); rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('tags apply：--scope 非法 → ARGS 退 2', async () => {
   const { dir, dbPath } = setup();
   const srv = await startMockServer(() => ({ status: 200, json: { ok: true } }));
   try {
-    const r = await cli(args(dbPath, srv.url, ['tags', 'apply', 'BV1', '--names', 'a', '--source', 'bogus']));
+    const r = await cli(args(dbPath, srv.url, ['tags', 'apply', 'BV1', '--names', 'a', '--scope', 'bogus']));
+    assert.equal(r.code, 2);
+    assert.equal(JSON.parse(r.out).code, 'ARGS');
+    assert.equal(srv.reqs.length, 0);
+  } finally { await srv.close(); rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('tags apply：--source 平台非法 → ARGS 退 2', async () => {
+  const { dir, dbPath } = setup();
+  const srv = await startMockServer(() => ({ status: 200, json: { ok: true } }));
+  try {
+    const r = await cli(args(dbPath, srv.url, ['tags', 'apply', 'BV1', '--names', 'a', '--source', 'douyin']));
     assert.equal(r.code, 2);
     assert.equal(JSON.parse(r.out).code, 'ARGS');
     assert.equal(srv.reqs.length, 0);
@@ -195,7 +232,7 @@ test('tags apply：server 409 → RUNTIME 退 1（server 拒绝）', async () =>
 
 // ── tags remove（走 server）──
 
-test('tags remove：省略 --source → body 不含 source 键（删全档），退 0', async () => {
+test('tags remove：省略 --scope → body 不含 scope 键（删全档），退 0', async () => {
   const { dir, dbPath } = setup();
   const srv = await startMockServer(() => ({ status: 200, json: { removed: 2 } }));
   try {
@@ -205,25 +242,25 @@ test('tags remove：省略 --source → body 不含 source 键（删全档），
     assert.equal(srv.reqs[0]!.path, '/api/tags/remove');
     const body = srv.reqs[0]!.body as Record<string, unknown>;
     assert.deepEqual(body, { items: [{ source: 'bilibili', source_vid: 'BV1' }], names: ['ai'] });
-    assert.ok(!('source' in body), '省略 --source 时 body 不含 source 键');
+    assert.ok(!('scope' in body), '省略 --scope 时 body 不含 scope 键');
   } finally { await srv.close(); rmSync(dir, { recursive: true, force: true }); }
 });
 
-test('tags remove --source manual：档位透传', async () => {
+test('tags remove --scope manual：档位透传', async () => {
   const { dir, dbPath } = setup();
   const srv = await startMockServer(() => ({ status: 200, json: { removed: 1 } }));
   try {
-    const r = await cli(args(dbPath, srv.url, ['tags', 'remove', 'BV1', '--names', '精选', '--source', 'manual']));
+    const r = await cli(args(dbPath, srv.url, ['tags', 'remove', 'BV1', '--names', '精选', '--scope', 'manual']));
     assert.equal(r.code, 0);
-    assert.deepEqual(srv.reqs[0]!.body, { items: [{ source: 'bilibili', source_vid: 'BV1' }], names: ['精选'], source: 'manual' });
+    assert.deepEqual(srv.reqs[0]!.body, { items: [{ source: 'bilibili', source_vid: 'BV1' }], names: ['精选'], scope: 'manual' });
   } finally { await srv.close(); rmSync(dir, { recursive: true, force: true }); }
 });
 
-test('tags remove：--source 非法 → ARGS 退 2', async () => {
+test('tags remove：--scope 非法 → ARGS 退 2', async () => {
   const { dir, dbPath } = setup();
   const srv = await startMockServer(() => ({ status: 200, json: { ok: true } }));
   try {
-    const r = await cli(args(dbPath, srv.url, ['tags', 'remove', 'BV1', '--names', 'a', '--source', 'x']));
+    const r = await cli(args(dbPath, srv.url, ['tags', 'remove', 'BV1', '--names', 'a', '--scope', 'x']));
     assert.equal(r.code, 2);
     assert.equal(JSON.parse(r.out).code, 'ARGS');
   } finally { await srv.close(); rmSync(dir, { recursive: true, force: true }); }

@@ -143,7 +143,7 @@ test('scope 切换：human→agent 写 query 并清 cat；再切回 human 清 sc
 test('排序 select：fans → URL sort=fans；first_seen 默认删除', async () => {
   render(<ToastProvider><CreatorsPage onOpen={() => {}} /></ToastProvider>);
   await screen.findByText('UP1');
-  // combobox 顺序：[0]=分类筛选 [1]=排序 [2+] 行内
+  // combobox 顺序：[0]=分类筛选 [1]=排序 [2]=平台筛选 [3+] 行内
   fireEvent.pointerDown(screen.getAllByRole('combobox')[1], { button: 0, ctrlKey: false, pointerType: 'mouse' });
   fireEvent.click(await screen.findByRole('option', { name: '粉丝数' }));
   await waitFor(() => expect(window.location.hash).toBe('#/creators?sort=fans'));
@@ -169,8 +169,17 @@ test('分页：下一页 → page=2 重拉；上一页回 1', async () => {
   await waitFor(() => expect(window.location.hash).toBe('#/creators'));
 });
 
-test('行内分类变更：Select 选择 → POST + toast + reload；失败 toast', async () => {
-  const post = vi.fn(() => Promise.resolve(ok({})));
+// 平台筛选（2026-08-24）：Select 切换写 URL source 且请求带参
+test('平台筛选 Select：切换写 URL source 且按平台重拉', async () => {
+  render(<ToastProvider><CreatorsPage onOpen={() => {}} /></ToastProvider>);
+  await screen.findByText('UP1');
+  fireEvent.pointerDown(screen.getByRole('combobox', { name: '平台筛选' }), { button: 0, ctrlKey: false, pointerType: 'mouse' });
+  fireEvent.click(await screen.findByRole('option', { name: '哔哩哔哩' }));
+  await waitFor(() => expect(window.location.hash).toBe('#/creators?source=bilibili'));
+  await waitFor(() => expect(String(fetchMock.mock.calls.at(-1)![0])).toContain('source=bilibili'));
+});
+
+test('行内分类变更：Select 选择 → POST + toast + reload；失败 toast', async () => {  const post = vi.fn(() => Promise.resolve(ok({})));
   fetchMock.mockImplementation((url: string, init?: RequestInit) => {
     if (init?.method === 'POST') return post();
     const r = defaultRoutes()(url);
@@ -178,19 +187,19 @@ test('行内分类变更：Select 选择 → POST + toast + reload；失败 toas
   });
   render(<ToastProvider><CreatorsPage onOpen={() => {}} /></ToastProvider>);
   await screen.findByText('UP1');
-  // 行内第二个 combobox（人工分类）——第一个是筛选/排序区
+  // 行内第二个 combobox（人工分类）——前面是筛选/排序/平台区
   const rowTriggers = screen.getAllByRole('combobox');
-  fireEvent.pointerDown(rowTriggers[3], { button: 0, ctrlKey: false, pointerType: 'mouse' }); // [0]=排序 [1]=cat筛选 [2]=UP1 agent [3]=UP1 human
+  fireEvent.pointerDown(rowTriggers[4], { button: 0, ctrlKey: false, pointerType: 'mouse' }); // [0]=cat筛选 [1]=排序 [2]=平台 [3]=UP1 agent [4]=UP1 human
   fireEvent.click(await screen.findByRole('option', { name: '优质' }));
   expect(await screen.findByText('已更新')).toBeInTheDocument();
   const postCall = fetchMock.mock.calls.find((c) => (c[1] as RequestInit | undefined)?.method === 'POST')!;
-  expect(postCall[0]).toBe('/api/creators/by-uid/1001/category');
+  expect(postCall[0]).toBe('/api/creators/by-uid/bilibili/1001/category');
   expect(JSON.parse(String(postCall[1].body))).toEqual({ scope: 'human', name: '优质' });
   // reload：/api/creators 再拉
   await waitFor(() => expect(fetchMock.mock.calls.filter((c) => String(c[0]).startsWith('/api/creators?')).length).toBeGreaterThanOrEqual(2));
 
   post.mockImplementation(() => Promise.resolve(new Response('', { status: 400 })));
-  fireEvent.pointerDown(screen.getAllByRole('combobox')[2], { button: 0, ctrlKey: false, pointerType: 'mouse' });
+  fireEvent.pointerDown(screen.getAllByRole('combobox')[3], { button: 0, ctrlKey: false, pointerType: 'mouse' });
   fireEvent.click(await screen.findByRole('option', { name: '科技' }));
   expect(await screen.findByText(/失败：HTTP 400/)).toBeInTheDocument();
 });

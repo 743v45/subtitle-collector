@@ -23,35 +23,45 @@ export interface TagWithCounts extends TagRow {
 }
 
 // 标签库列表：实时计数（3376 视频规模 COUNT 毫秒级，不冗余 usage_count）。
-// counts 恒为四档全量；?source=ai 过滤「该档计数 >0」的标签（按档位分开可查），
-// 排序也按该档计数（省略 source 时按 total）。
-export function listTags(db: Database.Database, opts: { source?: TagSource; q?: string; topN?: number } = {}): TagWithCounts[] {
+// counts 恒为四档全量；?scope=ai 过滤「该档计数 >0」的标签（按档位分开可查），
+// 排序也按该档计数（省略 scope 时按 total）。
+// source（平台）给定时计数只算该平台视频的关系（JOIN videos 收窄；bili/season 档本就不入表，不受影响）。
+// 命名约定：档位对外一律叫 scope（video_tags.source 列是历史命名，DB 列不动）；source 保留给平台。
+export function listTags(
+  db: Database.Database,
+  opts: { scope?: TagSource; source?: string; q?: string; topN?: number } = {},
+): TagWithCounts[] {
   const conds: string[] = [];
   const vals: unknown[] = [];
   if (opts.q) { conds.push("t.name LIKE ?"); vals.push(`%${opts.q}%`); }
   const where = conds.length ? `WHERE ${conds.join(' AND ')}` : '';
-  const counted = opts.source ?? 'total';
+  const counted = opts.scope ?? 'total';
   const totalExpr = counted === 'total' ? '(c_manual + c_batch + c_ai + c_system)' : `c_${counted}`;
+  // 平台收窄：关系行经 video 溯源平台后才计入 CASE；无平台时 vv JOIN 不参与判定（全平台口径）
+  // 占位符顺序 = SELECT 内 4 个 CASE（各 1 个 source）→ WHERE q → LIMIT，platformVals 排最前
+  const platformCond = opts.source ? ' AND vv.source = ?' : '';
+  const platformVals = opts.source ? [opts.source, opts.source, opts.source, opts.source] : [];
   const rows = db.prepare(
     `SELECT t.id, t.name, t.created_at,
-       SUM(CASE WHEN vt.source = 'manual' THEN 1 ELSE 0 END) AS c_manual,
-       SUM(CASE WHEN vt.source = 'batch'  THEN 1 ELSE 0 END) AS c_batch,
-       SUM(CASE WHEN vt.source = 'ai'     THEN 1 ELSE 0 END) AS c_ai,
-       SUM(CASE WHEN vt.source = 'system' THEN 1 ELSE 0 END) AS c_system
+       SUM(CASE WHEN vt.source = 'manual'${platformCond} THEN 1 ELSE 0 END) AS c_manual,
+       SUM(CASE WHEN vt.source = 'batch'${platformCond}  THEN 1 ELSE 0 END) AS c_batch,
+       SUM(CASE WHEN vt.source = 'ai'${platformCond}     THEN 1 ELSE 0 END) AS c_ai,
+       SUM(CASE WHEN vt.source = 'system'${platformCond} THEN 1 ELSE 0 END) AS c_system
      FROM tags t
      LEFT JOIN video_tags vt ON vt.tag_id = t.id
+     LEFT JOIN videos vv ON vv.id = vt.video_id
      ${where}
      GROUP BY t.id, t.name, t.created_at
      ORDER BY ${totalExpr} DESC, t.name ASC
      LIMIT ?`,
-  ).all(...vals, opts.topN ?? 500) as Array<TagRow & { c_manual: number; c_batch: number; c_ai: number; c_system: number }>;
+  ).all(...platformVals, ...vals, opts.topN ?? 500) as Array<TagRow & { c_manual: number; c_batch: number; c_ai: number; c_system: number }>;
   const mapped = rows.map((r) => ({
     id: r.id, name: r.name, created_at: r.created_at,
     counts: { manual: r.c_manual, batch: r.c_batch, ai: r.c_ai, system: r.c_system, total: r.c_manual + r.c_batch + r.c_ai + r.c_system },
   }));
   // 默认列表含 0 使用标签（标签库可复用，空标签留着下次直接用）；
-  // 显式 ?source= 时只列该档 >0 的（按档位分开可查）。
-  return opts.source ? mapped.filter((r) => r.counts[opts.source!] > 0) : mapped;
+  // 显式 ?scope= 时只列该档 >0 的（按档位分开可查）；平台过滤同样按收窄后计数判定。
+  return opts.scope ? mapped.filter((r) => r.counts[opts.scope!] > 0) : mapped;
 }
 
 export interface VideoRef { source: string; source_vid: string }
@@ -69,12 +79,13 @@ function resolveVideoIds(db: Database.Database, refs: VideoRef[]): { found: Map<
 }
 
 // 批量打标：打标即建标（upsert tags）+ 关系 INSERT OR IGNORE 幂等。
+// scope=档位（manual/batch/ai/system；落 video_tags.source 列——列名是历史命名，对外参数一律叫 scope）。
 // 返回 { applied: 命中视频数 × names 的关系写入尝试数（含已存在的忽略）, missing: 库里不存在的视频 }。
 export function applyVideoTags(
   db: Database.Database,
   refs: VideoRef[],
   names: string[],
-  source: TagSource,
+  scope: TagSource,
 ): { inserted: number; missing: VideoRef[] } {
   const { found, missing } = resolveVideoIds(db, refs);
   const cleanNames = [...new Set(names.map((n) => n.trim()).filter(Boolean))];
@@ -91,7 +102,7 @@ export function applyVideoTags(
       ensureTag.run(name, now);
       const t = tagId.get(name) as { id: number };
       for (const videoId of found.values()) {
-        const info = insertRel.run(videoId, t.id, source, now);
+        const info = insertRel.run(videoId, t.id, scope, now);
         if (info.changes > 0) inserted++;
       }
     }
@@ -99,26 +110,26 @@ export function applyVideoTags(
   return { inserted, missing };
 }
 
-// 批量移除：source 省略 → 删该名字的全部三档关系（tags 行保留，库里的标签不因移除关系而消失）。
+// 批量移除：scope 省略 → 删该名字的全部三档关系（tags 行保留，库里的标签不因移除关系而消失）。
 export function removeVideoTags(
   db: Database.Database,
   refs: VideoRef[],
   names: string[],
-  source?: TagSource,
+  scope?: TagSource,
 ): { removed: number; missing: VideoRef[] } {
   const { found, missing } = resolveVideoIds(db, refs);
   const cleanNames = [...new Set(names.map((n) => n.trim()).filter(Boolean))];
   if (found.size === 0 || cleanNames.length === 0) return { removed: 0, missing };
 
   let removed = 0;
-  const stmt = source
+  const stmt = scope
     ? db.prepare(`DELETE FROM video_tags WHERE video_id = ? AND tag_id = (SELECT id FROM tags WHERE name = ?) AND source = ?`)
     : db.prepare(`DELETE FROM video_tags WHERE video_id = ? AND tag_id = (SELECT id FROM tags WHERE name = ?)`);
 
   db.transaction(() => {
     for (const videoId of found.values()) {
       for (const name of cleanNames) {
-        const info = source ? stmt.run(videoId, name, source) : stmt.run(videoId, name);
+        const info = scope ? stmt.run(videoId, name, scope) : stmt.run(videoId, name);
         if (info.changes > 0) removed++;
       }
     }

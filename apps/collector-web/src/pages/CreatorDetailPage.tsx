@@ -8,6 +8,8 @@ import { useAsync } from '@/lib/useAsync';
 import { useToast } from '@/components/ui/toast';
 import { getCreatorDetail, listCategories, setCreatorCategory, listVideos } from '@/api';
 import { creatorUrl, videoUrl } from '../lib/externalLinks';
+import { PlatformIcon, platformIconClass } from '@/components/PlatformIcon';
+import { cn } from '@/lib/utils';
 import { ExtLink } from '@/components/ExtLink';
 import { ArrowLeft, UserRound } from 'lucide-react';
 import type { CreatorDetail, VideoListItem } from '@/types';
@@ -102,7 +104,8 @@ export function CreatorDetailPage({
     if (!creator) return;
     setBusyScope(scope);
     try {
-      await setCreatorCategory(creator.source_uid, scope, name);
+      // 平台段必传：uid 两平台命名空间独立，不带会写错行
+      await setCreatorCategory(creator.source, creator.source_uid, scope, name);
       toast('已更新', 'success');
       reload();
     } catch (e: unknown) {
@@ -146,7 +149,11 @@ export function CreatorDetailPage({
               )}
               <div className="min-w-0 space-y-1">
                 <div className="flex items-center gap-1.5 text-xl font-semibold">
-                  <span className="truncate">{creator.name ?? '(未知)'}</span>
+                  <span className="inline-flex truncate">
+                    {/* 平台徽章（2026-08-24）：与创作者列表行一致 */}
+                    <PlatformIcon source={creator.source} className={cn('mr-1 mt-0.5 h-3.5 w-3.5', platformIconClass(creator.source))} />
+                    <span className="truncate">{creator.name ?? '(未知)'}</span>
+                  </span>
                   <ExtLink href={creatorUrl(creator.source, creator.source_uid)} label={`在原站打开 ${creator.name ?? creator.source_uid} 的空间`} />
                 </div>
                 <div className="text-sm text-muted-foreground">

@@ -421,30 +421,37 @@ describe('A. loopback 无 token：真 main.ts 子进程基础链路', () => {
     assert.equal(r.status, 200);
     assert.equal(r.json.video.source_vid, vid);
 
-    // tags：apply → list
-    r = await api(srv.base, 'POST', '/api/tags/apply', { items: [{ source: 'bilibili', source_vid: vid }], names: ['e2e标记'], source: 'manual' });
+    // tags：apply → list（scope=档位；items[].source=平台）
+    r = await api(srv.base, 'POST', '/api/tags/apply', { items: [{ source: 'bilibili', source_vid: vid }], names: ['e2e标记'], scope: 'manual' });
     assert.equal(r.status, 200);
     assert.equal(r.json.inserted, 1);
     r = await api(srv.base, 'GET', '/api/tags');
     const tag = r.json.items.find((t: any) => t.name === 'e2e标记');
     assert.ok(tag, 'tags 列表应含刚 apply 的标签');
     assert.equal(tag.counts.manual, 1);
+    // 平台收窄计数：source=bilibili 只算 B 站关系（仍为 1）
+    r = await api(srv.base, 'GET', '/api/tags?source=bilibili');
+    assert.equal(r.json.items.find((t: any) => t.name === 'e2e标记').counts.manual, 1);
 
     // creators
     r = await api(srv.base, 'GET', '/api/creators');
     assert.equal(r.status, 200);
     assert.ok(r.json.items.some((c: any) => c.source_uid === '101' && c.name === 'UP主甲'));
 
-    // stats overview（WS ingest 的视频/轨/UP 全部计入）
+    // stats overview（WS ingest 的视频/轨/UP 全部计入；total + 分平台 by_source）
     r = await api(srv.base, 'GET', '/api/stats?type=overview');
     assert.equal(r.status, 200);
-    assert.ok(r.json.overview.videos >= 1);
-    assert.ok(r.json.overview.tracks >= 1);
-    assert.ok(r.json.overview.creators >= 1);
+    assert.ok(r.json.total.videos >= 1);
+    assert.ok(r.json.total.tracks >= 1);
+    assert.ok(r.json.total.creators >= 1);
+    assert.equal(r.json.by_source.bilibili.videos, r.json.total.videos); // 单平台库：平台小节 = 总量
     // aggregate
     r = await api(srv.base, 'GET', '/api/stats?type=aggregate&groupBy=creator');
     assert.equal(r.status, 200);
     assert.ok(Array.isArray(r.json.items));
+    r = await api(srv.base, 'GET', '/api/stats?type=aggregate&groupBy=source');
+    assert.equal(r.status, 200);
+    assert.ok(r.json.items.some((i: any) => i.key === 'bilibili' && i.count >= 1), '按平台分组应含 bilibili 行');
     r = await api(srv.base, 'GET', '/api/stats?type=aggregate&groupBy=bogus');
     assert.equal(r.status, 400);
 

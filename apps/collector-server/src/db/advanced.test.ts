@@ -286,6 +286,30 @@ test('getChanges: since/until 比对 changed_at', () => {
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
+// ── 平台维度（2026-08-24）：source 过滤经实体行判定 + items 带派生 source 列 ──
+test('getChanges: source 平台过滤（经实体行 JOIN）+ items 派生 source 列', () => {
+  const { db, dir } = setup();
+  try {
+    // 追加 YouTube 视频与 UP（ingest 产生 video/creator created 两条 change_log）
+    ingestVideo(db, {
+      source: 'youtube',
+      video: { source_vid: 'yt1', title: 'yt 视频', creator: { source_uid: 'UC9', name: 'yt频道' }, extra: {}, duration: 60, published_at: 1 },
+      tracks: [],
+    });
+    const base = getChanges(db, {}, 1, 20).total;
+    // 平台过滤：youtube 只命中新 ingest 的两条 created；bilibili 不含它们
+    const yt = getChanges(db, { source: 'youtube' }, 1, 20);
+    assert.equal(yt.total, 2);
+    assert.ok(yt.items.every((c) => c.source === 'youtube'), '派生 source 列随实体行带出');
+    assert.deepEqual(yt.items.map((c) => c.entity).sort(), ['creator', 'video']);
+    assert.equal(getChanges(db, { source: 'bilibili' }, 1, 20).total, base - 2);
+    // 派生列在无平台过滤时同样带出（供展示层标平台）
+    const all = getChanges(db, {}, 1, 50);
+    assert.ok(all.items.some((c) => c.source === 'bilibili'));
+    assert.ok(all.items.some((c) => c.source === 'youtube'));
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
 test('aggregateStats: by creator / tname / lang / track-type + topN', () => {
   const { db, dir } = setup();
   try {

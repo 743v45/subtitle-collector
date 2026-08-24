@@ -13,6 +13,8 @@ import { useToast } from '@/components/ui/toast';
 import { useQueryUpdater, useRoute } from '../router';
 import { TAG_SOURCE_CLASS, TAG_SOURCE_LABEL, type TagSource } from '@/lib/tagSources';
 import { creatorUrl, videoUrl } from '../lib/externalLinks';
+import { PlatformIcon, platformIconClass } from '@/components/PlatformIcon';
+import { cn } from '@/lib/utils';
 import { ExtLink } from '@/components/ExtLink';
 import { ArrowLeft, ExternalLink, Loader2, X } from 'lucide-react';
 import type { ReactNode } from 'react';
@@ -172,7 +174,11 @@ export function VideoDetail({ source, sourceVid, onBack }: { source: string; sou
         返回
       </Button>
       <div className="flex items-start justify-between gap-2">
-        <h1 className="text-2xl font-semibold tracking-tight">{v.title}</h1>
+        <h1 className="flex items-center gap-1.5 text-2xl font-semibold tracking-tight">
+          {/* 平台徽章（2026-08-24）：标题前标识来源平台，与视频列表行一致 */}
+          {source && <PlatformIcon source={source} className={cn('h-5 w-5', platformIconClass(source))} />}
+          <span className="min-w-0">{v.title}</span>
+        </h1>
         {/* 原站外链：asChild 把 button 样式落到 a 上，新标签打开视频页 */}
         <Button variant="outline" size="sm" asChild className="shrink-0 gap-1">
           <a href={videoUrl(source, sourceVid)} target="_blank" rel="noopener noreferrer">

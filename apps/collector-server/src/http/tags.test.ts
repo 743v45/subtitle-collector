@@ -49,20 +49,20 @@ test('tags API 全链路：apply → list → rename → 优先级 → 单视频
   try {
     // 1. 批量 apply（batch 档）
     let r = await call(port, 'POST', '/api/tags/apply', {
-      items: [{ source: 'bilibili', source_vid: 'BV1' }], names: ['ai', '面试题'], source: 'batch',
+      items: [{ source: 'bilibili', source_vid: 'BV1' }], names: ['ai', '面试题'], scope: 'batch',
     });
     assert.equal(r.status, 200);
     assert.equal(r.json.inserted, 2);
 
     // 2. bili 档只读 → 400
     r = await call(port, 'POST', '/api/tags/apply', {
-      items: [{ source: 'bilibili', source_vid: 'BV1' }], names: ['x'], source: 'bili',
+      items: [{ source: 'bilibili', source_vid: 'BV1' }], names: ['x'], scope: 'bili',
     });
     assert.equal(r.status, 400);
 
     // 3. 不存在的视频 → 404 + missing
     r = await call(port, 'POST', '/api/tags/apply', {
-      items: [{ source: 'bilibili', source_vid: 'BVnope' }], names: ['x'], source: 'manual',
+      items: [{ source: 'bilibili', source_vid: 'BVnope' }], names: ['x'], scope: 'manual',
     });
     assert.equal(r.status, 404);
     assert.deepEqual(r.json.missing, [{ source: 'bilibili', source_vid: 'BVnope' }]);
@@ -74,7 +74,7 @@ test('tags API 全链路：apply → list → rename → 优先级 → 单视频
     assert.equal(aiTag.counts.batch, 1);
 
     // 5. 单视频打标（manual 档，详情页路径）
-    r = await call(port, 'POST', '/api/videos/bilibili/BV1/tags', { names: ['ai'], source: 'manual' });
+    r = await call(port, 'POST', '/api/videos/bilibili/BV1/tags', { names: ['ai'], scope: 'manual' });
     assert.equal(r.status, 200);
     assert.equal(r.json.inserted, 1);
 
@@ -100,7 +100,7 @@ test('tags API 全链路：apply → list → rename → 优先级 → 单视频
     assert.equal(r.json.tag.name, '人工智能');
 
     // 8. 单视频移除（query 参数，指定档）
-    r = await call(port, 'DELETE', '/api/videos/bilibili/BV1/tags?name=人工智能&source=batch');
+    r = await call(port, 'DELETE', '/api/videos/bilibili/BV1/tags?name=人工智能&scope=batch');
     assert.equal(r.status, 200);
     assert.equal(r.json.removed, 1);
 
@@ -127,8 +127,8 @@ test('富化：列表 tag_details 按优先级 winner dedupe + 优先级翻转 +
   const { port, cleanup } = await setup();
   try {
     // BV1（setup 已入库，extra 无 tags）打 manual + ai 同名「人工智能」
-    await call(port, 'POST', '/api/videos/bilibili/BV1/tags', { names: ['人工智能'], source: 'manual' });
-    await call(port, 'POST', '/api/videos/bilibili/BV1/tags', { names: ['人工智能'], source: 'ai' });
+    await call(port, 'POST', '/api/videos/bilibili/BV1/tags', { names: ['人工智能'], scope: 'manual' });
+    await call(port, 'POST', '/api/videos/bilibili/BV1/tags', { names: ['人工智能'], scope: 'ai' });
 
     // 列表：默认优先级 manual > ... > ai → 人工智能 winner = manual；bili「B站自带」独立展示
     let r = await call(port, 'GET', '/api/videos?source=bilibili&source_vid=BV1&size=50');
@@ -204,12 +204,12 @@ test('season 档 HTTP：列表/详情富化 + 只读 400 + 过滤 + 聚合', asy
       { name: 'AI前沿', source: 'season' },
     ]);
 
-    // 3. 只读：单视频打标/移除 source=season → 400；批量 apply 同理
-    r = await call(port, 'POST', '/api/videos/bilibili/SV1/tags', { names: ['x'], source: 'season' });
+    // 3. 只读：单视频打标/移除 scope=season → 400；批量 apply 同理
+    r = await call(port, 'POST', '/api/videos/bilibili/SV1/tags', { names: ['x'], scope: 'season' });
     assert.equal(r.status, 400);
-    r = await call(port, 'DELETE', '/api/videos/bilibili/SV1/tags?name=x&source=season');
+    r = await call(port, 'DELETE', '/api/videos/bilibili/SV1/tags?name=x&scope=season');
     assert.equal(r.status, 400);
-    r = await call(port, 'POST', '/api/tags/apply', { items: [{ source: 'bilibili', source_vid: 'SV1' }], names: ['x'], source: 'season' });
+    r = await call(port, 'POST', '/api/tags/apply', { items: [{ source: 'bilibili', source_vid: 'SV1' }], names: ['x'], scope: 'season' });
     assert.equal(r.status, 400);
 
     // 4. 过滤分档：SV1 两档并存（bili + season 同名）→ season 档两视频都命中；bili 档只 SV1（SV2 无 bili）
@@ -273,22 +273,22 @@ test('POST /api/tags/apply|remove：body 各非法形态 → 400', async () => {
 
     // item 字段脏值：缺 source / 空 source_vid / 非字符串 → 400
     for (const item of [{ source_vid: 'BV1' }, { source: '', source_vid: 'BV1' }, { source: 'bilibili', source_vid: '' }, { source: 42, source_vid: 'BV1' }]) {
-      const r = await call(port, 'POST', '/api/tags/apply', { items: [item], names: ['x'], source: 'manual' });
+      const r = await call(port, 'POST', '/api/tags/apply', { items: [item], names: ['x'], scope: 'manual' });
       assert.equal(r.status, 400);
       assert.equal(r.json.error, 'each item needs non-empty source & source_vid');
     }
 
-    // remove 显式 source=bogus → 400；source=season 只读 → 400；source=bili 只读 → 400
-    let r = await call(port, 'POST', '/api/tags/remove', { items: [{ source: 'bilibili', source_vid: 'BV1' }], names: ['x'], source: 'bogus' });
+    // remove 显式 scope=bogus → 400；scope=season 只读 → 400；scope=bili 只读 → 400
+    let r = await call(port, 'POST', '/api/tags/remove', { items: [{ source: 'bilibili', source_vid: 'BV1' }], names: ['x'], scope: 'bogus' });
     assert.equal(r.status, 400);
-    r = await call(port, 'POST', '/api/tags/remove', { items: [{ source: 'bilibili', source_vid: 'BV1' }], names: ['x'], source: 'season' });
+    r = await call(port, 'POST', '/api/tags/remove', { items: [{ source: 'bilibili', source_vid: 'BV1' }], names: ['x'], scope: 'season' });
     assert.equal(r.status, 400);
-    r = await call(port, 'POST', '/api/tags/remove', { items: [{ source: 'bilibili', source_vid: 'BV1' }], names: ['x'], source: 'bili' });
+    r = await call(port, 'POST', '/api/tags/remove', { items: [{ source: 'bilibili', source_vid: 'BV1' }], names: ['x'], scope: 'bili' });
     assert.equal(r.status, 400);
-    // remove 显式合法 source=manual → 200（走带档删除分支）
-    await call(port, 'POST', '/api/tags/apply', { items: [{ source: 'bilibili', source_vid: 'BV1' }], names: ['档删'], source: 'manual' });
-    await call(port, 'POST', '/api/tags/apply', { items: [{ source: 'bilibili', source_vid: 'BV1' }], names: ['档删'], source: 'ai' });
-    r = await call(port, 'POST', '/api/tags/remove', { items: [{ source: 'bilibili', source_vid: 'BV1' }], names: ['档删'], source: 'manual' });
+    // remove 显式合法 scope=manual → 200（走带档删除分支）
+    await call(port, 'POST', '/api/tags/apply', { items: [{ source: 'bilibili', source_vid: 'BV1' }], names: ['档删'], scope: 'manual' });
+    await call(port, 'POST', '/api/tags/apply', { items: [{ source: 'bilibili', source_vid: 'BV1' }], names: ['档删'], scope: 'ai' });
+    r = await call(port, 'POST', '/api/tags/remove', { items: [{ source: 'bilibili', source_vid: 'BV1' }], names: ['档删'], scope: 'manual' });
     assert.equal(r.status, 200);
     assert.equal(r.json.removed, 1);
   } finally { cleanup(); }
@@ -298,7 +298,7 @@ test('POST /api/tags/apply|remove：body 各非法形态 → 400', async () => {
 test('PATCH /api/tags/:id：name 缺失/非串/空白 → 400；不存在 id → 404；未知方法/路径 → 404', async () => {
   const { port, cleanup } = await setup();
   try {
-    await call(port, 'POST', '/api/tags/apply', { items: [{ source: 'bilibili', source_vid: 'BV1' }], names: ['目标'], source: 'manual' });
+    await call(port, 'POST', '/api/tags/apply', { items: [{ source: 'bilibili', source_vid: 'BV1' }], names: ['目标'], scope: 'manual' });
     const tagId = (await call(port, 'GET', '/api/tags')).json.items.find((t: any) => t.name === '目标').id;
 
     // name 缺失 / 非字符串 / 纯空白 → 400
@@ -354,7 +354,7 @@ test('PATCH /api/tags/:id：rename 抛非 UNIQUE 错误 → 500 + 错误 message
     server.listen(0, '127.0.0.1', () => resolve((server.address() as AddressInfo).port));
   });
   try {
-    const apply = await call(port, 'POST', '/api/tags/apply', { items: [{ source: 'bilibili', source_vid: 'BV1' }], names: ['目标'], source: 'manual' });
+    const apply = await call(port, 'POST', '/api/tags/apply', { items: [{ source: 'bilibili', source_vid: 'BV1' }], names: ['目标'], scope: 'manual' });
     assert.equal(apply.status, 200);
     const tagId = (await call(port, 'GET', '/api/tags')).json.items[0].id;
     const r = await call(port, 'PATCH', `/api/tags/${tagId}`, { name: '改名' });
@@ -367,16 +367,16 @@ test('PATCH /api/tags/:id：rename 抛非 UNIQUE 错误 → 500 + 错误 message
 });
 
 // ── GET /api/tags 的 source 校验与 topN 归一 ──
-test('GET /api/tags：source 非法 400；topN 非法回落 500、上限 500、下限 1', async () => {
+test('GET /api/tags：scope 非法 400；topN 非法回落 500、上限 500、下限 1', async () => {
   const { port, cleanup } = await setup();
   try {
-    await call(port, 'POST', '/api/tags/apply', { items: [{ source: 'bilibili', source_vid: 'BV1' }], names: ['t1', 't2', 't3'], source: 'manual' });
-    // source 非法档 → 400
-    let r = await call(port, 'GET', '/api/tags?source=bogus');
+    await call(port, 'POST', '/api/tags/apply', { items: [{ source: 'bilibili', source_vid: 'BV1' }], names: ['t1', 't2', 't3'], scope: 'manual' });
+    // scope 非法档 → 400
+    let r = await call(port, 'GET', '/api/tags?scope=bogus');
     assert.equal(r.status, 400);
-    assert.equal(r.json.error, 'source must be manual|batch|ai');
-    // source 合法（manual）→ 只列该档 >0 的标签
-    r = await call(port, 'GET', '/api/tags?source=manual');
+    assert.equal(r.json.error, 'scope must be manual|batch|ai');
+    // scope 合法（manual）→ 只列该档 >0 的标签
+    r = await call(port, 'GET', '/api/tags?scope=manual');
     assert.equal(r.status, 200);
     assert.equal(r.json.items.length, 3);
     // topN 非法（NaN）→ 回落 500；topN=2 → 截 2 条；topN=99999 → 上限 500

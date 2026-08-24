@@ -152,9 +152,9 @@ test('getChanges：entity 省略 + items 缺失回落 []', async () => {
   expect(lastCall().url).toBe('/api/changes?page=1&size=20');
 });
 
-test('getStatsOverview：解包 overview', async () => {
-  fetchMock.mockResolvedValueOnce(ok({ overview: { videos: 3 } }));
-  await expect(api.getStatsOverview()).resolves.toEqual({ videos: 3 });
+test('getStatsOverview：解包 total + by_source（2026-08-24 分平台形状）', async () => {
+  fetchMock.mockResolvedValueOnce(ok({ total: { videos: 3 }, by_source: { bilibili: { videos: 3 } } }));
+  await expect(api.getStatsOverview()).resolves.toEqual({ total: { videos: 3 }, by_source: { bilibili: { videos: 3 } } });
   expect(lastCall().url).toBe('/api/stats?type=overview');
 });
 
@@ -386,22 +386,22 @@ test('getTagPriority / putTagPriority', async () => {
   expect(JSON.parse(String(init?.body))).toEqual({ priority: ['ai', 'manual'] });
 });
 
-test('videoApplyTags：POST body {names, source}，解包 inserted', async () => {
+test('videoApplyTags：POST body {names, scope}，解包 inserted', async () => {
   fetchMock.mockResolvedValueOnce(ok({ inserted: 4 }));
   await expect(api.videoApplyTags('bilibili', 'BV 1', ['x'], 'batch')).resolves.toEqual({ inserted: 4 });
   const { url, init } = lastCall();
   expect(url).toBe('/api/videos/bilibili/BV%201/tags');
-  expect(JSON.parse(String(init?.body))).toEqual({ names: ['x'], source: 'batch' });
+  expect(JSON.parse(String(init?.body))).toEqual({ names: ['x'], scope: 'batch' });
 });
 
-test('videoRemoveTags：source 可选进 query，解包 removed', async () => {
+test('videoRemoveTags：scope 可选进 query，解包 removed', async () => {
   fetchMock.mockResolvedValueOnce(ok({ removed: 1 }));
   await expect(api.videoRemoveTags('youtube', 'abc', 'x')).resolves.toEqual({ removed: 1 });
   expect(lastCall().url).toBe('/api/videos/youtube/abc/tags?name=x');
 
   fetchMock.mockResolvedValueOnce(ok({ removed: 2 }));
   await expect(api.videoRemoveTags('youtube', 'abc', 'x', 'manual')).resolves.toEqual({ removed: 2 });
-  expect(lastCall().url).toBe('/api/videos/youtube/abc/tags?name=x&source=manual');
+  expect(lastCall().url).toBe('/api/videos/youtube/abc/tags?name=x&scope=manual');
 });
 
 // ── UP 主 ──
@@ -428,14 +428,15 @@ test('getCreatorDetail：解包 creator', async () => {
   expect(lastCall().url).toBe('/api/creators/3');
 });
 
-test('setCreatorCategory：uid 编码 + body {scope,name}；失败上抛', async () => {
+test('setCreatorCategory：平台段 + uid 编码 + body {scope,name}；失败上抛', async () => {
   fetchMock.mockResolvedValueOnce(ok({}));
-  await expect(api.setCreatorCategory('42', 'agent', '科技')).resolves.toBeUndefined();
+  await expect(api.setCreatorCategory('bilibili', '42', 'agent', '科技')).resolves.toBeUndefined();
   const { url, init } = lastCall();
-  expect(url).toBe('/api/creators/by-uid/42/category');
+  expect(url).toBe('/api/creators/by-uid/bilibili/42/category');
   expect(init?.method).toBe('POST');
   expect(JSON.parse(String(init?.body))).toEqual({ scope: 'agent', name: '科技' });
 
   fetchMock.mockResolvedValueOnce(httpErr(400, { error: '分类不存在' }));
-  await expect(api.setCreatorCategory('42', 'human', '无')).rejects.toThrow('HTTP 400：分类不存在');
+  await expect(api.setCreatorCategory('youtube', 'UC%20x', 'human', '无')).rejects.toThrow('HTTP 400：分类不存在');
+  expect(lastCall().url).toBe('/api/creators/by-uid/youtube/UC%2520x/category');
 });

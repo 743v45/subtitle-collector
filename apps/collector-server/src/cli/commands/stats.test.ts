@@ -54,19 +54,45 @@ function setup(): { db: Database.Database; dir: string } {
 
 // ── statsOverview ──
 
-test('statsOverview：视频/轨/版本/UP/语言/分区计数 + first_seen 范围', () => {
+test('statsOverview：全库总 + 分平台 by_source（轨/版本/语言经视频溯源平台）', () => {
   const { db, dir } = setup();
   try {
+    // 追加一条 YouTube 视频（1 轨英文 CC），补双平台种子；first_seen 覆写为确定值（ingest 用 Date.now()）
+    ingestVideo(db, {
+      source: 'youtube',
+      video: { source_vid: 'ytvid00001', title: 'yt', creator: { source_uid: 'UCyt', name: 'YT频道' }, extra: {}, duration: 100, published_at: T },
+      tracks: [{ lan: 'en', lan_doc: 'English', track_type: 2, versions: [{ origin: 'external', payload: { body: [] } }] }],
+    });
+    db.prepare("UPDATE videos SET first_seen_at = ? WHERE source = 'youtube' AND source_vid = 'ytvid00001'").run(T + 400);
     const o = statsOverview(db);
-    assert.equal(o.videos, 3);
-    assert.equal(o.tracks, 3);      // BV1 两轨 + BV2 一轨
-    assert.equal(o.versions, 3);
-    assert.equal(o.creators, 2);
-    assert.equal(o.languages, 2);   // zh-Hans + en
-    assert.equal(o.categories, 2);  // 单机游戏 + 科技
-    assert.equal(o.today_videos, 0); // first_seen 全是 2023，不在今天
-    assert.equal(o.first_seen_min, T + 100);
-    assert.equal(o.first_seen_max, T + 300);
+    // 全库总：原 3 视频 3 轨 + YT 1 视频 1 轨
+    assert.equal(o.total.videos, 4);
+    assert.equal(o.total.tracks, 4);
+    assert.equal(o.total.versions, 4);
+    assert.equal(o.total.creators, 3);   // UP甲/UP乙/YT频道
+    assert.equal(o.total.languages, 2);  // zh-Hans + en
+    assert.equal(o.total.categories, 2); // 单机游戏 + 科技（YT 无 tname）
+    assert.equal(o.total.today_videos, 0);
+    assert.equal(o.total.first_seen_min, T + 100);
+    assert.equal(o.total.first_seen_max, T + 400);
+    // 分平台：by_source 键 = 库内 DISTINCT source
+    assert.deepEqual(Object.keys(o.by_source).sort(), ['bilibili', 'youtube']);
+    const bili = o.by_source.bilibili!;
+    assert.equal(bili.videos, 3);
+    assert.equal(bili.tracks, 3);
+    assert.equal(bili.versions, 3);
+    assert.equal(bili.creators, 2);
+    assert.equal(bili.languages, 2);   // zh-Hans + en 都在 B 站视频上
+    assert.equal(bili.categories, 2);
+    assert.deepEqual([bili.first_seen_min, bili.first_seen_max], [T + 100, T + 300]); // 平台内范围独立
+    const yt = o.by_source.youtube!;
+    assert.equal(yt.videos, 1);
+    assert.equal(yt.tracks, 1);
+    assert.equal(yt.versions, 1);
+    assert.equal(yt.creators, 1);
+    assert.equal(yt.languages, 1);     // 只有 en
+    assert.equal(yt.categories, 0);    // YouTube 无 tname
+    assert.deepEqual([yt.first_seen_min, yt.first_seen_max], [T + 400, T + 400]);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
@@ -98,6 +124,26 @@ test('statsCount：by=lang（DISTINCT 视频数）+ filter 透传（has_subtitle
     // has_subtitle 过滤掉无轨的 BV3 后按 creator 聚合 → 只剩 UP甲
     assert.deepEqual(statsCount(db, { by: 'creator', filter: { has_subtitle: true } }), [
       { key: 'UP甲', count: 2 },
+    ]);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+// by=source（2026-08-24）：按平台分组计数，可与 source 过滤组合
+test('statsCount：by=source 按平台分组（含 --source 过滤收窄）', () => {
+  const { db, dir } = setup();
+  try {
+    ingestVideo(db, {
+      source: 'youtube',
+      video: { source_vid: 'ytvid00001', title: 'yt', creator: { source_uid: 'UCyt', name: 'YT频道' }, extra: {}, duration: 100, published_at: T },
+      tracks: [],
+    });
+    assert.deepEqual(statsCount(db, { by: 'source' }), [
+      { key: 'bilibili', count: 3 },
+      { key: 'youtube', count: 1 },
+    ]);
+    // source 过滤 + source 分组组合（收窄后只含该平台）
+    assert.deepEqual(statsCount(db, { by: 'source', filter: { source: 'youtube' } }), [
+      { key: 'youtube', count: 1 },
     ]);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });

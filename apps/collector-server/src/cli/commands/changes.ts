@@ -19,6 +19,7 @@ export interface ChangesListOpts {
   entity?: string;
   entityId?: number;
   field?: string;
+  source?: string;  // 平台过滤（经实体行 JOIN 判定，change_log 表无平台列）
   since?: number;   // 已规范化毫秒，比对 changed_at
   until?: number;
   page?: number;
@@ -32,6 +33,7 @@ export function changesList(db: Database.Database, opts: ChangesListOpts): PageR
   if (opts.entity !== undefined) filter.entity = opts.entity;
   if (opts.entityId !== undefined) filter.entity_id = opts.entityId;
   if (opts.field !== undefined) filter.field = opts.field;
+  if (opts.source !== undefined) filter.source = opts.source;
   if (opts.since !== undefined) filter.since = opts.since;
   if (opts.until !== undefined) filter.until = opts.until;
   const page = opts.page && opts.page > 0 ? Math.floor(opts.page) : 1;
@@ -46,6 +48,7 @@ interface ChangesRawOpts {
   entity?: string;
   entityId?: string;
   field?: string;
+  source?: string;
   since?: string;
   until?: string;
   page?: string;
@@ -87,10 +90,11 @@ export function buildChangesCommand(): Command {
 
   changes
     .command('list')
-    .description('按 entity / field / 时间范围过滤 change_log，返回 {total,page,size,items}')
-    .option('--entity <name>', '按实体类型过滤（如 video / creator / subtitle_version）')
+    .description('按 entity / field / 时间范围过滤 change_log，返回 {total,page,size,items}（items 含派生 source 平台列）')
+    .option('--entity <name>', '按实体类型过滤（如 video / creator）')
     .option('--entity-id <id>', '按实体 id 过滤（建议配合 --entity）')
     .option('--field <name>', '按字段名过滤')
+    .option('--source <src>', '按平台过滤（bilibili|youtube，经实体行判定）')
     .option('--since <ts>', '起始时间（Unix 秒/毫秒 或 ISO8601），比对 changed_at')
     .option('--until <ts>', '结束时间（Unix 秒/毫秒 或 ISO8601），比对 changed_at')
     .option('--page <n>', '页码（从 1 起，默认 1）')
@@ -102,6 +106,7 @@ export function buildChangesCommand(): Command {
         entity: raw.entity,
         entityId: parseNum(raw.entityId, '--entity-id'),
         field: raw.field,
+        source: raw.source,
         since: parseTime(raw.since, '--since'),
         until: parseTime(raw.until, '--until'),
         page: parseNum(raw.page, '--page'),

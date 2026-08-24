@@ -134,7 +134,19 @@ test('Select 切换 entity：写 URL 且 resetPage', async () => {
   fetchMock.mockImplementation(() => Promise.resolve(ok({ total: 90, items: [row({ id: 1 })] })));
   render(<ChangesLog />);
   await screen.findByText('第 3/3 页');
-  fireEvent.pointerDown(screen.getByRole('combobox'), { button: 0, ctrlKey: false, pointerType: 'mouse' });
+  fireEvent.pointerDown(screen.getByRole('combobox', { name: '类型筛选' }), { button: 0, ctrlKey: false, pointerType: 'mouse' });
   fireEvent.click(await screen.findByRole('option', { name: '创作者' }));
   await waitFor(() => expect(window.location.hash).toBe('#/changes?entity=creator'));
+});
+
+// 平台筛选（2026-08-24）：Select 切换写 URL source 且请求带参；行内平台图标随派生 source 列渲染
+test('Select 切换平台：写 URL source 且请求带参', async () => {
+  window.history.replaceState(null, '', '#/changes');
+  fetchMock.mockImplementation(() => Promise.resolve(ok({ total: 1, items: [row({ id: 1, source: 'bilibili' })] })));
+  render(<ChangesLog />);
+  await screen.findByText('title'); // 首屏列表已渲染
+  fireEvent.pointerDown(screen.getByRole('combobox', { name: '平台筛选' }), { button: 0, ctrlKey: false, pointerType: 'mouse' });
+  fireEvent.click(await screen.findByRole('option', { name: '哔哩哔哩' }));
+  await waitFor(() => expect(window.location.hash).toBe('#/changes?source=bilibili'));
+  await waitFor(() => expect(String(fetchMock.mock.calls.at(-1)![0])).toContain('source=bilibili'));
 });

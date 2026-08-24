@@ -6,6 +6,9 @@ import { Card, CardContent } from '@/components/ui/card';
 import { useAsync } from '@/lib/useAsync';
 import { useQueryUpdater, useRoute } from '../router';
 import { getChanges } from '@/api';
+import { PlatformIcon, platformIconClass } from '@/components/PlatformIcon';
+import { PlatformSelect } from '@/components/PlatformSelect';
+import { cn } from '@/lib/utils';
 import type { ChangeRow } from '@/types';
 
 const PAGE_SIZE = 30;
@@ -26,15 +29,17 @@ function ValueCell({ v }: { v: string | null }) {
 }
 
 export function ChangesLog() {
-  // 类型筛选 + 页码进 URL（#/changes?entity=video&page=2），刷新/后退还原
+  // 类型 + 平台筛选 + 页码进 URL（#/changes?entity=video&source=bilibili&page=2），刷新/后退还原
   const route = useRoute();
   const updateQuery = useQueryUpdater();
   const entity = route.query.get('entity') ?? '';
+  const sourceRaw = route.query.get('source');
+  const source = sourceRaw === 'bilibili' || sourceRaw === 'youtube' ? sourceRaw : null;
   const pageRaw = Number(route.query.get('page'));
   const page = Number.isInteger(pageRaw) && pageRaw > 1 ? pageRaw : 1;
   const { data, loading, error, reload } = useAsync(
-    () => getChanges({ entity: entity || undefined, page, size: PAGE_SIZE }),
-    [entity, page],
+    () => getChanges({ entity: entity || undefined, source: source ?? undefined, page, size: PAGE_SIZE }),
+    [entity, source, page],
   );
   const items: ChangeRow[] = data?.items ?? [];
   const total = data?.total ?? 0;
@@ -52,7 +57,7 @@ export function ChangesLog() {
           value={entity || '__all'}
           onValueChange={(v) => updateQuery({ entity: v === '__all' ? null : v }, { resetPage: true })}
         >
-          <SelectTrigger className="w-32">
+          <SelectTrigger className="w-32" aria-label="类型筛选">
             <SelectValue placeholder="类型" />
           </SelectTrigger>
           <SelectContent>
@@ -61,6 +66,7 @@ export function ChangesLog() {
             <SelectItem value="creator">创作者</SelectItem>
           </SelectContent>
         </Select>
+        <PlatformSelect value={source} onChange={(v) => updateQuery({ source: v }, { resetPage: true })} />
         <Button variant="outline" size="sm" onClick={reload}>刷新</Button>
       </div>
 
@@ -104,7 +110,11 @@ export function ChangesLog() {
                 <TableRow key={c.id}>
                   <TableCell className="whitespace-nowrap text-xs tabular-nums text-muted-foreground">{fmtTime(c.changed_at)}</TableCell>
                   <TableCell className="text-xs">
-                    {c.entity === 'video' ? '视频' : c.entity === 'creator' ? 'UP' : c.entity}
+                    <span className="inline-flex items-center gap-1">
+                      {/* 派生 source 列：实体行所属平台（不可判时省略图标） */}
+                      {c.source && <PlatformIcon source={c.source} className={cn('h-3 w-3', platformIconClass(c.source))} />}
+                      {c.entity === 'video' ? '视频' : c.entity === 'creator' ? 'UP' : c.entity}
+                    </span>
                   </TableCell>
                   <TableCell className="font-mono text-xs text-muted-foreground">{c.entity_id}</TableCell>
                   <TableCell className="text-xs">{c.field}</TableCell>

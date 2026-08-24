@@ -126,23 +126,28 @@ test('sendCommand：action+params 展开、clientId URL 编码、timeout 有无�
   } finally { m.restore(); }
 });
 
-test('applyTags / removeTags：items source 固定 bilibili；remove 省略 source = 删全档（无 source 键）', async () => {
+test('applyTags / removeTags：items source=平台（默认 bilibili）、body scope=档位；remove 省略 scope = 删全档（无 scope 键）', async () => {
   const m = mockFetch(() => new Response('{"ok":true}', { status: 200 }));
   try {
     const c = client();
     await c.applyTags(['BV1', 'BV2'], ['ai', '面试题'], 'batch');
     await c.removeTags(['BV1'], ['ai']);
     await c.removeTags(['BV1'], ['ai'], 'manual');
+    await c.applyTags(['ytvid00001'], ['ai'], 'ai', 'youtube');
     assert.deepEqual(JSON.parse(String(m.recs[0]!.init.body)), {
       items: [{ source: 'bilibili', source_vid: 'BV1' }, { source: 'bilibili', source_vid: 'BV2' }],
       names: ['ai', '面试题'],
-      source: 'batch',
+      scope: 'batch',
     });
     const rm = JSON.parse(String(m.recs[1]!.init.body)) as Record<string, unknown>;
     assert.deepEqual(rm, { items: [{ source: 'bilibili', source_vid: 'BV1' }], names: ['ai'] });
-    assert.ok(!('source' in rm), 'remove 省略 source 时 body 不含 source 键');
+    assert.ok(!('scope' in rm), 'remove 省略 scope 时 body 不含 scope 键');
     assert.deepEqual(JSON.parse(String(m.recs[2]!.init.body)), {
-      items: [{ source: 'bilibili', source_vid: 'BV1' }], names: ['ai'], source: 'manual',
+      items: [{ source: 'bilibili', source_vid: 'BV1' }], names: ['ai'], scope: 'manual',
+    });
+    // platform=youtube：items source 跟随，不再硬编码 bilibili
+    assert.deepEqual(JSON.parse(String(m.recs[3]!.init.body)), {
+      items: [{ source: 'youtube', source_vid: 'ytvid00001' }], names: ['ai'], scope: 'ai',
     });
   } finally { m.restore(); }
 });

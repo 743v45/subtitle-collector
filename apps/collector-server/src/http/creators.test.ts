@@ -110,18 +110,18 @@ test('creators 打分类：缺参/非法 scope 400；合法 200（分类不存�
   const { port, cleanup } = await setup();
   try {
     // 400：scope 非法 / name 缺失
-    let r = await call(port, 'POST', '/api/creators/by-uid/100/category', { scope: 'bogus', name: '财经' });
+    let r = await call(port, 'POST', '/api/creators/by-uid/bilibili/100/category', { scope: 'bogus', name: '财经' });
     assert.equal(r.status, 400);
-    r = await call(port, 'POST', '/api/creators/by-uid/100/category', { scope: 'agent' });
+    r = await call(port, 'POST', '/api/creators/by-uid/bilibili/100/category', { scope: 'agent' });
     assert.equal(r.status, 400);
 
     // 200：给已入库 UP 打 agent 分类（分类不存在则建）
-    r = await call(port, 'POST', '/api/creators/by-uid/100/category', { scope: 'agent', name: '财经' });
+    r = await call(port, 'POST', '/api/creators/by-uid/bilibili/100/category', { scope: 'agent', name: '财经' });
     assert.equal(r.status, 200);
     assert.equal(r.json.creator.category_agent_name, '财经');
 
     // uid 含特殊字符（URL 编码后仍命中）；不存在的 UP → 建最小行
-    r = await call(port, 'POST', `/api/creators/by-uid/${encodeURIComponent('uid/空间')}/category`, { scope: 'human', name: '待观察' });
+    r = await call(port, 'POST', `/api/creators/by-uid/bilibili/${encodeURIComponent('uid/空间')}/category`, { scope: 'human', name: '待观察' });
     assert.equal(r.status, 200);
     assert.equal(r.json.creator.category_human_name, '待观察');
     assert.equal(r.json.creator.source_uid, 'uid/空间');
@@ -136,5 +136,47 @@ test('creators 打分类：缺参/非法 scope 400；合法 200（分类不存�
     // 详情路由只认 GET：POST /api/creators/:id → 404
     r = await call(port, 'POST', '/api/creators/100', {});
     assert.equal(r.status, 404);
+  } finally { cleanup(); }
+});
+
+// ── 平台维度（2026-08-24）──
+// 回归：打分类端点曾硬编码 bilibili——YouTube uid 打分类会误建 bilibili 行。
+// 修复后路径带 :source 段，YouTube uid 落 youtube 命名空间；非 bilibili|youtube 平台段 404。
+test('creators 打分类 by-uid/:source/:uid：YouTube uid 落 youtube 命名空间（回归：曾误写 bilibili）；非法平台 404', async () => {
+  const { port, cleanup } = await setup();
+  try {
+    // YouTube 频道打分类 → creator.source=youtube（修复前硬编码 bilibili，这里会得到 source='bilibili'）
+    const r = await call(port, 'POST', '/api/creators/by-uid/youtube/UCabc123/category', { scope: 'agent', name: '外语' });
+    assert.equal(r.status, 200);
+    assert.equal(r.json.creator.source, 'youtube');
+    assert.equal(r.json.creator.source_uid, 'UCabc123');
+    assert.equal(r.json.creator.category_agent_name, '外语');
+
+    // bilibili 列表不含该 YouTube 行（两命名空间隔离）
+    const bili = await call(port, 'GET', '/api/creators?source=bilibili');
+    assert.equal(bili.json.total, 2);
+    assert.equal(bili.json.items.some((i: any) => i.source_uid === 'UCabc123'), false);
+    // youtube 过滤只含它
+    const yt = await call(port, 'GET', '/api/creators?source=youtube');
+    assert.equal(yt.json.total, 1);
+    assert.equal(yt.json.items[0].source_uid, 'UCabc123');
+
+    // 非法平台段（非 bilibili|youtube）→ 404
+    const bad = await call(port, 'POST', '/api/creators/by-uid/douyin/123/category', { scope: 'agent', name: 'x' });
+    assert.equal(bad.status, 404);
+  } finally { cleanup(); }
+});
+
+test('creators 列表 ?source= 平台过滤', async () => {
+  const { port, cleanup } = await setup();
+  try {
+    let r = await call(port, 'GET', '/api/creators?source=bilibili');
+    assert.equal(r.json.total, 2);
+    r = await call(port, 'GET', '/api/creators?source=youtube');
+    assert.equal(r.json.total, 0);
+    // 非法平台值：宽松透传（无命中，不 500——对齐 /api/videos 的 source 处理）
+    r = await call(port, 'GET', '/api/creators?source=bogus');
+    assert.equal(r.status, 200);
+    assert.equal(r.json.total, 0);
   } finally { cleanup(); }
 });

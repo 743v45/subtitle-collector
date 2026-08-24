@@ -56,6 +56,13 @@ test('collectSubtitle 下发 fetch-subtitle action', async () => {
   assert.deepEqual(out, { ok: true, result: { bvid: 'BV1', tracks: 2, ingested: true } });
 });
 
+// ── 平台分叉（2026-08-24）：youtube → fetch-youtube-subtitle + videoId 参数（对齐 server 任务派发 tasks.ts）──
+test('collectSubtitle --source youtube → fetch-youtube-subtitle + { videoId }', async () => {
+  const c = mockClient({ ok: true, result: { videoId: 'ytvid00001', tracks: 1, ingested: true } });
+  await collectSubtitle(c as any, 'c1', 'ytvid00001', 15000, 'youtube');
+  assert.deepEqual(c.calls[0], { clientId: 'c1', action: 'fetch-youtube-subtitle', params: { videoId: 'ytvid00001' }, timeout: 15000 });
+});
+
 function makeDb() {
   const db = new Database(':memory:');
   db.exec(`CREATE TABLE videos (id INTEGER PRIMARY KEY, source TEXT, source_vid TEXT, title TEXT, first_seen_at INTEGER, UNIQUE(source, source_vid));`);

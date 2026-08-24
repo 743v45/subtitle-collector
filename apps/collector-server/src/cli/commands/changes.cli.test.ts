@@ -60,6 +60,31 @@ test('changes list：返回 {total,page,size,items}（ingest 产生的 change_lo
   } finally { db.close(); rmSync(dir, { recursive: true, force: true }); }
 });
 
+// --source 平台过滤（2026-08-24）：经实体行判定；items 带派生 source 列
+test('changes list --source：平台过滤命中 + items 带 source 列', async () => {
+  const { db, dir, dbPath } = setup();
+  try {
+    // 追加 YouTube 种子：bilibili 2 条 + youtube 2 条
+    ingestVideo(db, {
+      source: 'youtube',
+      video: { source_vid: 'yt1', title: 'yt', creator: { source_uid: 'UC1', name: 'ch' }, extra: {}, duration: 60, published_at: 1 },
+      tracks: [],
+    });
+    const all = await cli(args(dbPath, ['changes', 'list', '--size', '50']));
+    const allData = JSON.parse(all.out);
+    assert.equal(allData.total, 4);
+    assert.ok(allData.items.every((i: { source: string }) => i.source === 'bilibili' || i.source === 'youtube'), '派生 source 列随行带出');
+
+    const bili = await cli(args(dbPath, ['changes', 'list', '--source', 'bilibili']));
+    const biliData = JSON.parse(bili.out);
+    assert.equal(biliData.total, 2);
+    assert.ok(biliData.items.every((i: { source: string }) => i.source === 'bilibili'));
+
+    const yt = await cli(args(dbPath, ['changes', 'list', '--source', 'youtube']));
+    assert.equal(JSON.parse(yt.out).total, 2);
+  } finally { db.close(); rmSync(dir, { recursive: true, force: true }); }
+});
+
 test('changes list：--entity 过滤命中', async () => {
   const { dir, dbPath } = setup();
   try {

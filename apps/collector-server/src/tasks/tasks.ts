@@ -543,9 +543,9 @@ export function attachTaskScheduler(db: Database.Database): void {
       db2.prepare("UPDATE collect_tasks SET status = ?, result = ?, finished_at = ? WHERE id = ?")
         .run(status, JSON.stringify(data), Date.now(), taskId);
       pushTask(db2, taskId);
-      // 确认无字幕（bilibili fetch-subtitle 回执）→ 打 no-subtitle 系统标（远期 ASR 定位锚点；
+      // 确认无字幕（两平台回执均回 reason=no_subtitle）→ 打 no-subtitle 系统标（远期 ASR 定位锚点；
       // 视频元信息行已由扩展 ingest 先行落库，打标必命中）。失败静默——状态行已更新，标可回填。
-      if (task.source === 'bilibili' && data?.reason === 'no_subtitle') {
+      if (data?.reason === 'no_subtitle') {
         try { markNoSubtitle(db2, { source: task.source, source_vid: task.source_vid }); } catch { /* 回填补 */ }
       }
     } else {

@@ -3,9 +3,9 @@ import type Database from 'better-sqlite3';
 import { getVideo, getVersionPayload } from '../db/queries.js';
 import { listVideosFiltered, getChanges, latestTaskStatusByVideoIds, type VideoSortKey, type VideoListItemAdvanced, type ChangeFilter } from '../db/advanced.js';
 import { parseVideoFilter, parseBool } from './filter.js';
-import { applyVideoTags, removeVideoTags, isTagSource, getVideoTagsByVideoIds, getVideoTagsForDetail, type TagSource } from '../db/tags.js';
+import { applyVideoTags, removeVideoTags, getVideoTagsByVideoIds, getVideoTagsForDetail, type TagSource } from '../db/tags.js';
 import { getTagPriority, type TagPrioritySource } from '../db/settings.js';
-import { json, readJsonBody } from './http-util.js';
+import { json, readJsonBody, parseTagScope } from './http-util.js';
 
 // 合并 bili（extra.tags）+ season（extra.ugc_season.title）与关系三档，同名按 tag_priority 取优先档（winner）。
 // 列表用（去重）；详情要全档时传 keepAll=true。
@@ -96,7 +96,8 @@ export async function handleQueryHttp(req: IncomingMessage, res: ServerResponse,
     const entityIdRaw = url.searchParams.get('entity_id');
     const entity_id = entityIdRaw != null && /^\d+$/.test(entityIdRaw) ? Number(entityIdRaw) : undefined;
     const field = url.searchParams.get('field') ?? undefined;
-    const filter: ChangeFilter = { entity, entity_id, field };
+    const source = url.searchParams.get('source') ?? undefined; // 平台过滤（经实体行 JOIN 判定，见 getChanges）
+    const filter: ChangeFilter = { entity, entity_id, field, source };
     const sinceParam = url.searchParams.get('since');
     if (sinceParam != null && Number.isFinite(Number(sinceParam))) filter.since = Number(sinceParam);
     const untilParam = url.searchParams.get('until');
@@ -134,23 +135,23 @@ export async function handleQueryHttp(req: IncomingMessage, res: ServerResponse,
     const video = getVideo(db, source, sourceVid);
     if (!video) { json(res, 404, { ok: false, error: 'video not found' }); return; }
     if (req.method === 'POST') {
-      const b = await readJsonBody(req) as { names?: unknown; source?: unknown };
+      // body.scope=档位（parseTagScope 统一校验；历史字段名 source 已改名，URL 路径里的 :source 是平台）
+      const b = await readJsonBody(req) as { names?: unknown; scope?: unknown };
       const names = Array.isArray(b.names) ? b.names.filter((n): n is string => typeof n === 'string' && n.trim().length > 0) : [];
       if (names.length === 0) { json(res, 400, { ok: false, error: 'names:string[] required' }); return; }
-      if (b.source === 'bili' || b.source === 'season') { json(res, 400, { ok: false, error: 'bili/season tags are read-only (from video extra)' }); return; }
-      if (!isTagSource(b.source)) { json(res, 400, { ok: false, error: 'source must be manual|batch|ai' }); return; }
-      const r = applyVideoTags(db, [{ source, source_vid: sourceVid }], names, b.source);
+      const ps = parseTagScope(b.scope, true);
+      if (!ps.ok) { json(res, 400, { ok: false, error: ps.error }); return; }
+      const r = applyVideoTags(db, [{ source, source_vid: sourceVid }], names, ps.scope!); // required=true 时必有
       json(res, 200, { ok: true, inserted: r.inserted, missing: r.missing });
       return;
     }
-    // DELETE：name 必填，source 可选（省略删全档）——query 参数（规避 DELETE body 兼容坑）
+    // DELETE：name 必填，scope 可选（省略删全档）——query 参数（规避 DELETE body 兼容坑）
     {
       const name = url.searchParams.get('name');
       if (!name) { json(res, 400, { ok: false, error: 'name query param required' }); return; }
-      const sourceParam = url.searchParams.get('source');
-      if (sourceParam === 'bili' || sourceParam === 'season') { json(res, 400, { ok: false, error: 'bili/season tags are read-only' }); return; }
-      if (sourceParam != null && !isTagSource(sourceParam)) { json(res, 400, { ok: false, error: 'source must be manual|batch|ai' }); return; }
-      const r = removeVideoTags(db, [{ source, source_vid: sourceVid }], [name], sourceParam ?? undefined);
+      const ps = parseTagScope(url.searchParams.get('scope') ?? undefined, false);
+      if (!ps.ok) { json(res, 400, { ok: false, error: ps.error }); return; }
+      const r = removeVideoTags(db, [{ source, source_vid: sourceVid }], [name], ps.scope);
       json(res, 200, { ok: true, removed: r.removed, missing: r.missing });
       return;
     }

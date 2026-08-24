@@ -12,6 +12,7 @@ import { cn } from '@/lib/utils';
 import { navigate, useQueryUpdater, useRoute } from '../router';
 import { GripVertical } from 'lucide-react';
 import { listTags, renameTag, deleteTag, getTagPriority, putTagPriority, type TagItem } from '@/api';
+import { PlatformSelect } from '@/components/PlatformSelect';
 import { TAG_SOURCE_DOT, TAG_SOURCE_LABEL, type TagSource } from '@/lib/tagSources';
 
 function errMsg(e: unknown): string {
@@ -36,16 +37,19 @@ const SCOPES: { value: LibraryScope; label: string }[] = [
 
 export function TagsPage() {
   const toast = useToast();
-  // 档位过滤进 URL（#/tags?scope=manual），刷新/分享还原；默认「全部」省略不写
+  // 档位过滤 + 平台过滤进 URL（#/tags?scope=manual&source=bilibili），刷新/分享还原；默认「全部」省略不写
   const route = useRoute();
   const updateQuery = useQueryUpdater();
   const scopeRaw = route.query.get('scope');
   const scope: LibraryScope = (SCOPES.some((s) => s.value !== '' && s.value === scopeRaw))
     ? (scopeRaw as LibraryScope)
     : '';
+  const sourceRaw = route.query.get('source');
+  const source = sourceRaw === 'bilibili' || sourceRaw === 'youtube' ? sourceRaw : null;
+  // scope=档位过滤（该档计数>0）；source=平台过滤（计数只算该平台视频——标签本体跨平台共用）
   const { data: items, loading, error, reload } = useAsync(
-    () => listTags(scope ? { source: scope } : {}),
-    [scope],
+    () => listTags({ scope: scope || undefined, source: source ?? undefined }),
+    [scope, source],
   );
 
   // ── 展示优先级（拖拽 / 上下移本地排序，点「保存排序」整体 PUT）──
@@ -187,6 +191,8 @@ export function TagsPage() {
             {s.label}
           </Button>
         ))}
+        {/* 平台过滤：标签本体跨平台共用，这里收窄的是「该平台上的计数」（2026-08-24） */}
+        <PlatformSelect value={source} onChange={(v) => updateQuery({ source: v })} />
       </div>
 
       {error && (

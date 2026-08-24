@@ -4,8 +4,10 @@ import { useQueryUpdater, useRoute } from '../router';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
+import { PlatformSelect } from '@/components/PlatformSelect';
 import { cn } from '@/lib/utils';
-import type { StatsGroupBy, KeyValue } from '../types';
+import { PlatformIcon, platformIconClass } from '@/components/PlatformIcon';
+import type { StatsGroupBy, KeyValue, StatsOverview } from '../types';
 
 const GROUP_LABEL: Record<StatsGroupBy, string> = {
   tname: '分区',
@@ -13,8 +15,10 @@ const GROUP_LABEL: Record<StatsGroupBy, string> = {
   lang: '语言',
   'track-type': '轨类型',
   tag: '标签',
+  source: '平台',
 };
 const TRACK_TYPE_LABEL: Record<string, string> = { '1': 'AI 字幕', '2': 'CC 字幕' };
+const SOURCE_LABEL: Record<string, string> = { bilibili: '哔哩哔哩', youtube: 'YouTube' };
 
 // 条形宽度用静态字面量数组（Tailwind JIT 扫描源码字面量识别 w-[X%] 任意值类），
 // 避免运行时拼接类名导致 JIT 漏生成；也符合「禁 style={{}} 内联」政策。
@@ -40,21 +44,32 @@ function StatCard({ label, value }: { label: string; value: number }) {
 }
 
 export function StatsPage() {
+  // overview 一次取回 total + by_source，平台筛选本地切换（不发第二次请求）
   const overview = useAsync(() => getStatsOverview(), []);
-  // 分组维度进 URL（#/stats?groupBy=lang），非默认 tname 才写
+  // 平台筛选 + 分组维度都进 URL（#/stats?source=bilibili&groupBy=lang），非默认不写
   const route = useRoute();
   const updateQuery = useQueryUpdater();
+  const sourceRaw = route.query.get('source');
+  const source = sourceRaw === 'bilibili' || sourceRaw === 'youtube' ? sourceRaw : null;
   const groupByRaw = route.query.get('groupBy');
   const groupBy: StatsGroupBy = (Object.keys(GROUP_LABEL) as StatsGroupBy[]).includes(groupByRaw as StatsGroupBy)
     ? (groupByRaw as StatsGroupBy)
     : 'tname';
-  const agg = useAsync(() => getStatsAggregate(groupBy), [groupBy]);
+  const agg = useAsync(() => getStatsAggregate(groupBy, source ? { source } : {}), [groupBy, source]);
+
+  // 平台筛选联动：null=全平台（total），否则取 by_source 小节（无该平台数据时 null → 空态）
+  const o: StatsOverview | null = overview.data
+    ? (source ? overview.data.by_source[source] ?? null : overview.data.total)
+    : null;
 
   return (
     <div className="space-y-4">
       <h2 className="text-xl font-semibold tracking-tight">数据看板</h2>
 
-      {/* overview 数字卡 */}
+      {/* 平台筛选（共享 PlatformSelect，对齐 VideoList 三选项） */}
+      <PlatformSelect value={source} onChange={(v) => updateQuery({ source: v })} />
+
+      {/* overview 数字卡（随平台筛选联动） */}
       {overview.loading && (
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-6" aria-busy="true">
           {Array.from({ length: 6 }).map((_, i) => <Skeleton key={i} className="h-[88px]" />)}
@@ -66,23 +81,26 @@ export function StatsPage() {
           <button className="cursor-pointer underline" onClick={overview.reload}>重试</button>
         </div>
       )}
-      {overview.data && (
+      {o && (
         <>
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-6">
-            <StatCard label="视频" value={overview.data.videos} />
-            <StatCard label="字幕轨" value={overview.data.tracks} />
-            <StatCard label="字幕版本" value={overview.data.versions} />
-            <StatCard label="创作者" value={overview.data.creators} />
-            <StatCard label="语言数" value={overview.data.languages} />
-            <StatCard label="分区数" value={overview.data.categories} />
+            <StatCard label="视频" value={o.videos} />
+            <StatCard label="字幕轨" value={o.tracks} />
+            <StatCard label="字幕版本" value={o.versions} />
+            <StatCard label="创作者" value={o.creators} />
+            <StatCard label="语言数" value={o.languages} />
+            <StatCard label="分区数" value={o.categories} />
           </div>
           <div className="text-xs text-muted-foreground">
-            采集时间范围：{fmtTime(overview.data.first_seen_min)} ~ {fmtTime(overview.data.first_seen_max)}
+            采集时间范围：{fmtTime(o.first_seen_min)} ~ {fmtTime(o.first_seen_max)}
           </div>
         </>
       )}
+      {overview.data && source && !o && (
+        <div className="text-sm text-muted-foreground">该平台暂无数据</div>
+      )}
 
-      {/* 分组聚合 Top 榜（flex-wrap：375 档 5 个按钮一行放不下会折行,不横滚） */}
+      {/* 分组聚合 Top 榜（flex-wrap：375 档 6 个按钮一行放不下会折行,不横滚） */}
       <div className="flex flex-wrap gap-1 pt-2">
         {(Object.keys(GROUP_LABEL) as StatsGroupBy[]).map((g) => (
           <Button key={g} variant={groupBy === g ? 'default' : 'outline'} size="sm" onClick={() => updateQuery({ groupBy: g === 'tname' ? null : g })}>
@@ -136,12 +154,20 @@ function AggregatePanel({
   return (
     <div className="mt-3 space-y-1.5">
       {data.map((d, i) => {
-        const label = groupBy === 'track-type' ? (TRACK_TYPE_LABEL[d.key] ?? d.key) : d.key;
+        const label = groupBy === 'track-type'
+          ? (TRACK_TYPE_LABEL[d.key] ?? d.key)
+          : groupBy === 'source'
+            ? (SOURCE_LABEL[d.key] ?? d.key)
+            : d.key;
         const widthIdx = Math.min(10, Math.floor((d.count / max) * 10));
         return (
           <div key={i} className="flex items-center gap-3 text-sm">
-            <div className="w-40 shrink-0 truncate text-muted-foreground" title={label}>
-              <span className="mr-1 tabular-nums">#{i + 1}</span>{label}
+            <div className="flex w-40 shrink-0 items-center gap-1 truncate text-muted-foreground" title={label}>
+              <span className="mr-1 tabular-nums">#{i + 1}</span>
+              {groupBy === 'source' && (
+                <PlatformIcon source={d.key} className={cn('h-3.5 w-3.5', platformIconClass(d.key))} />
+              )}
+              <span className="min-w-0 truncate">{label}</span>
             </div>
             <div className="h-5 flex-1 overflow-hidden rounded bg-muted">
               <div className={cn('h-full rounded bg-primary/40 transition-all', WIDTH_CLASSES[widthIdx])} />

@@ -289,7 +289,7 @@ test('添加标签：逗号/中文逗号切分 → POST manual 档 → toast + r
   expect(await screen.findByText('已添加标签')).toBeInTheDocument();
   await waitFor(() => expect((input as HTMLInputElement).value).toBe(''));
   expect(posts).toHaveLength(1);
-  expect(posts[0]!.body).toEqual({ names: ['标签A', '标签B', '标签C'], source: 'manual' });
+  expect(posts[0]!.body).toEqual({ names: ['标签A', '标签B', '标签C'], scope: 'manual' });
   expect(detailCalls).toBeGreaterThanOrEqual(2); // reload
 });
 
@@ -318,7 +318,7 @@ test('移除标签：DELETE 对应档位 → toast + reload', async () => {
   await screen.findByText('手动标');
   fireEvent.click(screen.getByRole('button', { name: '移除标签 手动标' }));
   expect(await screen.findByText('已移除标签')).toBeInTheDocument();
-  expect(dels[0]!.url).toContain('/api/videos/bilibili/BV1test/tags?name=%E6%89%8B%E5%8A%A8%E6%A0%87&source=manual');
+  expect(dels[0]!.url).toContain('/api/videos/bilibili/BV1test/tags?name=%E6%89%8B%E5%8A%A8%E6%A0%87&scope=manual');
   expect(detailCalls).toBeGreaterThanOrEqual(2);
 });
 

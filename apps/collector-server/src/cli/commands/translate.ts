@@ -30,6 +30,7 @@ export interface PendingItem {
 }
 
 export interface TranslatePendingOpts {
+  source?: string; // 平台过滤（bilibili|youtube），缺省两平台混列
   from?: string; creator?: string; since?: number; until?: number;
   page?: number; size?: number; sort?: 'first_seen' | 'published_at'; asc?: boolean;
 }
@@ -47,10 +48,14 @@ export function translatePending(
     const page = Math.max(1, opts.page ?? 1);
     const size = Math.min(200, Math.max(1, opts.size ?? 20));
     const params: unknown[] = [];
-    // 过滤条件：EXISTS 有轨 / NOT EXISTS 中文轨 / 可选 --from（有该源语言轨）/ --creator 模糊 / --since/--until 入库时间窗
+    // 过滤条件：EXISTS 有轨 / NOT EXISTS 中文轨 / 可选 --source 平台 / --from（有该源语言轨）/ --creator 模糊 / --since/--until 入库时间窗
     let where = `WHERE EXISTS (SELECT 1 FROM subtitle_tracks t WHERE t.video_id = v.id)
       AND NOT EXISTS (SELECT 1 FROM subtitle_tracks t WHERE t.video_id = v.id AND t.lan IN (${ZH_LANS.map(() => '?').join(',')}))`;
     params.push(...ZH_LANS);
+    if (opts.source) {
+      where += ' AND v.source = ?';
+      params.push(opts.source);
+    }
     if (opts.from) {
       where += ' AND EXISTS (SELECT 1 FROM subtitle_tracks t WHERE t.video_id = v.id AND t.lan = ?)';
       params.push(opts.from);
@@ -179,6 +184,7 @@ export function buildTranslateCommand(): Command {
 
   cmd.command('pending')
     .description('查缺口：有轨但无任何中文轨的视频清单（含各源语言行数）')
+    .option('--source <src>', '视频来源平台（bilibili|youtube；缺省两平台混列）')
     .option('--from <lan>', '只看有该源语言轨的视频（如 ai-en）')
     .option('--creator <keyword>', 'UP 主名称模糊')
     .option('--since <time>', '入库时间下界（first_seen）')
@@ -197,7 +203,7 @@ export function buildTranslateCommand(): Command {
       const until = parseTime(opts.until, '--until'); if (opts.until !== undefined && until === undefined) return;
       try {
         emitResult(translatePending(ctx.dbPath, {
-          from: opts.from, creator: opts.creator, since, until,
+          source: opts.source, from: opts.from, creator: opts.creator, since, until,
           page: parseNum(opts.page, '--page'), size: parseNum(opts.size, '--size'),
           sort: opts.sort, asc: opts.asc,
         }), ctx.format);

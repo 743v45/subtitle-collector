@@ -8,11 +8,12 @@ import {
   listTags, applyVideoTags, removeVideoTags, renameTag, deleteTag,
   isTagSource, type VideoRef, type TagSource,
 } from '../db/tags.js';
-import { json, readJsonBody } from './http-util.js';
+import { json, readJsonBody, parseTagScope } from './http-util.js';
 
-// 请求体校验：items 必须是 [{source, source_vid}]，names 是 string[]；source 必须是合法档（bili 只读 → 400）
+// 请求体校验：items 必须是 [{source(平台), source_vid}]，names 是 string[]；scope=档位（parseTagScope 统一校验）。
+// 命名约定：source 一律指平台（bilibili|youtube），档位（manual/batch/ai/system）对外叫 scope。
 function parseApplyBody(b: unknown, needSource: boolean): { refs: VideoRef[]; names: string[]; source?: TagSource } | { error: string } {
-  const body = b as { items?: unknown; names?: unknown; source?: unknown };
+  const body = b as { items?: unknown; names?: unknown; scope?: unknown };
   if (!Array.isArray(body.items) || body.items.length === 0 || !Array.isArray(body.names) || body.names.length === 0) {
     return { error: 'items:[{source,source_vid}] and names:string[] required' };
   }
@@ -26,18 +27,8 @@ function parseApplyBody(b: unknown, needSource: boolean): { refs: VideoRef[]; na
   }
   const names = body.names.filter((n): n is string => typeof n === 'string' && n.trim().length > 0);
   if (names.length === 0) return { error: 'names must contain at least one non-empty string' };
-  if (needSource) {
-    if (body.source === 'bili') return { error: 'bili tags are read-only (from video extra)' };
-    if (!isTagSource(body.source)) return { error: 'source must be manual|batch|ai|system' };
-    return { refs, names, source: body.source };
-  }
-  // remove：source 可省略（删全档）；给了就必须合法
-  if (body.source !== undefined) {
-    if (body.source === 'bili') return { error: 'bili tags are read-only (from video extra)' };
-    if (!isTagSource(body.source)) return { error: 'source must be manual|batch|ai|system' };
-    return { refs, names, source: body.source };
-  }
-  return { refs, names };
+  const ps = parseTagScope(body.scope, needSource);
+  return ps.ok ? { refs, names, source: ps.scope } : { error: ps.error };
 }
 
 export async function handleTagsHttp(req: IncomingMessage, res: ServerResponse, db: Database.Database): Promise<void> {
@@ -45,11 +36,12 @@ export async function handleTagsHttp(req: IncomingMessage, res: ServerResponse, 
   const pathname = url.pathname;
 
   if (pathname === '/api/tags' && req.method === 'GET') {
-    const source = url.searchParams.get('source');
-    if (source && !isTagSource(source)) { json(res, 400, { ok: false, error: 'source must be manual|batch|ai' }); return; }
+    const scope = url.searchParams.get('scope');
+    if (scope && !isTagSource(scope)) { json(res, 400, { ok: false, error: 'scope must be manual|batch|ai' }); return; }
+    const source = url.searchParams.get('source') ?? undefined; // 平台：计数只算该平台视频的关系
     const q = url.searchParams.get('q') ?? undefined;
     const topN = Math.min(500, Math.max(1, Number(url.searchParams.get('topN') ?? '500') || 500));
-    json(res, 200, { ok: true, items: listTags(db, { source: source as TagSource | undefined, q, topN }) });
+    json(res, 200, { ok: true, items: listTags(db, { scope: scope as TagSource | undefined, source, q, topN }) });
     return;
   }
 

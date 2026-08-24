@@ -157,19 +157,23 @@ test('GET /api/videos：非法参数不崩（tid/sort/has_subtitle 非法一律�
   } finally { ctx.cleanup(); }
 });
 
-test('GET /api/stats?type=overview：总览数字正确', async () => {
+test('GET /api/stats?type=overview：总览数字正确（total + 分平台 by_source）', async () => {
   const ctx = await setup();
   try {
     const r = await httpGet(ctx.port, '/api/stats?type=overview');
     assert.equal(r.status, 200);
-    assert.equal(r.json.overview.videos, 4);
-    assert.equal(r.json.overview.tracks, 4);
-    assert.equal(r.json.overview.versions, 4);
-    assert.equal(r.json.overview.creators, 2);
-    assert.equal(r.json.overview.languages, 2);
-    assert.equal(r.json.overview.categories, 3);
-    assert.equal(r.json.overview.first_seen_min, T + 100);
-    assert.equal(r.json.overview.first_seen_max, T + 400);
+    assert.equal(r.json.total.videos, 4);
+    assert.equal(r.json.total.tracks, 4);
+    assert.equal(r.json.total.versions, 4);
+    assert.equal(r.json.total.creators, 2);
+    assert.equal(r.json.total.languages, 2);
+    assert.equal(r.json.total.categories, 3);
+    assert.equal(r.json.total.first_seen_min, T + 100);
+    assert.equal(r.json.total.first_seen_max, T + 400);
+    // 单平台种子：by_source 只含 bilibili 且与 total 一致
+    assert.deepEqual(Object.keys(r.json.by_source), ['bilibili']);
+    assert.equal(r.json.by_source.bilibili.videos, 4);
+    assert.equal(r.json.by_source.bilibili.tracks, 4);
   } finally { ctx.cleanup(); }
 });
 
@@ -179,7 +183,7 @@ test('GET /api/stats?type=overview：today_videos 只计当日本地 00:00 后�
     const r = await httpGet(ctx.port, '/api/stats?type=overview');
     assert.equal(r.status, 200);
     // 仅 BV5（今日）；BV1-4 的 first_seen 在 2023 年 → 不计
-    assert.equal(r.json.overview.today_videos, 1);
+    assert.equal(r.json.total.today_videos, 1);
   } finally { ctx.cleanup(); }
 });
 
@@ -188,7 +192,7 @@ test('GET /api/stats?type=overview：无当日入库时 today_videos = 0', async
   try {
     const r = await httpGet(ctx.port, '/api/stats?type=overview');
     assert.equal(r.status, 200);
-    assert.equal(r.json.overview.today_videos, 0);
+    assert.equal(r.json.total.today_videos, 0);
   } finally { ctx.cleanup(); }
 });
 
@@ -201,6 +205,20 @@ test('GET /api/stats?type=aggregate&groupBy=tname：分组聚合正确（单机�
     assert.equal(top.key, '单机游戏');
     assert.equal(top.count, 2);
     assert.equal(r.json.items.length, 3); // 单机游戏 / 科技 / 生活
+  } finally { ctx.cleanup(); }
+});
+
+// groupBy=source（2026-08-24）：按平台分组；与 ?source= 过滤组合
+test('GET /api/stats?type=aggregate&groupBy=source：按平台分组计数', async () => {
+  const ctx = await setup();
+  try {
+    const r = await httpGet(ctx.port, '/api/stats?type=aggregate&groupBy=source');
+    assert.equal(r.status, 200);
+    assert.deepEqual(r.json.items, [{ key: 'bilibili', count: 4 }]);
+    // 与 source 过滤组合（YouTube 空库 → 空数组）
+    const yt = await httpGet(ctx.port, '/api/stats?type=aggregate&groupBy=source&source=youtube');
+    assert.equal(yt.status, 200);
+    assert.deepEqual(yt.json.items, []);
   } finally { ctx.cleanup(); }
 });
 
@@ -227,7 +245,7 @@ test('GET /api/stats：非法 type / 缺 groupBy / 非法 groupBy → 400', asyn
     assert.equal(r2.json.ok, false);
     const r3 = await httpGet(ctx.port, '/api/stats?type=aggregate&groupBy=bogus');
     assert.equal(r3.status, 400);
-    assert.equal(r3.json.error, 'groupBy must be one of creator|tname|lang|track-type|tag');
+    assert.equal(r3.json.error, 'groupBy must be one of creator|tname|lang|track-type|tag|source');
   } finally { ctx.cleanup(); }
 });
 
@@ -238,7 +256,7 @@ test('GET /api/stats：缺 type → 默认 overview；topN 非法回落 20、越
     // 缺 type 参数 → 'overview'（?? 'overview' 分支）
     const r = await httpGet(ctx.port, '/api/stats');
     assert.equal(r.status, 200);
-    assert.equal(r.json.overview.videos, 4);
+    assert.equal(r.json.total.videos, 4);
     // topN=abc（NaN）→ || 20 回落；topN=1 截 1 条
     const agg = await httpGet(ctx.port, '/api/stats?type=aggregate&groupBy=tname&topN=abc');
     assert.equal(agg.status, 200);

@@ -68,19 +68,22 @@ function setup(): { db: Database.Database; dbPath: string; dir: string } {
 
 // ── stats overview ──
 
-test('stats overview：总览计数 + first_seen 范围，退 0', async () => {
+test('stats overview：总览计数（total + by_source）+ first_seen 范围，退 0', async () => {
   const { db, dir, dbPath } = setup();
   try {
     const r = await cli(args(dbPath, ['stats', 'overview']));
     assert.equal(r.code, 0);
     const data = JSON.parse(r.out);
-    assert.equal(data.videos, 4);
-    assert.equal(data.tracks, 4); // BV1×2 + BV2×1 + BV3×1
-    assert.equal(data.versions, 4); // 每轨 1 版本
-    assert.equal(data.creators, 2);
-    assert.equal(data.languages, 2); // zh-Hans + en
-    assert.equal(data.first_seen_min, T + 100);
-    assert.equal(data.first_seen_max, T + 400);
+    assert.equal(data.total.videos, 4);
+    assert.equal(data.total.tracks, 4); // BV1×2 + BV2×1 + BV3×1
+    assert.equal(data.total.versions, 4); // 每轨 1 版本
+    assert.equal(data.total.creators, 2);
+    assert.equal(data.total.languages, 2); // zh-Hans + en
+    assert.equal(data.total.first_seen_min, T + 100);
+    assert.equal(data.total.first_seen_max, T + 400);
+    // 单平台种子：by_source 只含 bilibili，数字与 total 一致
+    assert.deepEqual(Object.keys(data.by_source), ['bilibili']);
+    assert.equal(data.by_source.bilibili.videos, 4);
   } finally { db.close(); rmSync(dir, { recursive: true, force: true }); }
 });
 

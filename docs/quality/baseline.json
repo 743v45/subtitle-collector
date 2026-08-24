@@ -1,12 +1,12 @@
 {
-  "generatedAt": "2026-08-24T02:05:22.907Z",
+  "generatedAt": "2026-08-24T07:16:43.982Z",
   "rules": {
     "complexity": 15,
     "maxLines": 400
   },
   "files": {
     "apps/collector-server/src/cli/commands/collect.ts": {
-      "maxLines": 1009,
+      "maxLines": 1017,
       "complexity": 21
     },
     "apps/collector-server/src/cli/commands/server.ts": {
@@ -18,7 +18,7 @@
     },
     "apps/collector-server/src/db/advanced.ts": {
       "complexity": 25,
-      "maxLines": 469
+      "maxLines": 517
     },
     "apps/collector-server/src/db/ingest.ts": {
       "complexity": 42
@@ -30,16 +30,16 @@
       "complexity": 19
     },
     "apps/collector-server/src/http/creators.ts": {
-      "complexity": 20
+      "complexity": 18
     },
     "apps/collector-server/src/http/filter.ts": {
       "complexity": 25
     },
     "apps/collector-server/src/http/queries.ts": {
-      "complexity": 51
+      "complexity": 47
     },
     "apps/collector-server/src/http/tags.ts": {
-      "complexity": 26
+      "complexity": 27
     },
     "apps/collector-server/src/http/tasks.ts": {
       "complexity": 68
@@ -53,7 +53,7 @@
     },
     "apps/collector-web/src/api.ts": {
       "complexity": 26,
-      "maxLines": 423
+      "maxLines": 434
     },
     "apps/collector-web/src/components/TaskCards.tsx": {
       "complexity": 24
@@ -62,31 +62,31 @@
       "complexity": 19
     },
     "apps/collector-web/src/pages/ChangesLog.tsx": {
-      "complexity": 16
+      "complexity": 18
     },
     "apps/collector-web/src/pages/CollectPage.tsx": {
       "complexity": 16,
-      "maxLines": 493
+      "maxLines": 495
     },
     "apps/collector-web/src/pages/CreatorDetailPage.tsx": {
       "complexity": 29
     },
     "apps/collector-web/src/pages/CreatorsPage.tsx": {
-      "complexity": 23
+      "complexity": 26
     },
     "apps/collector-web/src/pages/TagsPage.tsx": {
-      "complexity": 21
+      "complexity": 23
     },
     "apps/collector-web/src/pages/TasksHistoryPage.tsx": {
       "complexity": 46,
       "maxLines": 409
     },
     "apps/collector-web/src/pages/VideoDetail.tsx": {
-      "complexity": 44
+      "complexity": 45
     },
     "apps/collector-web/src/pages/VideoList.tsx": {
       "complexity": 52,
-      "maxLines": 616
+      "maxLines": 605
     },
     "apps/collector-web/src/taskHistoryFilterUrl.ts": {
       "complexity": 17

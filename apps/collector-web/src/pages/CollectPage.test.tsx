@@ -58,7 +58,7 @@ function stubFetch(handler: (url: string, init?: RequestInit) => unknown) {
 function baseHandler(list: () => CollectTask[] = () => [], over: () => unknown = () => overview) {
   return (url: string, init?: RequestInit) => {
     if (url.includes('/api/collect-tasks?limit=')) return { ok: true, total: list().length, items: list() };
-    if (url.includes('/api/stats?type=overview')) return { ok: true, overview: over() };
+    if (url.includes('/api/stats?type=overview')) return { ok: true, total: over(), by_source: {} };
     return { ok: true };
   };
 }
@@ -381,7 +381,7 @@ test('按 UP 批量：批量提交失败 → 错误 toast；>50 confirm 取消/�
       return new Response(JSON.stringify({ ok: false, error: 'queue full' }), { status: 500, headers: { 'content-type': 'application/json' } });
     }
     if (url.includes('/api/collect-tasks?limit=')) return new Response(JSON.stringify({ ok: true, total: 0, items: [] }), { headers: { 'content-type': 'application/json' } });
-    if (url.includes('/api/stats?type=overview')) return new Response(JSON.stringify({ ok: true, overview }), { headers: { 'content-type': 'application/json' } });
+    if (url.includes('/api/stats?type=overview')) return new Response(JSON.stringify({ ok: true, total: overview, by_source: {} }), { headers: { 'content-type': 'application/json' } });
     return new Response(JSON.stringify({ ok: true }), { headers: { 'content-type': 'application/json' } });
   }));
   fireEvent.click(screen.getByRole('button', { name: /批量采集/ }));
@@ -410,7 +410,7 @@ test('轮询：2s 重拉；pending→succeeded 全终态 → 系统通知 + 摘�
     }
     if (url.includes('/api/stats?type=overview')) {
       overviewCalls++;
-      return new Response(JSON.stringify({ ok: true, overview: { ...overview, videos: 12 + overviewCalls - 1 } }), { headers: { 'content-type': 'application/json' } });
+      return new Response(JSON.stringify({ ok: true, total: { ...overview, videos: 12 + overviewCalls - 1 }, by_source: {} }), { headers: { 'content-type': 'application/json' } });
     }
     return new Response(JSON.stringify({ ok: true }), { headers: { 'content-type': 'application/json' } });
   }));

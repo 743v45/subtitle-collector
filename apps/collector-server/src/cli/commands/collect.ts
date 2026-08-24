@@ -109,14 +109,18 @@ export async function collectSearch(
   return sendExtCommand(client, clientId, 'search', params, timeout);
 }
 
-/** `collect subtitle <bvid>`：下发 fetch-subtitle，扩展 fetch view+player+字幕体→ingest。 */
+/** `collect subtitle <vid>`：按平台下发采集（bilibili→fetch-subtitle / youtube→fetch-youtube-subtitle）→ 扩展 fetch 元信息+字幕体→ingest。
+ *  vid=平台视频 ID：B 站 BV 号 / YouTube 11 位 ID（--source 定平台，默认 bilibili）。 */
 export async function collectSubtitle(
   client: CollectClient,
   clientId: string,
-  bvid: string,
+  vid: string,
   timeout: number,
+  source: 'bilibili' | 'youtube' = 'bilibili',
 ): Promise<unknown> {
-  return sendExtCommand(client, clientId, 'fetch-subtitle', { bvid }, timeout);
+  // 参数名对齐扩展侧 handler：B 站收 bvid，YouTube 收 videoId（与 server 任务派发 tasks.ts 同构）
+  const params: Record<string, unknown> = source === 'bilibili' ? { bvid: vid } : { videoId: vid };
+  return sendExtCommand(client, clientId, source === 'bilibili' ? 'fetch-subtitle' : 'fetch-youtube-subtitle', params, timeout);
 }
 
 /** `collect dedupe <bvid...>`：直读 SQLite，判据=video 是否存在（无字幕视频采过后也入 videos）。
@@ -686,21 +690,23 @@ export function buildCollectCommand(): Command {
     });
 
   collect
-    .command('subtitle <bvid>')
-    .description('采集单个视频字幕入库（扩展 fetch view+player+字幕体）')
+    .command('subtitle <vid>')
+    .description('采集单个视频字幕入库（vid=BV 号或 YouTube 11 位 ID；扩展 fetch 元信息+字幕体）')
+    .option('--source <src>', '视频来源平台（默认 bilibili）', 'bilibili')
     .option('--client <id>', '扩展 client_id（缺省取第一个在线）')
     .option('--timeout <ms>', '超时毫秒（默认 180000）', (v) => Number.parseInt(v, 10), DEFAULT_COLLECT_TIMEOUT_MS)
-    .action(async (bvid: string, opts: { client?: string; timeout: number }) => {
+    .action(async (vid: string, opts: { source?: string; client?: string; timeout: number }) => {
+      if (opts.source !== 'bilibili' && opts.source !== 'youtube') emitError(`--source 必须是 bilibili/youtube: ${opts.source}`, 'ARGS');
       if (!Number.isFinite(opts.timeout) || opts.timeout <= 0) emitError(`invalid --timeout: ${opts.timeout}`, 'ARGS');
       const ctx = getCliContext();
       const client = new ServerClient(ctx.serverUrl, ctx.token);
       try {
         const clientId = await resolveClientId(client as CollectClient, opts.client);
-        const data = await collectSubtitle(client as CollectClient, clientId, bvid, opts.timeout);
-        // 确认无字幕（扩展回执 reason=no_subtitle）→ 打 no-subtitle 系统标（远期 ASR 音频转字幕的定位锚点）。
+        const data = await collectSubtitle(client as CollectClient, clientId, vid, opts.timeout, opts.source);
+        // 确认无字幕（两平台扩展回执均回 reason=no_subtitle）→ 打 no-subtitle 系统标（远期 ASR 音频转字幕的定位锚点）。
         // 打标失败不阻断结果输出（视频行已入库；标可由下次重采或回填脚本补）。
         if ((data as { result?: { reason?: string } })?.result?.reason === 'no_subtitle') {
-          try { await client.applyTags([bvid], [NO_SUBTITLE_TAG], 'system'); } catch { /* 下次补 */ }
+          try { await client.applyTags([vid], [NO_SUBTITLE_TAG], 'system', opts.source); } catch { /* 下次补 */ }
         }
         emitResult(data, ctx.format);
       } catch (err) {
@@ -709,9 +715,11 @@ export function buildCollectCommand(): Command {
     });
 
   collect
-    .command('dedupe <bvid...>')
-    .description('批量判重：按 video 是否已入库分 collected/missing（直读 SQLite）')
-    .action((bvids: string[]) => {
+    .command('dedupe <vid...>')
+    .description('批量判重：按 video 是否已入库分 collected/missing（直读 SQLite；vid=平台视频 ID）')
+    .option('--source <src>', '视频来源平台（默认 bilibili）', 'bilibili')
+    .action((vids: string[], opts: { source?: string }) => {
+      if (opts.source !== 'bilibili' && opts.source !== 'youtube') emitError(`--source 必须是 bilibili/youtube: ${opts.source}`, 'ARGS');
       const ctx = getCliContext();
       let db: Database.Database;
       try {
@@ -720,7 +728,7 @@ export function buildCollectCommand(): Command {
         const msg = err instanceof Error ? err.message : String(err);
         emitError(msg, 'DB_UNREADABLE');
       }
-      const data = collectDedupe(db, bvids);
+      const data = collectDedupe(db, vids, opts.source);
       emitResult(data, ctx.format);
     });
 

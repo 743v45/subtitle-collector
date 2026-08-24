@@ -7,15 +7,15 @@ import { Command } from 'commander';
 import { getCliContext } from '../context.js';
 import { emitResult, emitError } from '../output.js';
 import { openReadonlyDb } from '../db.js';
-import { countOverview, aggregateStats } from '../../db/advanced.js';
+import { countOverview, countOverviewWithSources, aggregateStats } from '../../db/advanced.js';
 import type { Overview, KeyValue, StatsGroupBy, VideoFilter } from '../../db/advanced.js';
 import { normalizeTimestamp } from './videos.js';
 
 // ── 纯处理函数 ──
 
-// stats overview 纯处理：总览计数（视频/轨/版本/UP/语言/分区 + first_seen 时间范围）。
-export function statsOverview(db: Database.Database): Overview {
-  return countOverview(db);
+// stats overview 纯处理：总览计数（视频/轨/版本/UP/语言/分区 + first_seen 时间范围），全库总 + 分平台。
+export function statsOverview(db: Database.Database): { total: Overview; by_source: Record<string, Overview> } {
+  return countOverviewWithSources(db);
 }
 
 export interface StatsCountOpts {
@@ -31,7 +31,7 @@ export function statsCount(db: Database.Database, opts: StatsCountOpts): KeyValu
 
 // ── commander 装配 ──
 
-const STATS_GROUP_BY = ['creator', 'tname', 'lang', 'track-type'] as const;
+const STATS_GROUP_BY = ['creator', 'tname', 'lang', 'track-type', 'source'] as const;
 
 interface StatsCountRawOpts {
   by?: string;
@@ -53,7 +53,7 @@ function parseTime(raw: string | undefined, name: string): number | undefined {
   catch (err) { return emitError(`${name}: ${(err as Error).message}`, 'ARGS'); }
 }
 
-// --by 必填且限定 4 值；commander 的 requiredOption 兜底缺失，这里再校验取值。
+// --by 必填且限定 5 值（source=按平台分组）；commander 的 requiredOption 兜底缺失，这里再校验取值。
 function parseGroupBy(raw: string | undefined): StatsGroupBy {
   if (raw === undefined || !(STATS_GROUP_BY as readonly string[]).includes(raw)) {
     return emitError(`非法 --by: ${raw ?? '(缺失)'}（可选: ${STATS_GROUP_BY.join('|')}）`, 'ARGS');
@@ -72,7 +72,7 @@ export function buildStatsCommand(): Command {
 
   stats
     .command('overview')
-    .description('总览：视频/轨/版本/UP/语言/分区数 + first_seen 时间范围')
+    .description('总览：视频/轨/版本/UP/语言/分区数 + first_seen 时间范围（全库总 + 分平台 by_source）')
     .action(() => {
       const ctx = getCliContext();
       const db = openDbOrEmit(ctx.dbPath);
@@ -82,7 +82,7 @@ export function buildStatsCommand(): Command {
   stats
     .command('count')
     .description('按维度分组计数（默认 Top 20）；过滤项同 videos list')
-    .requiredOption('--by <kind>', '分组维度：creator|tname|lang|track-type')
+    .requiredOption('--by <kind>', '分组维度：creator|tname|lang|track-type|source')
     .option('--top <n>', 'Top N（默认 20）')
     .option('--q <text>', '标题 / UP 名模糊匹配')
     .option('--creator <name>', 'UP 名模糊匹配')

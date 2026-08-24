@@ -262,7 +262,7 @@ test('分类变更：Select 选择 → POST setCreatorCategory → toast + reloa
   await screen.findByText('已更新');
   expect(post).toHaveBeenCalledWith();
   const postCall = fetchMock.mock.calls.find((c) => (c[1] as RequestInit | undefined)?.method === 'POST')!;
-  expect(postCall[0]).toBe('/api/creators/by-uid/42/category');
+  expect(postCall[0]).toBe('/api/creators/by-uid/bilibili/42/category');
   expect(JSON.parse(String(postCall[1].body))).toEqual({ scope: 'human', name: '优质' });
 
   // Agent 分类失败分支

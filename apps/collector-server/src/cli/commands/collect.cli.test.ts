@@ -775,7 +775,7 @@ test('collect find：实时查 fans 连接中断 → SERVER_UNREACHABLE 退 3（
 
 // ── collect subtitle 自动打 no-subtitle 系统标（2026-08-23）──
 // 前提：fetch-subtitle 回执 reason=no_subtitle（视频元信息已 ingest）；操作：CLI 收到回执后应再 POST /api/tags/apply；
-// 断言：apply 请求体 names=['no-subtitle']、source='system'、items 含该 bvid；apply 失败不阻断结果输出（退 0）。
+// 断言：apply 请求体 names=['no-subtitle']、scope='system'、items 含该 vid（平台跟随 --source）。
 test('collect subtitle：reason=no_subtitle → 自动 POST /api/tags/apply 打 no-subtitle system 标', async () => {
   const srv = await startMockServer((req) => {
     if (req.body?.action === 'fetch-subtitle') return { status: 200, json: { ok: true, client_id: 'ext-1', action: 'fetch-subtitle', result: { reason: 'no_subtitle', tracks: 0, ai_tracks: 0, ingested: true } } };
@@ -791,8 +791,27 @@ test('collect subtitle：reason=no_subtitle → 自动 POST /api/tags/apply 打 
     assert.deepEqual(applyReq!.body, {
       items: [{ source: 'bilibili', source_vid: 'BV1' }],
       names: ['no-subtitle'],
-      source: 'system',
+      scope: 'system',
     });
+  } finally { await srv.close(); }
+});
+
+// ── collect subtitle --source youtube（2026-08-24）：action/参数按平台分叉 + 打标 items 跟随平台 ──
+test('collect subtitle --source youtube：派发 fetch-youtube-subtitle(videoId) + no-subtitle 标 items source=youtube', async () => {
+  const srv = await startMockServer((req) => {
+    if (req.body?.action === 'fetch-youtube-subtitle') return { status: 200, json: { ok: true, client_id: 'ext-1', action: 'fetch-youtube-subtitle', result: { reason: 'no_subtitle', tracks: 0, ingested: true } } };
+    if (req.path === '/api/tags/apply') return { status: 200, json: { ok: true, inserted: 1 } };
+    return { status: 404 };
+  });
+  try {
+    const r = await cli(args(NO_DB, srv.url, ['collect', 'subtitle', 'ytvid00001', '--source', 'youtube', '--client', 'ext-1']));
+    assert.equal(r.code, 0);
+    const fetchReq = srv.reqs.find((q) => q.path.includes('/command'));
+    assert.equal(fetchReq!.body!.action, 'fetch-youtube-subtitle');
+    assert.deepEqual(fetchReq!.body!.videoId, 'ytvid00001'); // YouTube 参数名 videoId（对齐扩展侧）
+    const applyReq = srv.reqs.find((q) => q.path === '/api/tags/apply');
+    assert.ok(applyReq, 'YouTube 无字幕同样打标（no-subtitle 两平台对齐）');
+    assert.deepEqual(applyReq!.body!.items, [{ source: 'youtube', source_vid: 'ytvid00001' }]);
   } finally { await srv.close(); }
 });
 

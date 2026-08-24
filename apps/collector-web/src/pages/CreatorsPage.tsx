@@ -10,6 +10,9 @@ import { useQueryUpdater, useRoute } from '../router';
 import { listCategories, listCreators, setCreatorCategory, type Category, type CreatorListItem } from '@/api';
 import { creatorUrl } from '../lib/externalLinks';
 import { ExtLink } from '@/components/ExtLink';
+import { PlatformIcon, platformIconClass } from '@/components/PlatformIcon';
+import { PlatformSelect } from '@/components/PlatformSelect';
+import { cn } from '@/lib/utils';
 
 const PAGE_SIZE = 20;
 type CreatorSort = 'first_seen' | 'fans' | 'video_count';
@@ -24,6 +27,8 @@ export function CreatorsPage({ onOpen }: { onOpen: (id: number) => void }) {
   const q = route.query.get('q') ?? '';
   const catFilter = route.query.get('cat') ?? '';
   const scope = (route.query.get('scope') === 'agent' ? 'agent' : 'human') as 'agent' | 'human';
+  const sourceRaw = route.query.get('source');
+  const source = sourceRaw === 'bilibili' || sourceRaw === 'youtube' ? sourceRaw : null;
   const sortRaw = route.query.get('sort');
   const sort: CreatorSort = (SORTS as readonly string[]).includes(sortRaw ?? '') ? (sortRaw as CreatorSort) : 'first_seen';
   const pageRaw = Number(route.query.get('page'));
@@ -44,11 +49,12 @@ export function CreatorsPage({ onOpen }: { onOpen: (id: number) => void }) {
       q: q || undefined,
       category: catFilter || undefined,
       scope: catFilter ? scope : undefined,
+      source: source ?? undefined,
       sort,
       page,
       size: PAGE_SIZE,
     }),
-    [q, catFilter, scope, sort, page],
+    [q, catFilter, scope, source, sort, page],
   );
   const items = listResult?.items ?? [];
   const total = listResult?.total ?? 0;
@@ -68,7 +74,8 @@ export function CreatorsPage({ onOpen }: { onOpen: (id: number) => void }) {
   async function changeCategory(c: CreatorListItem, catScope: 'agent' | 'human', name: string) {
     setBusyUid(c.source_uid);
     try {
-      await setCreatorCategory(c.source_uid, catScope, name);
+      // 平台段必传：uid 两平台命名空间独立（B 站 mid / YouTube channelId），不带会写错行
+      await setCreatorCategory(c.source, c.source_uid, catScope, name);
       toast('已更新', 'success');
       reload();
     } catch (e: unknown) {
@@ -130,6 +137,7 @@ export function CreatorsPage({ onOpen }: { onOpen: (id: number) => void }) {
             <SelectItem value="video_count">视频数</SelectItem>
           </SelectContent>
         </Select>
+        <PlatformSelect value={source} onChange={(v) => setFilter({ source: v })} />
       </div>
 
       <div className="overflow-hidden rounded-md border" aria-busy={loading || undefined}>
@@ -167,7 +175,7 @@ export function CreatorsPage({ onOpen }: { onOpen: (id: number) => void }) {
               <TableRow className="hover:bg-transparent">
                 <TableCell colSpan={6} className="py-8 text-center">
                   <div className="text-sm text-muted-foreground">
-                    {q || catFilter ? '没有匹配的创作者——试试放宽搜索或分类筛选' : '暂无创作者——采集视频后创作者会自动入库'}
+                    {q || catFilter || source ? '没有匹配的创作者——试试放宽搜索或筛选' : '暂无创作者——采集视频后创作者会自动入库'}
                   </div>
                 </TableCell>
               </TableRow>
@@ -176,6 +184,8 @@ export function CreatorsPage({ onOpen }: { onOpen: (id: number) => void }) {
               <TableRow key={c.id} className="cursor-pointer hover:bg-accent" onClick={() => onOpen(c.id)}>
                 <TableCell>
                   <span className="inline-flex items-center gap-1">
+                    {/* 平台图标：同名创作者两平台各一条时靠它分辨（2026-08-24） */}
+                    <PlatformIcon source={c.source} className={cn('h-3.5 w-3.5', platformIconClass(c.source))} />
                     {c.name ?? '(未知)'}
                     <ExtLink href={creatorUrl(c.source, c.source_uid)} label={`在原站打开 ${c.name ?? c.source_uid} 的空间`} />
                   </span>

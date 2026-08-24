@@ -845,3 +845,35 @@ test('dispatchTask：bilibili no_subtitle 回执 → succeeded + no-subtitle 系
     assert.equal(tagged != null, true, 'no_subtitle 回执后带 no-subtitle system 标');
   } finally { cleanup(); }
 });
+
+// ── dispatchTask 打标平台对齐（2026-08-24）：youtube no_subtitle 回执同样打标 ──
+// 背景：0.1.19 起扩展两平台都上报 0 轨回执（reason=no_subtitle），server 侧条件残留 bilibili 限定属半截子工程。
+// 前提/操作/断言同上用例，source 换 youtube。
+test('dispatchTask：youtube no_subtitle 回执 → succeeded + no-subtitle 系统标（两平台对齐）', async () => {
+  const { db, cleanup } = setupDb();
+  registerWsBridge({
+    listClients: () => [{ client_id: 'ext-ns', ext_version: null, reporting_enabled: true, task_dispatch_enabled: true, connected: true }],
+    requestCommand: async () => ({ ok: true, result: { ok: true, data: { reason: 'no_subtitle', tracks: 0, ingested: true } } }),
+    broadcastEvent: () => {},
+  } satisfies WsBridge);
+  try {
+    ingestVideo(db, {
+      source: 'youtube',
+      video: { source_vid: 'ytns1', title: 'yt 无字幕视频', extra: {}, duration: 5, published_at: 1700000000000 },
+      tracks: [],
+    });
+    createTask(db, { source: 'youtube', source_vid: 'ytns1', url: 'https://www.youtube.com/watch?v=ytns1' }, 'ext-ns');
+    attachTaskScheduler(db);
+    kickTaskScheduler();
+    for (let i = 0; i < 40; i++) {
+      const t = getTask(db, (db.prepare('SELECT id FROM collect_tasks').get() as { id: number }).id);
+      if (t?.status === 'succeeded') break;
+      await new Promise((r) => setTimeout(r, 50));
+    }
+    const tagged = db.prepare(
+      `SELECT 1 FROM video_tags vt JOIN tags t ON t.id = vt.tag_id JOIN videos v ON v.id = vt.video_id
+       WHERE v.source = 'youtube' AND v.source_vid = 'ytns1' AND t.name = 'no-subtitle' AND vt.source = 'system'`,
+    ).get();
+    assert.equal(tagged != null, true, 'YouTube 无字幕同样进 ASR 圈选锚点');
+  } finally { cleanup(); }
+});

@@ -5,12 +5,19 @@
 // | 轮次 | 范围 | 结果 | 备注 |
 // |---|---|---|---|
 // | R1 | 优先级操作 + 档位过滤 + CRUD + 空错态 + 名称跳转 | 通过 | 拖拽用 dragStart/drop 事件模拟 |
-import { test, expect, vi, beforeEach, afterEach } from 'vitest';
+import { test, expect, vi, beforeEach, afterEach, beforeAll } from 'vitest';
 import { render, screen, fireEvent, cleanup, waitFor } from '@testing-library/react';
 import { ToastProvider } from '@/components/ui/toast';
 import { TagsPage } from './TagsPage';
 import type { TagItem } from '@/api';
 import { TAG_SOURCE_LABEL, type TagSource } from '@/lib/tagSources';
+
+// Radix Select 在 jsdom 打开所需 polyfill（对齐 CreatorsPage.test 先例）
+beforeAll(() => {
+  window.HTMLElement.prototype.scrollIntoView = vi.fn();
+  (window.HTMLElement.prototype as unknown as { hasPointerCapture: () => boolean }).hasPointerCapture = vi.fn(() => false);
+  (window.HTMLElement.prototype as unknown as { releasePointerCapture: () => void }).releasePointerCapture = vi.fn();
+});
 
 function ok(json: unknown, status = 200): Response {
   return new Response(JSON.stringify(json), { status, headers: { 'Content-Type': 'application/json' } });
@@ -138,7 +145,7 @@ test('档位过滤：按钮写 URL scope 且按 source 重拉', async () => {
   await screen.findByText('游戏');
   fireEvent.click(screen.getByRole('button', { name: '手动' }));
   await waitFor(() => expect(window.location.hash).toBe('#/tags?scope=manual'));
-  await waitFor(() => expect(String(fetchMock.mock.calls.at(-1)![0])).toContain('source=manual'));
+  await waitFor(() => expect(String(fetchMock.mock.calls.at(-1)![0])).toContain('scope=manual'));
   fireEvent.click(screen.getByRole('button', { name: '全部' }));
   await waitFor(() => expect(window.location.hash).toBe('#/tags'));
 });
@@ -149,6 +156,16 @@ test('URL 非法 scope 回落全部', async () => {
   await screen.findByText('游戏');
   const tagUrls = fetchMock.mock.calls.filter((c) => String(c[0]).startsWith('/api/tags?'));
   expect(String(tagUrls[0][0])).not.toContain('source=');
+});
+
+// 平台筛选（2026-08-24）：Select 切换写 URL source 且计数按平台重拉
+test('平台筛选 Select：切换写 URL source 且按平台重拉', async () => {
+  render(<ToastProvider><TagsPage /></ToastProvider>);
+  await screen.findByText('游戏');
+  fireEvent.pointerDown(screen.getByRole('combobox', { name: '平台筛选' }), { button: 0, ctrlKey: false, pointerType: 'mouse' });
+  fireEvent.click(await screen.findByRole('option', { name: '哔哩哔哩' }));
+  await waitFor(() => expect(window.location.hash).toBe('#/tags?source=bilibili'));
+  await waitFor(() => expect(String(fetchMock.mock.calls.at(-1)![0])).toContain('source=bilibili'));
 });
 
 test('点击标签名 → 跳视频页 tags 过滤', async () => {

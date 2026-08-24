@@ -54,22 +54,28 @@ log('filter', `待打标 ${toTag.length} | 已有轨跳过 ${alreadyHasTracks} |
 db.close();
 if (toTag.length === 0) { console.error('[done] 无待打标项'); process.exit(0); }
 
-// ── apply：分批走 CLI tags apply --source system（写走 server，对齐既定模式）──
+// ── apply：分批走 CLI tags apply --scope system --source <平台>（写走 server，对齐既定模式）──
+// 2026-08-24 平台通道打通：YouTube 记录同样回填（CLI --source 定平台，不再只滤 bilibili）。
 if (DRY) {
   for (const r of toTag) console.log(`${r.source}\t${r.source_vid}`);
   console.error('[done] dry-run 未写库');
   process.exit(0);
 }
 let inserted = 0, missing = 0;
-for (let i = 0; i < toTag.length; i += BATCH) {
-  const chunk = toTag.slice(i, i + BATCH);
-  const out = execFileSync('npx', ['tsx', 'src/cli/main.ts', 'tags', 'apply',
-    ...chunk.filter((r) => r.source === 'bilibili').map((r) => r.source_vid),
-    '--names', 'no-subtitle', '--source', 'system', '--format', 'json'],
-  { cwd: CLI_DIR, encoding: 'utf8', timeout: 120000, stdio: ['ignore', 'pipe', 'pipe'] });
-  const j = JSON.parse(out.slice(out.indexOf('{')));
-  inserted += j.inserted ?? 0;
-  missing += (j.missing ?? []).length;
-  log('apply', `批次 ${Math.floor(i / BATCH) + 1}/${Math.ceil(toTag.length / BATCH)}：inserted=${j.inserted} missing=${(j.missing ?? []).length}`);
+const PLATFORMS = ['bilibili', 'youtube'];
+for (const platform of PLATFORMS) {
+  const targets = toTag.filter((r) => r.source === platform);
+  if (targets.length === 0) continue;
+  for (let i = 0; i < targets.length; i += BATCH) {
+    const chunk = targets.slice(i, i + BATCH);
+    const out = execFileSync('npx', ['tsx', 'src/cli/main.ts', 'tags', 'apply',
+      ...chunk.map((r) => r.source_vid),
+      '--names', 'no-subtitle', '--scope', 'system', '--source', platform, '--format', 'json'],
+    { cwd: CLI_DIR, encoding: 'utf8', timeout: 120000, stdio: ['ignore', 'pipe', 'pipe'] });
+    const j = JSON.parse(out.slice(out.indexOf('{')));
+    inserted += j.inserted ?? 0;
+    missing += (j.missing ?? []).length;
+    log('apply', `${platform} 批次 ${Math.floor(i / BATCH) + 1}/${Math.ceil(targets.length / BATCH)}：inserted=${j.inserted} missing=${(j.missing ?? []).length}`);
+  }
 }
-console.error(`[done] 打标完成：inserted=${inserted} missing=${missing}（非 bilibili 源 ${toTag.filter((r) => r.source !== 'bilibili').length} 条暂无 CLI 通道，见日志）`);
+console.error(`[done] 打标完成：inserted=${inserted} missing=${missing}`);

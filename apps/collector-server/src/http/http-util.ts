@@ -1,4 +1,5 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
+import { isTagSource, type TagSource } from '../db/tags.js';
 
 // HTTP 层共享工具：响应包络、JSON body 读取、handler 异常兜底。
 // 单一实现收敛此前散在 8 个 handler 的拷贝（语义已分叉：tasks/clients 静默返回 {}，
@@ -26,6 +27,15 @@ export function readJsonBody(req: IncomingMessage): Promise<any> {
       try { resolve(buf ? JSON.parse(buf) : {}); } catch { reject(new HttpError(400, 'invalid JSON body')); }
     });
   });
+}
+
+// 档位（scope）参数校验（2026-08-24 从 http/tags、http/queries 的四处重复收敛）：
+// required=true 时缺省也非法（apply 必带档）；bili/season 只读 → 错；非法 → 错；合法/可省 → 带回 TagSource。
+export function parseTagScope(v: unknown, required: boolean): { ok: true; scope?: TagSource } | { ok: false; error: string } {
+  if (v === undefined) return required ? { ok: false, error: 'scope must be manual|batch|ai|system' } : { ok: true };
+  if (v === 'bili' || v === 'season') return { ok: false, error: 'bili/season tags are read-only (from video extra)' };
+  if (!isTagSource(v)) return { ok: false, error: 'scope must be manual|batch|ai|system' };
+  return { ok: true, scope: v };
 }
 
 // handler 异常兜底：单个请求的失败（含非法 JSON）只影响该请求，

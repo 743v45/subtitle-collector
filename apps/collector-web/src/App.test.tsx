@@ -45,7 +45,8 @@ beforeEach(() => {
     if (url.startsWith('/api/creators')) return Promise.resolve(ok({ total: 0, items: [] }));
     if (url.startsWith('/api/videos')) return Promise.resolve(ok({ total: 0, items: [] }));
     if (url.startsWith('/api/stats?type=overview')) return Promise.resolve(ok({
-      overview: { videos: 1, tracks: 2, versions: 3, creators: 4, languages: 5, categories: 6, today_videos: 0, first_seen_min: null, first_seen_max: null },
+      total: { videos: 1, tracks: 2, versions: 3, creators: 4, languages: 5, categories: 6, today_videos: 0, first_seen_min: null, first_seen_max: null },
+      by_source: {},
     }));
     if (url.startsWith('/api/stats')) return Promise.resolve(ok({ items: [] }));
     if (url.startsWith('/api/clients')) return Promise.resolve(ok({ clients: [] }));
