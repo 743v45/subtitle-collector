@@ -50,7 +50,7 @@ collector-cli --db <repo>/data/bilibili-collector.db stats overview
 | `sub search <关键词>` | DB 只读 | 字幕正文检索:`--ctx --regex --max-videos --full`;AI 打标的数据源 |
 | `translate pending/source/fill` | pending/source 读 DB;fill 走 server | 补翻工作流(无中文轨视频):`pending --source <平台>` 查缺口(带各源语言行数)→ `source <vid> --from <lan> --source <平台>` 取逐行待翻文本 → 会话内翻译 → `fill <vid> --from <lan> --file <译文> --source <平台>` 写回 zh-manual 轨 |
 | `tags list/apply/remove` | list 读 DB;apply/remove 走 server | `tags apply <vid...> --names <csv> --scope manual\|batch\|ai\|system --source <平台>`(打标即建标;scope=档位,source=平台默认 bilibili——YouTube 11 位 ID 用 `--source youtube`;system=系统状态档如 no-subtitle,采集链路自动打/摘) |
-| `clients list/reporting/task-dispatch/command` | server HTTP | 扩展客户端管控;`list` 含离线客户端(DB 注册表合并在线态,带 popup 改的名字、在线/离线时长、扩展版本与 B 站登录态 `bili_login`——未登录会让充电视频 AI 字幕接口返回空,批量采集整批 no_subtitle 的判因依据);`reporting <id> <on\|off>` 切上报 / `task-dispatch <id> <on\|off>` 切任务派发(off=仅上报状态,调度器不派任务);`command <id> <action> --timeout <ms>` |
+| `clients list/reporting/task-dispatch/command` | server HTTP | 扩展客户端管控;`list` 含离线客户端(DB 注册表合并在线态,带 popup 改的名字与在线/离线时长);`reporting <id> <on\|off>` 切上报 / `task-dispatch <id> <on\|off>` 切任务派发(off=仅上报状态,调度器不派任务);`command <id> <action> --timeout <ms>` |
 | `server ping/status/start/stop` | 本地 | 探活 / 起停(pid 文件;`start --no-detached --port`) |
 | `collect …`(12 子命令) | server→扩展 | 见下方 |
 
@@ -66,7 +66,7 @@ collect 子命令速记:`search <关键词>` 搜候选(不入库)/ `subtitle <vi
 | `scripts/backfill-no-subtitle-tags.mjs` | 历史存量回填 no-subtitle 系统标(collect_tasks 有据部分,两平台都回填;`--db` 绝对路径 `--dry-run` 试跑) |
 | `scripts/collect-uppers.mts` | 多 UP 主批量:`pnpm collect-uppers <mid...> [--size 30] [--dry-run] [--since <unix秒>] [--category <名>]` |
 | `scripts/youtube-collect-videos.mjs` | 列频道视频(stdout 给 videoId 列表;第 2 参月数默认 6,给 240 即全量;InnerTube 续页拉满,`[fetch]/[browse]/[parse]/[filter]` 分步 stderr 日志;2026-08-24 续页 token 适配三层嵌套新结构——扩展侧 tab 注入路径另有 browse 故障,全量列表以此脚本为准) |
-| `scripts/verify-yt-channel.mjs` | YouTube 频道采集验收(`<@handle\|UCxxx\|URL>`;经 expand 端点对比频道全量 vs 库内已采,输出覆盖率与缺失清单 JSON;全采 exit 0,有缺 exit 1) |
+| `scripts/verify-yt-channel.mjs` | YouTube 频道采集验收(`<@handle\|UCxxx\|URL>`;频道全量=youtube-collect-videos.mjs 续页拉满,库内=HTTP /api/videos?creator_uid=,对比输出覆盖率与缺失清单 JSON;全采 exit 0,有缺 exit 1) |
 | `scripts/youtube-collect-subs.mjs` | 采 YouTube 字幕(英文+中文翻译,stdin 读 videoId) |
 | `scripts/run-collector-server.mjs` | 启动 server(node24 ABI 已重编译) |
 | `scripts/launch-chrome.mjs` | 起 Chrome + cdpc 端口(扩展联调) |

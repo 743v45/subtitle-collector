@@ -11,10 +11,12 @@ const args = process.argv.slice(2);
 let vids = [];
 let batchTags = null;
 let platform = 'bilibili';
+let clientId = null;
 {
   const rest = [];
   for (let i = 0; i < args.length; i++) {
     if (args[i] === '--tag') { batchTags = args[++i]; continue; }
+    if (args[i] === '--client') { clientId = args[++i]; continue; }
     if (args[i] === '--source') {
       platform = args[++i];
       if (platform !== 'bilibili' && platform !== 'youtube') { console.error('--source 必须是 bilibili/youtube'); process.exit(1); }
@@ -25,7 +27,7 @@ let platform = 'bilibili';
   if (rest[0] === '--file') vids = (await import('node:fs')).readFileSync(rest[1], 'utf8').trim().split(/\s+/);
   else vids = rest;
 }
-if (!vids.length) { console.error('用法: collect-batch.mjs <vid...> | --file <file> [--tag "a,b"] [--source bilibili|youtube]'); process.exit(1); }
+if (!vids.length) { console.error('用法: collect-batch.mjs <vid...> | --file <file> [--tag "a,b"] [--source bilibili|youtube] [--client <id>]'); process.exit(1); }
 const tagNames = batchTags ? batchTags.split(',').map((s) => s.trim()).filter(Boolean) : [];
 
 // 仓库根相对定位（脚本在 scripts/ 下），避免硬编码绝对路径换环境即挂
@@ -35,7 +37,11 @@ const t0 = Date.now();
 const el = (m) => console.log(`[${Math.round((Date.now() - t0) / 1000)}s] ${m}`);
 
 function collectSubtitle(vid) {
-  const out = execFileSync('npx', ['tsx', 'src/cli/main.ts', 'collect', 'subtitle', vid, '--source', platform, '--format', 'json'],
+  // --client 透传（2026-08-24）：多客户端时缺省「第一个在线」可能是仅上报态（dispatch=off），
+  // 显式指定采集机避免「任务派发已关闭」全批量空跑。
+  // vid 前置 `--`：YouTube 11 位 ID 可能以 '-' 开头，commander 会误解析为选项（unknown option）。
+  const clientArgs = clientId ? ['--client', clientId] : [];
+  const out = execFileSync('npx', ['tsx', 'src/cli/main.ts', 'collect', 'subtitle', '--source', platform, ...clientArgs, '--format', 'json', '--', vid],
     { cwd: CLI_DIR, env, encoding: 'utf8', timeout: 60000 });
   // CLI 输出是 pretty JSON，可能前面混 zsh 噪音行——取首个 '{' 到末尾整体 parse
   const start = out.indexOf('{');

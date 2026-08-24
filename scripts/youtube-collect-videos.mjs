@@ -49,7 +49,7 @@ async function handleToChannelId(handle) {
   return m[1];
 }
 
-// uploads playlist(UU + channelId 去 UC 前缀)→ ytInitialData
+// uploads playlist(UU + channelId 去 UC 前缀)→ ytInitialData + 续页 token/InnerTube 凭据
 async function fetchPlaylistData(channelId) {
   const playlistId = 'UU' + channelId.slice(2);
   const html = await fetchText(`https://www.youtube.com/playlist?list=${playlistId}`);
@@ -66,8 +66,53 @@ async function fetchPlaylistData(channelId) {
   } catch (e) {
     throw new Error(`ytInitialData JSON.parse 失败(${e.message});切片长度 ${jsonStr.length},尾部 80 字符: ${JSON.stringify(jsonStr.slice(-80))}`);
   }
-  log(`[playlist] ${playlistId} ytInitialData 解析 OK(切片 ${jsonStr.length} 字符)`);
-  return data;
+  // InnerTube 续页凭据（2026-08-24 补全量分页：首页只有 100 条，频道数百视频需 browse 续页）
+  const innertubeKey = html.match(/"INNERTUBE_API_KEY":"([^"]+)"/)?.[1] ?? null;
+  const clientVersion = html.match(/"INNERTUBE_CONTEXT_CLIENT_VERSION":"([^"]+)"/)?.[1] ?? null;
+  log(`[playlist] ${playlistId} ytInitialData 解析 OK(切片 ${jsonStr.length} 字符;innertubeKey=${innertubeKey ? '有' : '无'})`);
+  return { data, innertubeKey, clientVersion };
+}
+
+// JSON 树递归收集指定 key（yt-channel.mjs collect 同构；script 侧零依赖复制）
+function collectKey(node, key, out = []) {
+  if (Array.isArray(node)) { for (const v of node) collectKey(v, key, out); }
+  else if (node && typeof node === 'object') {
+    if (key in node) out.push(node[key]);
+    for (const v of Object.values(node)) collectKey(v, key, out);
+  }
+  return out;
+}
+
+// 续页 token 提取（2026-08-24 适配新结构）：旧 UI 在 continuationCommand.token；
+// 新 UI 嵌套为 continuationCommand.trigger + .continuationCommand.innertubeCommand.continuationCommand.token。
+// 对全部 continuationCommand 节点逐层下钻取第一个非空 token 字符串。
+function findContinuationToken(json) {
+  for (const cmd of collectKey(json, 'continuationCommand')) {
+    const t = cmd?.token ?? cmd?.continuationCommand?.token ?? cmd?.innertubeCommand?.continuationCommand?.token;
+    if (typeof t === 'string' && t) return t;
+  }
+  return null;
+}
+
+// InnerTube browse 续页（node fetch 直连——同层已验证可通；扩展 tab 注入路径另有 'browse HTTP parse' 故障，
+// 该路径在扩展侧修复前，全量列表以本脚本为准）。返回 { json, status }。
+async function browseContinuation(innertubeKey, clientVersion, token) {
+  let res;
+  try {
+    res = await fetch(`https://www.youtube.com/youtubei/v1/browse?key=${innertubeKey}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'user-agent': UA, 'accept-language': 'en-US,en;q=0.9' },
+      body: JSON.stringify({
+        context: { client: { clientName: 'WEB', clientVersion, hl: 'en', gl: 'US' } },
+        continuation: token,
+      }),
+    });
+  } catch (e) {
+    return { status: 0, json: null, cause: String(e.cause?.code ?? e.message) };
+  }
+  const json = await res.json().catch(() => null);
+  log(`[browse] HTTP ${res.status} (${json ? 'JSON OK' : '非 JSON！'})`);
+  return { status: res.status, json };
 }
 
 // 结构命中统计:遍历时计数所有 *Renderer/*ViewModel 键。0 视频时输出 top 计数,
@@ -134,8 +179,27 @@ async function main() {
   let channelId = input;
   if (input.startsWith('@')) channelId = await handleToChannelId(input);
   log(`[main] channelId: ${channelId}`);
-  const data = await fetchPlaylistData(channelId);
+  const { data, innertubeKey, clientVersion } = await fetchPlaylistData(channelId);
   const videos = findVideos(data);
+  // 全量续页（2026-08-24）：首页 SSR 只有 ~100 条，browse continuation 拉满（频道页 total 对照）
+  let token = findContinuationToken(data);
+  let page = 1;
+  let noNewStreak = 0;
+  while (token && typeof token === 'string' && innertubeKey && clientVersion) {
+    const r = await browseContinuation(innertubeKey, clientVersion, token);
+    if (r.status !== 200 || !r.json) throw new Error(`browse 续页失败: HTTP ${r.status}${r.cause ? ` cause=${r.cause}` : ''}(首页 ${videos.length} 条已保留——续页凭据失效或被拦)`);
+    const pageVideos = findVideos(r.json);
+    const before = new Set(videos.map(v => v.videoId));
+    const added = pageVideos.filter(v => !before.has(v.videoId));
+    videos.push(...added);
+    token = findContinuationToken(r.json);
+    page++;
+    noNewStreak = added.length > 0 ? 0 : noNewStreak + 1;
+    if (noNewStreak >= 3) { log(`[browse] 连续 3 页无新视频，判定分页停滞终止(已得 ${videos.length} 条)`); break; }
+    log(`[browse] 第 ${page - 1} 轮续页: +${added.length}(累计 ${videos.length})`);
+    await sleep(600); // 页间节流
+  }
+  if (!token && page > 1) log(`[browse] 续页拉满: 共 ${page - 1} 轮,累计 ${videos.length} 条`);
   const titleHit = videos.filter(v => v.title).length;
   const timeHit = videos.filter(v => v.publishedText).length;
   log(`[parse] lockupViewModel 命中视频 ${videos.length} 条;标题 ${titleHit}/${videos.length}、时间 ${timeHit}/${videos.length}(任一命中率骤降 = 对应字段结构改版)`);
