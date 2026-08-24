@@ -42,3 +42,6 @@ reports/
 .stryker-tmp/
 coverage/
 *.lcov
+
+# 本地 dev server 的内置备份产物（生产备份在 docker volume 内，不在此）
+apps/collector-server/backups/
