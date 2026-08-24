@@ -141,7 +141,7 @@ export function Popup() {
   // 回调后视频页才出现——既精简非视频页，也避免"非视频页 → BVxxx"的初始值闪烁。
   // detectPlatform(tabUrl) 决定 currentPlatform，平台头/统计按当前平台渲染；无关页 currentPlatform=null 不渲染平台头。
   const isVideoPage = currentVid !== null;
-  // 上报是上报字幕：没字幕（no-subtitle）→ 上报按钮置灰
+  // 无字幕（no-subtitle）也可上报视频信息（0 轨，对齐 content-yt）；hasSubtitle 仅用于文案区分，不拦上报。
   const hasSubtitle = local.state === 'has-subtitle';
   // server ok 时从 video.creator_id 查 UP 主详情；其它态（loading/server-down/not-collected）
   // 没有 creator_id → useCreator 返回 none，CreatorCard 不渲染，无噪音。
@@ -531,8 +531,8 @@ function FooterActions({
         <Button
           size="sm"
           onClick={onReport}
-          disabled={standalone || !hasSubtitle || reportStatus === 'reporting'}
-          title={standalone ? '纯扩展模式：不连接 server，无法上报' : !hasSubtitle ? '当前视频无字幕，无法上报' : undefined}
+          disabled={standalone || reportStatus === 'reporting'}
+          title={standalone ? '纯扩展模式：不连接 server，无法上报' : !hasSubtitle ? '当前视频无字幕：上报视频信息（0 轨，不含字幕轨）' : undefined}
           className={cn(
             'ml-auto h-7 px-3 text-xs',
             reportStatus === 'success'
@@ -542,15 +542,13 @@ function FooterActions({
                 : 'bg-brand text-brand-foreground hover:bg-brand/90'
           )}
         >
-          {!hasSubtitle
-            ? '无字幕'
-            : reportStatus === 'reporting'
-              ? '上报中…'
-              : reportStatus === 'success'
-                ? '上报成功 ✓'
-                : reportStatus === 'failed'
-                  ? '上报失败 ✗'
-                  : '上报'}
+          {/* 无字幕态 idle/成功 区分为「上报信息/信息已报 ✓」：点的是视频信息上报（0 轨），不是字幕 */}
+          {!hasSubtitle && reportStatus === 'idle' ? '上报信息'
+            : !hasSubtitle && reportStatus === 'success' ? '信息已报 ✓'
+            : reportStatus === 'reporting' ? '上报中…'
+            : reportStatus === 'success' ? '上报成功 ✓'
+            : reportStatus === 'failed' ? '上报失败 ✗'
+            : '上报'}
         </Button>
       )}
     </div>
@@ -819,8 +817,7 @@ function CollectedBlock({
   if (local.state === 'not-loaded') return <NotLoadedCard />;
 
   // no-subtitle 与 has-subtitle 都带 extra（视频元数据），统一渲染视频卡；区别在字幕卡（SubtitleCard）。
-  // 没字幕不代表没视频数据（统计/tags 仍展示）；上报是上报字幕，没字幕→同步未达 + 上报按钮置灰。
-  const hasSubtitle = local.state === 'has-subtitle';
+  // 没字幕不代表没视频数据（统计/tags 仍展示）；无字幕可上报视频信息（0 轨），video 入库即同步。
   const { extra } = local;
   const stat = extra.stat ?? {};
   const tags = Array.isArray(extra.tags) ? extra.tags : [];
@@ -839,7 +836,7 @@ function CollectedBlock({
           <CollapsibleTrigger className="flex w-full items-center gap-2 text-left">
             <ChevronIcon className={cn('h-3 w-3 shrink-0 transition-transform', !collapsed && 'rotate-90')} />
             <span className="shrink-0 text-sm font-semibold">视频信息</span>
-            <SyncStatusBadge server={server} hasSubtitle={hasSubtitle} />
+            <SyncStatusBadge server={server} />
             {consistency.map((c) => (
               <Badge
                 key={c.field}
@@ -1462,7 +1459,7 @@ function FilterPill({
 }
 
 // 服务端同步状态 badge（标题旁）：颜色区分 + 上次同步时间；loading 用中性占位避免闪烁。
-function SyncStatusBadge({ server, hasSubtitle }: { server: CollectedState; hasSubtitle: boolean }) {
+function SyncStatusBadge({ server }: { server: CollectedState }) {
   if (server.state === 'loading') {
     return <StatusPlaceholder className="h-5 w-16" />;
   }
@@ -1472,8 +1469,8 @@ function SyncStatusBadge({ server, hasSubtitle }: { server: CollectedState; hasS
   let variant: 'success' | 'secondary';
   let text: string;
   let title: string | undefined;
-  // 上报是上报字幕：没字幕就算 video 入库也不算「同步」（没字幕轨上报）→ 显示未同步
-  if (server.state === 'ok' && hasSubtitle) {
+  // video 行入库即「同步」：无字幕视频上报的是视频信息（0 轨），入库即算同步（2026-08-24 无字幕可上报）。
+  if (server.state === 'ok') {
     const ts = server.video.updated_at;
     const ago = ts ? fmtTimeAgo(ts) : '';
     variant = 'success';
@@ -1518,7 +1515,7 @@ function fmtDuration(sec: number): string {
 
 // 字幕独立卡（2026-08-22 从视频信息卡内拆出，渲染在视频信息卡正下方）：
 //   loading / not-loaded → 不渲染（视频信息卡已给出「查询中 / 未获取到」提示）
-//   no-subtitle → 极简卡「无字幕」（不可折叠；底部上报按钮同态置灰已有提示，卡固定位置比时有时无可预期）
+//   no-subtitle → 极简卡「无字幕」（不可折叠；上报按钮转「上报信息」——无字幕报的是视频信息，卡固定位置比时有时无可预期）
 //   has-subtitle 且无可复制轨（正文均未抓到）→ 不渲染（url_missing / 仍在加载）
 //   has-subtitle → 折叠态标题行「字幕 · N 轨」（N=总轨数，与展开行数一致）；
 //     展开态 = 格式抽屉（横向，格式记忆）+ 每轨复制/预览。折叠状态跨次记忆（首次默认折叠）。

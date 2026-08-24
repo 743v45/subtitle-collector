@@ -100,26 +100,9 @@ function fetchSubtitleBodiesViaBg(bvid, subs) {
   }
 }
 
-function flushIfReady(bvid, force = false) {
-  const cur = collected.get(bvid);
-  if (!cur?.meta) return;
-  const urlMissing = cur.meta.subs.filter((s) => !s.subtitle_url || s.url_missing);
-  if (urlMissing.length > 0) {
-    console.warn(`[collector] bvid=${bvid}: ${urlMissing.length} 轨 subtitle_url 缺失（url_missing），跳过这些轨`);
-  }
-  const ready = cur.meta.subs.filter((s) => cur.bodies.has(s.subtitle_url) || !s.subtitle_url);
-  if (ready.length === 0) return;
-  const tracks = cur.meta.subs.map((s) => {
-    if (!s.subtitle_url || s.url_missing) return null; // url_missing 轨跳过，不报
-    const body = cur.bodies.get(s.subtitle_url);
-    if (!body) return null;
-    return {
-      lan: s.lan, lan_doc: s.lan_doc, track_type: s.track_type,
-      versions: [{ origin: "external", payload: body, source_url: s.subtitle_url }],
-    };
-  }).filter(Boolean);
-  if (tracks.length === 0) return;
-  const record = {
+// INGEST record 组装（0 轨与带轨共用）：video 元信息 + tracks（无字幕上报时传 []，仅视频信息）。
+function buildIngestRecord(cur, tracks) {
+  return {
     source: "bilibili",
     video: {
       source_vid: cur.meta.bvid,
@@ -137,12 +120,49 @@ function flushIfReady(bvid, force = false) {
     },
     tracks,
   };
-  console.log(`[content] INGEST bvid=${cur.meta.bvid} tracks=${tracks.length}${force ? " force=true（绕过开关）" : ""}`);
+}
+
+function sendIngestRecord(cur, tracks, force) {
+  console.log(`[content] INGEST bvid=${cur.meta.bvid} tracks=${tracks.length}${tracks.length === 0 ? "（无字幕，仅视频信息）" : ""}${force ? " force=true（绕过开关）" : ""}`);
   try {
-    chrome.runtime.sendMessage({ type: "INGEST", payload: record, ...(force ? { force: true } : {}) });
+    chrome.runtime.sendMessage({ type: "INGEST", payload: buildIngestRecord(cur, tracks), ...(force ? { force: true } : {}) });
   } catch (e) {
     console.warn(`[content] INGEST 发送异常（扩展上下文可能已失效）bvid=${cur.meta.bvid} err=${e?.message}`);
   }
+}
+
+function flushIfReady(bvid, force = false) {
+  const cur = collected.get(bvid);
+  if (!cur?.meta) return;
+  const subs = cur.meta.subs ?? [];
+  // 无字幕（subs 空）不再整体跳过：上报 0 轨视频信息 payload（对齐 content-yt 2026-08-22 决策——
+  // 元信息不是脏数据；video 入行后标题/UP/统计可查，AI 字幕后续到达再 flush 补轨，server ingest 幂等）。
+  // 与批量采集的「确认无字幕」打 no-subtitle 系统标语义不同：浏览路径 0 轨≠确认无字幕
+  // （可能只是 AI 字幕未到/未登录拿不到），不打标，仅入 video 行。
+  // 防重：PLAYER_META 随清晰度切换/切 P 重复到达，0 轨自动上报每 bvid 一次；force 手动重发不受限。
+  if (subs.length === 0) {
+    if (!force && cur.zeroFlushed) return;
+    cur.zeroFlushed = true;
+    sendIngestRecord(cur, [], force);
+    return;
+  }
+  const urlMissing = subs.filter((s) => !s.subtitle_url || s.url_missing);
+  if (urlMissing.length > 0) {
+    console.warn(`[collector] bvid=${bvid}: ${urlMissing.length} 轨 subtitle_url 缺失（url_missing），跳过这些轨`);
+  }
+  const ready = subs.filter((s) => cur.bodies.has(s.subtitle_url) || !s.subtitle_url);
+  if (ready.length === 0) return;
+  const tracks = subs.map((s) => {
+    if (!s.subtitle_url || s.url_missing) return null; // url_missing 轨跳过，不报
+    const body = cur.bodies.get(s.subtitle_url);
+    if (!body) return null;
+    return {
+      lan: s.lan, lan_doc: s.lan_doc, track_type: s.track_type,
+      versions: [{ origin: "external", payload: body, source_url: s.subtitle_url }],
+    };
+  }).filter(Boolean);
+  if (tracks.length === 0) return;
+  sendIngestRecord(cur, tracks, force);
 }
 
 // 自动点击 AI 字幕按钮，触发播放器 fetch 明文 aisubtitle（inject 拦截 SUBTITLE_BODY 入库）。
