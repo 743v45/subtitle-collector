@@ -5,7 +5,6 @@ import {
   useCollected,
   useConnectionStatus,
   useCreator,
-  useCreatorCollected,
   useLocalCollected,
   useClientId,
   useReporting,
@@ -28,6 +27,7 @@ import {
   type YtChannelIdent,
   type YtChannelState,
 } from './hooks';
+import { useCreatorCollected } from './hooks-collected';
 import { LOGOS, type Platform, type StatIconName } from './platforms';
 import { fmtNum } from './format';
 import { cn } from '@/lib/utils';

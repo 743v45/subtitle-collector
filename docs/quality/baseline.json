@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-08-23T18:59:32.532Z",
+  "generatedAt": "2026-08-24T00:31:42.490Z",
   "rules": {
     "complexity": 15,
     "maxLines": 400
@@ -126,7 +126,7 @@
       "maxLines": 1818
     },
     "apps/subtitle-collector/src/popup/hooks.ts": {
-      "maxLines": 934,
+      "maxLines": 894,
       "complexity": 19
     },
     "apps/subtitle-collector/yt-channel.mjs": {
