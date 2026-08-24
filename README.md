@@ -114,6 +114,9 @@ server 端**可选**设置 `COLLECTOR_TOKEN`：设置后扩展的 server URL 必
 pnpm test        # turbo run test：三端单测（server c8 / web vitest / 扩展 c8，各带覆盖率锁定）
 pnpm qa          # 全量质量门：build + test + 静态质量台账 check + depcruise（细则见 docs/quality/RULES.md）
 pnpm test:ext    # puppeteer mock 扩展回归（scripts/verify-collector.mjs，按需手动，不进 qa）
+pnpm verify:deployed -- --token <t> [--server <url>] [--db <库路径>]
+                 # 部署后服务状态自检：/ping + 核心只读 API + SQLite integrity_check
+                 #（坏页损坏 HTTP 探活测不出，须带 --db；2026-08-24 生产库 SQLITE_CORRUPT 事故产物）
 ```
 
 - **单测**（`pnpm test`）：[apps/collector-server](apps/collector-server)（c8 + node:test）、[apps/collector-web](apps/collector-web)（vitest + jsdom + Testing Library）、[apps/subtitle-collector](apps/subtitle-collector)（c8 包裹 node --test，import 源码）；三端覆盖率按锁定线只升不降。

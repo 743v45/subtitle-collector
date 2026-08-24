@@ -71,6 +71,8 @@ collect 子命令速记:`search <关键词>` 搜候选(不入库)/ `subtitle <bv
 | `scripts/launch-chrome.mjs` | 起 Chrome + cdpc 端口(扩展联调) |
 | `scripts/load-collector-extension.sh` | 装扩展到 Chrome |
 | `scripts/proxy-collector-server.mjs` | 127.0.0.1:21528 → 内网 21527 转发 |
+| `scripts/verify-deployed.mjs` | 部署后服务状态自检(`pnpm verify:deployed -- --token <t> [--server <url>] [--db <路径>]`;HTTP 核心接口 + `--db` 时 SQLite integrity_check,坏页损坏探活测不出——2026-08-24 事故教训) |
+| `scripts/sqlite-rescue.mjs` | 损坏库抢救重建(`node scripts/sqlite-rescue.mjs <主库> <完好备份> <新库输出>`;分段绕坏页 + 备份兜底 + JSON 列降级 + 孤儿引用登记,2026-08-24 SQLITE_CORRUPT 事故产物) |
 | `scripts/verify-*.mjs` | 链路验收冒烟族(`pnpm test:ext` / `test:youtube`,按需不进 qa) |
 
 ## 纪律
