@@ -3,6 +3,7 @@ import type Database from 'better-sqlite3';
 import { readFileSync, existsSync } from 'node:fs';
 import { join, extname } from 'node:path';
 import { openDb, migrate, runMigrations } from './db/migrate.js';
+import { attachBackupTimer } from './db/backup.js';
 import { attachWsServer } from './ws/server.js';
 import { handleQueryHttp } from './http/queries.js';
 import { handleClientsHttp } from './http/clients.js';
@@ -122,6 +123,7 @@ const httpServer = createServer((req, res) => {
 
 attachWsServer(httpServer, db, TOKEN);
 attachTaskScheduler(db); // 采集任务调度器（pending → 扩展派发 → 回执落 status）
+attachBackupTimer(db, DB_PATH); // 容器内定时备份（VACUUM INTO 一致性快照，2026-08-24 损库事故产物）
 
 httpServer.listen(PORT, HOST, () => {
   if (HOST === '0.0.0.0') {

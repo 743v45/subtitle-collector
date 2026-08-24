@@ -54,6 +54,16 @@ test('tags API 全链路：apply → list → rename → 优先级 → 单视频
     assert.equal(r.status, 200);
     assert.equal(r.json.inserted, 2);
 
+    // 1.5 分支洼地：items/names 缺失或空数组 → 400（parseApplyBody 第一层校验）
+    r = await call(port, 'POST', '/api/tags/apply', { names: ['x'] });
+    assert.equal(r.status, 400);
+    assert.match(r.json.error, /items.*required/);
+    r = await call(port, 'POST', '/api/tags/apply', { items: [{ source: 'bilibili', source_vid: 'BV1' }], names: [] });
+    assert.equal(r.status, 400, '空 names 同层拦截');
+    r = await call(port, 'POST', '/api/tags/apply', { items: [{ source: '', source_vid: '' }], names: ['x'] });
+    assert.equal(r.status, 400, 'item 空字段第二层拦截');
+    assert.match(r.json.error, /non-empty source/);
+
     // 2. bili 档只读 → 400
     r = await call(port, 'POST', '/api/tags/apply', {
       items: [{ source: 'bilibili', source_vid: 'BV1' }], names: ['x'], scope: 'bili',

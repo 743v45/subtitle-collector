@@ -126,6 +126,15 @@ test('collectUpperVideosAll 一次拿完（items < size 即停，不超翻）', 
   assert.equal(out.result?.total, 2);
 });
 
+test('collectUpperVideosAll total 缺失(0) 且每页满 size → maxPages=200 兜底终止（total>0 短路不成立）', async () => {
+  // 异常 API（total 恒缺失）+ 每页恰好满 size：唯一终止条件是 maxPages，防无限翻页
+  const c = mockClient({ ok: true, result: { total: 0, items: [{ bvid: 'x' }, { bvid: 'y' }] } });
+  const out = await collectUpperVideosAll(c as any, 'c1', '123', 2, 15000);
+  assert.equal(c.calls.length, 200, '翻满 maxPages 兜底');
+  assert.equal(out.result?.items?.length, 400, '200 页 × 2 条全合并');
+  assert.equal(out.result?.total, 0, 'total 缺失保持 0');
+});
+
 test('collectUpperVideosAll 单页失败抛错（server 502 → ExtCommandError 带 page 上下文）', async () => {
   // server 已把扩展回执 ok=false 映射为 502（http/clients.ts），requestJson 抛 ServerResponseError
   const c = mockClient(null);

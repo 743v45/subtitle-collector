@@ -104,6 +104,16 @@ test('parseVideoUrl：不可识别 → null', () => {
   assert.equal(parseVideoUrl('不是URL'), null);
 });
 
+test('parseVideoUrl：分支洼地——m 站 / 裸域 host、youtu.be 空 id、watch 无 v 参数', () => {
+  // B 站域短路链的其余 host：m.bilibili.com 与裸域 bilibili.com（url 归一化到 www 域）
+  assert.deepEqual(parseVideoUrl('https://m.bilibili.com/video/BV1xx411c7mD'), { source: 'bilibili', source_vid: 'BV1xx411c7mD', url: 'https://www.bilibili.com/video/BV1xx411c7mD' });
+  assert.deepEqual(parseVideoUrl('https://bilibili.com/?bvid=BV1xx411c7mD'), { source: 'bilibili', source_vid: 'BV1xx411c7mD', url: 'https://www.bilibili.com/video/BV1xx411c7mD' });
+  // youtu.be 路径首段为空（无 id）→ null
+  assert.equal(parseVideoUrl('https://youtu.be/'), null);
+  // youtube watch 无 v 参数 → null
+  assert.equal(parseVideoUrl('https://www.youtube.com/watch?t=10s'), null);
+});
+
 // ── 任务 CRUD ──
 
 test('createTask/getTask/listTasks：建 pending 任务、按 id 倒序列出', () => {

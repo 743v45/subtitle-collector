@@ -14,29 +14,8 @@ import { registerWsBridge } from '../tasks/wsBridge.js';
 const MAX_TIMED_OUT = 200;
 const timedOutParams = new Map<string, Record<string, unknown>>();
 
-// B 站登录态快照（hello / login-state 上报；扩展从 /x/web-interface/nav 抽取）。
-// 未登录时充电视频的 AI 字幕接口 /x/v2/subtitle/web/view 返回空（2026-08-24 批量 1190 no_subtitle 根因），
-// server 侧可见登录态用于 web 客户端页徽章与 CLI clients list 定位此类失败。
-export interface BiliLogin {
-  is_login: boolean;
-  mid?: string;
-  uname?: string;
-  vip?: boolean;
-}
-
-function parseLogin(raw: string | null | undefined): BiliLogin | null {
-  if (!raw) return null;
-  try {
-    const v = JSON.parse(raw);
-    return v && typeof v === 'object' && typeof v.is_login === 'boolean' ? v as BiliLogin : null;
-  } catch {
-    return null;
-  }
-}
-
-function parseLoginMsg(v: unknown): BiliLogin | null {
-  return v && typeof v === 'object' && typeof (v as BiliLogin).is_login === 'boolean' ? v as BiliLogin : null;
-}
+// B 站登录态快照（hello / login-state 上报）解析在 ws/login.ts（2026-08-25 偿还复杂度台账抽出）。
+import { parseLogin, parseLoginMsg, type BiliLogin } from './login.js';
 
 interface ExtConn {
   ws: WebSocket;
@@ -50,6 +29,22 @@ interface ExtConn {
 }
 
 const connections = new Map<string, ExtConn>(); // key = clientId（hello 后入表）
+
+// hello 的注册表落库元信息（自 handleHello 抽出，偿还复杂度台账）：
+// 登录态/版本只在有效上报时落库（undefined=旧扩展未上报，DB 旧值保留不抹）。
+function helloUpsertMeta(conn: ExtConn): { biliLogin?: string; extVersion?: string } {
+  return { biliLogin: conn.biliLogin != null ? JSON.stringify(conn.biliLogin) : undefined, extVersion: conn.extVersion ?? undefined };
+}
+
+// login-state 消息处理（自 message 回调抽出，偿还复杂度台账）：更新连接表 + 落库。
+// 畸形/缺 login 不清除 DB 旧值（保守：探测失败 ≠ 未登录）。
+function handleLoginState(db: Database.Database, conn: ExtConn, msg: any): void {
+  conn.biliLogin = parseLoginMsg(msg.login);
+  if (conn.clientId && conn.biliLogin) {
+    upsertClient(db, conn.clientId, undefined, { biliLogin: JSON.stringify(conn.biliLogin) });
+    console.log(`[ws] client_id=${conn.clientId} B 站登录态更新：${conn.biliLogin.is_login ? `已登录 ${conn.biliLogin.uname ?? ''}(${conn.biliLogin.mid ?? '?'})` : '未登录'}`);
+  }
+}
 
 interface PendingEntry { resolve: (v: any) => void; timer: NodeJS.Timeout; }
 const pending = new Map<string, PendingEntry>();
@@ -80,11 +75,7 @@ function handleHello(db: Database.Database, ws: WebSocket, conn: ExtConn, msg: a
     const prev = connections.get(conn.clientId);
     if (prev && prev.ws !== ws && prev.ws.readyState === WebSocket.OPEN) prev.ws.close(4000, 'replaced');
     connections.set(conn.clientId, conn);
-    // 登录态/版本只在有效上报时落库（undefined=旧扩展未上报，DB 旧值保留不抹）
-    upsertClient(db, conn.clientId, msg.client_name === undefined ? undefined : conn.clientName, {
-      biliLogin: conn.biliLogin != null ? JSON.stringify(conn.biliLogin) : undefined,
-      extVersion: conn.extVersion ?? undefined,
-    });
+    upsertClient(db, conn.clientId, msg.client_name === undefined ? undefined : conn.clientName, helloUpsertMeta(conn));
     notifyClientOnline(); // 扩展上线：kick 采集任务调度器（pending 任务可派发了）
   }
 }
@@ -147,14 +138,7 @@ export function attachWsServer(httpServer: Server, db: Database.Database, expect
       }
 
       if (msg.type === 'login-state') {
-        // 扩展登录态变化推送（对齐 client-name-state）：更新连接表 + 落库。
-        // 畸形/缺 login 不清除 DB 旧值（保守：探测失败 ≠ 未登录）。
-        const login = parseLoginMsg(msg.login);
-        conn.biliLogin = login;
-        if (conn.clientId && login) {
-          upsertClient(db, conn.clientId, undefined, { biliLogin: JSON.stringify(login) });
-          console.log(`[ws] client_id=${conn.clientId} B 站登录态更新：${login.is_login ? `已登录 ${login.uname ?? ''}(${login.mid ?? '?'})` : '未登录'}`);
-        }
+        handleLoginState(db, conn, msg);
         return;
       }
 

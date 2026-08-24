@@ -20,7 +20,31 @@ import { openDb, migrate } from '../../db/migrate.js';
 import { ingestVideo } from '../../db/ingest.js';
 import { serializeVideosResult } from './export.js';
 import { resolveSubtitle } from '../subtitleFormat.js';
+import { secsToClock, stampedTxt } from '../bundle.js';
 import type { VideoListItemAdvanced, PageResult } from '../../db/advanced.js';
+
+// ── bundle 行格式化纯函数（覆盖小时级分支与空行过滤，端到端 fixture 均为短视频）──
+
+test('secsToClock：秒 → 分:秒 / 时:分:秒 补零；负值归零四舍五入', () => {
+  assert.equal(secsToClock(0), '00:00');
+  assert.equal(secsToClock(9.4), '00:09');
+  assert.equal(secsToClock(59.6), '01:00', '四舍五入进分');
+  assert.equal(secsToClock(65), '01:05');
+  assert.equal(secsToClock(3599), '59:59');
+  assert.equal(secsToClock(3600), '1:00:00', '恰 1 小时走时:分:秒');
+  assert.equal(secsToClock(3661.4), '1:01:01');
+  assert.equal(secsToClock(-5), '00:00', '负值归零');
+});
+
+test('stampedTxt：body → [分:秒] 行；空 content 行过滤；结构不符抛错', () => {
+  const out = stampedTxt({ body: [
+    { from: 1.5, to: 2, content: ' 甲 ' },
+    { from: 3, to: 4, content: '   ' }, // 空白行过滤
+    { from: 3661, to: 3662, content: '一小时后' },
+  ] });
+  assert.equal(out, '[00:02] 甲\n[1:01:01] 一小时后\n');
+  assert.throws(() => stampedTxt({ noBody: true }), /body/);
+});
 
 // B 站字幕 payload 样本（结构对齐 info/body.json，裁剪为 2 条便于断言）
 const ZH_PAYLOAD = {

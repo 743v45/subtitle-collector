@@ -1,9 +1,20 @@
 # collector-server 容器编排
 #
-# 数据库：bind mount ./data → /data，文件不进镜像、不进项目。
-# 首次启动前，若要保留现有数据，把库拷过来：
-#   mkdir -p data && cp apps/collector-server/bilibili-collector.db data/bilibili-collector.db
-# （WAL 模式：先停掉本地 dev server 再拷，或连 -shm/-wal 一起拷）
+# 数据库：named volume collector-data → /data。不进镜像、不经 bind mount——
+# 2026-08-24 教训：bind mount 走 virtiofs，SQLite WAL 的 mmap(-shm) 跨虚拟机共享
+# 一致性有缺陷，宿主机进程直触挂载库（哪怕只读）两次引发 SQLITE_CORRUPT（丢当日数据）。
+# named volume 数据落在 Docker VM 磁盘、容器直通，宿主机不存在该文件——误操作路径物理封死。
+# 查生产库一律走 server HTTP/CLI 或 docker exec collector-server node -e '...'。
+#
+# 备份：server 内置每小时容器内 VACUUM INTO /data/backups/（滚动 24 份）；
+# 导出到宿主：node scripts/backup-export.mjs（docker cp）。
+#
+# 一次性迁移（bind mount → volume，2026-08-24 已执行）：
+#   docker compose down
+#   docker run --rm -v collector-data:/dst -v "$(pwd)/data:/src" alpine \
+#     sh -c 'cp /src/bilibili-collector.db /dst/ && ls -la /dst'
+#   （停机状态下拷贝，WAL/-shm 不拷——重启后如有残留再补）
+#   改本文件挂载 → docker compose up -d --build → pnpm verify:deployed
 #
 # 启动：docker compose up -d --build
 # 看 TOKEN 等可在仓库根放 .env，或直接 export。
@@ -27,4 +38,7 @@ services:
       # 从宿主 localhost（经 -p 映射）访问无需填；从局域网 IP/主机名访问则填上，逗号分隔。
       COLLECTOR_ALLOWED_HOSTS: ${COLLECTOR_ALLOWED_HOSTS:-}
     volumes:
-      - ./data:/data
+      - collector-data:/data
+
+volumes:
+  collector-data:
