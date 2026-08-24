@@ -17,6 +17,7 @@ import {
   pidFilePath,
   readPidFile,
   removePidFile,
+  resolveTsx,
   serverRoot,
   writePidFile,
   type PingClient,
@@ -31,6 +32,16 @@ import {
 // ─────────────────────────────────────────────────────────────────────────────
 // 路径解析
 // ─────────────────────────────────────────────────────────────────────────────
+
+test('resolveTsx: 本地 node_modules/.bin/tsx 存在 → 绝对路径；空目录 → 退回 PATH 上的 tsx', () => {
+  // 真实 app 根：pnpm 装好 tsx，命中本地 .bin
+  assert.equal(resolveTsx(serverRoot()), join(serverRoot(), 'node_modules', '.bin', 'tsx'));
+  // 空临时目录：无本地 .bin → fallback 'tsx'（PATH 解析交给 spawn）
+  const empty = mkdtempSync(join(tmpdir(), 'collector-resolve-tsx-'));
+  try {
+    assert.equal(resolveTsx(empty), 'tsx');
+  } finally { rmSync(empty, { recursive: true, force: true }); }
+});
 
 test('serverRoot: 解析到 apps/collector-server 绝对路径', () => {
   const root = serverRoot();

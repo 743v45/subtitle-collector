@@ -66,6 +66,30 @@ function ClientCard({ c, now, busy, onToggleReporting, onToggleDispatch }: {
             }
             <span>· 版本 {c.ext_version ?? '-'}</span>
           </div>
+          {/* B 站登录态（2026-08-24 充电视频 no_subtitle 根因可观察化）：null=旧版扩展未上报，不显示 */}
+          {c.bili_login && (
+            c.bili_login.is_login ? (
+              <div className="mt-1 flex items-center gap-1.5 text-xs">
+                <span className="rounded bg-emerald-100 px-1.5 py-0.5 font-medium text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300" title="该浏览器的 B 站登录态（充电视频 AI 字幕需要登录态才拿得到）">
+                  B 站已登录
+                </span>
+                <span className="text-muted-foreground">
+                  {c.bili_login.uname ?? '（未取到昵称）'}
+                  {c.bili_login.mid ? `（${c.bili_login.mid}）` : ''}
+                  {c.bili_login.vip && <span className="ml-1 rounded bg-amber-100 px-1 py-0.5 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300">大会员</span>}
+                </span>
+              </div>
+            ) : (
+              <div className="mt-1">
+                <span
+                  className="rounded bg-red-100 px-1.5 py-0.5 text-xs font-medium text-red-800 dark:bg-red-900/40 dark:text-red-300"
+                  title="充电视频的 AI 字幕接口未登录时返回空——派给该客户端的批量采集会整批 no_subtitle。在该浏览器登录 B 站后自动恢复。"
+                >
+                  B 站未登录
+                </span>
+              </div>
+            )
+          )}
         </div>
         {c.connected && (
           <div className="flex shrink-0 items-center gap-2">

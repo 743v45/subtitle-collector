@@ -14,11 +14,36 @@ import { registerWsBridge } from '../tasks/wsBridge.js';
 const MAX_TIMED_OUT = 200;
 const timedOutParams = new Map<string, Record<string, unknown>>();
 
+// B 站登录态快照（hello / login-state 上报；扩展从 /x/web-interface/nav 抽取）。
+// 未登录时充电视频的 AI 字幕接口 /x/v2/subtitle/web/view 返回空（2026-08-24 批量 1190 no_subtitle 根因），
+// server 侧可见登录态用于 web 客户端页徽章与 CLI clients list 定位此类失败。
+export interface BiliLogin {
+  is_login: boolean;
+  mid?: string;
+  uname?: string;
+  vip?: boolean;
+}
+
+function parseLogin(raw: string | null | undefined): BiliLogin | null {
+  if (!raw) return null;
+  try {
+    const v = JSON.parse(raw);
+    return v && typeof v === 'object' && typeof v.is_login === 'boolean' ? v as BiliLogin : null;
+  } catch {
+    return null;
+  }
+}
+
+function parseLoginMsg(v: unknown): BiliLogin | null {
+  return v && typeof v === 'object' && typeof (v as BiliLogin).is_login === 'boolean' ? v as BiliLogin : null;
+}
+
 interface ExtConn {
   ws: WebSocket;
   extVersion: string | null;
   clientId: string | null;
   clientName: string | null; // 客户端名字（hello / client-name-state 上报；null=未命名或已清除）
+  biliLogin: BiliLogin | null; // B 站登录态现值（hello / login-state 上报；null=未知或旧扩展）
   connectedAt: number;       // 本次连接建立时刻（hello 握手时；「在线时长」起算点）
   reportingEnabled: boolean;
   taskDispatchEnabled: boolean; // 2026-08-23 仅上报状态：false = 调度器不派任务（hello 上报，popup 本地切发 task-dispatch-state）
@@ -49,12 +74,17 @@ function handleHello(db: Database.Database, ws: WebSocket, conn: ExtConn, msg: a
   conn.taskDispatchEnabled = msg.task_dispatch_enabled !== false; // 缺省 true（旧扩展 fail-open）
   const reportedName = typeof msg.client_name === 'string' ? msg.client_name.trim() : null;
   conn.clientName = reportedName || null; // 空串视同 null（显式清除）
+  conn.biliLogin = parseLoginMsg(msg.bili_login);
   conn.connectedAt = Date.now();
   if (conn.clientId) {
     const prev = connections.get(conn.clientId);
     if (prev && prev.ws !== ws && prev.ws.readyState === WebSocket.OPEN) prev.ws.close(4000, 'replaced');
     connections.set(conn.clientId, conn);
-    upsertClient(db, conn.clientId, msg.client_name === undefined ? undefined : conn.clientName);
+    // 登录态/版本只在有效上报时落库（undefined=旧扩展未上报，DB 旧值保留不抹）
+    upsertClient(db, conn.clientId, msg.client_name === undefined ? undefined : conn.clientName, {
+      biliLogin: conn.biliLogin != null ? JSON.stringify(conn.biliLogin) : undefined,
+      extVersion: conn.extVersion ?? undefined,
+    });
     notifyClientOnline(); // 扩展上线：kick 采集任务调度器（pending 任务可派发了）
   }
 }
@@ -72,7 +102,7 @@ export function attachWsServer(httpServer: Server, db: Database.Database, expect
   });
 
   wss.on('connection', (ws: WebSocket) => {
-    const conn: ExtConn = { ws, extVersion: null, clientId: null, clientName: null, connectedAt: 0, reportingEnabled: true, taskDispatchEnabled: true };
+    const conn: ExtConn = { ws, extVersion: null, clientId: null, clientName: null, biliLogin: null, connectedAt: 0, reportingEnabled: true, taskDispatchEnabled: true };
     // 心跳：连接建立 isAlive=true，收到 pong 翻回 true；sweep 周期内无 pong → terminate（清理半开连接）
     const live = ws as WebSocket & { isAlive: boolean };
     live.isAlive = true;
@@ -113,6 +143,18 @@ export function attachWsServer(httpServer: Server, db: Database.Database, expect
         const name = typeof msg.name === 'string' && msg.name.trim() ? msg.name.trim() : null;
         conn.clientName = name;
         if (conn.clientId) upsertClient(db, conn.clientId, name);
+        return;
+      }
+
+      if (msg.type === 'login-state') {
+        // 扩展登录态变化推送（对齐 client-name-state）：更新连接表 + 落库。
+        // 畸形/缺 login 不清除 DB 旧值（保守：探测失败 ≠ 未登录）。
+        const login = parseLoginMsg(msg.login);
+        conn.biliLogin = login;
+        if (conn.clientId && login) {
+          upsertClient(db, conn.clientId, undefined, { biliLogin: JSON.stringify(login) });
+          console.log(`[ws] client_id=${conn.clientId} B 站登录态更新：${login.is_login ? `已登录 ${login.uname ?? ''}(${login.mid ?? '?'})` : '未登录'}`);
+        }
         return;
       }
 
@@ -230,6 +272,7 @@ export interface ClientRow {
   client_id: string;
   client_name: string | null;
   ext_version: string | null;
+  bili_login: BiliLogin | null; // 在线取连接表现值，离线回落 DB 快照（NULL=旧版扩展从未上报）
   reporting_enabled: boolean | null;
   task_dispatch_enabled: boolean | null;
   connected: boolean;
@@ -249,7 +292,8 @@ export function listClients(db: Database.Database): ClientRow[] {
     return {
       client_id: k.client_id,
       client_name: c?.clientName ?? k.name,
-      ext_version: c?.extVersion ?? null,
+      ext_version: c?.extVersion ?? k.ext_version,
+      bili_login: c?.biliLogin ?? parseLogin(k.bili_login),
       reporting_enabled: c ? c.reportingEnabled : null,
       task_dispatch_enabled: c ? c.taskDispatchEnabled : null,
       connected: !!c,
@@ -265,6 +309,7 @@ export function listClients(db: Database.Database): ClientRow[] {
         client_id: id,
         client_name: c.clientName,
         ext_version: c.extVersion,
+        bili_login: c.biliLogin,
         reporting_enabled: c.reportingEnabled,
         task_dispatch_enabled: c.taskDispatchEnabled,
         connected: true,

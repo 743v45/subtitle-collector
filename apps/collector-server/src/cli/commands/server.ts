@@ -234,7 +234,7 @@ export interface ServerStartResult {
 
 // 优先用 apps/collector-server/node_modules/.bin/tsx（pnpm 未必把 .bin 放 PATH），
 // 找不到则退回 PATH 上的 'tsx'。
-function resolveTsx(cwd: string): string {
+export function resolveTsx(cwd: string): string {
   const local = join(cwd, 'node_modules', '.bin', 'tsx');
   return existsSync(local) ? local : 'tsx';
 }

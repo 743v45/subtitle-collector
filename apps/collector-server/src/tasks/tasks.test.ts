@@ -53,6 +53,15 @@ test('expandShortLink：b23.tv 重定向到视频页（取 Response.url）', asy
   assert.equal(out, 'https://www.bilibili.com/video/BV1xx411c7mD?spm_id_from=333.999');
 });
 
+test('expandShortLink：短链 fetch 抛错（网络失败）→ 原样返回（后续解析 400 错误可见）；res.url 空 → 兜底原 URL', async () => {
+  const boom: FetchLike = async () => { throw new Error('network down'); };
+  assert.equal(await expandShortLink('https://b23.tv/AbCdEfG', boom), 'https://b23.tv/AbCdEfG');
+  // URL 本身非法（new URL 抛错）→ 同样原样返回
+  assert.equal(await expandShortLink('不是URL', boom), '不是URL');
+  const emptyUrl: FetchLike = async () => ({ url: '' } as unknown as Response);
+  assert.equal(await expandShortLink('https://youtu.be/dQw4w9WgXcQ', emptyUrl), 'https://youtu.be/dQw4w9WgXcQ');
+});
+
 test('expandShortLink：非短链域名原样返回（不发请求）', async () => {
   let called = false;
   const fetcher: FetchLike = async () => { called = true; return new Response(''); };

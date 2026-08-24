@@ -187,6 +187,14 @@ export const MIGRATIONS: readonly MigrationStep[] = [
        )`,
     ],
   },
+  {
+    version: 14,
+    note: 'clients 补 bili_login（B 站登录态 JSON 快照 {is_login,mid,uname,vip}：未登录时充电视频 AI 字幕接口返回空，2026-08-24 批量 1190 个 no_subtitle 根因，server 侧可见登录态/账号）+ ext_version（离线客户端可见版本）。ADD COLUMN 撞 duplicate column name 容忍（双写 schema.sql）',
+    statements: [
+      'ALTER TABLE clients ADD COLUMN bili_login TEXT',
+      'ALTER TABLE clients ADD COLUMN ext_version TEXT',
+    ],
+  },
 ];
 
 export function runMigrations(db: Database.Database): void {

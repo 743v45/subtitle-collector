@@ -15,22 +15,32 @@ function setup() {
   const db = openDb(join(dir, 'test.db'));
   migrate(db);
   const httpServer = createServer((req, res) => handleClientsHttp(req, res, db));
-  return new Promise<{ port: number; cleanup: () => void }>((resolve) => {
+  return new Promise<{ port: number; cleanup: () => void; injectBadLogin: (clientId: string, raw?: string) => void; deleteClientRow: (clientId: string) => void }>((resolve) => {
     httpServer.listen(0, '127.0.0.1', () => {
       const port = (httpServer.address() as AddressInfo).port;
       attachWsServer(httpServer, db, 'test-token');
-      resolve({ port, cleanup: () => { httpServer.close(); rmSync(dir, { recursive: true, force: true }); } });
+      resolve({
+        port,
+        cleanup: () => { httpServer.close(); rmSync(dir, { recursive: true, force: true }); },
+        // 直写坏 bili_login（手工库/旧版本脏数据形态），测 listClients 解析容错
+        injectBadLogin: (clientId: string, raw?: string) =>
+          db.prepare('UPDATE clients SET bili_login = ? WHERE client_id = ?').run(raw ?? '{bad json', clientId),
+        // 直删注册表行（模拟异常库：在线但不在 DB），测 listClients 防御分支不漏显示
+        deleteClientRow: (clientId: string) =>
+          db.prepare('DELETE FROM clients WHERE client_id = ?').run(clientId),
+      });
     });
   });
 }
 // clientName 三态（2026-08-24 客户端命名）：string=hello 带名 / null=hello 带 client_name:null（显式清除）/
 // undefined=hello 不带该字段（旧扩展形态，DB 旧名不动）
-function wsConnect(port: number, clientId: string, enabled: boolean, acceptsTasks: boolean = true, clientName?: string | null): Promise<WebSocket> {
+function wsConnect(port: number, clientId: string, enabled: boolean, acceptsTasks: boolean = true, clientName?: string | null, biliLogin?: Record<string, unknown>): Promise<WebSocket> {
   return new Promise((resolve) => {
     const ws = new WebSocket(`ws://127.0.0.1:${port}/ext`);
     ws.once('open', () => {
       const hello: Record<string, unknown> = { type: 'hello', ext_version: '0.1.0', token: 'test-token', client_id: clientId, reporting_enabled: enabled, task_dispatch_enabled: acceptsTasks };
       if (clientName !== undefined) hello.client_name = clientName;
+      if (biliLogin !== undefined) hello.bili_login = biliLogin;
       ws.send(JSON.stringify(hello));
       resolve(ws);
     });
@@ -162,6 +172,28 @@ test('task-dispatch-state 消息：popup 本地切换 → server 连接表即时
   } finally { ctx.cleanup(); }
 });
 
+test('reporting-state 消息：popup 本地切换上报 → server 连接表即时更新（畸形值严格按 false）', async () => {
+  const ctx = await setup();
+  try {
+    const ws = await wsConnect(ctx.port, 'ext-A', true);
+    await new Promise(r => setTimeout(r, 50));
+    ws.send(JSON.stringify({ type: 'reporting-state', enabled: false }));
+    await new Promise(r => setTimeout(r, 50));
+    const r = await httpReq(ctx.port, 'GET', '/api/clients');
+    assert.equal(r.json.clients[0].reporting_enabled, false);
+    // 畸形 enabled（非 true 严格解析 → false）：对齐 task-dispatch-state 语义
+    ws.send(JSON.stringify({ type: 'reporting-state', enabled: 'on' }));
+    await new Promise(r => setTimeout(r, 50));
+    const r2 = await httpReq(ctx.port, 'GET', '/api/clients');
+    assert.equal(r2.json.clients[0].reporting_enabled, false);
+    ws.send(JSON.stringify({ type: 'reporting-state', enabled: true }));
+    await new Promise(r => setTimeout(r, 50));
+    const r3 = await httpReq(ctx.port, 'GET', '/api/clients');
+    assert.equal(r3.json.clients[0].reporting_enabled, true);
+    ws.close();
+  } finally { ctx.cleanup(); }
+});
+
 // ── 客户端命名（2026-08-24 popup 改名，id 不变）：hello 上报名 + client-name-state 推送改名 + 离线留存 ──
 
 test('GET /api/clients：hello 带 client_name → 列表带名字与在线时间戳', async () => {
@@ -235,6 +267,190 @@ test('旧扩展 hello 不带 client_name：重连不抹 DB 旧名（列表回落
     assert.equal(c.connected, true);
     assert.equal(c.client_name, '历史名', '连接表未带名 → 回落 DB 历史名');
     ws2.close();
+  } finally { ctx.cleanup(); }
+});
+
+// ── B 站登录态（2026-08-24 充电视频 1190 no_subtitle 根因可观察化）：hello 上报 + login-state 推送 + 离线留存 ──
+
+test('GET /api/clients：hello 带 bili_login → listClients 透传登录态与账号', async () => {
+  const ctx = await setup();
+  try {
+    const login = { is_login: true, mid: '3546645614562148', uname: '测试用户', vip: true };
+    const ws = await wsConnect(ctx.port, 'ext-A', true, true, undefined, login);
+    await new Promise(r => setTimeout(r, 50));
+    const r = await httpReq(ctx.port, 'GET', '/api/clients');
+    assert.equal(r.status, 200);
+    const c = r.json.clients[0];
+    assert.deepEqual(c.bili_login, login);
+    assert.equal(c.ext_version, '0.1.0', 'hello 的 ext_version 透传');
+    ws.close();
+  } finally { ctx.cleanup(); }
+});
+
+test('login-state：登录态变化推送 → 连接表 + DB 即时可见（未登录也能上报）', async () => {
+  const ctx = await setup();
+  try {
+    const ws = await wsConnect(ctx.port, 'ext-A', true, true, undefined, { is_login: true, mid: '1', uname: '旧账号' });
+    await new Promise(r => setTimeout(r, 50));
+    // 用户在浏览器退出登录 → 扩展推送未登录态
+    ws.send(JSON.stringify({ type: 'login-state', login: { is_login: false } }));
+    await new Promise(r => setTimeout(r, 50));
+    let r = await httpReq(ctx.port, 'GET', '/api/clients');
+    assert.deepEqual(r.json.clients[0].bili_login, { is_login: false });
+    // 畸形 login（探测失败）：不清除 DB 旧值（保守：探测失败 ≠ 未登录）
+    ws.send(JSON.stringify({ type: 'login-state', login: null }));
+    await new Promise(r => setTimeout(r, 50));
+    r = await httpReq(ctx.port, 'GET', '/api/clients');
+    assert.deepEqual(r.json.clients[0].bili_login, { is_login: false }, '畸形推送不动现值');
+    ws.close();
+  } finally { ctx.cleanup(); }
+});
+
+test('断开后登录态离线留存：DB 快照带出（在线时上报过的最后状态）', async () => {
+  const ctx = await setup();
+  try {
+    const login = { is_login: false };
+    const ws = await wsConnect(ctx.port, 'ext-A', true, true, undefined, login);
+    await new Promise(r => setTimeout(r, 50));
+    ws.close();
+    await new Promise(r => setTimeout(r, 80));
+    const r = await httpReq(ctx.port, 'GET', '/api/clients');
+    const c = r.json.clients[0];
+    assert.equal(c.connected, false);
+    assert.deepEqual(c.bili_login, { is_login: false }, '离线回落 DB 快照');
+    assert.equal(c.ext_version, '0.1.0', '离线版本来自 DB 列');
+  } finally { ctx.cleanup(); }
+});
+
+test('旧扩展 hello 不带 bili_login：重连不抹 DB 登录态快照', async () => {
+  const ctx = await setup();
+  try {
+    const ws1 = await wsConnect(ctx.port, 'ext-A', true, true, undefined, { is_login: true, mid: '7', uname: '账号' });
+    await new Promise(r => setTimeout(r, 50));
+    ws1.close();
+    await new Promise(r => setTimeout(r, 80));
+    // 旧扩展形态重连：hello 不带 bili_login 字段（wsConnect 第 6 参缺省）
+    const ws2 = await wsConnect(ctx.port, 'ext-A', true);
+    await new Promise(r => setTimeout(r, 50));
+    const r = await httpReq(ctx.port, 'GET', '/api/clients');
+    assert.deepEqual(r.json.clients[0].bili_login, { is_login: true, mid: '7', uname: '账号' }, '旧式 hello 不抹 DB 快照');
+    ws2.close();
+  } finally { ctx.cleanup(); }
+});
+
+test('分支洼地：DB 坏 JSON 快照解析容错 → bili_login null 不炸', async () => {
+  const ctx = await setup();
+  try {
+    const ws = await wsConnect(ctx.port, 'ext-A', true); // 先 hello 建行
+    await new Promise(r => setTimeout(r, 50));
+    ws.close();
+    await new Promise(r => setTimeout(r, 80));
+    // 直写坏 JSON（手工库/旧版本脏数据）：parseLogin catch → null
+    ctx.injectBadLogin('ext-A');
+    const r = await httpReq(ctx.port, 'GET', '/api/clients');
+    assert.equal(r.json.clients[0].bili_login, null, '坏 JSON 容错为 null');
+    // 非 boolean is_login 的 JSON 同样容错
+    ctx.injectBadLogin('ext-A', '{"is_login":"yes"}');
+    const r2 = await httpReq(ctx.port, 'GET', '/api/clients');
+    assert.equal(r2.json.clients[0].bili_login, null);
+  } finally { ctx.cleanup(); }
+});
+
+test('分支洼地：在线但不在 DB（异常库直删行）→ listClients 防御分支不漏显示', async () => {
+  const ctx = await setup();
+  try {
+    const ws = await wsConnect(ctx.port, 'ext-A', true, true, undefined, { is_login: false });
+    await new Promise(r => setTimeout(r, 50));
+    ctx.deleteClientRow('ext-A'); // 模拟异常库：hello 已 upsert 但行被外部删掉
+    const r = await httpReq(ctx.port, 'GET', '/api/clients');
+    assert.equal(r.json.clients.length, 1, '在线客户端不因 DB 缺行而漏显示');
+    const c = r.json.clients[0];
+    assert.equal(c.client_id, 'ext-A');
+    assert.equal(c.connected, true);
+    assert.deepEqual(c.bili_login, { is_login: false }, '防御行走连接表现值');
+    ws.close();
+  } finally { ctx.cleanup(); }
+});
+
+test('分支洼地：hello 带畸形 bili_login（非对象）→ 连接表 null，列表回落 DB 快照', async () => {
+  const ctx = await setup();
+  try {
+    // 先用正常 hello 留下 DB 快照
+    const ws1 = await wsConnect(ctx.port, 'ext-A', true, true, undefined, { is_login: true, mid: '9' });
+    await new Promise(r => setTimeout(r, 50));
+    ws1.close();
+    await new Promise(r => setTimeout(r, 80));
+    // 重连但 bili_login 是畸形字符串（parseLoginMsg false → 连接表 null → 回落 DB）
+    const ws2 = await wsConnect(ctx.port, 'ext-A', true, true, undefined, 'not-an-object' as any);
+    await new Promise(r => setTimeout(r, 50));
+    const r = await httpReq(ctx.port, 'GET', '/api/clients');
+    assert.deepEqual(r.json.clients[0].bili_login, { is_login: true, mid: '9' }, '在线现值 null 回落 DB 快照');
+    ws2.close();
+  } finally { ctx.cleanup(); }
+});
+
+test('分支洼地：hello bili_login 是对象但 is_login 非布尔 / client_id 空串 → 均按未上报处理', async () => {
+  const ctx = await setup();
+  try {
+    // is_login 非布尔（parseLoginMsg 严格解析 false）→ 连接表 null
+    const ws1 = await wsConnect(ctx.port, 'ext-A', true, true, undefined, { is_login: 'yes' } as any);
+    await new Promise(r => setTimeout(r, 50));
+    const r = await httpReq(ctx.port, 'GET', '/api/clients');
+    assert.equal(r.json.clients.length, 1);
+    assert.equal(r.json.clients[0].bili_login, null, '非布尔 is_login 按未上报');
+    ws1.close();
+    await new Promise(r => setTimeout(r, 80));
+    // client_id 空串 → 视同未握手身份（不入连接表不落库），server 不产生新行
+    const ws2 = await new Promise<WebSocket>((resolve) => {
+      const ws = new WebSocket(`ws://127.0.0.1:${ctx.port}/ext`);
+      ws.once('open', () => {
+        ws.send(JSON.stringify({ type: 'hello', ext_version: '0.1.21', token: 'test-token', client_id: '', reporting_enabled: true }));
+        resolve(ws);
+      });
+    });
+    await new Promise(r => setTimeout(r, 50));
+    const r2 = await httpReq(ctx.port, 'GET', '/api/clients');
+    assert.equal(r2.json.clients.length, 1, '空串 client_id 不产生新行（原 ext-A 留存）');
+    ws2.close();
+  } finally { ctx.cleanup(); }
+});
+
+test('分支洼地：hello 无 ext_version 重连不抹 DB 旧版本；无 client_id 的 login-state 不落库不炸', async () => {
+  const ctx = await setup();
+  try {
+    const ws1 = await wsConnect(ctx.port, 'ext-A', true);
+    await new Promise(r => setTimeout(r, 50));
+    ws1.close();
+    await new Promise(r => setTimeout(r, 80));
+    // hello 不带 ext_version（更旧扩展形态）：conn.extVersion null → meta.extVersion undefined → DB 旧版本保留
+    const ws2 = await new Promise<WebSocket>((resolve) => {
+      const ws = new WebSocket(`ws://127.0.0.1:${ctx.port}/ext`);
+      ws.once('open', () => {
+        ws.send(JSON.stringify({ type: 'hello', token: 'test-token', client_id: 'ext-A', reporting_enabled: true, bili_login: { is_login: false } }));
+        resolve(ws);
+      });
+    });
+    await new Promise(r => setTimeout(r, 50));
+    let r = await httpReq(ctx.port, 'GET', '/api/clients');
+    const c = r.json.clients[0];
+    assert.equal(c.ext_version, '0.1.0', '无 ext_version 重连不抹 DB 旧版本');
+    assert.deepEqual(c.bili_login, { is_login: false }, 'bili_login 正常上报');
+
+    // hello 无 client_id：连接不入表，login-state 到达时 conn.clientId null → 跳过落库不炸
+    const ws3 = await new Promise<WebSocket>((resolve) => {
+      const ws = new WebSocket(`ws://127.0.0.1:${ctx.port}/ext`);
+      ws.once('open', () => {
+        ws.send(JSON.stringify({ type: 'hello', ext_version: '0.1.0', token: 'test-token', reporting_enabled: true, bili_login: { is_login: true } }));
+        resolve(ws);
+      });
+    });
+    await new Promise(r => setTimeout(r, 50));
+    ws3.send(JSON.stringify({ type: 'login-state', login: { is_login: false } }));
+    await new Promise(r => setTimeout(r, 50));
+    r = await httpReq(ctx.port, 'GET', '/api/clients');
+    assert.equal(r.json.clients.length, 1, '无 client_id 连接不产生新行');
+    assert.deepEqual(r.json.clients[0].bili_login, { is_login: false }, 'login-state 未被无 id 连接污染');
+    ws2.close(); ws3.close();
   } finally { ctx.cleanup(); }
 });
 
@@ -345,6 +561,20 @@ test('POST /api/clients/:id/reporting：扩展不回 result → 504（默认 5s 
     // 不注册 message 处理器：收到 set-reporting 不回 result → 默认 5000ms 超时后 504
     await new Promise(r => setTimeout(r, 50));
     const r = await httpReq(ctx.port, 'POST', '/api/clients/ext-A/reporting', { enabled: false });
+    assert.equal(r.status, 504);
+    assert.equal(r.json.ok, false);
+    assert.equal(r.json.error, 'extension result timeout');
+    ws.close();
+  } finally { ctx.cleanup(); }
+});
+
+test('POST /api/clients/:id/task-dispatch：扩展不回 result → 504（默认 5s 超时）', { timeout: 10_000 }, async () => {
+  const ctx = await setup();
+  try {
+    const ws = await wsConnect(ctx.port, 'ext-A', true);
+    // 不注册 message 处理器：收到 set-task-dispatch 不回 result → 超时 504
+    await new Promise(r => setTimeout(r, 50));
+    const r = await httpReq(ctx.port, 'POST', '/api/clients/ext-A/task-dispatch', { enabled: false });
     assert.equal(r.status, 504);
     assert.equal(r.json.ok, false);
     assert.equal(r.json.error, 'extension result timeout');

@@ -154,6 +154,53 @@ test('server start --port abc：NaN → CliError RUNTIME 退 1', async () => {
 
 // ── server stop（真实 pid 文件三态）──
 
+test('server start：pid 文件存活（本进程 pid）→ CliError already running 退 1，不 spawn', async (t) => {
+  if (existsSync(REAL_PID_PATH)) return t.skip('真实 pid 文件存在（本机 server 在跑），跳过避免误伤');
+  writeFileSync(REAL_PID_PATH, String(process.pid), 'utf-8'); // 本测试进程必然存活
+  try {
+    const r = await cli(args(DEAD, '/tmp/none.db', ['server', 'start']));
+    assert.equal(r.code, 1);
+    assert.match(r.err, new RegExp(`server already running, pid=${process.pid}`));
+    assert.equal(existsSync(REAL_PID_PATH), true, '存活 pid 不被清理');
+  } finally {
+    rmSync(REAL_PID_PATH);
+  }
+});
+
+test('server start 成功路径：随机端口起真 server（--db 临时库）→ {ok,pid} + pid 文件 → stop SIGTERM 回收', { timeout: 30_000 }, async (t) => {
+  if (existsSync(REAL_PID_PATH)) return t.skip('真实 pid 文件存在（本机 server 在跑），跳过避免误伤');
+  // 找一个空闲端口（listen 0 后释放再复用；测试窗口内冲突概率极低）
+  const port = await new Promise<number>((resolvePort) => {
+    const probe = createServer();
+    probe.listen(0, '127.0.0.1', () => {
+      const p = (probe.address() as AddressInfo).port;
+      probe.close(() => resolvePort(p));
+    });
+  });
+  const tmpDb = join(mkdtempSync(join(tmpdir(), 'collector-start-')), 't.db');
+  try {
+    const r = await cli(args(DEAD, tmpDb, ['server', 'start', '--port', String(port)]));
+    assert.equal(r.code, 0, `start 应成功：${r.err}`);
+    const data = JSON.parse(r.out);
+    assert.equal(data.ok, true);
+    assert.equal(typeof data.pid, 'number');
+    assert.equal(existsSync(REAL_PID_PATH), true, 'pid 文件落盘');
+    // stop：SIGTERM 回收 + pid 文件删除（detached tsx 进程组）
+    const stop = await cli(args(DEAD, tmpDb, ['server', 'stop']));
+    assert.equal(stop.code, 0, `stop 应成功：${stop.err}`);
+    assert.equal(JSON.parse(stop.out).pid, data.pid);
+    assert.equal(existsSync(REAL_PID_PATH), false, 'stop 后 pid 文件删除');
+  } finally {
+    if (existsSync(REAL_PID_PATH)) {
+      // 兜底清理：stop 失败时杀掉测试起的进程，不污染本机
+      const pid = Number(readFileSync(REAL_PID_PATH, 'utf-8'));
+      if (Number.isInteger(pid) && pid !== process.pid) { try { process.kill(pid, 'SIGKILL'); } catch { /* 已退 */ } }
+      rmSync(REAL_PID_PATH);
+    }
+    rmSync(dirname(tmpDb), { recursive: true, force: true });
+  }
+});
+
 test('server stop：pid 文件不存在 → NOT_FOUND 退 5', async (t) => {
   if (existsSync(REAL_PID_PATH)) return t.skip('真实 pid 文件存在（本机 server 在跑），跳过避免误伤');
   const r = await cli(args(DEAD, '/tmp/none.db', ['server', 'stop']));

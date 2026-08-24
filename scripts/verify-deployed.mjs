@@ -31,7 +31,7 @@ const HTTP_CHECKS = [
   { path: '/api/collect-tasks?limit=1', assert: (d) => d?.ok === true && Array.isArray(d.items), desc: '任务列表(原 500 事故接口,JOIN videos 路径)' },
   { path: '/api/videos?page=1&size=1', assert: (d) => d?.ok === true && typeof d.total === 'number', desc: '视频列表' },
   { path: '/api/changes?page=1&size=1', assert: (d) => d?.ok === true && typeof d.total === 'number', desc: '变更历史' },
-  { path: '/api/stats/overview', assert: (d) => d?.ok === true && typeof d.overview?.videos === 'number', desc: '统计总览(全表聚合)' },
+  { path: '/api/stats/overview', assert: (d) => d?.ok === true && typeof d.total?.videos === 'number' && d.by_source?.bilibili != null, desc: '统计总览(全表聚合 + 分平台 by_source)' },
   { path: '/api/creators?page=1&size=1', assert: (d) => d?.ok === true && typeof d.total === 'number', desc: 'UP 列表' },
   { path: '/api/tags', assert: (d) => d?.ok === true && Array.isArray(d.items), desc: '标签列表' },
 ];

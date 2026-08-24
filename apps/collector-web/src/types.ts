@@ -63,10 +63,20 @@ export interface ChangeRow {
   source?: string | null; // 派生列：实体行所属平台（bilibili|youtube；不可判 null）
 }
 
+// B 站登录态快照（扩展从 /x/web-interface/nav 抽取；hello / login-state 上报）。
+// 背景：未登录时充电视频 AI 字幕接口返回空，批量采集整批 no_subtitle（2026-08-24）。
+export interface BiliLoginInfo {
+  is_login: boolean;
+  mid?: string;
+  uname?: string;
+  vip?: boolean;
+}
+
 export interface ClientInfo {
   client_id: string;
   client_name: string | null; // popup 改名（id 不变；null=未命名或已清除）
   ext_version: string | null;
+  bili_login: BiliLoginInfo | null; // 在线=现值；离线=DB 快照；null=旧版扩展未上报过
   reporting_enabled: boolean | null; // 在线=实际开关；离线 null（远端切换须在线）
   task_dispatch_enabled: boolean | null;
   connected: boolean;              // false = 离线（DB 注册表留存，含历史客户端）

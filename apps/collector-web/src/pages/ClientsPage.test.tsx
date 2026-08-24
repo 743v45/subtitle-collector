@@ -7,6 +7,7 @@
 // | R1 | 渲染 + toggle 成败 + 空态 + 3s 轮询 | 通过 | 轮询用 fake timers（shouldAdvanceTime 保 findBy 可用） |
 // | R2 | 任务派发开关（2026-08-23 仅上报状态）：badge 展示 + 切换 POST /api/clients/:id/task-dispatch | 通过 | |
 // | R3 | 客户端命名（2026-08-24）：client() helper 扩全量字段；新增名字/离线时长/离线无按钮断言；计数文案改「客户端 N · 在线 M」 | 通过 | |
+// | R4 | B 站登录态（2026-08-24 充电视频 no_subtitle 根因可观察化）：已登录徽章+账号+大会员 / 未登录红徽章 / null（旧扩展）不渲染 | 通过 | |
 import { test, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, cleanup, act, waitFor } from '@testing-library/react';
 import { ClientsPage } from './ClientsPage';
@@ -25,6 +26,7 @@ function client(id: string, reporting: boolean, ver: string | null = '0.1.12', a
     client_id: id,
     client_name: null,
     ext_version: ver,
+    bili_login: null,
     reporting_enabled: reporting,
     task_dispatch_enabled: acceptsTasks,
     connected,
@@ -190,6 +192,45 @@ test('离线客户端：显示离线时长与最后在线；不渲染远程操�
   expect(screen.getByText('客户端 5 个 · 在线 1 · 每 3s 刷新')).toBeInTheDocument();
   // 离线不显示「仅上报状态」badge（开关未知 null）
   expect(screen.queryByText('仅上报状态')).not.toBeInTheDocument();
+});
+
+// ── B 站登录态（2026-08-24 充电视频 1190 no_subtitle 根因可观察化）──
+
+test('登录态：已登录 → 徽章 + 昵称（mid）+ 大会员标识；未登录 → 红徽章；null → 不渲染', async () => {
+  fetchMock.mockImplementation(() => Promise.resolve(ok({
+    clients: [
+      client('c-login', true, '0.1.21', true, {
+        bili_login: { is_login: true, mid: '3546645614562148', uname: '测试用户', vip: true },
+      }),
+      client('c-nologin', true, '0.1.21', true, {
+        bili_login: { is_login: false },
+      }),
+      client('c-old', true, '0.1.20'), // bili_login null（旧版扩展未上报）
+    ],
+  })));
+  render(<ClientsPage />);
+  expect(await screen.findByText('B 站已登录')).toBeInTheDocument();
+  expect(screen.getByText(/测试用户/)).toBeInTheDocument();
+  expect(screen.getByText(/3546645614562148/)).toBeInTheDocument();
+  expect(screen.getByText('大会员')).toBeInTheDocument();
+  expect(screen.getByText('B 站未登录')).toBeInTheDocument();
+  // 旧扩展（null）不渲染任何登录态元素
+  expect(screen.queryByText(/（未取到昵称）/)).not.toBeInTheDocument();
+  // 旧扩展（null）不渲染任何登录态元素：只有上报过登录态的两个客户端渲染徽章
+  expect(screen.getAllByText(/B 站(已登录|未登录)/).length).toBe(2);
+});
+
+test('登录态：已登录无昵称/无 mid/非大会员 → 兜底文案，无 mid 括号无大会员标识', async () => {
+  fetchMock.mockImplementation(() => Promise.resolve(ok({
+    clients: [client('c-bare', true, '0.1.21', true, {
+      bili_login: { is_login: true, vip: false },
+    })],
+  })));
+  render(<ClientsPage />);
+  expect(await screen.findByText('B 站已登录')).toBeInTheDocument();
+  expect(screen.getByText(/（未取到昵称）/)).toBeInTheDocument();
+  expect(screen.queryByText(/（\d+）/, { selector: 'span.text-muted-foreground' })).not.toBeInTheDocument();
+  expect(screen.queryByText('大会员')).not.toBeInTheDocument();
 });
 
 test('空态：暂无已知客户端提示', async () => {

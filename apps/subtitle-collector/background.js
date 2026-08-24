@@ -3,6 +3,7 @@ import { shouldReport, genClientId, normalizeClientName, CLIENT_ID_KEY, CLIENT_N
 import { shouldAcceptTasks, TASK_DISPATCH_KEY, TASK_DISPATCH_DISABLED_ERROR } from "./task-dispatch.mjs";
 import { resolveConnectionMode, isStandalone, CONNECTION_MODE_KEY, MODE_SERVER, MODE_STANDALONE } from "./connection-mode.mjs";
 import { extractKeysFromNav } from "./wbi.js";
+import { extractLoginFromNav } from "./bili-login.mjs";
 import { biliFetch, formatSearchResult, fetchSubtitleView } from "./bili-fetch.js";
 import { buildIngestPayload, normalizeUrl, normalizeTags } from "./ingest-payload.js";
 import {
@@ -47,6 +48,31 @@ async function refreshWbiKeys() {
 }
 async function ensureWbiKeys() {
   if (!wbiKeys || Date.now() - wbiKeysAt > WBI_KEYS_TTL_MS) await refreshWbiKeys();
+}
+
+// B 站登录态缓存（与 wbi keys 共享 nav 接口、独立缓存/TTL）。上报通道：hello / login-state 推送 /
+// fetch-subtitle 回执 login 字段。背景（2026-08-24）：充电视频 AI 字幕接口未登录返回空，
+// 采集派到未登录浏览器时整批 no_subtitle——登录态必须 server 侧可观察。
+let biliLogin = null;
+let biliLoginAt = 0;
+const BILI_LOGIN_TTL_MS = 10 * 60 * 1000; // 10min：登录/退出变化在下一个触发点（连接/采集）内可见
+async function maybeRefreshBiliLogin(force = false) {
+  if (!force && biliLogin && Date.now() - biliLoginAt <= BILI_LOGIN_TTL_MS) return biliLogin;
+  try {
+    const parsed = await biliFetch('/x/web-interface/nav');
+    if (!parsed.ok) return biliLogin; // 探测失败保留旧值（≠ 未登录）
+    const next = extractLoginFromNav(parsed);
+    const changed = JSON.stringify(biliLogin) !== JSON.stringify(next);
+    biliLogin = next; biliLoginAt = Date.now();
+    if (changed) sendLoginState();
+    return biliLogin;
+  } catch { return biliLogin; } // nav 异常静默：探测失败 ≠ 未登录
+}
+// 登录态推送（对齐 reporting-state/client-name-state：变化即上报，server 落 clients 表）
+function sendLoginState() {
+  if (!biliLogin || !authenticated || ws?.readyState !== WebSocket.OPEN) return;
+  ws.send(JSON.stringify({ type: "login-state", login: biliLogin }));
+  extLog(`[login] 登录态上报：${biliLogin.is_login ? `已登录 ${biliLogin.uname ?? ''}(${biliLogin.mid ?? '?'})${biliLogin.vip ? ' 大会员' : ''}` : '未登录'}`);
 }
 
 // P4：被动采 UP 资料（7 天 TTL）。TTL 用 chrome.storage 持久（SW 重启不丢）。失败抛错由调用方 catch。
@@ -476,11 +502,14 @@ async function connect() {
   try {
     ws = new WebSocket(activeServer.wsUrl);
   } catch { scheduleReconnect(); return; }
-  ws.onopen = () => {
+  ws.onopen = async () => {
     reconnectAttempts = 0;
+    // hello 前刷登录态（TTL 命中时零开销）：连接即上报最新登录态，server 客户端页立即可见。
+    // 未握手期间 nav 已可并行发（fetch 不依赖 ws）。
+    await maybeRefreshBiliLogin();
     // token 可选（server 端可不要 token）：有则放 hello（兼容 server 从 hello body 取 token）；
     // wsUrl 原样含 ?token= query，兼容 server 从握手 URL 取 token——双兼容。
-    const hello = { type: "hello", ext_version: EXT_VERSION, client_id: clientId, client_name: clientName, reporting_enabled: reportingEnabled, task_dispatch_enabled: taskDispatchEnabled };
+    const hello = { type: "hello", ext_version: EXT_VERSION, client_id: clientId, client_name: clientName, reporting_enabled: reportingEnabled, task_dispatch_enabled: taskDispatchEnabled, ...(biliLogin ? { bili_login: biliLogin } : {}) };
     if (activeServer.token) hello.token = activeServer.token;
     ws.send(JSON.stringify(hello));
     // flushPendingIngests 移到 hello-ack：鉴权通过后才补发（未握手发 ingest 会被 server 丢，server.ts:44 守卫）
@@ -577,6 +606,14 @@ async function connect() {
         inFlightCollects.add(vidKey);
         try {
           const bvid = msg.bvid;
+          // 登录态随回执上报（§9 可观察性）：未登录时充电视频 AI 字幕列表必空——
+          // ai_tracks:0 与 no_subtitle 从此可判根因（2026-08-24 批量 1190 no_subtitle 教训）。
+          // 不拦截：非充电视频的 CC 字幕不需要登录，未登录照采、只标注。
+          await maybeRefreshBiliLogin();
+          const loginInfo = biliLogin ? { login: biliLogin.is_login } : {};
+          if (biliLogin && !biliLogin.is_login) {
+            extLog(`[fetch-subtitle] B 站未登录 bvid=${bvid}：充电视频 AI 字幕列表将拿不到（/x/v2/subtitle/web/view 未登录返回空）`, "warn");
+          }
           // 1. view：完整元信息（标题/UP owner/stat/tags/pages/desc，组装 extra）
           const viewRes = await biliFetch('/x/web-interface/view', { params: { bvid } });
           if (!viewRes.ok) { ws.send(JSON.stringify({ type: "result", id: msg.id, ok: false, error: viewRes.code })); return; }
@@ -640,7 +677,7 @@ async function connect() {
             sendIngest(buildIngestPayload(view, validSubs, bodies, tags, paidInfo));
             ws.send(JSON.stringify({
               type: "result", id: msg.id, ok: true,
-              data: { bvid, tracks: validSubs.length, ai_tracks: aiSubs.length, ingested: true, ...(isPaid ? { paid: true } : {}) },
+              data: { bvid, tracks: validSubs.length, ai_tracks: aiSubs.length, ingested: true, ...loginInfo, ...(isPaid ? { paid: true } : {}) },
             }));
           } else if (isPaid) {
             // 充电视频字幕加密（%00，Chrome 拒 fetch），API 拿不到 → navigate 打开页面，
@@ -649,14 +686,14 @@ async function connect() {
             const ok = await collectViaNavigate(bvid, 20000);
             ws.send(JSON.stringify({
               type: "result", id: msg.id, ok: true,
-              data: { bvid, tracks: ok ? 1 : 0, ai_tracks: aiSubs.length, ingested: true, paid: true, navigated: true, ...(ok ? {} : { reason: 'no_subtitle' }) },
+              data: { bvid, tracks: ok ? 1 : 0, ai_tracks: aiSubs.length, ingested: true, paid: true, navigated: true, ...loginInfo, ...(ok ? {} : { reason: 'no_subtitle' }) },
             }));
           } else {
             // 真无字幕：video 入库（避免重采），无轨
             sendIngest(buildIngestPayload(view, [], {}, tags, paidInfo));
             ws.send(JSON.stringify({
               type: "result", id: msg.id, ok: true,
-              data: { bvid, tracks: 0, ai_tracks: aiSubs.length, ingested: true, reason: 'no_subtitle' },
+              data: { bvid, tracks: 0, ai_tracks: aiSubs.length, ingested: true, reason: 'no_subtitle', ...loginInfo },
             }));
           }
         } catch (err) {
@@ -1100,6 +1137,8 @@ async function collectViaNavigate(bvid, timeoutMs = 20000) {
   while (navCollectBusy) await new Promise((r) => setTimeout(r, 500)); // 等锁（同时只 1 个 navigate）
   navCollectBusy = true;
   let tabId = null;
+  const startedAt = Date.now();
+  extLog(`[bili-navigate] start bvid=${bvid} tab=后台 timeout=${timeoutMs / 1000}s`);
   try {
     // active:false 不抢用户前台焦点（采集是后台任务，不该打断浏览）。取舍：触发链路是 content
     // 对播放器字幕按钮/语言菜单的合成 DOM click——click 不依赖页面可见性（合成事件无手势要求，
@@ -1120,9 +1159,12 @@ async function collectViaNavigate(bvid, timeoutMs = 20000) {
       const t = setTimeout(() => { pendingNavCollect.delete(bvid); resolve(false); }, timeoutMs);
       pendingNavCollect.set(bvid, { resolve: (v) => { clearTimeout(t); resolve(v); } });
     });
+    // §9 可观察性：失败路径必须能定位根因（后台 tab 节流/播放器未起播/按钮未找到，2026-08-24 批次 3/1193 成功率）
+    extLog(`[bili-navigate] done bvid=${bvid} ok=${ok} elapsed=${((Date.now() - startedAt) / 1000).toFixed(1)}s${ok ? '' : '（超时无被动 INGEST：字幕按钮未找到 / 语言菜单未出 / 后台 tab 播放器未起播）'}`, ok ? 'info' : 'warn');
     return ok;
   } catch (e) {
     console.warn(`[background] navigate 采集失败 bvid=${bvid}`, String(e?.message ?? e));
+    extLog(`[bili-navigate] error bvid=${bvid} err=${String(e?.message ?? e)}`, 'warn');
     return false;
   } finally {
     if (tabId != null) { try { await chrome.tabs.remove(tabId); } catch {} }
