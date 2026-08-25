@@ -459,6 +459,44 @@ test('重采 duration/published_at 缺失：保留旧值（COALESCE(new, old)）
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
+// 必要字段缺失留证（2026-08-25：上报不完整必须可观察）：INSERT 落值 / UPDATE COALESCE
+// 合并终值仍 NULL 时，返回值带 missing_required 清单供 ws 层记告警日志；字段齐时不带该键。
+test('missing_required：INSERT 缺→返回清单；重采补齐→清单消失；重采仍缺→清单保留', () => {
+  const { db, dir } = freshDb();
+  try {
+    const rec = (duration?: number, published_at?: number) => ingestVideo(db, {
+      source: 'bilibili',
+      video: { source_vid: 'BVMR', title: 't', creator: { source_uid: '1', name: 'up' }, extra: {}, duration, published_at },
+      tracks: [],
+    });
+    // 首次 INSERT 全缺（player API 无 pubdate/video_info 的被动路径形态）→ 两个字段都进清单
+    const r1 = rec(undefined, undefined);
+    assert.deepEqual(r1.missing_required, ['duration', 'published_at'], 'INSERT 缺失应返回完整清单');
+    // 重采带值补齐（修复后扩展 force 重采）→ 终值非空，清单消失（键不出现）
+    const r2 = rec(269, 1787556638000);
+    assert.equal(r2.missing_required, undefined, '补齐后不应带 missing_required 键');
+    // 补齐后重采再缺（浏览路径 payload 不带）→ COALESCE 保留旧值，终值仍非空 → 不告警
+    const r3 = rec(undefined, undefined);
+    assert.equal(r3.missing_required, undefined, '终值已补齐时 COALESCE 保留,不应再告警');
+    // 真正的终值仍 NULL：INSERT 缺 + 重采仍缺（旧版扩展/videoData 未就绪持续空转）→ 清单恒保留
+    const rec2 = (duration?: number, published_at?: number) => ingestVideo(db, {
+      source: 'bilibili',
+      video: { source_vid: 'BV_MISS', title: 't', creator: { source_uid: '1', name: 'up' }, extra: {}, duration, published_at },
+      tracks: [],
+    });
+    rec2(undefined, undefined);
+    const r5 = rec2(undefined, undefined);
+    assert.deepEqual(r5.missing_required, ['duration', 'published_at'], '终值仍 NULL 时清单应保留');
+    // 半缺形态：只缺 duration
+    const r4 = ingestVideo(db, {
+      source: 'bilibili',
+      video: { source_vid: 'BV_HALF', title: 't', extra: {}, duration: 100 },
+      tracks: [],
+    });
+    assert.deepEqual(r4.missing_required, ['published_at'], '只缺 published_at 时清单应单列');
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
 test('paid 只升不降：旧 1 时新 payload 无 paid 键 / paid=false 均保持 1；旧 0 新 1 正常升级', () => {
   const { db, dir } = freshDb();
   try {

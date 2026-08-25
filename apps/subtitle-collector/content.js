@@ -123,6 +123,14 @@ function buildIngestRecord(cur, tracks) {
 }
 
 function sendIngestRecord(cur, tracks, force) {
+  // 必要字段缺失告警（CLAUDE.md §9：上报不完整必须可观察——此处留痕供事后定位；
+  // 不阻塞上报，字幕资产优先，元数据待重采经 server COALESCE 语义补齐）。
+  const missing = [];
+  if (cur.meta.duration == null) missing.push("duration");
+  if (cur.meta.published_at == null) missing.push("published_at");
+  if (missing.length > 0) {
+    console.warn(`[content] INGEST 必要字段缺失 bvid=${cur.meta.bvid} missing=${missing.join(",")}（PLAYER_META 数据源不完整，视为上报质量问题）`);
+  }
   console.log(`[content] INGEST bvid=${cur.meta.bvid} tracks=${tracks.length}${tracks.length === 0 ? "（无字幕，仅视频信息）" : ""}${force ? " force=true（绕过开关）" : ""}`);
   try {
     chrome.runtime.sendMessage({ type: "INGEST", payload: buildIngestRecord(cur, tracks), ...(force ? { force: true } : {}) });

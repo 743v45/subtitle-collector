@@ -44,6 +44,9 @@ export interface IngestResult {
   source_vid: string;
   inserted_tracks: number;
   skipped_tracks: number;
+  // 必要字段（duration/published_at）按 INSERT 落值 / UPDATE COALESCE 合并终值仍缺失时的清单
+  //（上报不完整的留证，调用方据此告警；不拒收——字幕资产优先，重采可经 COALESCE 语义补齐）
+  missing_required?: string[];
 }
 
 const VIDEO_FIELDS = ['title', 'extra', 'duration', 'published_at', 'paid'] as const;
@@ -185,10 +188,24 @@ export function ingestVideo(db: Database.Database, req: IngestRequest): IngestRe
     // 实际新增字幕轨 → 摘 no-subtitle 系统标（此前确认无字幕的视频重采到了轨，标失效必须摘，
     // 保证 --tag no-subtitle 圈出的恒为真无轨；同事务内，标随轨原子翻转）。
     if (inserted > 0) unmarkNoSubtitle(db, { source: r.source, source_vid: r.video.source_vid });
-    return { inserted, skipped };
+    // 必要字段缺失清单（终值口径）：INSERT 用落值、UPDATE 用 COALESCE 合并终值——
+    // 即「本次 ingest 后库里这两列仍为 NULL」，供调用方记「上报不完整」告警日志。
+    const finalDuration = existingVideo
+      ? (r.video.duration ?? existingVideo.duration ?? null)
+      : (r.video.duration ?? null);
+    const finalPublishedAt = existingVideo
+      ? (r.video.published_at ?? existingVideo.published_at ?? null)
+      : (r.video.published_at ?? null);
+    const missingRequired: string[] = [];
+    if (finalDuration == null) missingRequired.push('duration');
+    if (finalPublishedAt == null) missingRequired.push('published_at');
+    return { inserted, skipped, missingRequired };
   });
-  const { inserted, skipped } = tx(req);
-  return { source: req.source, source_vid: req.video.source_vid, inserted_tracks: inserted, skipped_tracks: skipped };
+  const { inserted, skipped, missingRequired } = tx(req);
+  return {
+    source: req.source, source_vid: req.video.source_vid, inserted_tracks: inserted, skipped_tracks: skipped,
+    ...(missingRequired.length > 0 ? { missing_required: missingRequired } : {}),
+  };
 }
 
 // track+version 写入（ingestVideo 步骤 3/4 抽出，2026-08-23）：translate fill（http/translate.ts）

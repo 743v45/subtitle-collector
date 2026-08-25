@@ -80,14 +80,34 @@
       extra.paid = true;
       extra.paid_detail = { is_upower_exclusive: d.is_upower_exclusive ?? false, is_ugc_pay_preview: d.is_ugc_pay_preview ?? false, elec_privilege_type: elecType };
     }
+    // 必要元数据三级兜底（player 响应 → __INITIAL_STATE__.videoData → 降级值）：
+    // player/wbi/v2 不返回 pubdate，video_info.duration/title 也常缺——只信 player 响应会让
+    // duration/published_at 恒 NULL 落库（2026-08-25 生产 15 条双 NULL 事故根因）；
+    // videoData 由 B 站 SSR 写入（readVideoExtra 同源），顶层 title/duration/pubdate 齐全。
+    const vd = window.__INITIAL_STATE__?.videoData;
+    const titleDegraded = d.title == null && vd?.title == null; // 两源皆缺才降级页面标题（带 _哔哩哔哩_bilibili 后缀）
+    const title = d.title ?? vd?.title ?? document.title;
+    const duration = d.video_info?.duration ?? vd?.duration ?? null;
+    const publishedAt = d.pubdate != null ? d.pubdate * 1000
+      : vd?.pubdate != null ? vd.pubdate * 1000
+      : vd?.ctime != null ? vd.ctime * 1000 // pubdate 缺时用 ctime 兜底（投稿时间≈发布时间；extra 同存 ctime 可追溯）
+      : null;
+    // 必要字段缺失告警（CLAUDE.md §9：上报不完整必须可观察——留日志供事后定位，不阻塞字幕采集）
+    const missing = [];
+    if (duration == null) missing.push("duration");
+    if (publishedAt == null) missing.push("published_at");
+    if (titleDegraded) missing.push("title=页面标题(两源皆缺)");
+    if (missing.length > 0) {
+      console.warn(`[inject] PLAYER_META 必要字段缺失 bvid=${d.bvid ?? currentPageBvid()} missing=${missing.join(",")}（player 响应与 __INITIAL_STATE__ 均未提供，数据源异常需排查）`);
+    }
     return {
       bvid: d.bvid, aid: d.aid, cid: d.cid,
-      title: d.title ?? document.title,
+      title,
       // UP：player/wbi/v2 响应不含 UP（只有登录用户 login_mid/name），从 __INITIAL_STATE__.videoData.owner 拿
-      up_mid: (window.__INITIAL_STATE__?.videoData?.owner)?.mid ?? d.up_info?.mid ?? null,
-      up_name: (window.__INITIAL_STATE__?.videoData?.owner)?.name ?? d.up_info?.name ?? null,
-      pic: d.pic, duration: d.video_info?.duration ?? null,
-      published_at: d.pubdate ? d.pubdate * 1000 : null,
+      up_mid: vd?.owner?.mid ?? d.up_info?.mid ?? null,
+      up_name: vd?.owner?.name ?? d.up_info?.name ?? null,
+      pic: d.pic ?? vd?.pic ?? null, duration,
+      published_at: publishedAt,
       // 用上面已并入 paid/paid_detail 的 extra —— 曾在此重新调 readVideoExtra(d) 返回全新对象，
       // 被动路径的付费标志从未进过库（2026-08-21 修复）
       extra,

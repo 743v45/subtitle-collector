@@ -65,8 +65,35 @@ test('ingest 消息：服务端写入 SQLite 并回 ingest-ack', async () => {
   } finally { ctx.cleanup(); }
 });
 
-test('result 消息：服务端记录 commandId → result 映射', async () => {
+// 必要字段缺失留证（2026-08-25）：ack 回传 missing_required 供客户端感知，server 侧 console.warn 留证
+test('ingest 必要字段缺失：ack 带 missing_required + server warn 日志留证', async () => {
   const ctx = await setup();
+  const origWarn = console.warn;
+  const warns: string[] = [];
+  console.warn = (...a: unknown[]) => { warns.push(a.join(' ')); };
+  try {
+    const ws = await connect(ctx.port);
+    ws.send(JSON.stringify({ type: 'hello', ext_version: '0.1.0', token: 'test-token' }));
+    await new Promise(r => setTimeout(r, 30));
+    ws.send(JSON.stringify({
+      type: 'ingest',
+      // player API 无 pubdate/video_info 的被动路径形态（生产 15 条双 NULL 的输入）
+      payload: { source: 'bilibili', video: { source_vid: 'BV1miss00x', title: 't', extra: {} }, tracks: [] },
+    }));
+    const ack: any = await new Promise((resolve) => ws.once('message', (data) => resolve(JSON.parse(data.toString()))));
+    assert.equal(ack.ok, true);
+    assert.deepEqual(ack.missing_required, ['duration', 'published_at'], 'ack 应回传缺失清单');
+    const warn = warns.find((w) => w.includes('必要字段缺失'));
+    assert.ok(warn, 'server 必须 console.warn 留证');
+    assert.ok(warn.includes('BV1miss00x'), '告警应带 source_vid');
+    ws.close();
+  } finally {
+    console.warn = origWarn;
+    ctx.cleanup();
+  }
+});
+
+test('result 消息：服务端记录 commandId → result 映射', async () => {  const ctx = await setup();
   try {
     const ws = await connect(ctx.port);
     ws.send(JSON.stringify({ type: 'hello', ext_version: '0.1.0', token: 'test-token' }));

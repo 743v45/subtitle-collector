@@ -375,6 +375,14 @@ function flushIfReady(vid, force = false) {
     captionTracks: tracksWithBody,
     bodies: Object.fromEntries(cur.bodies),
   });
+  // 必要字段缺失告警（对齐 content.js sendIngestRecord 2026-08-25：上报不完整必须可观察；
+  // 不阻塞上报，published_at 缺失多为 microformat 未就绪，待重采补齐）。
+  const missing = [];
+  if (payload.video.duration == null) missing.push("duration");
+  if (payload.video.published_at == null) missing.push("published_at");
+  if (missing.length > 0) {
+    console.warn(`[content-yt] INGEST 必要字段缺失 vid=${vid} missing=${missing.join(",")}（microformat/ytInitialPlayerResponse 数据源不完整，视为上报质量问题）`);
+  }
   console.log(`[content-yt] INGEST vid=${vid} tracks=${payload.tracks.length}${force ? " force=true（绕过开关）" : ""}`);
   try {
     chrome.runtime.sendMessage({ type: "INGEST", payload, ...(force ? { force: true } : {}) });

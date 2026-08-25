@@ -147,6 +147,11 @@ export function attachWsServer(httpServer: Server, db: Database.Database, expect
           const result = ingestVideo(db, msg.payload as IngestRequest);
           ws.send(JSON.stringify({ type: 'ingest-ack', ok: true, ...result }));
           console.log(`[server] ingest source=${result.source} source_vid=${result.source_vid} 新增 ${result.inserted_tracks} 条版本 / 跳过 ${result.skipped_tracks} 条（已存在）`);
+          // 必要字段缺失告警（2026-08-25：上报不完整必须可观察——ingest 终值口径的 duration/published_at
+          // 仍 NULL 时留证；不拒收，force 重采可补齐。ingest-ack 亦回传 missing_required 供客户端感知）。
+          if (result.missing_required?.length) {
+            console.warn(`[server] ingest 必要字段缺失 source=${result.source} source_vid=${result.source_vid} missing=${result.missing_required.join(',')}（上报不完整，建议排查扩展侧数据源或 force 重采补齐）`);
+          }
           // 迟到 INGEST 改判：超时落 failed 的任务，字幕轨稍后经被动链路实际入库 → 改判 succeeded
           //（与迟到 result 改判互补：扩展自限超时后无回执可等，只有 INGEST 证明数据落了）
           const amended = amendLateIngest(db, result);
