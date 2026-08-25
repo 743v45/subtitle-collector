@@ -4,6 +4,7 @@ import { getWsBridge } from './wsBridge.js';
 import { DEFAULT_COLLECT_TIMEOUT_MS, getCollectTimeout, type CollectTimeoutMs } from '../db/settings.js';
 import { markNoSubtitle } from '../db/tags.js';
 import { inFlight } from './inflight.js';
+import { buildOrderBy, cmpBySortKey, TASK_SORT_KEYS, type TaskSortKey } from '../db/sort.js';
 
 // ── 采集任务系统：手机/网页提交 → server 派发给桌面扩展 → 扩展采集回执 ──
 // 设计依据：docs/superpowers/specs/2026-08-13-mobile-collect-task-design.md
@@ -429,15 +430,11 @@ export function deleteTask(db: Database.Database, id: number): boolean {
 
 // ── 重试（2026-08-22 原地重置，取代「重试建新任务并入原批」方案）──
 // failed/limited 任务行重置回 pending 重跑：不建新行——原任务行状态直接 failed→pending→succeeded,
-// 批次聚合卡/聚焦视图/进度徽章随该行实时更新（新建行方案下旧失败行永不更新,批次徽章永远停在
-// 「失败」,聚焦视图同一视频出现 failed+succeeded 两行）。仅终态未成功可重置：succeeded 重采走
-// 建新任务（保留成功历史）;pending/dispatched 在途不可重入。error/result/finished_at/client_id
-// 一并清空回到全新 pending 态（旧执行结果不作残留）。
-//
-// 查库短路（同日）：重试前先查该视频库内字幕轨数——已有轨（此前某次采集实际成功落库,
-// 只是回执迟到/改判前的行还挂在 failed/limited）→ 直接置 succeeded（result 带
-// already_collected + 轨数）不派发不重采；无轨（limited=0 轨入库,failed 可能未入库）
-// 才重置 pending 重新采集。
+// 批次聚合卡/聚焦视图/进度徽章随该行实时更新。仅终态未成功可重置：succeeded 重采走建新任务
+// （保留成功历史）;pending/dispatched 在途不可重入。error/result/finished_at/client_id 一并清空。
+// 查库短路（同日）：重试前先查该视频库内字幕轨数——已有轨（此前采集实际成功落库,只是回执迟到/
+// 改判前还挂 failed/limited）→ 直接置 succeeded（result 带 already_collected + 轨数）不重采；
+// 无轨（limited=0 轨入库,failed 可能未入库）才重置 pending 重新采集。
 export function retryTask(db: Database.Database, id: number): CollectTask | null {
   const task = db.prepare('SELECT * FROM collect_tasks WHERE id = ?').get(id) as CollectTask | undefined;
   if (!task || (task.status !== 'failed' && task.status !== 'limited')) return null; // 不存在/非可重试：静默跳过
@@ -478,10 +475,8 @@ export interface TaskListFilter {
 // 批次补全:limit/offset 与全部筛选只限制种子行,种子涉及的批次成员全量带出——展示侧聚合要完整成员
 // 才算得出「n/m 完成」进度;筛选同样只作用于种子(补全跨筛选/跨状态拉齐整批,分组完整)。
 export function listTasks(
-  db: Database.Database,
-  limit = 20,
-  offset = 0,
-  filter: TaskListFilter = {},
+  db: Database.Database, limit = 20, offset = 0, filter: TaskListFilter = {},
+  sort: TaskSortKey = 'created_at', desc = true,
 ): { total: number; items: CollectTask[] } {
   const conds: string[] = [];
   const params: unknown[] = [];
@@ -515,7 +510,7 @@ export function listTasks(
   const seed = db.prepare(`
     ${TASK_SELECT}
     ${where}
-    ORDER BY t.id DESC LIMIT ? OFFSET ?
+    ${buildOrderBy(`t.${sort}`, desc, { nullable: sort === 'finished_at', tieExpr: 't.id' })} LIMIT ? OFFSET ?
   `).all(...params, limit, offset) as CollectTask[];
   const batchIds = [...new Set(seed.map((r) => r.batch_id).filter((b): b is string => b != null))];
   let items = seed;
@@ -525,7 +520,8 @@ export function listTasks(
       WHERE t.batch_id IN (${batchIds.map(() => '?').join(',')})
     `).all(...batchIds) as CollectTask[];
     const seen = new Set(seed.map((r) => r.id));
-    items = [...seed, ...members.filter((r) => !seen.has(r.id))].sort((a, b) => b.id - a.id);
+    items = [...seed, ...members.filter((r) => !seen.has(r.id))]
+      .sort((a, b) => cmpBySortKey(a, b, sort, desc, 'id')); // 补全成员并入后按排序键重排（镜像 SQL 语义）
   }
   return { total, items };
 }

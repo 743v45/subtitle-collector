@@ -406,3 +406,25 @@ test('GET /api/tags：scope 非法 400；topN 非法回落 500、上限 500、�
     ], '同档（manual）内部按名字排序，档间按优先级');
   } finally { cleanup(); }
 });
+
+// ── 2026-08-25 全端点排序：GET /api/tags sort=count/name/created_at + desc；非法 → 400 ──
+test('GET /api/tags：sort=name 升降 + 非法 sort 400', async () => {
+  const { port, cleanup } = await setup();
+  try {
+    await call(port, 'POST', '/api/tags/apply', { items: [{ source: 'bilibili', source_vid: 'BV1' }], names: ['bbb', 'aaa', 'ccc'], scope: 'manual' });
+    const names = (r: Awaited<ReturnType<typeof call>>) => r.json.items.map((t: { name: string }) => t.name);
+    // 缺省 count DESC（三标签同计数 → tie name ASC，与旧硬编码一致）
+    let r = await call(port, 'GET', '/api/tags');
+    assert.deepEqual(names(r), ['aaa', 'bbb', 'ccc']);
+    // name 排序缺省 desc=true（降序）；显式 desc=0 升序
+    r = await call(port, 'GET', '/api/tags?sort=name');
+    assert.deepEqual(names(r), ['ccc', 'bbb', 'aaa']);
+    r = await call(port, 'GET', '/api/tags?sort=name&desc=0');
+    assert.deepEqual(names(r), ['aaa', 'bbb', 'ccc']);
+    // 非法 sort → 400 + 错误列全合法键
+    r = await call(port, 'GET', '/api/tags?sort=bogus');
+    assert.equal(r.status, 400);
+    assert.equal(r.json.ok, false);
+    assert.match(r.json.error, /sort must be one of count\|name\|created_at/);
+  } finally { cleanup(); }
+});

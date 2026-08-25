@@ -25,6 +25,7 @@ CREATE TABLE IF NOT EXISTS creators (
   following     INTEGER,
   category_agent_id INTEGER REFERENCES categories(id),
   category_human_id INTEGER REFERENCES categories(id),
+  blocked      INTEGER NOT NULL DEFAULT 0, -- 屏蔽标记（2026-08-24）：采集照常入库，仅 CLI 消费链路默认过滤、web 展示标识
   first_seen_at INTEGER NOT NULL,
   updated_at    INTEGER NOT NULL,
   UNIQUE(source, source_uid)

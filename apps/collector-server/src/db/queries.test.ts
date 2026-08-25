@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { openDb, migrate, runMigrations } from './migrate.js';
 import { ingestVideo } from './ingest.js';
-import { listVideos, getVideo, getVersionPayload, getCreator, listCategories, createCategory, updateCategory, deleteCategory, listCreators, setCreatorCategory, getCreatorBySourceUid } from './queries.js';
+import { getVideo, getVersionPayload, getCreator, listCategories, createCategory, updateCategory, deleteCategory, listCreators, setCreatorCategory, setCreatorBlocked, getCreatorBySourceUid } from './queries.js';
 
 function freshDb() {
   const dir = mkdtempSync(join(tmpdir(), 'collector-q-'));
@@ -21,32 +21,8 @@ const sampleReq = (title: string, tracks: any[] = [], sourceVid = 'BV1') => ({
   tracks,
 });
 
-test('listVideos: 空库 total=0', () => {
-  const { db, dir } = freshDb();
-  try {
-    const r = listVideos(db, undefined, 1, 20);
-    assert.equal(r.total, 0);
-    assert.deepEqual(r.items, []);
-  } finally { rmSync(dir, { recursive: true, force: true }); }
-});
-
-test('listVideos: 搜索 title/creator LIKE + 分页 + first_seen_at 倒序', () => {
-  const { db, dir } = freshDb();
-  try {
-    ingestVideo(db, sampleReq('字幕视频A', [], 'BV1'));
-    ingestVideo(db, sampleReq('其他视频', [], 'BV2'));
-    const all = listVideos(db, undefined, 1, 20);
-    assert.equal(all.total, 2);
-    assert.equal(all.items[0].title, '其他视频'); // 后插入 = first_seen_at 更大 = 排前
-    assert.equal(all.items[1].title, '字幕视频A');
-    const q = listVideos(db, '字幕', 1, 20);
-    assert.equal(q.total, 1);
-    assert.equal(q.items[0].title, '字幕视频A');
-    const page2 = listVideos(db, undefined, 2, 1);
-    assert.equal(page2.items.length, 1);
-    assert.equal(page2.items[0].title, '字幕视频A');
-  } finally { rmSync(dir, { recursive: true, force: true }); }
-});
+// listVideos（旧版仅 q 过滤）已删（2026-08-25 死代码清理），其 q/分页/倒序语义
+// 由 advanced.test.ts 的 listVideosFiltered 用例覆盖。
 
 test('getVideo: 默认轨优先级 CC中文 > AI中文 > 英文', () => {
   const { db, dir } = freshDb();
@@ -373,4 +349,73 @@ test('listCreators: q 模糊 / human scope 分类 / 无过滤全量 + fans / vid
   const c1 = all.items.find((c) => c.source_uid === '1')!;
   assert.equal(c1.video_count, 2);
   assert.equal(c1.category_human_name, '关注');
+});
+
+// 2026-08-25 全端点排序：listCreators 新增 following/level/updated_at/name 键 + desc 方向参数。
+// 可空数值键 COALESCE 归零（NULL UP 不抢头尾）；name 可空走 NULLS LAST（不论升降）。
+test('listCreators: sort=following/level/updated_at/name + desc 方向 + name NULLS LAST', () => {
+  const db = memDb();
+  // 三个 UP：uid1（数值齐全）、uid2（following/level NULL）、uid3（name NULL）
+  for (const uid of ['1', '2', '3']) {
+    db.prepare("INSERT INTO creators (source, source_uid, first_seen_at, updated_at) VALUES ('bilibili', ?, 100, 100)").run(uid);
+  }
+  db.prepare("UPDATE creators SET name='乙', fans=100, following=30, level=5, updated_at=300 WHERE source_uid='1'").run();
+  db.prepare("UPDATE creators SET name='甲', fans=200, updated_at=200 WHERE source_uid='2'").run(); // following/level NULL
+  db.prepare("UPDATE creators SET name=NULL, fans=50, updated_at=400 WHERE source_uid='3'").run();   // name NULL
+  // following DESC：乙(30) > 甲(NULL→0) = 丙(NULL→0)，tie 按 c.id DESC
+  assert.deepEqual(listCreators(db, {}, 1, 20, 'following', true).items.map((c) => c.name), ['乙', null, '甲']);
+  // following ASC：COALESCE 后同为 0 的 NULL 行 tie 按 c.id ASC
+  assert.deepEqual(listCreators(db, {}, 1, 20, 'following', false).items.map((c) => c.name), ['甲', null, '乙']);
+  // level DESC：乙(5) > 甲(0) = 丙(0)
+  assert.deepEqual(listCreators(db, {}, 1, 20, 'level', true).items.map((c) => c.name), ['乙', null, '甲']);
+  // updated_at DESC：丙(400) > 乙(300) > 甲(200)
+  assert.deepEqual(listCreators(db, {}, 1, 20, 'updated_at', true).items.map((c) => c.source_uid), ['3', '1', '2']);
+  // name ASC：乙(U+4E59) < 甲(U+7532)，name NULL 恒排最后（NULLS LAST）
+  assert.deepEqual(listCreators(db, {}, 1, 20, 'name', false).items.map((c) => c.name), ['乙', '甲', null]);
+  // name DESC：甲 > 乙，NULL 仍排最后（NULLS LAST 不随方向翻转）
+  assert.deepEqual(listCreators(db, {}, 1, 20, 'name', true).items.map((c) => c.name), ['甲', '乙', null]);
+  // desc 缺省 true：fans DESC 旧语义不变（fans=200 甲 在前）
+  assert.deepEqual(listCreators(db, {}, 1, 20, 'fans').items.map((c) => c.name), ['甲', '乙', null]);
+});
+
+// ---- UP 屏蔽（2026-08-24）：setCreatorBlocked 读写 + listCreators 筛选 + getVideo 归属标记 ----
+
+test('setCreatorBlocked：屏蔽/解除往返 + 未入库返回 null', () => {
+  const { db, dir } = freshDb();
+  try {
+    ingestVideo(db, sampleReq('甲', [], 'BV1'));
+    const blocked = setCreatorBlocked(db, 'bilibili', '1', true);
+    assert.equal(blocked!.blocked, true, '屏蔽后回读 blocked=true');
+    assert.equal(getCreatorBySourceUid(db, 'bilibili', '1')!.blocked, true);
+    const un = setCreatorBlocked(db, 'bilibili', '1', false);
+    assert.equal(un!.blocked, false, '解除后回读 blocked=false');
+    assert.equal(setCreatorBlocked(db, 'bilibili', '999', true), null, '未入库返回 null（不建最小行）');
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('listCreators：blocked 筛选三态 + items 带布尔化 blocked', () => {
+  const { db, dir } = freshDb();
+  try {
+    ingestVideo(db, sampleReq('甲', [], 'BV1'));
+    db.prepare("INSERT INTO creators (source, source_uid, first_seen_at, updated_at) VALUES ('bilibili', '2', 1, 1)").run();
+    db.prepare("UPDATE creators SET blocked = 1 WHERE source_uid = '2'").run();
+    const all = listCreators(db, {}, 1, 20);
+    assert.equal(all.total, 2);
+    assert.equal(all.items.find((c) => c.source_uid === '2')!.blocked, true, 'SQLite 0/1 出口布尔化');
+    assert.equal(all.items.find((c) => c.source_uid === '1')!.blocked, false);
+    const onlyBlocked = listCreators(db, { blocked: true }, 1, 20);
+    assert.equal(onlyBlocked.total, 1);
+    assert.equal(onlyBlocked.items[0].source_uid, '2');
+    assert.equal(listCreators(db, { blocked: false }, 1, 20).total, 1);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('getVideo：video 带 creator_blocked 布尔化', () => {
+  const { db, dir } = freshDb();
+  try {
+    ingestVideo(db, sampleReq('甲', [], 'BV1'));
+    db.prepare('UPDATE creators SET blocked = 1').run();
+    const d = getVideo(db, 'bilibili', 'BV1');
+    assert.equal(d!.video.creator_blocked, true);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
 });

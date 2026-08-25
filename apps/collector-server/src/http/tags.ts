@@ -6,9 +6,9 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import type Database from 'better-sqlite3';
 import {
   listTags, applyVideoTags, removeVideoTags, renameTag, deleteTag,
-  isTagSource, type VideoRef, type TagSource,
+  isTagSource, TAG_SORT_KEYS, type VideoRef, type TagSource, type TagSortKey,
 } from '../db/tags.js';
-import { json, readJsonBody, parseTagScope } from './http-util.js';
+import { json, readJsonBody, parseTagScope, parseSortParams } from './http-util.js';
 
 // 请求体校验：items 必须是 [{source(平台), source_vid}]，names 是 string[]；scope=档位（parseTagScope 统一校验）。
 // 命名约定：source 一律指平台（bilibili|youtube），档位（manual/batch/ai/system）对外叫 scope。
@@ -31,17 +31,25 @@ function parseApplyBody(b: unknown, needSource: boolean): { refs: VideoRef[]; na
   return ps.ok ? { refs, names, source: ps.scope } : { error: ps.error };
 }
 
+// GET /api/tags 标签库列表。抽出降 handleTagsHttp 圈复杂度（2026-08-25 排序分支并入后主函数超标恶化）。
+function handleListTagsHttp(res: ServerResponse, url: URL, db: Database.Database): void {
+  const scope = url.searchParams.get('scope');
+  if (scope && !isTagSource(scope)) { json(res, 400, { ok: false, error: 'scope must be manual|batch|ai' }); return; }
+  const source = url.searchParams.get('source') ?? undefined; // 平台：计数只算该平台视频的关系
+  const q = url.searchParams.get('q') ?? undefined;
+  const topN = Math.min(500, Math.max(1, Number(url.searchParams.get('topN') ?? '500') || 500));
+  // sort：count（默认，语义跟随 scope 档）/name/created_at；非法 → 400；desc 缺省 true（计数榜降序=现状）
+  const sp = parseSortParams(url.searchParams, TAG_SORT_KEYS, 'count');
+  if ('error' in sp) { json(res, 400, { ok: false, error: sp.error }); return; }
+  json(res, 200, { ok: true, items: listTags(db, { scope: scope as TagSource | undefined, source, q, topN, sort: sp.sort as TagSortKey, desc: sp.desc }) });
+}
+
 export async function handleTagsHttp(req: IncomingMessage, res: ServerResponse, db: Database.Database): Promise<void> {
   const url = new URL(req.url ?? '/', 'http://localhost');
   const pathname = url.pathname;
 
   if (pathname === '/api/tags' && req.method === 'GET') {
-    const scope = url.searchParams.get('scope');
-    if (scope && !isTagSource(scope)) { json(res, 400, { ok: false, error: 'scope must be manual|batch|ai' }); return; }
-    const source = url.searchParams.get('source') ?? undefined; // 平台：计数只算该平台视频的关系
-    const q = url.searchParams.get('q') ?? undefined;
-    const topN = Math.min(500, Math.max(1, Number(url.searchParams.get('topN') ?? '500') || 500));
-    json(res, 200, { ok: true, items: listTags(db, { scope: scope as TagSource | undefined, source, q, topN }) });
+    handleListTagsHttp(res, url, db);
     return;
   }
 

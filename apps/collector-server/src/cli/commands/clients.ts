@@ -21,6 +21,8 @@ import {
 } from '../http.js';
 import { emitResult, emitError } from '../output.js';
 import { getCliContext } from '../context.js';
+import { CLIENT_SORT_KEYS, type ClientSortKey } from '../../db/clients.js';
+import { parseDesc } from './videos.js';
 
 /** `clients command` 下发给扩展的可选参数；undefined 字段不会被收进发送体。 */
 export interface CommandParams {
@@ -38,12 +40,13 @@ const DEFAULT_COMMAND_TIMEOUT_MS = 5000;
  * `clients list`：取客户端列表，包裹成全局 list 规范 `{items, total}`。
  * server `GET /api/clients` → `{clients: [...]}`（2026-08-24 起为全量视图：DB 注册表
  * 含离线客户端 + 在线态合并，字段含 client_name/connected/connected_at/last_seen_at）；
- * `ServerClient.listClients` 已拆出数组。
+ * `ServerClient.listClients` 已拆出数组。sort/desc（2026-08-25）：last_seen（默认）/first_seen/name。
  */
 export async function clientsList(
   client: ServerClient,
+  opts: { sort?: ClientSortKey; desc?: boolean } = {},
 ): Promise<{ items: unknown[]; total: number }> {
-  const items = await client.listClients();
+  const items = await client.listClients(opts);
   return { items, total: items.length };
 }
 
@@ -129,11 +132,22 @@ export function buildClientsCommand(): Command {
   cmd
     .command('list')
     .description('列出客户端（含离线：DB 注册表合并在线态，带名字与在线/离线时长；GET /api/clients）')
-    .action(async () => {
+    .option('--sort <key>', `排序键：${CLIENT_SORT_KEYS.join('|')}`)
+    .option('--desc [value]', '降序（默认降序，最近活跃在前；升序传 --desc=false）')
+    .action(async (opts: { sort?: string; desc?: string | boolean }) => {
+      // sort 白名单校验（非法 → ARGS 退 2，对齐 HTTP 400 口径）
+      if (opts.sort !== undefined && !(CLIENT_SORT_KEYS as readonly string[]).includes(opts.sort)) {
+        emitError(`非法 --sort: ${opts.sort}（可选: ${CLIENT_SORT_KEYS.join('|')}）`, 'ARGS');
+        return;
+      }
       const ctx = getCliContext();
       const client = new ServerClient(ctx.serverUrl, ctx.token);
+      // --sort 未传 → 不带排序 query（行为与旧版一致）；传了 → sort+desc 成对下发
+      const sortOpts = opts.sort === undefined
+        ? {}
+        : { sort: opts.sort as ClientSortKey, desc: parseDesc(opts.desc) };
       try {
-        const data = await clientsList(client);
+        const data = await clientsList(client, sortOpts);
         emitResult(data, ctx.format);
       } catch (err) {
         handleHttpError(err);

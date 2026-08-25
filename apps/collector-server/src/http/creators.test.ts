@@ -50,7 +50,7 @@ async function call(port: number, method: string, path: string, body?: unknown):
   return { status: res.status, json: await res.json().catch(() => null) };
 }
 
-test('creators 列表：默认 total/items + q 模糊（name/uid）+ sort=fans/video_count + 非法 sort 回落 + 分页', async () => {
+test('creators 列表：默认 total/items + q 模糊（name/uid）+ sort=fans/video_count + 非法 sort 400 + 分页', async () => {
   const { port, cleanup } = await setup();
   try {
     let r = await call(port, 'GET', '/api/creators');
@@ -74,10 +74,11 @@ test('creators 列表：默认 total/items + q 模糊（name/uid）+ sort=fans/v
     r = await call(port, 'GET', '/api/creators?sort=video_count');
     assert.deepEqual(r.json.items.map((i: any) => i.name), ['UP甲', 'UP乙']);
 
-    // 非法 sort → 回落 first_seen（不 500）
+    // 非法 sort → 400（2026-08-25 起取代旧「静默回落」：以为排了其实没排是暗坑；错误信息列全合法键）
     r = await call(port, 'GET', '/api/creators?sort=bogus');
-    assert.equal(r.status, 200);
-    assert.equal(r.json.total, 2);
+    assert.equal(r.status, 400);
+    assert.equal(r.json.ok, false);
+    assert.match(r.json.error, /sort must be one of first_seen\|fans\|video_count\|following\|level\|updated_at\|name/);
 
     // 分页 size=1
     r = await call(port, 'GET', '/api/creators?size=1&page=2');

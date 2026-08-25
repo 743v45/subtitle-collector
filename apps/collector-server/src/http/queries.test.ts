@@ -121,6 +121,19 @@ test('/api/changes: 全维过滤 + 分页 + 非法 since/until/entity_id 忽略'
     assert.equal(r.json.items[0].field, 'duration');
     assert.equal(r.json.page, 2);
     assert.equal(r.json.size, 1);
+    // ── 2026-08-25 全端点排序：sort=changed_at + desc；非法 sort → 400 ──
+    // 缺省 changed_at DESC：field 序 [name(300), duration(200), title(100)]
+    r = await call(s.port, '/api/changes');
+    assert.deepEqual(r.json.items.map((i: any) => i.field), ['name', 'duration', 'title']);
+    // 显式升序
+    r = await call(s.port, '/api/changes?sort=changed_at&desc=0');
+    assert.deepEqual(r.json.items.map((i: any) => i.field), ['title', 'duration', 'name']);
+    // 非法 sort → 400 + 错误列全合法键（单键端点）
+    r = await call(s.port, '/api/changes?sort=bogus');
+    assert.equal(r.status, 400);
+    assert.equal(r.json.ok, false);
+    assert.match(r.json.error, /sort must be one of changed_at/);
+
     // 非法 page/size 回落默认（page≥1，size 夹 1..100）
     r = await call(s.port, '/api/changes?page=oops&size=huge');
     assert.equal(r.json.page, 1);

@@ -10,7 +10,7 @@ import { Command } from 'commander';
 import { getCliContext } from '../context.js';
 import { emitResult, emitError } from '../output.js';
 import { openReadonlyDb } from '../db.js';
-import { listVideosFiltered, getVideoByDbId } from '../../db/advanced.js';
+import { listVideosFiltered, getVideoByDbId, VIDEO_SORT_KEYS } from '../../db/advanced.js';
 import * as queries from '../../db/queries.js';
 import type {
   VideoSortKey,
@@ -114,7 +114,25 @@ export function videosGetById(
 
 // ── commander 装配 ──
 
-const SORT_KEYS = ['first_seen', 'published_at', 'title', 'duration', 'view'] as const;
+// 字符串 → VideoSortKey；非法 → ARGS。undefined 透传。导出供 export.ts 复用（键清单单一事实源）。
+export function parseSort(raw: string | undefined): VideoSortKey | undefined {
+  if (raw === undefined) return undefined;
+  if (!(VIDEO_SORT_KEYS as readonly string[]).includes(raw)) {
+    return emitError(`非法 --sort: ${raw}（可选: ${VIDEO_SORT_KEYS.join('|')}）`, 'ARGS');
+  }
+  return raw as VideoSortKey;
+}
+
+// --desc 解析（2026-08-25 全端点排序）：缺省 true（CLI 缺省从升序改降序，对齐 HTTP 与 web 默认视角）；
+// 裸 --desc → true；--desc=false|0|no → false（升序）；值非法 → ARGS。导出供各列表命令复用。
+export function parseDesc(raw: string | boolean | undefined): boolean {
+  if (raw === undefined) return true;
+  if (typeof raw === 'boolean') return raw;
+  const v = raw.toLowerCase();
+  if (v === 'true' || v === '1' || v === 'yes') return true;
+  if (v === 'false' || v === '0' || v === 'no') return false;
+  return emitError(`非法 --desc: ${raw}（可选 true|false，缺省 true）`, 'ARGS');
+}
 
 // commander 解析出的原始选项（字符串/布尔），action 内转成 VideosListOpts。
 interface ListRawOpts {
@@ -135,7 +153,7 @@ interface ListRawOpts {
   minView?: string;
   maxView?: string;
   sort?: string;
-  desc?: boolean;
+  desc?: string | boolean; // --desc [value]：裸 flag → true；=false/0/no → 升序；缺省 → true（降序）
   page?: string;
   subtitleQ?: string;
   size?: string;
@@ -149,15 +167,6 @@ export function parseNum(raw: string | undefined, name: string): number | undefi
     return emitError(`${name} 不是合法数字: ${raw}`, 'ARGS');
   }
   return n;
-}
-
-// 字符串 → VideoSortKey；非法 → ARGS。undefined 透传。
-function parseSort(raw: string | undefined): VideoSortKey | undefined {
-  if (raw === undefined) return undefined;
-  if (!(SORT_KEYS as readonly string[]).includes(raw)) {
-    return emitError(`非法 --sort: ${raw}（可选: ${SORT_KEYS.join('|')}）`, 'ARGS');
-  }
-  return raw as VideoSortKey;
 }
 
 // since/until 字符串 → 毫秒数字；格式非法（normalizeTimestamp 抛错）→ ARGS。
@@ -203,8 +212,8 @@ export function buildVideosCommand(): Command {
     .option('--max-duration <s>', '最大时长（秒）')
     .option('--min-view <n>', '最小播放量')
     .option('--max-view <n>', '最大播放量')
-    .option('--sort <key>', '排序键：first_seen|published_at|title|duration|view')
-    .option('--desc', '降序（默认升序）')
+    .option('--sort <key>', `排序键：${VIDEO_SORT_KEYS.join('|')}（updated_at=最近有动静：重采/变更）`)
+    .option('--desc [value]', '降序（默认降序，对齐 HTTP；升序传 --desc=false）')
     .option('--page <n>', '页码（从 1 起，默认 1）')
     .option('--size <n>', '每页条数（默认 20）')
     .action((raw: ListRawOpts) => {
@@ -229,7 +238,7 @@ export function buildVideosCommand(): Command {
         minView: parseNum(raw.minView, '--min-view'),
         maxView: parseNum(raw.maxView, '--max-view'),
         sort: parseSort(raw.sort),
-        desc: raw.desc,
+        desc: parseDesc(raw.desc),
         page: parseNum(raw.page, '--page'),
         size: parseNum(raw.size, '--size'),
       };

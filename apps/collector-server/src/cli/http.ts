@@ -46,9 +46,13 @@ export class ServerClient {
     }
   }
 
-  // 客户端列表：GET /api/clients → 取 .clients 数组。
-  async listClients(): Promise<unknown[]> {
-    const data = await this.requestJson('GET', '/api/clients');
+  // 客户端列表：GET /api/clients（可选 sort/desc 查询参数，2026-08-25 全端点排序）→ 取 .clients 数组。
+  async listClients(params?: { sort?: string; desc?: boolean }): Promise<unknown[]> {
+    const qs = new URLSearchParams();
+    if (params?.sort !== undefined) qs.set('sort', params.sort);
+    if (params?.desc !== undefined) qs.set('desc', params.desc ? 'true' : 'false');
+    const suffix = qs.size > 0 ? `?${qs.toString()}` : '';
+    const data = await this.requestJson('GET', `/api/clients${suffix}`);
     const clients = (data as { clients?: unknown[] } | null)?.clients;
     return Array.isArray(clients) ? clients : [];
   }

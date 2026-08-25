@@ -1,7 +1,8 @@
 import { type IncomingMessage, type ServerResponse } from 'node:http';
 import type Database from 'better-sqlite3';
 import { extractVideoUrl, expandShortLink, parseVideoUrl, createTask, createTasksBatch, findActiveTask, expandUpperVideos, parseYtChannelArg, getTask, deleteTask, retryTask, listTasks, kickTaskScheduler, type FetchLike, type TaskListFilter, type TaskStatus } from '../tasks/tasks.js';
-import { json, readJsonBody } from './http-util.js';
+import { TASK_SORT_KEYS, type TaskSortKey } from '../db/sort.js';
+import { json, readJsonBody, parseSortParams } from './http-util.js';
 import { toInt } from './filter.js';
 
 // ── 采集任务 HTTP 接口（手机/网页提交入口）──
@@ -16,11 +17,56 @@ import { toInt } from './filter.js';
 //                                  (采集页 limit=30 最近列表;历史页 page/page_size+筛选全量分页)
 //                                  筛选参数:status(CSV) / source / batch_id / batch(batch|single 批量/单点档) /
 //                                  creator(UP名模糊) / creator_uid(mid 精确) / q(库内标题) / since / until(毫秒,created_at)
-//                                  creator/q 只覆盖已入库视频的任务(join 元数据);非法值忽略不抛错
+//                                  creator/q 只覆盖已入库视频的任务(join 元数据);非法值忽略不抛错;
+//                                  sort=created_at|finished_at|status + desc(bool,缺省 true;2026-08-25),非法 sort → 400
 // GET    /api/collect-tasks/:id    单任务状态（手机每 2s 轮询直到终态）
 // DELETE /api/collect-tasks/:id    删除任务（采集页删除按钮,任意状态可删）
 // POST   /api/upper-videos/expand  { mid } | { source:'youtube', channel } → 经扩展 WS 代理拉
 //                                  UP/频道全部视频 + 标注已采（web「按 UP 批量」用，2026-08-24 双平台）
+// GET /api/collect-tasks 任务列表（分页双形态 + 多维筛选 + 排序）。
+// 抽出降 handleTasksHttp 圈复杂度（2026-08-25 排序分支并入后主函数超标恶化）。
+function handleListTasksHttp(res: ServerResponse, url: URL, db: Database.Database): void {
+  // 两种形态:采集页 ?limit=N(最近列表,无分页);历史页 ?page=N&page_size=M&筛选(全量分页+多维查询)
+  const STATUSES: readonly TaskStatus[] = ['pending', 'dispatched', 'succeeded', 'failed', 'limited'];
+  const statusParam = url.searchParams.get('status');
+  const statusFilter = statusParam
+    ? statusParam.split(',').map((s) => s.trim()).filter((s): s is TaskStatus => (STATUSES as readonly string[]).includes(s))
+    : undefined;
+  let limit = Math.min(100, Math.max(1, Math.floor(Number(url.searchParams.get('limit') ?? '20')) || 20));
+  let offset = 0;
+  let paged = false;
+  const page = Number(url.searchParams.get('page') ?? '');
+  const pageSize = Number(url.searchParams.get('page_size') ?? '');
+  if (Number.isInteger(page) && page >= 1 && Number.isInteger(pageSize) && pageSize >= 1) {
+    limit = Math.min(100, pageSize);
+    offset = (page - 1) * limit;
+    paged = true;
+  }
+  // 多维筛选（2026-08-22 历史页）：非法值一律忽略该过滤项（不抛错，对齐 parseVideoFilter）
+  const filter: TaskListFilter = {};
+  if (statusFilter?.length) filter.status = statusFilter;
+  const sourceParam = url.searchParams.get('source');
+  if (sourceParam === 'bilibili' || sourceParam === 'youtube') filter.source = sourceParam;
+  const batchId = url.searchParams.get('batch_id');
+  if (batchId) filter.batchId = batchId;
+  const batchScope = url.searchParams.get('batch');
+  if (batchScope === 'batch' || batchScope === 'single') filter.batchScope = batchScope;
+  const creator = url.searchParams.get('creator');
+  if (creator) filter.creator = creator;
+  const creatorUid = url.searchParams.get('creator_uid');
+  if (creatorUid) filter.creatorUid = creatorUid;
+  const qParam = url.searchParams.get('q');
+  if (qParam) filter.q = qParam;
+  const since = toInt(url.searchParams.get('since'));
+  if (since !== undefined) filter.since = since;
+  const until = toInt(url.searchParams.get('until'));
+  if (until !== undefined) filter.until = until;
+  // sort：created_at（默认，≡ 旧 t.id DESC）/finished_at（NULLS LAST）/status；非法 → 400
+  const sp = parseSortParams(url.searchParams, TASK_SORT_KEYS, 'created_at');
+  if ('error' in sp) { json(res, 400, { ok: false, error: sp.error }); return; }
+  json(res, 200, { ok: true, ...(paged ? { page, page_size: limit } : {}), ...listTasks(db, limit, offset, filter, sp.sort as TaskSortKey, sp.desc) });
+}
+
 export async function handleTasksHttp(req: IncomingMessage, res: ServerResponse, db: Database.Database): Promise<void> {
   const url = new URL(req.url ?? '/', 'http://localhost');
   const pathname = url.pathname;
@@ -45,42 +91,7 @@ export async function handleTasksHttp(req: IncomingMessage, res: ServerResponse,
       return;
     }
     if (req.method === 'GET') {
-      // 两种形态:采集页 ?limit=N(最近列表,无分页);历史页 ?page=N&page_size=M&筛选(全量分页+多维查询)
-      const STATUSES: readonly TaskStatus[] = ['pending', 'dispatched', 'succeeded', 'failed', 'limited'];
-      const statusParam = url.searchParams.get('status');
-      const statusFilter = statusParam
-        ? statusParam.split(',').map((s) => s.trim()).filter((s): s is TaskStatus => (STATUSES as readonly string[]).includes(s))
-        : undefined;
-      let limit = Math.min(100, Math.max(1, Math.floor(Number(url.searchParams.get('limit') ?? '20')) || 20));
-      let offset = 0;
-      let paged = false;
-      const page = Number(url.searchParams.get('page') ?? '');
-      const pageSize = Number(url.searchParams.get('page_size') ?? '');
-      if (Number.isInteger(page) && page >= 1 && Number.isInteger(pageSize) && pageSize >= 1) {
-        limit = Math.min(100, pageSize);
-        offset = (page - 1) * limit;
-        paged = true;
-      }
-      // 多维筛选（2026-08-22 历史页）：非法值一律忽略该过滤项（不抛错，对齐 parseVideoFilter）
-      const filter: TaskListFilter = {};
-      if (statusFilter?.length) filter.status = statusFilter;
-      const sourceParam = url.searchParams.get('source');
-      if (sourceParam === 'bilibili' || sourceParam === 'youtube') filter.source = sourceParam;
-      const batchId = url.searchParams.get('batch_id');
-      if (batchId) filter.batchId = batchId;
-      const batchScope = url.searchParams.get('batch');
-      if (batchScope === 'batch' || batchScope === 'single') filter.batchScope = batchScope;
-      const creator = url.searchParams.get('creator');
-      if (creator) filter.creator = creator;
-      const creatorUid = url.searchParams.get('creator_uid');
-      if (creatorUid) filter.creatorUid = creatorUid;
-      const qParam = url.searchParams.get('q');
-      if (qParam) filter.q = qParam;
-      const since = toInt(url.searchParams.get('since'));
-      if (since !== undefined) filter.since = since;
-      const until = toInt(url.searchParams.get('until'));
-      if (until !== undefined) filter.until = until;
-      json(res, 200, { ok: true, ...(paged ? { page, page_size: limit } : {}), ...listTasks(db, limit, offset, filter) });
+      handleListTasksHttp(res, url, db);
       return;
     }
     json(res, 405, { ok: false, error: 'method not allowed' });

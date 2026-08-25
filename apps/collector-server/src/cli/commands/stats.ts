@@ -7,9 +7,9 @@ import { Command } from 'commander';
 import { getCliContext } from '../context.js';
 import { emitResult, emitError } from '../output.js';
 import { openReadonlyDb } from '../db.js';
-import { countOverview, countOverviewWithSources, aggregateStats } from '../../db/advanced.js';
-import type { Overview, KeyValue, StatsGroupBy, VideoFilter } from '../../db/advanced.js';
-import { normalizeTimestamp } from './videos.js';
+import { countOverview, countOverviewWithSources, aggregateStats, type StatsGroupBy, type Overview, type KeyValue, type VideoFilter } from '../../db/advanced.js';
+import { AGG_SORT_KEYS, type AggregateSortKey } from '../../db/sort.js';
+import { normalizeTimestamp, parseDesc } from './videos.js';
 
 // ── 纯处理函数 ──
 
@@ -22,11 +22,13 @@ export interface StatsCountOpts {
   by: StatsGroupBy;
   topN?: number;
   filter?: VideoFilter;  // 已解析（数值字段为数字、since/until 为毫秒）
+  sort?: AggregateSortKey; // count（默认，计数）/ key（分组值本身，如 source 名）
+  desc?: boolean;
 }
 
-// stats count 纯处理：分组聚合计数，委托 aggregateStats（默认 Top 20）。
+// stats count 纯处理：分组聚合计数，委托 aggregateStats（默认 Top 20、count DESC, key ASC）。
 export function statsCount(db: Database.Database, opts: StatsCountOpts): KeyValue[] {
-  return aggregateStats(db, opts.by, opts.filter ?? {}, opts.topN ?? 20);
+  return aggregateStats(db, opts.by, opts.filter ?? {}, opts.topN ?? 20, opts.sort ?? 'count', opts.desc ?? true);
 }
 
 // ── commander 装配 ──
@@ -36,6 +38,8 @@ const STATS_GROUP_BY = ['creator', 'tname', 'lang', 'track-type', 'source'] as c
 interface StatsCountRawOpts {
   by?: string;
   top?: string;
+  sort?: string;
+  desc?: string | boolean;
   q?: string; creator?: string; source?: string; tid?: string; tname?: string; tag?: string; lang?: string;
   trackType?: string; hasSubtitle?: boolean; since?: string; until?: string; minDuration?: string; maxDuration?: string;
 }
@@ -81,9 +85,11 @@ export function buildStatsCommand(): Command {
 
   stats
     .command('count')
-    .description('按维度分组计数（默认 Top 20）；过滤项同 videos list')
+    .description('按维度分组计数（默认 Top 20，count 降序）；过滤项同 videos list')
     .requiredOption('--by <kind>', '分组维度：creator|tname|lang|track-type|source')
     .option('--top <n>', 'Top N（默认 20）')
+    .option('--sort <key>', `排序键：${AGG_SORT_KEYS.join('|')}（count=计数，key=分组值本身）`)
+    .option('--desc [value]', '降序（默认降序；升序传 --desc=false）')
     .option('--q <text>', '标题 / UP 名模糊匹配')
     .option('--creator <name>', 'UP 名模糊匹配')
     .option('--source <src>', '视频来源（精确）')
@@ -120,6 +126,13 @@ export function buildStatsCommand(): Command {
         by: parseGroupBy(raw.by),
         topN: parseNum(raw.top, '--top'),
         filter,
+        // sort 白名单校验（非法 → ARGS 退 2，对齐 HTTP 400 口径）
+        sort: raw.sort !== undefined
+          ? ((AGG_SORT_KEYS as readonly string[]).includes(raw.sort)
+              ? (raw.sort as AggregateSortKey)
+              : emitError(`非法 --sort: ${raw.sort}（可选: ${AGG_SORT_KEYS.join('|')}）`, 'ARGS'))
+          : undefined,
+        desc: parseDesc(raw.desc),
       });
       emitResult(data, ctx.format);
     });

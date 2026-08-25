@@ -22,14 +22,19 @@ export interface TagWithCounts extends TagRow {
   counts: { manual: number; batch: number; ai: number; system: number; total: number };
 }
 
+// 标签榜排序键（2026-08-25 全端点排序）：count=计数（语义跟随 scope——scope=ai 时按 c_ai 排，
+// 与显示一致）、name=字典序、created_at=建标时间。三列均 NOT NULL，无 NULLS LAST 场景。
+export type TagSortKey = 'count' | 'name' | 'created_at';
+export const TAG_SORT_KEYS: readonly TagSortKey[] = ['count', 'name', 'created_at'];
+
 // 标签库列表：实时计数（3376 视频规模 COUNT 毫秒级，不冗余 usage_count）。
 // counts 恒为四档全量；?scope=ai 过滤「该档计数 >0」的标签（按档位分开可查），
-// 排序也按该档计数（省略 scope 时按 total）。
+// count 排序也按该档计数（省略 scope 时按 total）。
 // source（平台）给定时计数只算该平台视频的关系（JOIN videos 收窄；bili/season 档本就不入表，不受影响）。
 // 命名约定：档位对外一律叫 scope（video_tags.source 列是历史命名，DB 列不动）；source 保留给平台。
 export function listTags(
   db: Database.Database,
-  opts: { scope?: TagSource; source?: string; q?: string; topN?: number } = {},
+  opts: { scope?: TagSource; source?: string; q?: string; topN?: number; sort?: TagSortKey; desc?: boolean } = {},
 ): TagWithCounts[] {
   const conds: string[] = [];
   const vals: unknown[] = [];
@@ -37,6 +42,15 @@ export function listTags(
   const where = conds.length ? `WHERE ${conds.join(' AND ')}` : '';
   const counted = opts.scope ?? 'total';
   const totalExpr = counted === 'total' ? '(c_manual + c_batch + c_ai + c_system)' : `c_${counted}`;
+  // 排序子句：count 排序按 scope 档计数（tie name ASC 稳定）；name/created_at 排序 tie 回计数（榜语义兜底）。
+  // 三键均 NOT NULL，无需 NULLS LAST；direction 局部变量避免模板里三目重复
+  const dir = (opts.desc ?? true) ? 'DESC' : 'ASC';
+  const sortKey = opts.sort ?? 'count';
+  const orderBy = sortKey === 'count'
+    ? `ORDER BY ${totalExpr} ${dir}, t.name ASC`
+    : sortKey === 'name'
+      ? `ORDER BY t.name ${dir}, ${totalExpr} DESC`
+      : `ORDER BY t.created_at ${dir}, t.id ${dir}`;
   // 平台收窄：关系行经 video 溯源平台后才计入 CASE；无平台时 vv JOIN 不参与判定（全平台口径）
   // 占位符顺序 = SELECT 内 4 个 CASE（各 1 个 source）→ WHERE q → LIMIT，platformVals 排最前
   const platformCond = opts.source ? ' AND vv.source = ?' : '';
@@ -52,7 +66,7 @@ export function listTags(
      LEFT JOIN videos vv ON vv.id = vt.video_id
      ${where}
      GROUP BY t.id, t.name, t.created_at
-     ORDER BY ${totalExpr} DESC, t.name ASC
+     ${orderBy}
      LIMIT ?`,
   ).all(...platformVals, ...vals, opts.topN ?? 500) as Array<TagRow & { c_manual: number; c_batch: number; c_ai: number; c_system: number }>;
   const mapped = rows.map((r) => ({
@@ -137,6 +151,25 @@ export function removeVideoTags(
   return { removed, missing };
 }
 
+// 按档全删（2026-08-24）：删这些视频该档位的全部关系（不按名字圈，如视频详情页「清空 AI 档」）。
+// tags 实体保留。返回 { removed: 实删关系数, missing: 库里不存在的视频 }。
+export function removeVideoTagsBySource(
+  db: Database.Database,
+  refs: VideoRef[],
+  scope: TagSource,
+): { removed: number; missing: VideoRef[] } {
+  const { found, missing } = resolveVideoIds(db, refs);
+  if (found.size === 0) return { removed: 0, missing };
+  const stmt = db.prepare('DELETE FROM video_tags WHERE video_id = ? AND source = ?');
+  let removed = 0;
+  db.transaction(() => {
+    for (const videoId of found.values()) {
+      removed += stmt.run(videoId, scope).changes;
+    }
+  })();
+  return { removed, missing };
+}
+
 // 改名：video_tags 走 tag_id 引用自动生效（无需级联写）。撞已有名由 UNIQUE 抛错（http 层转 409）。
 export function renameTag(db: Database.Database, id: number, name: string): TagRow | null {
   const info = db.prepare('UPDATE tags SET name = ? WHERE id = ?').run(name, id);
@@ -151,6 +184,12 @@ export function deleteTag(db: Database.Database, id: number): boolean {
     const info = db.prepare('DELETE FROM tags WHERE id = ?').run(id);
     return info.changes > 0;
   })();
+}
+
+// 按档删关联（2026-08-24）：只删该档位的关系行，tags 实体保留（空标签留着下次直接用）。
+// 与 deleteTag（全档 + 删实体）互补，供标签库「仅删某档」操作。返回实删关系数。
+export function deleteTagRelations(db: Database.Database, id: number, scope: TagSource): number {
+  return db.prepare('DELETE FROM video_tags WHERE tag_id = ? AND source = ?').run(id, scope).changes;
 }
 
 // 批量查视频的关系档标签（enrichItems 富化用）：video_id -> [{name, source}]

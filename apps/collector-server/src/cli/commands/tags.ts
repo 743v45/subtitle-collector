@@ -7,14 +7,16 @@ import { ServerClient, ServerUnreachableError, ServerResponseError } from '../ht
 import { emitResult, emitError } from '../output.js';
 import { getCliContext } from '../context.js';
 import { openReadonlyDb } from '../db.js';
-import { listTags, type TagSource } from '../../db/tags.js';
+import { listTags, TAG_SORT_KEYS, type TagSource, type TagSortKey } from '../../db/tags.js';
+import { parseDesc } from './videos.js';
 
 // ── 纯处理函数（可测：注入依赖，不直接碰 stdout/exit） ──
 
-/** `tags list`：直读只读 DB（不走 server）。scope 过滤档位（该档计数 >0 才列）；source 平台收窄计数。 */
+/** `tags list`：直读只读 DB（不走 server）。scope 过滤档位（该档计数 >0 才列）；source 平台收窄计数；
+ *  sort=count（默认，按 scope 档计数）/name/created_at，desc 缺省 true（计数榜降序=现状）。 */
 export function tagsList(
   dbPath: string,
-  opts: { scope?: TagSource; source?: string; q?: string; topN?: number },
+  opts: { scope?: TagSource; source?: string; q?: string; topN?: number; sort?: TagSortKey; desc?: boolean },
 ): { items: ReturnType<typeof listTags>; total: number } {
   const db = openReadonlyDb(dbPath);
   try {
@@ -72,6 +74,8 @@ export function buildTagsCommand(): Command {
     .option('--source <src>', '平台过滤（bilibili|youtube），计数只算该平台视频')
     .option('--q <keyword>', '名称模糊')
     .option('--topN <n>', '最多返回条数（默认 500）', '500')
+    .option('--sort <key>', `排序键：${TAG_SORT_KEYS.join('|')}（count 语义跟随 --scope 档）`)
+    .option('--desc [value]', '降序（默认降序；升序传 --desc=false）')
     .action((opts) => {
       const ctx = getCliContext();
       try {
@@ -83,11 +87,18 @@ export function buildTagsCommand(): Command {
           emitError(`--source 必须是 bilibili/youtube`, "ARGS");
           return;
         }
+        // sort 白名单校验（非法 → ARGS 退 2，对齐 HTTP 400 口径）
+        if (opts.sort !== undefined && !(TAG_SORT_KEYS as readonly string[]).includes(opts.sort)) {
+          emitError(`非法 --sort: ${opts.sort}（可选: ${TAG_SORT_KEYS.join('|')}）`, "ARGS");
+          return;
+        }
         emitResult(tagsList(ctx.dbPath, {
           scope: opts.scope as TagSource | undefined,
           source: opts.source,
           q: opts.q,
           topN: Math.min(500, Math.max(1, Number(opts.topN) || 500)),
+          sort: opts.sort as TagSortKey | undefined,
+          desc: parseDesc(opts.desc),
         }), ctx.format);
       } catch (err) {
         emitError(`读取标签库失败: ${(err as Error).message}`, 'DB_UNREADABLE');

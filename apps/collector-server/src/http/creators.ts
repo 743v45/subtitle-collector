@@ -4,8 +4,8 @@
 // 沿用 http/queries.ts 范式（本地 json + readJsonBody + 正则路由）。
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type Database from 'better-sqlite3';
-import { listCreators, getCreator, setCreatorCategory } from '../db/queries.js';
-import { json, readJsonBody } from './http-util.js';
+import { listCreators, getCreator, setCreatorCategory, CREATOR_SORT_KEYS, type CreatorSortKey } from '../db/queries.js';
+import { json, readJsonBody, parseSortParams } from './http-util.js';
 
 export async function handleCreatorsHttp(req: IncomingMessage, res: ServerResponse, db: Database.Database): Promise<void> {
   const url = new URL(req.url ?? '/', 'http://localhost');
@@ -19,9 +19,10 @@ export async function handleCreatorsHttp(req: IncomingMessage, res: ServerRespon
     const source = qp('source'); // 平台过滤（bilibili|youtube）
     const page = Math.max(1, Number(url.searchParams.get('page') ?? 1));
     const size = Math.min(100, Math.max(1, Number(url.searchParams.get('size') ?? 20)));
-    const sortRaw = qp('sort');
-    const sort = sortRaw === 'fans' || sortRaw === 'video_count' ? sortRaw : 'first_seen';
-    const r = listCreators(db, { q, category, source, scope: scopeRaw === 'agent' || scopeRaw === 'human' ? scopeRaw : undefined }, page, size, sort);
+    // sort 非法 → 400（2026-08-25 起取代旧「非法静默回落」）；desc 缺省 true（旧恒 DESC 行为不变）
+    const sp = parseSortParams(url.searchParams, CREATOR_SORT_KEYS, 'first_seen');
+    if ('error' in sp) { json(res, 400, { ok: false, error: sp.error }); return; }
+    const r = listCreators(db, { q, category, source, scope: scopeRaw === 'agent' || scopeRaw === 'human' ? scopeRaw : undefined }, page, size, sp.sort as CreatorSortKey, sp.desc);
     json(res, 200, { ok: true, ...r });
     return;
   }

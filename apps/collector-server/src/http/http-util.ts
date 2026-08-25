@@ -1,5 +1,6 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { isTagSource, type TagSource } from '../db/tags.js';
+import { parseBool } from './filter.js';
 
 // HTTP 层共享工具：响应包络、JSON body 读取、handler 异常兜底。
 // 单一实现收敛此前散在 8 个 handler 的拷贝（语义已分叉：tasks/clients 静默返回 {}，
@@ -36,6 +37,23 @@ export function parseTagScope(v: unknown, required: boolean): { ok: true; scope?
   if (v === 'bili' || v === 'season') return { ok: false, error: 'bili/season tags are read-only (from video extra)' };
   if (!isTagSource(v)) return { ok: false, error: 'scope must be manual|batch|ai|system' };
   return { ok: true, scope: v };
+}
+
+// sort/desc 查询参数严格解析（2026-08-25 全端点排序统一口径）：
+//   - sort 缺省 → defaultKey；非法 → error（调用方 400，错误列全合法键）——取代旧行为的静默回落，
+//     「以为排了其实没排」是暗坑；先例：stats groupBy 非法 400。
+//   - desc 缺省 true（各列表端点现状默认均为最新/最多在前）；值非法（非 true/1/yes/false/0/no）
+//     回落 true——布尔类参数宽松（对齐 page/size/topN），只有枚举类 sort 严格。
+export function parseSortParams(
+  p: URLSearchParams,
+  keys: readonly string[],
+  defaultKey: string,
+): { sort: string; desc: boolean } | { error: string } {
+  const raw = p.get('sort');
+  if (raw !== null && !keys.includes(raw)) {
+    return { error: `sort must be one of ${keys.join('|')}` };
+  }
+  return { sort: raw ?? defaultKey, desc: parseBool(p.get('desc')) ?? true };
 }
 
 // handler 异常兜底：单个请求的失败（含非法 JSON）只影响该请求，

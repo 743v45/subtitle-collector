@@ -1,11 +1,12 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type Database from 'better-sqlite3';
 import { getVideo, getVersionPayload } from '../db/queries.js';
-import { listVideosFiltered, getChanges, latestTaskStatusByVideoIds, type VideoSortKey, type VideoListItemAdvanced, type ChangeFilter } from '../db/advanced.js';
-import { parseVideoFilter, parseBool } from './filter.js';
+import { listVideosFiltered, getChanges, latestTaskStatusByVideoIds, VIDEO_SORT_KEYS, type VideoSortKey, type VideoListItemAdvanced, type ChangeFilter } from '../db/advanced.js';
+import { CHANGE_SORT_KEYS, type ChangeSortKey } from '../db/sort.js';
+import { parseVideoFilter } from './filter.js';
 import { applyVideoTags, removeVideoTags, getVideoTagsByVideoIds, getVideoTagsForDetail, type TagSource } from '../db/tags.js';
 import { getTagPriority, type TagPrioritySource } from '../db/settings.js';
-import { json, readJsonBody, parseTagScope } from './http-util.js';
+import { json, readJsonBody, parseTagScope, parseSortParams } from './http-util.js';
 
 // 合并 bili（extra.tags）+ season（extra.ugc_season.title）与关系三档，同名按 tag_priority 取优先档（winner）。
 // 列表用（去重）；详情要全档时传 keepAll=true。
@@ -38,8 +39,6 @@ function mergeTagDetails(
     return pa !== pb ? pa - pb : a.name.localeCompare(b.name);
   });
 }
-
-const SORT_KEYS: readonly VideoSortKey[] = ['first_seen', 'published_at', 'title', 'duration', 'view'];
 
 // 列表项富化：用 json_extract 从 extra 取 tid/tname/tags/view/season_title，并合并关系档标签按优先级 dedupe。
 // tags（兼容旧字段）= winner 标签名数组；tag_details = [{name, source}]（同名只保留优先级最高档）。
@@ -104,24 +103,25 @@ export async function handleQueryHttp(req: IncomingMessage, res: ServerResponse,
     if (untilParam != null && Number.isFinite(Number(untilParam))) filter.until = Number(untilParam);
     const page = Math.max(1, Math.floor(Number(url.searchParams.get('page') ?? '1')) || 1);
     const size = Math.min(100, Math.max(1, Math.floor(Number(url.searchParams.get('size') ?? '20')) || 20));
-    const data = getChanges(db, filter, page, size);
+    // sort 仅 changed_at 一个键（实体/字段文本排序无意义），但参数形态与其他列表端点统一；非法 → 400
+    const sp = parseSortParams(url.searchParams, CHANGE_SORT_KEYS, 'changed_at');
+    if ('error' in sp) { json(res, 400, { ok: false, error: sp.error }); return; }
+    const data = getChanges(db, filter, page, size, sp.sort as ChangeSortKey, sp.desc);
     json(res, 200, { ok: true, total: data.total, page: data.page, size: data.size, items: data.items });
     return;
   }
   if (pathname === '/api/videos') {
     const filter = parseVideoFilter(url.searchParams);
-    // sort：非法值落回默认 first_seen（不报错）
-    const sortRaw = url.searchParams.get('sort');
-    const sort: VideoSortKey = sortRaw && (SORT_KEYS as readonly string[]).includes(sortRaw)
-      ? (sortRaw as VideoSortKey)
-      : 'first_seen';
+    // sort：非法 → 400（2026-08-25 起取代旧「非法静默回落 first_seen」——以为排了其实没排是暗坑；
+    // 错误信息列全合法键，单一事实源 VIDEO_SORT_KEYS）
+    const sp = parseSortParams(url.searchParams, VIDEO_SORT_KEYS, 'first_seen');
+    if ('error' in sp) { json(res, 400, { ok: false, error: sp.error }); return; }
     // desc：缺省 true（兼容旧 /api/videos 的 first_seen DESC，最新在前）；显式 'false'/'0'/'no' → 升序
-    const desc = parseBool(url.searchParams.get('desc')) ?? true;
     // page/size：非法（NaN）回落默认，page≥1，size 夹在 1..100
     const page = Math.max(1, Math.floor(Number(url.searchParams.get('page') ?? '1')) || 1);
     const size = Math.min(100, Math.max(1, Math.floor(Number(url.searchParams.get('size') ?? '20')) || 20));
 
-    const data = listVideosFiltered(db, { ...filter, sort, desc, page, size });
+    const data = listVideosFiltered(db, { ...filter, sort: sp.sort as VideoSortKey, desc: sp.desc, page, size });
     json(res, 200, { ok: true, total: data.total, page: data.page, size: data.size, items: enrichItems(db, data.items) });
     return;
   }

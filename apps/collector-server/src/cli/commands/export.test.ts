@@ -253,7 +253,7 @@ test('resolveSubtitle: json 可往返 parse 回原 payload', () => {
 function makeItem(over: Partial<VideoListItemAdvanced>): VideoListItemAdvanced {
   return {
     id: 1, source: 'bilibili', source_vid: 'BV1', title: '标题A',
-    creator_name: 'Alpha UP', creator_source_uid: '1',
+    creator_name: 'Alpha UP', creator_source_uid: '1', creator_blocked: false,
     duration: 600, published_at: 1000, first_seen_at: 1000, track_count: 2,
     ...over,
   };

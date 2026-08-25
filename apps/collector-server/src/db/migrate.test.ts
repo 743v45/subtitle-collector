@@ -304,3 +304,18 @@ test('v10：同 (video_id, lan) 已有 type=3 轨时跳过旧 type=2 行（防 U
     assert.equal(t3row.track_type, 3, '既有 type=3 轨不受影响');
   } finally { db.close(); }
 });
+
+// ---- v15：creators.blocked 屏蔽标记（2026-08-24；v14 已被 clients 登录态迁移占用）----
+
+test('v15：旧库（creators 无 blocked 列）跑 runMigrations → 列补齐且存量行默认 0', () => {
+  const db = new Database(':memory:');
+  migrate(db);
+  db.exec('ALTER TABLE creators DROP COLUMN blocked');
+  db.exec("INSERT INTO creators (source, source_uid, first_seen_at, updated_at) VALUES ('bilibili', '9', 1, 1)");
+  runMigrations(db);
+  const cols = db.prepare('PRAGMA table_info(creators)').all() as Array<{ name: string }>;
+  assert.ok(cols.map((c) => c.name).includes('blocked'), 'creators.blocked 应被 v15 补齐');
+  const row = db.prepare('SELECT blocked FROM creators WHERE source_uid = 9').get() as { blocked: number };
+  assert.equal(row.blocked, 0, '存量行 blocked 默认 0');
+  db.close();
+});

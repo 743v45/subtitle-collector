@@ -5,6 +5,7 @@
 // | 轮次 | 范围 | 结果 | 备注 |
 // |---|---|---|---|
 // | R1 | list/get/get-by-id 三 action 成功 + ARGS（tid/since/sort/id 非数字）+ DB_UNREADABLE + NOT_FOUND | 通过 | |
+// | R2 | 排序：缺省降序对齐 HTTP + --desc=false 升序 + --sort updated_at + 非法 --desc ARGS | 通过 | 2026-08-25 全端点排序；pnpm qa 全绿 |
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -186,5 +187,34 @@ test('videos get-by-id：id 不存在 → NOT_FOUND 退 5', async () => {
     const r = await cli(args(dbPath, ['videos', 'get-by-id', '99999']));
     assert.equal(r.code, 5);
     assert.equal(JSON.parse(r.out).code, 'NOT_FOUND');
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+// ── 2026-08-25 全端点排序：默认降序（CLI 缺省从升序改降序对齐 HTTP）+ --desc=false 升序 + updated_at 新键 ──
+test('videos list：缺省降序（D,C,B,A）；--desc=false 升序；--sort updated_at', async () => {
+  const { db, dir, dbPath } = setup();
+  try {
+    // updated_at 确定值：V4 最近有动静（500 > 400 > 300 > 200）
+    const setUpdated = (sv: string, ts: number) => db.prepare('UPDATE videos SET updated_at = ? WHERE source_vid = ?').run(ts, sv);
+    setUpdated('BV1', T + 400);
+    setUpdated('BV2', T + 300);
+    setUpdated('BV3', T + 200);
+    setUpdated('BV4', T + 500);
+    // 缺省：first_seen DESC（V4>V3>V2>V1）——2026-08-25 起 CLI 缺省降序对齐 HTTP
+    let r = await cli(args(dbPath, ['videos', 'list']));
+    assert.equal(r.code, 0);
+    assert.deepEqual(JSON.parse(r.out).items.map((i: { title: string }) => i.title), ['标题D', '标题C', '标题B', '标题A']);
+    // --desc=false：升序（旧行为）
+    r = await cli(args(dbPath, ['videos', 'list', '--desc=false']));
+    assert.equal(r.code, 0);
+    assert.deepEqual(JSON.parse(r.out).items.map((i: { title: string }) => i.title), ['标题A', '标题B', '标题C', '标题D']);
+    // --sort updated_at（新键）：V4(500) > V1(400) > V2(300) > V3(200)
+    r = await cli(args(dbPath, ['videos', 'list', '--sort', 'updated_at']));
+    assert.equal(r.code, 0);
+    assert.deepEqual(JSON.parse(r.out).items.map((i: { title: string }) => i.title), ['标题D', '标题A', '标题B', '标题C']);
+    // 非法 --desc 值 → ARGS 退 2
+    r = await cli(args(dbPath, ['videos', 'list', '--desc=maybe']));
+    assert.equal(r.code, 2);
+    assert.match(r.err, /非法 --desc: maybe/);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });

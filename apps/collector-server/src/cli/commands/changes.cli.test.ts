@@ -5,6 +5,7 @@
 // | 轮次 | 范围 | 结果 | 备注 |
 // |---|---|---|---|
 // | R1 | changes list 成功（entity 过滤）+ ARGS（entity-id/since）+ DB_UNREADABLE | 通过 | ingest 自带 change_log 种子 |
+// | R2 | 排序：--desc=false 升序断言 + 非法 --sort ARGS 退 2 | 通过 | 2026-08-25 全端点排序；pnpm qa 全绿 |
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -120,4 +121,21 @@ test('changes list：DB 缺失 → DB_UNREADABLE 退 4', async () => {
   const r = await cli(args(join(tmpdir(), 'cli-changes-no-such.db'), ['changes', 'list']));
   assert.equal(r.code, 4);
   assert.equal(JSON.parse(r.out).code, 'DB_UNREADABLE');
+});
+
+// ── 2026-08-25 全端点排序：--sort/--desc 透传 + 非法 --sort ARGS ──
+test('changes list：--desc=false 升序（changed_at 最旧在前）；--sort 非法 → ARGS 退 2', async () => {
+  const { dir, dbPath } = setup();
+  try {
+    const r = await cli(args(dbPath, ['changes', 'list', '--desc=false']));
+    assert.equal(r.code, 0);
+    const items = JSON.parse(r.out).items as Array<{ changed_at: number }>;
+    assert.ok(items.length >= 2);
+    // 升序：changed_at 非降
+    for (let i = 1; i < items.length; i++) assert.ok(items[i - 1].changed_at <= items[i].changed_at, '升序 changed_at 非降');
+    // 非法 sort 键 → ARGS 退 2（单键端点）
+    const bad = await cli(args(dbPath, ['changes', 'list', '--sort', 'bogus']));
+    assert.equal(bad.code, 2);
+    assert.match(bad.err, /非法 --sort: bogus（可选: changed_at）/);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
 });

@@ -1,5 +1,7 @@
 import type Database from 'better-sqlite3';
 import type { VideoDetail, VideoListItem, VersionRow } from './queries.js';
+import { buildOrderBy, aggOrderBy, AGG_SORT_KEYS, CHANGE_SORT_KEYS, type AggregateSortKey, type ChangeSortKey } from './sort.js';
+import { aggregateStatsByTag } from './aggregate-tag.js';
 
 // CLI 专用扩展查询（不碰 queries.ts 以保 HTTP 兼容）。设计文档 §3.1/§3.2/§5。
 // extra 是 TEXT/JSON，分区/标签/stat 过滤一律走 SQLite json_extract；first_seen/changed 比对为毫秒时间戳。
@@ -28,9 +30,12 @@ export interface VideoFilter {
   min_view?: number;         // extra.stat.view 范围（绝对值）
   max_view?: number;
   date_field?: 'first_seen' | 'published_at';  // since/until 比对的列，默认 first_seen
+  exclude_blocked?: boolean; // 排除已屏蔽 UP 的视频（undefined=不过滤；CLI 消费命令默认置 true，web/HTTP 不传即全量）
 }
 
-export type VideoSortKey = 'first_seen' | 'published_at' | 'title' | 'duration' | 'view';
+export type VideoSortKey = 'first_seen' | 'published_at' | 'title' | 'duration' | 'view' | 'updated_at';
+// 合法排序键清单（HTTP/CLI 校验与 SORT_EXPR 的单一事实源；2026-08-25 全端点排序）
+export const VIDEO_SORT_KEYS: readonly VideoSortKey[] = ['first_seen', 'published_at', 'title', 'duration', 'view', 'updated_at'];
 
 export interface ListFilter extends VideoFilter {
   sort?: VideoSortKey;
@@ -39,10 +44,11 @@ export interface ListFilter extends VideoFilter {
   size?: number;
 }
 
-// list items：在 queries.ts VideoListItem 基础上补 published_at / creator_source_uid
+// list items：在 queries.ts VideoListItem 基础上补 published_at / creator_source_uid / creator_blocked
 export interface VideoListItemAdvanced extends VideoListItem {
   published_at: number | null;
   creator_source_uid: string | null;
+  creator_blocked: boolean;
 }
 
 export interface PageResult<T> {
@@ -77,6 +83,7 @@ export type StatsGroupBy = 'creator' | 'tname' | 'lang' | 'track-type' | 'tag' |
 export interface KeyValue {
   key: string;
   count: number;
+  blocked?: boolean; // 仅 groupBy=creator 时置位（该 UP 已屏蔽，web 聚合榜标识用）
 }
 
 export interface Overview {
@@ -89,6 +96,8 @@ export interface Overview {
   today_videos: number; // 当日本地 00:00 起 first_seen_at 新入库视频数（采集页摘要行）
   first_seen_min: number | null;
   first_seen_max: number | null;
+  blocked_videos: number;   // 已屏蔽 UP 名下视频数（恒返回：web 展示与 CLI 可观察性）
+  blocked_creators: number; // 已屏蔽 UP 数
 }
 
 // 标签匹配 EXISTS 片段：一个标签名（精确 = 或模糊 LIKE）× 档位（tag_source 过滤）。
@@ -131,6 +140,9 @@ function tagMatchCond(name: string, mode: 'exact' | 'like', tagSource?: string[]
 function buildVideoWhere(f: VideoFilter): { where: string; params: unknown[] } {
   const conds: string[] = [];
   const params: unknown[] = [];
+  // 排除已屏蔽 UP：参数化写法保 LEFT JOIN 下无 UP 的视频保留（COALESCE）；falsy → 0 → 恒真不过滤
+  conds.push('(? = 0 OR COALESCE(c.blocked, 0) = 0)');
+  params.push(Number(Boolean(f.exclude_blocked)));
   if (f.q) {
     conds.push('(v.title LIKE ? OR c.name LIKE ?)');
     params.push(`%${f.q}%`, `%${f.q}%`);
@@ -228,7 +240,11 @@ const SORT_EXPR: Record<VideoSortKey, string> = {
   title: 'v.title',
   duration: 'v.duration',
   view: "CAST(json_extract(v.extra, '$.stat.view') AS INTEGER)",
+  updated_at: 'v.updated_at',
 };
+
+// 可空排序键（NULLS LAST 不论升降）：published_at/duration 可空、view 经 json_extract 可能 NULL；其余 NOT NULL。
+const SORT_NULLABLE: ReadonlySet<VideoSortKey> = new Set(['published_at', 'duration', 'view']);
 
 // 视频列表（多过滤 + 多排序键 + 分页）。返回 {total, page, size, items}。
 export function listVideosFiltered(db: Database.Database, filter: ListFilter): PageResult<VideoListItemAdvanced> {
@@ -241,23 +257,34 @@ export function listVideosFiltered(db: Database.Database, filter: ListFilter): P
     `SELECT COUNT(*) as c FROM videos v LEFT JOIN creators c ON c.id = v.creator_id ${where}`,
   ).get(...params) as { c: number };
 
-  const sortExpr = SORT_EXPR[filter.sort ?? 'first_seen'];
-  const dir = filter.desc ? 'DESC' : 'ASC';
-  // id 作 tiebreaker 保证分页稳定（方向跟随主排序键）
-  const orderBy = `ORDER BY ${sortExpr} ${dir}, v.id ${dir}`;
+  const sortKey = filter.sort ?? 'first_seen';
+  // id tiebreak 保分页稳定（方向随主键）、可空键 NULLS LAST（见 db/sort.ts）
+  const orderBy = buildOrderBy(SORT_EXPR[sortKey], filter.desc ?? true, { nullable: SORT_NULLABLE.has(sortKey), tieExpr: 'v.id' });
 
   const items = db.prepare(`
     SELECT v.id, v.source, v.source_vid, v.title,
            c.name as creator_name, c.source_uid as creator_source_uid,
+           COALESCE(c.blocked, 0) as creator_blocked,
            v.duration, v.published_at, v.first_seen_at,
            (SELECT COUNT(*) FROM subtitle_tracks t WHERE t.video_id = v.id) as track_count
     FROM videos v LEFT JOIN creators c ON c.id = v.creator_id
     ${where}
     ${orderBy}
     LIMIT ? OFFSET ?
-  `).all(...params, size, offset) as VideoListItemAdvanced[];
+  `).all(...params, size, offset) as Array<Omit<VideoListItemAdvanced, 'creator_blocked'> & { creator_blocked: number }>;
 
-  return { total: totalRow.c, page, size, items };
+  // blocked 存 0/1，出口统一布尔化
+  const mapped = items.map((r) => ({ ...r, creator_blocked: !!r.creator_blocked }));
+  return { total: totalRow.c, page, size, items: mapped };
+}
+
+// 过滤命中总数（不分页）：导出可观察性用（blocked_filtered = 不排除计数 − 排除计数）。
+export function countVideosFiltered(db: Database.Database, filter: VideoFilter): number {
+  const { where, params } = buildVideoWhere(filter);
+  const row = db.prepare(
+    `SELECT COUNT(*) as c FROM videos v LEFT JOIN creators c ON c.id = v.creator_id ${where}`,
+  ).get(...params) as { c: number };
+  return row.c;
 }
 
 // 优先级 / is_default 逻辑镜像 queries.ts getVideo，保持一致（queries.ts 的私有 helper 不导出，这里原地复刻一份）。
@@ -283,9 +310,10 @@ const versionPriority = (origin: string): number => {
 // 按 videos.id 取详情（轨+版本，默认标记逻辑同 getVideo）
 export function getVideoByDbId(db: Database.Database, id: number): VideoDetail | null {
   const video = db.prepare(
-    'SELECT v.*, c.name as creator_name FROM videos v LEFT JOIN creators c ON c.id = v.creator_id WHERE v.id = ?',
+    'SELECT v.*, c.name as creator_name, COALESCE(c.blocked, 0) as creator_blocked FROM videos v LEFT JOIN creators c ON c.id = v.creator_id WHERE v.id = ?',
   ).get(id) as Record<string, unknown> | undefined;
   if (!video) return null;
+  video.creator_blocked = !!video.creator_blocked;
   const tracks = db.prepare('SELECT * FROM subtitle_tracks WHERE video_id = ? ORDER BY id').all(id) as Array<{
     id: number; lan: string | null; lan_doc: string | null; track_type: number | null;
   }>;
@@ -309,13 +337,8 @@ export function getVideoByDbId(db: Database.Database, id: number): VideoDetail |
   return result;
 }
 
-// change_log 列表（过滤 + 分页）。返回 {total, page, size, items}。
-export function getChanges(
-  db: Database.Database,
-  filter: ChangeFilter,
-  page: number,
-  size: number,
-): PageResult<ChangeRow> {
+// change_log 列表（过滤 + 分页 + 排序，键仅 changed_at——单键但参数形态与其他端点统一；缺省 DESC）。
+export function getChanges(db: Database.Database, filter: ChangeFilter, page: number, size: number, sort: ChangeSortKey = 'changed_at', desc = true): PageResult<ChangeRow> {
   const p = page > 0 ? page : 1;
   const s = size > 0 ? size : 20;
   const offset = (p - 1) * s;
@@ -360,95 +383,56 @@ export function getChanges(
          WHEN cl.entity = 'creator' THEN (SELECT source FROM creators WHERE id = cl.entity_id)
          ELSE NULL
        END AS source
-     FROM change_log cl ${where} ORDER BY changed_at DESC, id DESC LIMIT ? OFFSET ?`,
+     FROM change_log cl ${where} ${buildOrderBy('cl.changed_at', desc, { tieExpr: 'cl.id' })} LIMIT ? OFFSET ?`,
   ).all(...params, s, offset) as ChangeRow[];
   return { total: totalRow.c, page: p, size: s, items };
 }
 
-// 分组聚合计数（count desc 截 topN，默认 20）。filter 同 list。
+// 分组聚合计数（topN 截断，默认 20）。filter 同 list；sort 缺省 count DESC, key ASC（与旧硬编码一致）。
 export function aggregateStats(
-  db: Database.Database,
-  groupBy: StatsGroupBy,
-  filter: VideoFilter = {},
-  topN = 20,
+  db: Database.Database, groupBy: StatsGroupBy, filter: VideoFilter = {}, topN = 20,
+  sort: AggregateSortKey = 'count', desc = true,
 ): KeyValue[] {
   const { where, params } = buildVideoWhere(filter);
   let sql: string;
   switch (groupBy) {
     case 'creator':
-      sql = `SELECT COALESCE(c.name, '(unknown)') as key, COUNT(*) as count
+      sql = `SELECT COALESCE(c.name, '(unknown)') as key, COUNT(*) as count, MAX(COALESCE(c.blocked, 0)) as blocked
              FROM videos v LEFT JOIN creators c ON c.id = v.creator_id ${where}
-             GROUP BY c.name ORDER BY count DESC, key ASC LIMIT ?`;
+             GROUP BY c.name ORDER BY ${aggOrderBy(sort, desc)} LIMIT ?`;
       break;
     case 'source':
       sql = `SELECT COALESCE(v.source, '(unknown)') as key, COUNT(*) as count
              FROM videos v LEFT JOIN creators c ON c.id = v.creator_id ${where}
-             GROUP BY v.source ORDER BY count DESC, key ASC LIMIT ?`;
+             GROUP BY v.source ORDER BY ${aggOrderBy(sort, desc)} LIMIT ?`;
       break;
     case 'tname':
       sql = `SELECT COALESCE(json_extract(v.extra, '$.tname'), '(unknown)') as key, COUNT(*) as count
              FROM videos v LEFT JOIN creators c ON c.id = v.creator_id ${where}
-             GROUP BY json_extract(v.extra, '$.tname') ORDER BY count DESC, key ASC LIMIT ?`;
+             GROUP BY json_extract(v.extra, '$.tname') ORDER BY ${aggOrderBy(sort, desc)} LIMIT ?`;
       break;
     case 'lang':
       sql = `SELECT COALESCE(t.lan, '(unknown)') as key, COUNT(DISTINCT v.id) as count
              FROM videos v JOIN subtitle_tracks t ON t.video_id = v.id
              LEFT JOIN creators c ON c.id = v.creator_id ${where}
-             GROUP BY t.lan ORDER BY count DESC, key ASC LIMIT ?`;
+             GROUP BY t.lan ORDER BY ${aggOrderBy(sort, desc)} LIMIT ?`;
       break;
     case 'track-type':
       sql = `SELECT COALESCE(t.track_type, '(unknown)') as key, COUNT(DISTINCT v.id) as count
              FROM videos v JOIN subtitle_tracks t ON t.video_id = v.id
              LEFT JOIN creators c ON c.id = v.creator_id ${where}
-             GROUP BY t.track_type ORDER BY count DESC, key ASC LIMIT ?`;
+             GROUP BY t.track_type ORDER BY ${aggOrderBy(sort, desc)} LIMIT ?`;
       break;
-    case 'tag': {
-      // 五档并聚：关系表三档 UNION ALL bili extra json_each + season extra json_extract，
-      // 外层 COUNT(DISTINCT video_id)（同名多档并存时按 1 计——聚合语义是「有几个视频带此标签」）。
-      // tag_source 过滤：只含 bili/season → 只对应 extra 分支；只含关系档 → 第一分支带 IN；省略 → 全查。
-      const allSources = ['manual', 'batch', 'ai', 'bili', 'season'];
-      const sources = filter.tag_source?.length
-        ? filter.tag_source.filter((s) => allSources.includes(s))
-        : allSources;
-      const relSources = sources.filter((s) => s !== 'bili' && s !== 'season');
-      const parts: string[] = [];
-      const params2: unknown[] = [];
-      if (relSources.length > 0) {
-        const placeholders = relSources.map(() => '?').join(',');
-        const relWhere = where ? `${where} AND vt.source IN (${placeholders})` : `WHERE vt.source IN (${placeholders})`;
-        parts.push(
-          `SELECT vt.video_id as vid, t.name as name FROM video_tags vt
-             JOIN tags t ON t.id = vt.tag_id
-             JOIN videos v ON v.id = vt.video_id
-             LEFT JOIN creators c ON c.id = v.creator_id ${relWhere}`,
-        );
-        params2.push(...params, ...relSources);
-      }
-      if (sources.includes('bili')) {
-        parts.push(
-          `SELECT v.id as vid, json_extract(je.value, '$.tag_name') as name
-             FROM videos v LEFT JOIN creators c ON c.id = v.creator_id, json_each(v.extra, '$.tags') je
-             ${where}`,
-        );
-        params2.push(...params);
-      }
-      if (sources.includes('season')) {
-        parts.push(
-          `SELECT v.id as vid, json_extract(v.extra, '$.ugc_season.title') as name
-             FROM videos v LEFT JOIN creators c ON c.id = v.creator_id ${where}`,
-        );
-        params2.push(...params);
-      }
-      if (parts.length === 0) return [];
-      sql = `SELECT name as key, COUNT(DISTINCT vid) as count FROM (${parts.join(' UNION ALL ')})
-             WHERE name IS NOT NULL GROUP BY name ORDER BY count DESC, key ASC LIMIT ?`;
-      // 注意：两个分支各自绑定 params + 自身的 IN 占位；SQL 的 ? 顺序 = 分支顺序，params2 已按此排列。
-      const rows = db.prepare(sql).all(...params2, topN) as Array<{ key: string | null; count: number }>;
-      return rows.map((r) => ({ key: r.key == null ? '(unknown)' : String(r.key), count: r.count }));
-    }
+    case 'tag': // 五档并聚在 aggregate-tag.ts（2026-08-25 抽出偿还 max-lines 台账），WHERE/参数同构传入
+      return aggregateStatsByTag(db, where, params, filter.tag_source, topN, sort, desc);
   }
-  const rows = db.prepare(sql).all(...params, topN) as Array<{ key: string | number | null; count: number }>;
-  return rows.map((r) => ({ key: r.key == null ? '(unknown)' : String(r.key), count: r.count }));
+  const rows = db.prepare(sql).all(...params, topN) as Array<{ key: string | number | null; count: number; blocked?: number | null }>;
+  return rows.map((r) => ({
+    key: r.key == null ? '(unknown)' : String(r.key),
+    count: r.count,
+    // 仅 creator 分支且已屏蔽时置位（web 聚合榜按 truthy 判断，未屏蔽不带键保持存量断言兼容）
+    ...((groupBy === 'creator' && r.blocked) ? { blocked: true } : {}),
+  }));
 }
 
 // 每视频最近一次采集任务状态（collect_tasks 按 (source, source_vid) 取 id 最大一条；无任务 → null）。
@@ -470,40 +454,49 @@ export function latestTaskStatusByVideoIds(db: Database.Database, ids: number[])
   return map;
 }
 
-// 总览计数：视频/轨/版本/UP/语言/分区数 + first_seen 时间范围。
+// 总览计数：视频/轨/版本/UP/语言/分区数 + first_seen 时间范围 + 屏蔽口径计数。
 // languages 取 subtitle_tracks.lan 去重计数；categories 取 extra.tname 去重计数。
-// source 给定时全口径按平台收窄（轨/版本经 video_id 溯源归属平台）；两版 SQL 分支写死，防占位符错位。
-export function countOverview(db: Database.Database, source?: string): Overview {
+// source 给定时全口径按平台收窄（轨/版本经 video_id 溯源归属平台）；
+// opts.exclude_blocked 时视频级指标全部排除已屏蔽 UP（tracks/versions 经 JOIN videos 关联排除），
+// creators 恒全量（UP 总数与屏蔽数并列展示才有意义）。模板统一拼接，params 按子查询出现顺序绑定。
+export function countOverview(
+  db: Database.Database,
+  source?: string,
+  opts: { exclude_blocked?: boolean } = {},
+): Overview {
   // 当日本地零点（ms epoch）：today_videos 的下界。跨时区按 server 本地时区算。
   const todayStart = new Date();
   todayStart.setHours(0, 0, 0, 0);
-  if (source == null) {
-    return db.prepare(`
-      SELECT
-        (SELECT COUNT(*) FROM videos) as videos,
-        (SELECT COUNT(*) FROM subtitle_tracks) as tracks,
-        (SELECT COUNT(*) FROM subtitle_versions) as versions,
-        (SELECT COUNT(*) FROM creators) as creators,
-        (SELECT COUNT(DISTINCT lan) FROM subtitle_tracks WHERE lan IS NOT NULL) as languages,
-        (SELECT COUNT(DISTINCT json_extract(extra, '$.tname')) FROM videos WHERE json_extract(extra, '$.tname') IS NOT NULL) as categories,
-        (SELECT COUNT(*) FROM videos WHERE first_seen_at >= ?) as today_videos,
-        (SELECT MIN(first_seen_at) FROM videos) as first_seen_min,
-        (SELECT MAX(first_seen_at) FROM videos) as first_seen_max
-    `).get(todayStart.getTime()) as Overview;
-  }
-  // 平台版：10 个占位符按出现顺序绑定（videos/tracks/versions/creators/languages/categories/today/min/max）
-  return db.prepare(`
+  const nb = opts.exclude_blocked
+    ? 'NOT EXISTS (SELECT 1 FROM creators bc WHERE bc.id = v.creator_id AND bc.blocked = 1)'
+    : '';
+  const src = source ? 'v.source = ?' : '';
+  // 视频级子查询的 WHERE 拼接（source + 屏蔽排除 + 调用方附加条件）
+  const vw = (extra = '') => {
+    const conds = [src, nb, extra].filter(Boolean);
+    return conds.length ? ` WHERE ${conds.join(' AND ')}` : '';
+  };
+  // 占位符绑定：子查询含 source 条件时按出现顺序先 push(source)，再 push子查询自身参数（如 today 的零点）
+  const params: unknown[] = [];
+  const bind = (...rest: unknown[]) => { if (source) params.push(source); params.push(...rest); };
+  const sql = `
     SELECT
-      (SELECT COUNT(*) FROM videos WHERE source = ?) as videos,
-      (SELECT COUNT(*) FROM subtitle_tracks WHERE video_id IN (SELECT id FROM videos WHERE source = ?)) as tracks,
-      (SELECT COUNT(*) FROM subtitle_versions WHERE track_id IN (SELECT id FROM subtitle_tracks WHERE video_id IN (SELECT id FROM videos WHERE source = ?))) as versions,
-      (SELECT COUNT(*) FROM creators WHERE source = ?) as creators,
-      (SELECT COUNT(DISTINCT lan) FROM subtitle_tracks WHERE lan IS NOT NULL AND video_id IN (SELECT id FROM videos WHERE source = ?)) as languages,
-      (SELECT COUNT(DISTINCT json_extract(extra, '$.tname')) FROM videos WHERE json_extract(extra, '$.tname') IS NOT NULL AND source = ?) as categories,
-      (SELECT COUNT(*) FROM videos WHERE first_seen_at >= ? AND source = ?) as today_videos,
-      (SELECT MIN(first_seen_at) FROM videos WHERE source = ?) as first_seen_min,
-      (SELECT MAX(first_seen_at) FROM videos WHERE source = ?) as first_seen_max
-  `).get(source, source, source, source, source, source, todayStart.getTime(), source, source, source) as Overview;
+      (SELECT COUNT(*) FROM videos v${vw()}) as videos,
+      (SELECT COUNT(*) FROM subtitle_tracks st JOIN videos v ON v.id = st.video_id${vw()}) as tracks,
+      (SELECT COUNT(*) FROM subtitle_versions sv JOIN subtitle_tracks st ON st.id = sv.track_id JOIN videos v ON v.id = st.video_id${vw()}) as versions,
+      (SELECT COUNT(*) FROM creators${source ? ' WHERE source = ?' : ''}) as creators,
+      (SELECT COUNT(DISTINCT st.lan) FROM subtitle_tracks st JOIN videos v ON v.id = st.video_id${vw('st.lan IS NOT NULL')}) as languages,
+      (SELECT COUNT(DISTINCT json_extract(v.extra, '$.tname')) FROM videos v${vw("json_extract(v.extra, '$.tname') IS NOT NULL")}) as categories,
+      (SELECT COUNT(*) FROM videos v${vw('v.first_seen_at >= ?')}) as today_videos,
+      (SELECT MIN(v.first_seen_at) FROM videos v${vw()}) as first_seen_min,
+      (SELECT MAX(v.first_seen_at) FROM videos v${vw()}) as first_seen_max,
+      (SELECT COUNT(*) FROM videos v JOIN creators bc ON bc.id = v.creator_id WHERE bc.blocked = 1${source ? ' AND v.source = ?' : ''}) as blocked_videos,
+      (SELECT COUNT(*) FROM creators WHERE blocked = 1${source ? ' AND source = ?' : ''}) as blocked_creators
+  `;
+  // 绑定顺序 = 子查询出现顺序：videos/tracks/versions/creators/languages/categories/today(+零点)/min/max/blocked_videos/blocked_creators
+  bind(); bind(); bind(); bind(); bind(); bind();
+  bind(todayStart.getTime()); bind(); bind(); bind(); bind();
+  return db.prepare(sql).get(...params) as Overview;
 }
 
 // 分平台总览（overview 接口/命令用）：全库总 + 按库内出现的平台逐个收窄。

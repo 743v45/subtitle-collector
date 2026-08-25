@@ -5,6 +5,7 @@
 // | 轮次 | 范围 | 结果 | 备注 |
 // |---|---|---|---|
 // | R1 | overview + count --by creator/lang 成功；--by/--top/--since 非法 ARGS；DB 缺失 DB_UNREADABLE | 通过 | |
+// | R2 | 排序：count --sort key 升降 + 非法 --sort ARGS 退 2 | 通过 | 2026-08-25 全端点排序；pnpm qa 全绿 |
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -162,4 +163,23 @@ test('stats count：DB 缺失 → DB_UNREADABLE 退 4', async () => {
   const r = await cli(args(join(tmpdir(), 'cli-stats-no-such.db'), ['stats', 'count', '--by', 'creator']));
   assert.equal(r.code, 4);
   assert.equal(JSON.parse(r.out).code, 'DB_UNREADABLE');
+});
+
+// ── 2026-08-25 全端点排序：count --sort/--desc 透传 + 非法 --sort ARGS ──
+test('stats count：--sort key 升降 + 非法 --sort → ARGS 退 2', async () => {
+  const { dir, dbPath } = setup();
+  try {
+    // --sort key --desc=false：分组值字典序升序
+    const r = await cli(args(dbPath, ['stats', 'count', '--by', 'creator', '--sort', 'key', '--desc=false']));
+    assert.equal(r.code, 0);
+    const keys = (JSON.parse(r.out) as Array<{ key: string }>).map((i) => i.key);
+    assert.deepEqual([...keys].sort(), keys, 'key 升序');
+    // --sort key（缺省 desc）：降序
+    const r2 = await cli(args(dbPath, ['stats', 'count', '--by', 'creator', '--sort', 'key']));
+    assert.deepEqual((JSON.parse(r2.out) as Array<{ key: string }>).map((i) => i.key), [...keys].reverse(), 'key 降序');
+    // 非法 --sort → ARGS 退 2
+    const bad = await cli(args(dbPath, ['stats', 'count', '--by', 'creator', '--sort', 'bogus']));
+    assert.equal(bad.code, 2);
+    assert.match(bad.err, /非法 --sort: bogus（可选: count\|key）/);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
 });

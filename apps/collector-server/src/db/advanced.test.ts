@@ -12,6 +12,7 @@ import {
   getChanges,
   aggregateStats,
   countOverview,
+  countVideosFiltered,
 } from './advanced.js';
 
 function freshDb(): { db: Database.Database; dir: string } {
@@ -85,15 +86,18 @@ function setup(): { db: Database.Database; dir: string; ids: Record<string, numb
 
 const titles = (items: Array<{ title: string }>) => items.map((i) => i.title);
 
-test('listVideosFiltered: 默认 sort=first_seen asc，分页正确，items 含 published_at / creator_source_uid', () => {
+test('listVideosFiltered: 缺省 sort=first_seen desc（2026-08-25 起 db 层缺省降序），显式 desc:false 升序', () => {
   const { db, dir, ids } = setup();
   try {
-    const all = listVideosFiltered(db, { sort: 'first_seen' });
+    // 缺省：first_seen DESC（最新在前，与 HTTP/web 默认视角一致）
+    const all = listVideosFiltered(db, {});
     assert.equal(all.total, 4);
     assert.equal(all.page, 1);
     assert.equal(all.size, 20);
-    assert.deepEqual(titles(all.items), ['标题A', '标题B', '标题C', '标题D']); // first_seen 升序
-    const v1 = all.items[0];
+    assert.deepEqual(titles(all.items), ['标题D', '标题C', '标题B', '标题A']);
+    // 显式升序（旧行为）
+    assert.deepEqual(titles(listVideosFiltered(db, { desc: false }).items), ['标题A', '标题B', '标题C', '标题D']);
+    const v1 = listVideosFiltered(db, { desc: false }).items[0];
     assert.equal(v1.published_at, T + 1000);
     assert.equal(v1.creator_source_uid, '1');
     assert.equal(v1.track_count, 2);
@@ -105,13 +109,13 @@ test('listVideosFiltered: 默认 sort=first_seen asc，分页正确，items 含 
 test('listVideosFiltered: 分页 page/size', () => {
   const { db, dir } = setup();
   try {
-    const p1 = listVideosFiltered(db, { sort: 'first_seen', page: 1, size: 2 });
+    const p1 = listVideosFiltered(db, { sort: 'first_seen', desc: false, page: 1, size: 2 });
     assert.deepEqual(titles(p1.items), ['标题A', '标题B']);
     assert.equal(p1.total, 4);
-    const p2 = listVideosFiltered(db, { sort: 'first_seen', page: 2, size: 2 });
+    const p2 = listVideosFiltered(db, { sort: 'first_seen', desc: false, page: 2, size: 2 });
     assert.deepEqual(titles(p2.items), ['标题C', '标题D']);
-    const p3 = listVideosFiltered(db, { sort: 'first_seen', page: 3, size: 2 });
-    assert.deepEqual(p3.items, []);
+    const p3 = listVideosFiltered(db, { sort: 'first_seen', desc: false, page: 3, size: 2 });
+    assert.equal(p3.items.length, 0);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
@@ -119,13 +123,13 @@ test('listVideosFiltered: 文本/UP/source/tid/tname/tag 过滤', () => {
   const { db, dir } = setup();
   try {
     assert.deepEqual(titles(listVideosFiltered(db, { q: '标题A' }).items), ['标题A']);
-    assert.deepEqual(titles(listVideosFiltered(db, { q: 'Alpha' }).items), ['标题A', '标题B']); // 命中 creator 名
-    assert.deepEqual(titles(listVideosFiltered(db, { creator: 'Beta' }).items), ['标题C', '标题D']);
-    assert.deepEqual(titles(listVideosFiltered(db, { source: 'bilibili' }).items).sort(), ['标题A', '标题B', '标题C', '标题D']);
+    assert.deepEqual(titles(listVideosFiltered(db, { q: 'Alpha', desc: false }).items), ['标题A', '标题B']); // 命中 creator 名
+    assert.deepEqual(titles(listVideosFiltered(db, { creator: 'Beta', desc: false }).items), ['标题C', '标题D']);
+    assert.deepEqual(titles(listVideosFiltered(db, { source: 'bilibili', desc: false }).items).sort(), ['标题A', '标题B', '标题C', '标题D']);
     assert.equal(listVideosFiltered(db, { source: 'other' }).total, 0);
-    assert.deepEqual(titles(listVideosFiltered(db, { tid: 17 }).items.sort()), ['标题A', '标题C']);
-    assert.deepEqual(titles(listVideosFiltered(db, { tname: '单机' }).items.sort()), ['标题A', '标题C']);
-    assert.deepEqual(titles(listVideosFiltered(db, { tag: '游戏' }).items.sort()), ['标题A', '标题C']);
+    assert.deepEqual(titles(listVideosFiltered(db, { tid: 17, desc: false }).items), ['标题A', '标题C']);
+    assert.deepEqual(titles(listVideosFiltered(db, { tname: '单机', desc: false }).items), ['标题A', '标题C']);
+    assert.deepEqual(titles(listVideosFiltered(db, { tag: '游戏', desc: false }).items), ['标题A', '标题C']);
     assert.deepEqual(titles(listVideosFiltered(db, { tag: '数码' }).items), ['标题B']);
     assert.deepEqual(titles(listVideosFiltered(db, { tag: '实况' }).items), ['标题A']);
   } finally { rmSync(dir, { recursive: true, force: true }); }
@@ -134,46 +138,54 @@ test('listVideosFiltered: 文本/UP/source/tid/tname/tag 过滤', () => {
 test('listVideosFiltered: lang / track_type / has_subtitle 过滤', () => {
   const { db, dir } = setup();
   try {
-    assert.deepEqual(titles(listVideosFiltered(db, { lang: 'zh' }).items.sort()), ['标题A', '标题B']);
-    assert.deepEqual(titles(listVideosFiltered(db, { lang: 'en' }).items.sort()), ['标题A', '标题C']);
-    assert.deepEqual(titles(listVideosFiltered(db, { track_type: 2 }).items.sort()), ['标题A', '标题C']); // CC 轨
-    assert.deepEqual(titles(listVideosFiltered(db, { track_type: 1 }).items.sort()), ['标题A', '标题B']); // AI 轨
-    assert.deepEqual(titles(listVideosFiltered(db, { has_subtitle: true }).items.sort()), ['标题A', '标题B', '标题C']); // V4 无轨/版本被排除
+    assert.deepEqual(titles(listVideosFiltered(db, { lang: 'zh', desc: false }).items), ['标题A', '标题B']);
+    assert.deepEqual(titles(listVideosFiltered(db, { lang: 'en', desc: false }).items), ['标题A', '标题C']);
+    assert.deepEqual(titles(listVideosFiltered(db, { track_type: 2, desc: false }).items), ['标题A', '标题C']); // CC 轨
+    assert.deepEqual(titles(listVideosFiltered(db, { track_type: 1, desc: false }).items), ['标题A', '标题B']); // AI 轨
+    assert.deepEqual(titles(listVideosFiltered(db, { has_subtitle: true, desc: false }).items), ['标题A', '标题B', '标题C']); // V4 无轨/版本被排除
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
 test('listVideosFiltered: since/until 比对 first_seen_at（毫秒）', () => {
   const { db, dir } = setup();
   try {
-    assert.deepEqual(titles(listVideosFiltered(db, { since: T + 250 }).items.sort()), ['标题C', '标题D']);
-    assert.deepEqual(titles(listVideosFiltered(db, { until: T + 150 }).items.sort()), ['标题A']);
-    assert.deepEqual(titles(listVideosFiltered(db, { since: T + 150, until: T + 300 }).items.sort()), ['标题B', '标题C']);
+    assert.deepEqual(titles(listVideosFiltered(db, { since: T + 250, desc: false }).items), ['标题C', '标题D']);
+    assert.deepEqual(titles(listVideosFiltered(db, { until: T + 150, desc: false }).items), ['标题A']);
+    assert.deepEqual(titles(listVideosFiltered(db, { since: T + 150, until: T + 300, desc: false }).items), ['标题B', '标题C']);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
 test('listVideosFiltered: min/max duration', () => {
   const { db, dir } = setup();
   try {
-    assert.deepEqual(titles(listVideosFiltered(db, { min_duration: 500 }).items.sort()), ['标题A', '标题C']);
-    assert.deepEqual(titles(listVideosFiltered(db, { max_duration: 300 }).items.sort()), ['标题B', '标题D']);
+    assert.deepEqual(titles(listVideosFiltered(db, { min_duration: 500, desc: false }).items), ['标题A', '标题C']);
+    assert.deepEqual(titles(listVideosFiltered(db, { max_duration: 300, desc: false }).items), ['标题B', '标题D']);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
-test('listVideosFiltered: sort 各键 + desc', () => {
+test('listVideosFiltered: sort 各键 + desc（含 2026-08-25 新增 updated_at）', () => {
   const { db, dir } = setup();
   try {
+    // updated_at：setup 的 ingest 各写 Date.now()，覆写为确定值（V4 最近有动静 → V1）
+    const setUpdated = (sv: string, ts: number) => db.prepare('UPDATE videos SET updated_at = ? WHERE source_vid = ?').run(ts, sv);
+    setUpdated('BV1', T + 400);
+    setUpdated('BV2', T + 300);
+    setUpdated('BV3', T + 200);
+    setUpdated('BV4', T + 500);
     // view desc：V2(5000) > V1(1000) > V3(200) > V4(50)
     assert.deepEqual(titles(listVideosFiltered(db, { sort: 'view', desc: true }).items), ['标题B', '标题A', '标题C', '标题D']);
     // duration asc：V4(60) < V2(300) < V1(600) < V3(1200)
-    assert.deepEqual(titles(listVideosFiltered(db, { sort: 'duration' }).items), ['标题D', '标题B', '标题A', '标题C']);
+    assert.deepEqual(titles(listVideosFiltered(db, { sort: 'duration', desc: false }).items), ['标题D', '标题B', '标题A', '标题C']);
     // duration desc
     assert.deepEqual(titles(listVideosFiltered(db, { sort: 'duration', desc: true }).items), ['标题C', '标题A', '标题B', '标题D']);
     // published_at asc：V1 < V2 < V3 < V4
-    assert.deepEqual(titles(listVideosFiltered(db, { sort: 'published_at' }).items), ['标题A', '标题B', '标题C', '标题D']);
+    assert.deepEqual(titles(listVideosFiltered(db, { sort: 'published_at', desc: false }).items), ['标题A', '标题B', '标题C', '标题D']);
     // title asc
-    assert.deepEqual(titles(listVideosFiltered(db, { sort: 'title' }).items), ['标题A', '标题B', '标题C', '标题D']);
+    assert.deepEqual(titles(listVideosFiltered(db, { sort: 'title', desc: false }).items), ['标题A', '标题B', '标题C', '标题D']);
     // first_seen desc
     assert.deepEqual(titles(listVideosFiltered(db, { sort: 'first_seen', desc: true }).items), ['标题D', '标题C', '标题B', '标题A']);
+    // updated_at desc（最近有动静在前）：V4 > V1 > V2 > V3
+    assert.deepEqual(titles(listVideosFiltered(db, { sort: 'updated_at', desc: true }).items), ['标题D', '标题A', '标题B', '标题C']);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
@@ -548,12 +560,12 @@ test('EXPLAIN QUERY PLAN：stat.view 范围过滤走 idx_videos_extra_view（SEA
 test('listVideosFiltered: creator_id 精确（UP 详情页拉该 UP 视频）+ creator_uid 精确（子查询防 LIKE 误匹配）', () => {
   const { db, dir, ids } = setup();
   try {
-    assert.deepEqual(titles(listVideosFiltered(db, { creator_id: ids.alpha }).items.sort()), ['标题A', '标题B']);
+    assert.deepEqual(titles(listVideosFiltered(db, { creator_id: ids.alpha, desc: false }).items), ['标题A', '标题B']);
     assert.equal(listVideosFiltered(db, { creator_id: ids.beta }).total, 2);
     assert.equal(listVideosFiltered(db, { creator_id: 99999 }).total, 0);
     // creator_uid '1' 不误命中 '21' 式前缀（子查询 = 精确）
-    assert.deepEqual(titles(listVideosFiltered(db, { creator_uid: '1' }).items.sort()), ['标题A', '标题B']);
-    assert.deepEqual(titles(listVideosFiltered(db, { creator_uid: '2' }).items.sort()), ['标题C', '标题D']);
+    assert.deepEqual(titles(listVideosFiltered(db, { creator_uid: '1', desc: false }).items), ['标题A', '标题B']);
+    assert.deepEqual(titles(listVideosFiltered(db, { creator_uid: '2', desc: false }).items), ['标题C', '标题D']);
     assert.equal(listVideosFiltered(db, { creator_uid: '21' }).total, 0);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
@@ -593,9 +605,9 @@ test('listVideosFiltered: min_view / max_view（extra.stat.view 范围，CAST IN
   const { db, dir } = setup();
   try {
     // view：V2=5000 > V1=1000 > V3=200 > V4=50
-    assert.deepEqual(titles(listVideosFiltered(db, { min_view: 1000 }).items.sort()), ['标题A', '标题B']);
-    assert.deepEqual(titles(listVideosFiltered(db, { max_view: 200 }).items.sort()), ['标题C', '标题D']);
-    assert.deepEqual(titles(listVideosFiltered(db, { min_view: 200, max_view: 1000 }).items.sort()), ['标题A', '标题C']);
+    assert.deepEqual(titles(listVideosFiltered(db, { min_view: 1000, desc: false }).items), ['标题A', '标题B']);
+    assert.deepEqual(titles(listVideosFiltered(db, { max_view: 200, desc: false }).items), ['标题C', '标题D']);
+    assert.deepEqual(titles(listVideosFiltered(db, { min_view: 200, max_view: 1000, desc: false }).items), ['标题A', '标题C']);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
@@ -711,10 +723,128 @@ test('listVideosFiltered: date_field=published_at → since/until 比对发布�
   const { db, dir } = setup();
   try {
     // published_at：V1(T+1000) V2(T+2000) V3(T+3000) V4(T+4000)
-    assert.deepEqual(titles(listVideosFiltered(db, { since: T + 2500, date_field: 'published_at' }).items.sort()), ['标题C', '标题D']);
-    assert.deepEqual(titles(listVideosFiltered(db, { until: T + 1500, date_field: 'published_at' }).items.sort()), ['标题A']);
+    assert.deepEqual(titles(listVideosFiltered(db, { since: T + 2500, date_field: 'published_at', desc: false }).items), ['标题C', '标题D']);
+    assert.deepEqual(titles(listVideosFiltered(db, { until: T + 1500, date_field: 'published_at', desc: false }).items), ['标题A']);
     // 对照：默认 first_seen（V1=T+100..V4=T+400）下同阈值命中完全不同
     assert.deepEqual(listVideosFiltered(db, { since: T + 2500 }).items, [], 'first_seen 均小于阈值 → 空');
     assert.equal(listVideosFiltered(db, { until: T + 1500 }).total, 4, 'first_seen 均小于阈值 → 全量');
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+// ---- UP 屏蔽（2026-08-24）：exclude_blocked 默认过滤与可观察性计数 ----
+
+test('exclude_blocked：屏蔽 UP 的视频被排除、未传时全量、无 UP 视频保留', () => {
+  const { db, dir } = setup();
+  try {
+    // 屏蔽 alpha（uid=1，BV1/BV2 归属）；BV4 摘掉 creator 模拟无 UP 视频
+    db.prepare("UPDATE creators SET blocked = 1 WHERE source_uid = '1'").run();
+    db.prepare("UPDATE videos SET creator_id = NULL WHERE source_vid = 'BV4'").run();
+    const all = listVideosFiltered(db, {});
+    assert.equal(all.total, 4, 'exclude_blocked 未传 = 不过滤（web/HTTP 默认全量）');
+    const filtered = listVideosFiltered(db, { exclude_blocked: true });
+    assert.equal(filtered.total, 2, '屏蔽 UP 的 BV1/BV2 被排除');
+    assert.deepEqual(filtered.items.map((i) => i.source_vid).sort(), ['BV3', 'BV4']);
+    assert.ok(filtered.items.some((i) => i.source_vid === 'BV4'), '无 UP 的视频在排除态下保留');
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('listVideosFiltered: items 带 creator_blocked 布尔化（屏蔽/未屏蔽）', () => {
+  const { db, dir } = setup();
+  try {
+    db.prepare("UPDATE creators SET blocked = 1 WHERE source_uid = '1'").run();
+    const { items } = listVideosFiltered(db, {});
+    const byVid = new Map(items.map((i) => [i.source_vid, i]));
+    assert.equal(byVid.get('BV1')!.creator_blocked, true, '屏蔽 UP 的视频 creator_blocked=true');
+    assert.equal(byVid.get('BV3')!.creator_blocked, false, '未屏蔽 UP 的视频 creator_blocked=false');
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('countVideosFiltered：与 listVideosFiltered 的 total 同口径（含 exclude_blocked 排除态）', () => {
+  const { db, dir } = setup();
+  try {
+    db.prepare("UPDATE creators SET blocked = 1 WHERE source_uid = '1'").run();
+    assert.equal(countVideosFiltered(db, {}), 4);
+    assert.equal(countVideosFiltered(db, { exclude_blocked: true }), 2);
+    assert.equal(countVideosFiltered(db, { exclude_blocked: true }), listVideosFiltered(db, { exclude_blocked: true }).total);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('countOverview: exclude_blocked 排除屏蔽 UP 的视频级指标、creators 恒全量、blocked_* 计数', () => {
+  const { db, dir } = setup();
+  try {
+    db.prepare("UPDATE creators SET blocked = 1 WHERE source_uid = '1'").run();
+    const o = countOverview(db, undefined, { exclude_blocked: true });
+    assert.equal(o.videos, 2, 'BV1/BV2（屏蔽 UP）被排除');
+    assert.equal(o.tracks, 1, 'BV3 的 en CC 轨保留');
+    assert.equal(o.versions, 1);
+    assert.equal(o.languages, 1, 'en 一种');
+    assert.equal(o.categories, 2, '单机游戏/生活（科技属 BV2 被排除）');
+    assert.equal(o.creators, 2, 'creators 恒全量（含屏蔽 UP）');
+    assert.equal(o.blocked_videos, 2);
+    assert.equal(o.blocked_creators, 1);
+    // 未排除态恒返回 blocked_* 计数（web 展示与 CLI 可观察性）
+    const full = countOverview(db);
+    assert.equal(full.videos, 4);
+    assert.equal(full.blocked_videos, 2);
+    assert.equal(full.blocked_creators, 1);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('aggregateStats: creator 分支屏蔽 UP 带 blocked 标记（其余 groupBy 不带）', () => {
+  const { db, dir } = setup();
+  try {
+    db.prepare("UPDATE creators SET blocked = 1 WHERE source_uid = '1'").run();
+    const rows = aggregateStats(db, 'creator');
+    const alpha = rows.find((r) => r.key === 'Alpha UP')!;
+    const beta = rows.find((r) => r.key === 'Beta UP')!;
+    assert.equal(alpha.blocked, true);
+    assert.equal(beta.blocked, undefined, '未屏蔽 UP 不带 blocked 键');
+    for (const r of aggregateStats(db, 'tname')) assert.equal(r.blocked, undefined, '非 creator 分支不置位');
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('getVideoByDbId: video 带 creator_blocked 布尔化', () => {
+  const { db, dir } = setup();
+  try {
+    db.prepare("UPDATE creators SET blocked = 1 WHERE source_uid = '1'").run();
+    const v1 = db.prepare("SELECT id FROM videos WHERE source_vid = 'BV1'").get() as { id: number };
+    const d = getVideoByDbId(db, v1.id);
+    assert.equal(d!.video.creator_blocked, true);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+// ---- 2026-08-25 全端点排序：getChanges / aggregateStats ----
+
+// setup 的 change_log：creator.name(T+10) < video.title(T+50) < video.duration(T+150)
+test('getChanges: sort=changed_at + desc 方向（缺省 DESC 与旧硬编码一致）', () => {
+  const { db, dir } = setup();
+  try {
+    const fields = (rows: Array<{ field: string }>) => rows.map((r) => r.field);
+    // 缺省：changed_at DESC（最新在前）
+    assert.deepEqual(fields(getChanges(db, {}, 1, 20).items), ['duration', 'title', 'name']);
+    // 显式升序：changed_at ASC
+    assert.deepEqual(fields(getChanges(db, {}, 1, 20, 'changed_at', false).items), ['name', 'title', 'duration']);
+    // 显式降序 = 缺省
+    assert.deepEqual(fields(getChanges(db, {}, 1, 20, 'changed_at', true).items), ['duration', 'title', 'name']);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('aggregateStats: sort=count/key + desc（缺省 count DESC, key ASC 与旧硬编码一致）', () => {
+  const { db, dir } = setup();
+  try {
+    // tname 榜（ingest 按 tid 反查标准分区名）：单机游戏(2)、日常(1, V4 tid21)、野生技术协会(1, V2 tid122)
+    const keys = (rows: Array<{ key: string }>) => rows.map((r) => r.key);
+    // 缺省：count DESC，同计数 tie key ASC（日常 < 野生技术协会）
+    assert.deepEqual(keys(aggregateStats(db, 'tname')), ['单机游戏', '日常', '野生技术协会']);
+    // count 升序：同计数 tie 仍 key ASC
+    assert.deepEqual(keys(aggregateStats(db, 'tname', {}, 20, 'count', false)), ['日常', '野生技术协会', '单机游戏']);
+    // key 排序（分组值本身）：字典序升序
+    assert.deepEqual(keys(aggregateStats(db, 'tname', {}, 20, 'key', false)), ['单机游戏', '日常', '野生技术协会']);
+    // key 降序
+    assert.deepEqual(keys(aggregateStats(db, 'tname', {}, 20, 'key', true)), ['野生技术协会', '日常', '单机游戏']);
+    // tag 分支（早返回路径）同样吃排序参数：bili 档两个标签各 1 视频计数，tie key ASC
+    const tagKeys = (rows: Array<{ key: string }>) => rows.map((r) => r.key);
+    assert.deepEqual(tagKeys(aggregateStats(db, 'tag', {}, 20, 'key', false)), ['实况', '数码', '游戏']);
+    assert.deepEqual(tagKeys(aggregateStats(db, 'tag', {}, 20, 'key', true)), ['游戏', '数码', '实况']);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });

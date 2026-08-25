@@ -15,7 +15,7 @@ function setup() {
   const db = openDb(join(dir, 'test.db'));
   migrate(db);
   const httpServer = createServer((req, res) => handleClientsHttp(req, res, db));
-  return new Promise<{ port: number; cleanup: () => void; injectBadLogin: (clientId: string, raw?: string) => void; deleteClientRow: (clientId: string) => void }>((resolve) => {
+  return new Promise<{ port: number; cleanup: () => void; injectBadLogin: (clientId: string, raw?: string) => void; deleteClientRow: (clientId: string) => void; insertClient: (clientId: string, name: string | null, firstSeen: number, lastSeen: number) => void }>((resolve) => {
     httpServer.listen(0, '127.0.0.1', () => {
       const port = (httpServer.address() as AddressInfo).port;
       attachWsServer(httpServer, db, 'test-token');
@@ -28,6 +28,9 @@ function setup() {
         // 直删注册表行（模拟异常库：在线但不在 DB），测 listClients 防御分支不漏显示
         deleteClientRow: (clientId: string) =>
           db.prepare('DELETE FROM clients WHERE client_id = ?').run(clientId),
+        // 直插历史注册行（排序测试用：确定性 first_seen/last_seen 时间线）
+        insertClient: (clientId: string, name: string | null, firstSeen: number, lastSeen: number) =>
+          db.prepare('INSERT INTO clients (client_id, name, first_seen_at, last_seen_at) VALUES (?, ?, ?, ?)').run(clientId, name, firstSeen, lastSeen),
       });
     });
   });
@@ -615,5 +618,38 @@ test('未知子路径 / 方法不匹配 → 兜底 404', async () => {
     // command 路径但 GET 方法
     r = await httpReq(ctx.port, 'GET', '/api/clients/ext-A/command');
     assert.equal(r.status, 404);
+  } finally { ctx.cleanup(); }
+});
+
+// ── 2026-08-25 全端点排序：GET /api/clients sort=last_seen/first_seen/name + desc；非法 → 400 ──
+test('GET /api/clients：sort=name/first_seen + desc + 非法 sort 400（name NULLS LAST）', async () => {
+  const ctx = await setup();
+  try {
+    // 注册三个客户端（直写 DB 模拟历史注册，时间线确定）：ext-A（有名）、ext-B（无名）、ext-C（有名）
+    ctx.insertClient('ext-A', 'alpha', 300, 300);
+    ctx.insertClient('ext-B', null, 100, 500);
+    ctx.insertClient('ext-C', 'zeta', 200, 400);
+    const ids = (r: { json: { clients: Array<{ client_id: string }> } }) => r.json.clients.map((c) => c.client_id);
+    const req = (path: string) => httpReq(ctx.port, 'GET', path);
+
+    // 缺省 last_seen DESC：B(500) > C(400) > A(300)
+    let r = await req('/api/clients');
+    assert.deepEqual(ids(r), ['ext-B', 'ext-C', 'ext-A']);
+    // last_seen 升序
+    r = await req('/api/clients?sort=last_seen&desc=0');
+    assert.deepEqual(ids(r), ['ext-A', 'ext-C', 'ext-B']);
+    // first_seen DESC：A(300) > C(200) > B(100)
+    r = await req('/api/clients?sort=first_seen');
+    assert.deepEqual(ids(r), ['ext-A', 'ext-C', 'ext-B']);
+    // name 排序：alpha < zeta，NULL（未命名）恒排尾（NULLS LAST 不随方向翻转）
+    r = await req('/api/clients?sort=name&desc=0');
+    assert.deepEqual(ids(r), ['ext-A', 'ext-C', 'ext-B']);
+    r = await req('/api/clients?sort=name&desc=1');
+    assert.deepEqual(ids(r), ['ext-C', 'ext-A', 'ext-B']);
+    // 非法 sort → 400
+    r = await req('/api/clients?sort=bogus');
+    assert.equal(r.status, 400);
+    assert.equal(r.json.ok, false);
+    assert.match(r.json.error, /sort must be one of last_seen\|first_seen\|name/);
   } finally { ctx.cleanup(); }
 });

@@ -31,6 +31,7 @@ B 站**字幕（subtitle）**相关浏览器扩展与配套服务的 monorepo（
 - ✅ 采集任务历史页多维查询：按 UP（名字模糊 / mid 精确；任务行 UP 归属冗余——批量提交/重采/ingest 回填，未入库/失败任务也命中）、时间范围（今天 / 近7天 / 近30天 / 自定义）、平台、采集方式（批量/单点）、标题/关键词（vid 段搜 BV 号）、批次聚焦筛选；URL query 承载，可刷新/分享还原；重试并入原批次（聚焦视图实时看重试行，不另开新批）、任务全部到终态时浏览器系统通知（提交/重试后切走标签页，跑完即被提醒）
 - ✅ 视频标签六档：manual/batch/ai/system（落表，system=系统状态标如 no-subtitle，采集链路自动打/摘）+ bili（视频自带）/ **season（合集，只读实时读 extra.ugc_season.title）**，tag_priority 可调 + 按档位过滤/聚合
 - ✅ 字幕正文全文检索：`sub search <keyword>`（带时间戳定位片段）
+- ✅ **全端点排序**（2026-08-25）：全部列表端点支持 `sort`+`desc`——视频（first_seen/发布时间/标题/时长/播放量/updated_at）、UP 主（粉丝/视频数/关注数/等级/更新时间/名字，补方向参数）、变更历史、采集任务（created_at/finished_at 未完成恒排尾/status 运维聚合）、标签榜（计数/名字/建标时间）、聚合榜（计数/分组值）、客户端（最近活跃/首次见到/名字）；非法键 HTTP 400 / CLI 退 2 列全合法键，可空键 NULLS LAST 恒排尾
 - ✅ 导出：`export subtitle`（srt/vtt/txt/json）、`export videos`（csv/ndjson/table）
 - ✅ **补翻中文翻译** `translate`：无中文轨（有其他语言轨）视频的三步工作流——`translate pending` 查缺口（带各源语言行数）→ `translate source` 取逐行待翻文本 → 会话内大模型翻译 → `translate fill` 写回 `zh-manual` 轨（行数对齐校验 + 时间轴从源轨拷贝；补翻后默认轨变中文，export/bundle 自动受益）
 

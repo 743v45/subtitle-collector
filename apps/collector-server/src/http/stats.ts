@@ -5,8 +5,9 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type Database from 'better-sqlite3';
 import { aggregateStats, countOverviewWithSources, type StatsGroupBy } from '../db/advanced.js';
+import { AGG_SORT_KEYS, type AggregateSortKey } from '../db/sort.js';
 import { parseVideoFilter } from './filter.js';
-import { json } from './http-util.js';
+import { json, parseSortParams } from './http-util.js';
 
 const GROUP_BY: readonly StatsGroupBy[] = ['creator', 'tname', 'lang', 'track-type', 'tag', 'source'];
 
@@ -28,7 +29,10 @@ export function handleStatsHttp(req: IncomingMessage, res: ServerResponse, db: D
     const filter = parseVideoFilter(url.searchParams);
     // topN：覆盖默认 20（分区下拉等场景需更大列表），夹在 1..500，非法回落 20。
     const topN = Math.min(500, Math.max(1, Math.floor(Number(url.searchParams.get('topN') ?? '20')) || 20));
-    json(res, 200, { ok: true, items: aggregateStats(db, groupByRaw as StatsGroupBy, filter, topN) });
+    // sort：count（默认）/key（分组值本身）；非法 → 400；desc 缺省 true（count DESC, key ASC = 现状）
+    const sp = parseSortParams(url.searchParams, AGG_SORT_KEYS, 'count');
+    if ('error' in sp) { json(res, 400, { ok: false, error: sp.error }); return; }
+    json(res, 200, { ok: true, items: aggregateStats(db, groupByRaw as StatsGroupBy, filter, topN, sp.sort as AggregateSortKey, sp.desc) });
     return;
   }
   json(res, 400, { ok: false, error: 'type must be overview|aggregate' });

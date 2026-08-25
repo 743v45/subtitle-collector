@@ -195,6 +195,13 @@ export const MIGRATIONS: readonly MigrationStep[] = [
       'ALTER TABLE clients ADD COLUMN ext_version TEXT',
     ],
   },
+  {
+    version: 15,
+    note: 'creators 补 blocked 屏蔽标记列（2026-08-24）：采集入库不受影响，仅 CLI 消费链路（videos list/export/stats/sub search）默认过滤、web 全处标识展示。ADD COLUMN 撞 duplicate column name 容忍（双写 schema.sql）',
+    statements: [
+      'ALTER TABLE creators ADD COLUMN blocked INTEGER NOT NULL DEFAULT 0',
+    ],
+  },
 ];
 
 export function runMigrations(db: Database.Database): void {

@@ -48,23 +48,23 @@ docker exec collector-server node -e 'const db=require("better-sqlite3")("/data/
 
 | 组 | 通道 | 用途 |
 |---|---|---|
-| `videos list/get/get-by-id` | DB 只读 | 过滤查视频:`--q --creator --since --until --tag --has-subtitle --sort --desc --page --size` |
+| `videos list/get/get-by-id` | DB 只读 | 过滤查视频:`--q --creator --since --until --tag --has-subtitle --sort --desc --page --size`(sort 键 `first_seen\|published_at\|title\|duration\|view\|updated_at`;`--desc` 可选值,缺省降序,升序 `--desc=false`) |
 | `versions get <id>` | DB 只读 | 取字幕版本 payload(B 站 JSON 含 body) |
-| `changes list` | DB 只读 | change_log 变更历史:`--entity --since --until --source <平台>`(items 带派生 source 平台列) |
+| `changes list` | DB 只读 | change_log 变更历史:`--entity --since --until --source <平台> --sort --desc`(sort 仅 `changed_at`;items 带派生 source 平台列) |
 | `export subtitle <source> <bvid>` | DB 只读 | 字幕导出:`--sub-format srt\|vtt\|txt\|json --track <lan> --version <id> -o <file>`;不指定轨取默认轨默认版本,纯文本直写 stdout |
 | `export videos` | DB 只读 | 视频列表 json/csv/ndjson(格式随全局 `--format`;过滤同 videos list) |
 | `export bundle` | DB 只读 | 分析原料包:`--out <dir> --track <lan> --limit <n>` + videos list 全套过滤 → manifest.json + videos/*.txt + ANALYZE.md |
-| `stats overview` / `stats count --by <kind> --top <n>` | DB 只读 | 总览(全库 total + 分平台 by_source) / 分组计数(`--by` 含 `source` 按平台分组;`--source` 过滤收窄) |
+| `stats overview` / `stats count --by <kind> --top <n>` | DB 只读 | 总览(全库 total + 分平台 by_source) / 分组计数(`--by` 含 `source` 按平台分组;`--source` 过滤收窄;`--sort count\|key --desc` 排序,2026-08-25) |
 | `sub search <关键词>` | DB 只读 | 字幕正文检索:`--ctx --regex --max-videos --full`;AI 打标的数据源 |
 | `translate pending/source/fill` | pending/source 读 DB;fill 走 server | 补翻工作流(无中文轨视频):`pending --source <平台>` 查缺口(带各源语言行数)→ `source <vid> --from <lan> --source <平台>` 取逐行待翻文本 → 会话内翻译 → `fill <vid> --from <lan> --file <译文> --source <平台>` 写回 zh-manual 轨 |
-| `tags list/apply/remove` | list 读 DB;apply/remove 走 server | `tags apply <vid...> --names <csv> --scope manual\|batch\|ai\|system --source <平台>`(打标即建标;scope=档位,source=平台默认 bilibili——YouTube 11 位 ID 用 `--source youtube`;system=系统状态档如 no-subtitle,采集链路自动打/摘) |
-| `clients list/reporting/task-dispatch/command` | server HTTP | 扩展客户端管控;`list` 含离线客户端(DB 注册表合并在线态,带 popup 改的名字、在线/离线时长、扩展版本与 B 站登录态 `bili_login`——未登录会让充电视频 AI 字幕接口返回空,批量采集整批 no_subtitle 的判因依据);`reporting <id> <on\|off>` 切上报 / `task-dispatch <id> <on\|off>` 切任务派发(off=仅上报状态,调度器不派任务);`command <id> <action> --timeout <ms>` |
+| `tags list/apply/remove` | list 读 DB;apply/remove 走 server | `tags list --sort count\|name\|created_at --desc`(count 语义跟随 `--scope` 档)/ `tags apply <vid...> --names <csv> --scope manual\|batch\|ai\|system --source <平台>`(打标即建标;scope=档位,source=平台默认 bilibili——YouTube 11 位 ID 用 `--source youtube`;system=系统状态档如 no-subtitle,采集链路自动打/摘) |
+| `clients list/reporting/task-dispatch/command` | server HTTP | 扩展客户端管控;`list --sort last_seen\|first_seen\|name --desc` 含离线客户端(DB 注册表合并在线态,带 popup 改的名字、在线/离线时长、扩展版本与 B 站登录态 `bili_login`——未登录会让充电视频 AI 字幕接口返回空,批量采集整批 no_subtitle 的判因依据);`reporting <id> <on\|off>` 切上报 / `task-dispatch <id> <on\|off>` 切任务派发(off=仅上报状态,调度器不派任务);`command <id> <action> --timeout <ms>` |
 | `server ping/status/start/stop` | 本地 | 探活 / 起停(pid 文件;`start --no-detached --port`) |
 | `collect …`(12 子命令) | server→扩展 | 见下方 |
 
 collect 子命令速记:`search <关键词>` 搜候选(不入库)/ `subtitle <vid> [--source bilibili|youtube]` 采单个入库(两平台回执 reason=no_subtitle 都自动打 no-subtitle 系统标;采到轨自动摘) / `dedupe <vid...> [--source <平台>]` 批量判重 / `season` 整合集 / `upper-info <mid>` UP 资料入库 / `upper-videos <mid> --all` 拉列表 / `new-videos <mid>` / `discover <mid...>` 多 UP 发现 / `find <关键词> --min-fans --since-days` 条件检索 / `yt-videos <handle> --since-days --collect [--force]` YouTube 频道(--collect 逐条采,已有字幕轨的默认跳过,--force 强制重采) / `yt-search <关键词> --order --since-days --collect` YouTube 搜索。采集默认超时 180s(覆盖扩展全链路)。**批量建任务端点同语义**:`POST /api/collect-tasks/batch {vids,source,force?}` 默认跳过已有字幕轨的入库视频(skipped_collected 返回),force=true 强制重采(2026-08-25)。
 
-**排序语义**:`--sort first_seen`(入库时间)vs `published_at`(发布时间)——用户说「最近」先确认指哪个;无法确认时默认 `first_seen`(查询主语是「库」,最近入库)。
+**排序语义**:全部列表端点支持 `--sort` + `--desc`(缺省降序,升序 `--desc=false`;非法键 ARGS 退 2 / HTTP 400,不再静默回落)——2026-08-25 全端点统一。`--sort first_seen`(入库时间)vs `published_at`(发布时间)——用户说「最近」先确认指哪个;无法确认时默认 `first_seen`(查询主语是「库」,最近入库)。可空键(finished_at/name/published_at 等)NULLS LAST 恒排尾。
 
 ## scripts 工具速查
 

@@ -3,7 +3,7 @@ import { WebSocketServer, WebSocket, type RawData } from 'ws';
 import type { IncomingMessage, Server } from 'node:http';
 import type Database from 'better-sqlite3';
 import { ingestVideo, ingestUpper, type IngestRequest, type IngestUpperRequest } from '../db/ingest.js';
-import { upsertClient, touchClientLastSeen, listKnownClients } from '../db/clients.js';
+import { upsertClient, touchClientLastSeen, listKnownClients, compareClientRows, type ClientSortKey } from '../db/clients.js';
 import { notifyClientOnline, pushTask } from '../tasks/tasks.js';
 import { amendLateResult, amendLateIngest } from '../tasks/amend.js';
 import { releaseClient } from '../tasks/inflight.js';
@@ -265,7 +265,7 @@ export interface ClientRow {
   last_seen_at: number;        // 最近一次连接建立/断开时刻（「离线时长」起算点）
 }
 
-export function listClients(db: Database.Database): ClientRow[] {
+export function listClients(db: Database.Database, sort: ClientSortKey = 'last_seen', desc = true): ClientRow[] {
   const online = new Map<string, ExtConn>();
   for (const c of connections.values()) {
     if (c.clientId && c.ws.readyState === WebSocket.OPEN) online.set(c.clientId, c);
@@ -303,6 +303,8 @@ export function listClients(db: Database.Database): ClientRow[] {
       });
     }
   }
+  // 排序在合并视图上做（比较器与键清单在 db/clients.ts；口径：主键方向随 sort、client_id tie、name NULLS LAST）
+  rows.sort((a, b) => compareClientRows(a, b, sort, desc));
   return rows;
 }
 

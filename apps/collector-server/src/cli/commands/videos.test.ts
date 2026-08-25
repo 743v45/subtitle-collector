@@ -15,7 +15,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { openDb, migrate } from '../../db/migrate.js';
 import { ingestVideo } from '../../db/ingest.js';
-import { videosList, videosGet, videosGetById, normalizeTimestamp } from './videos.js';
+import { videosList, videosGet, videosGetById, normalizeTimestamp, parseDesc } from './videos.js';
 
 const T = 1_700_000_000_000; // 基准毫秒时间戳（2023-11-14T22:13:20.000Z）
 
@@ -144,12 +144,13 @@ test('videosList: sort + desc + 分页', () => {
   try {
     // view desc：V2(5000) > V1(1000) > V3(200) > V4(50)
     assert.deepEqual(titles(videosList(db, { sort: 'view', desc: true }).items), ['标题B', '标题A', '标题C', '标题D']);
-    const p1 = videosList(db, { sort: 'first_seen', page: 1, size: 2 });
+    // 分页走升序断言（CLI 缺省已改降序对齐 HTTP，这里显式 desc:false 锁定分页语义）
+    const p1 = videosList(db, { sort: 'first_seen', desc: false, page: 1, size: 2 });
     assert.deepEqual(titles(p1.items), ['标题A', '标题B']);
     assert.equal(p1.total, 4);
-    const p2 = videosList(db, { sort: 'first_seen', page: 2, size: 2 });
+    const p2 = videosList(db, { sort: 'first_seen', desc: false, page: 2, size: 2 });
     assert.deepEqual(titles(p2.items), ['标题C', '标题D']);
-    const p3 = videosList(db, { sort: 'first_seen', page: 3, size: 2 });
+    const p3 = videosList(db, { sort: 'first_seen', desc: false, page: 3, size: 2 });
     assert.deepEqual(p3.items, []);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
@@ -239,4 +240,17 @@ test('videosList: paid 过滤仅返回付费视频', () => {
     // 不过滤 paid → 全部 5 个
     assert.equal(videosList(db, {}).total, 5);
   } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+// ── 2026-08-25 全端点排序：parseDesc 纯函数（--desc [value] 解析；非法值分支见 cli 子进程测试）──
+test('parseDesc：缺省 true（CLI 缺省降序）；裸 true / true/false/1/0/yes/no 字符串映射', () => {
+  assert.equal(parseDesc(undefined), true, '缺省 → 降序（2026-08-25 起 CLI 缺省对齐 HTTP）');
+  assert.equal(parseDesc(true), true, '裸 --desc → true');
+  assert.equal(parseDesc('true'), true);
+  assert.equal(parseDesc('1'), true);
+  assert.equal(parseDesc('yes'), true);
+  assert.equal(parseDesc('false'), false);
+  assert.equal(parseDesc('0'), false);
+  assert.equal(parseDesc('no'), false);
+  assert.equal(parseDesc('TRUE'), true, '大小写不敏感');
 });

@@ -14,16 +14,17 @@ import { join } from 'node:path';
 import { getCliContext } from '../context.js';
 import { emitResult, emitError } from '../output.js';
 import { openReadonlyDb } from '../db.js';
-import type { VideoListItemAdvanced, PageResult, VideoSortKey } from '../../db/advanced.js';
+import type { VideoListItemAdvanced, PageResult } from '../../db/advanced.js';
+import { VIDEO_SORT_KEYS } from '../../db/advanced.js';
 // resolveSubtitle 已下沉 subtitleFormat.ts（2026-08-23 断环：bundle.ts 也用它，原在本文件会构成 bundle ↔ export 循环）
 import { convertSubtitle, resolveSubtitle, type SubtitleFormat } from '../subtitleFormat.js';
 import { buildBundle } from '../bundle.js';
-// videos.ts 暴露 videosList（camelCase opts → snake_case filter）+ normalizeTimestamp，export videos 直接复用查询逻辑。
-import { videosList, normalizeTimestamp, type VideosListOpts } from './videos.js';
+// videos.ts 暴露 videosList（camelCase opts → snake_case filter）+ normalizeTimestamp + parseSort/parseDesc
+// （排序键清单单一事实源 db/advanced.ts VIDEO_SORT_KEYS），export videos/bundle 直接复用查询与解析逻辑。
+import { videosList, normalizeTimestamp, parseSort, parseDesc, type VideosListOpts } from './videos.js';
 
 const SUBTITLE_FORMATS = ['srt', 'vtt', 'txt', 'json'] as const;
 const VIDEOS_FORMATS = ['json', 'csv', 'ndjson'] as const;
-const SORT_KEYS = ['first_seen', 'published_at', 'title', 'duration', 'view'] as const;
 export type ExportVideosFormat = (typeof VIDEOS_FORMATS)[number];
 
 // ── export videos 文件序列化（-o 写文件用；stdout 走 emitResult）──
@@ -77,7 +78,7 @@ interface SubtitleRawOpts {
 interface VideosRawOpts {
   q?: string; creator?: string; source?: string; tid?: string; tname?: string; tag?: string; lang?: string;
   trackType?: string; hasSubtitle?: boolean; since?: string; until?: string; minDuration?: string; maxDuration?: string;
-  sort?: string; desc?: boolean; page?: string; size?: string; output?: string;
+  sort?: string; desc?: string | boolean; page?: string; size?: string; output?: string;
 }
 
 // export bundle 原始选项：过滤器同 videos list（去分页去 -o）+ bundle 专属三项。
@@ -104,14 +105,6 @@ function parseTime(raw: string | undefined, name: string): number | undefined {
   if (raw === undefined) return undefined;
   try { return normalizeTimestamp(raw); }
   catch (err) { return emitError(`${name}: ${(err as Error).message}`, 'ARGS'); }
-}
-
-function parseSort(raw: string | undefined): VideoSortKey | undefined {
-  if (raw === undefined) return undefined;
-  if (!(SORT_KEYS as readonly string[]).includes(raw)) {
-    return emitError(`非法 --sort: ${raw}（可选: ${SORT_KEYS.join('|')}）`, 'ARGS');
-  }
-  return raw as VideoSortKey;
 }
 
 function parseSubtitleFormat(raw: string | undefined): SubtitleFormat {
@@ -186,8 +179,8 @@ export function buildExportCommand(): Command {
     .option('--until <ts>', '结束时间，比对 first_seen_at')
     .option('--min-duration <s>', '最小时长（秒）')
     .option('--max-duration <s>', '最大时长（秒）')
-    .option('--sort <key>', '排序键：first_seen|published_at|title|duration|view')
-    .option('--desc', '降序（默认升序）')
+    .option('--sort <key>', `排序键：${VIDEO_SORT_KEYS.join('|')}`)
+    .option('--desc [value]', '降序（默认降序，对齐 HTTP；升序传 --desc=false）')
     .option('--page <n>', '页码（从 1 起，默认 1）')
     .option('--size <n>', '每页条数（默认 20）')
     .option('-o, --output <file>', '写入文件（不指定则写 stdout）')
@@ -209,7 +202,7 @@ export function buildExportCommand(): Command {
         minDuration: parseNum(raw.minDuration, '--min-duration'),
         maxDuration: parseNum(raw.maxDuration, '--max-duration'),
         sort: parseSort(raw.sort),
-        desc: raw.desc,
+        desc: parseDesc(raw.desc),
         page: parseNum(raw.page, '--page'),
         size: parseNum(raw.size, '--size'),
       };
@@ -258,8 +251,8 @@ export function buildExportCommand(): Command {
     .option('--max-duration <s>', '最大时长（秒）')
     .option('--min-view <n>', '最小播放量')
     .option('--max-view <n>', '最大播放量')
-    .option('--sort <key>', '排序键：first_seen|published_at|title|duration|view')
-    .option('--desc', '降序（默认升序）')
+    .option('--sort <key>', `排序键：${VIDEO_SORT_KEYS.join('|')}`)
+    .option('--desc [value]', '降序（默认降序，对齐 HTTP；升序传 --desc=false）')
     .action((raw: BundleRawOpts) => {
       const ctx = getCliContext();
       const db = openDbOrEmit(ctx.dbPath);
@@ -276,7 +269,7 @@ export function buildExportCommand(): Command {
         since: parseTime(raw.since, '--since'), until: parseTime(raw.until, '--until'),
         minDuration: parseNum(raw.minDuration, '--min-duration'), maxDuration: parseNum(raw.maxDuration, '--max-duration'),
         minView: parseNum(raw.minView, '--min-view'), maxView: parseNum(raw.maxView, '--max-view'),
-        sort: parseSort(raw.sort), desc: raw.desc,
+        sort: parseSort(raw.sort), desc: parseDesc(raw.desc),
       };
       const built = buildBundle(db, { filters, track: raw.track, limit: parseNum(raw.limit, '--limit') ?? 500, now: Date.now() });
       mkdirSync(join(raw.out, 'videos'), { recursive: true });

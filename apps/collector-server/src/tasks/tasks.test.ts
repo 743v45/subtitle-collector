@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import type Database from 'better-sqlite3';
 import { openDb, migrate } from '../db/migrate.js';
 import { ingestVideo } from '../db/ingest.js';
-import { extractVideoUrl, expandShortLink, parseVideoUrl, createTask, createTasksBatch, findActiveTask, pickClientForTask, commandTimeoutMs, expandUpperVideos, getTask, retryTask, listTasks, resetDispatched, attachTaskScheduler, kickTaskScheduler, type FetchLike, type UpperExpandDeps } from './tasks.js';
+import { extractVideoUrl, expandShortLink, parseVideoUrl, createTask, createTasksBatch, findActiveTask, pickClientForTask, commandTimeoutMs, expandUpperVideos, getTask, retryTask, listTasks, resetDispatched, attachTaskScheduler, kickTaskScheduler, type FetchLike, type UpperExpandDeps, type CollectTask } from './tasks.js';
 import { registerWsBridge, type WsBridge } from './wsBridge.js';
 
 // 测试桥注册：tasks.ts 不再 import ws/server（分层规则 server-tasks-no-upward），pushTask 经
@@ -999,5 +999,69 @@ test('dispatchTask：youtube no_subtitle 回执 → succeeded + no-subtitle 系�
        WHERE v.source = 'youtube' AND v.source_vid = 'ytns1' AND t.name = 'no-subtitle' AND vt.source = 'system'`,
     ).get();
     assert.equal(tagged != null, true, 'YouTube 无字幕同样进 ASR 圈选锚点');
+  } finally { cleanup(); }
+});
+
+// ---- 2026-08-25 全端点排序：listTasks sort=created_at/finished_at/status ----
+
+// 排序口径：主键方向随 sort；finished_at 可空 → NULLS LAST（未完成任务恒排尾）；
+// 缺省 created_at DESC 与旧 t.id DESC 逐行等价（created_at 随 id 单调不减）。
+test('listTasks：sort=finished_at/status + desc + NULLS LAST + 缺省等价旧行为', () => {
+  const { db, cleanup } = setupDb();
+  try {
+    const mk = (vid: string) => createTask(db, { source: 'bilibili', source_vid: vid, url: `https://b23.tv/${vid}` });
+    const t1 = mk('BVsort1'); // succeeded, finished=100
+    const t2 = mk('BVsort2'); // failed,     finished=200
+    const t3 = mk('BVsort3'); // pending,    finished=NULL
+    const t4 = mk('BVsort4'); // dispatched, finished=NULL
+    const upd = db.prepare('UPDATE collect_tasks SET status = ?, finished_at = ? WHERE id = ?');
+    upd.run('succeeded', 100, t1.id);
+    upd.run('failed', 200, t2.id);
+    // t3/t4 保持 finished_at NULL
+    upd.run('dispatched', null, t4.id);
+    const vids = (rows: CollectTask[]) => rows.map((r) => r.source_vid);
+
+    // 缺省（不传 sort）＝ 旧 t.id DESC：最新在前
+    assert.deepEqual(vids(listTasks(db, 20).items), ['BVsort4', 'BVsort3', 'BVsort2', 'BVsort1']);
+    // 显式 created_at desc 与缺省一致
+    assert.deepEqual(vids(listTasks(db, 20, 0, {}, 'created_at', true).items), ['BVsort4', 'BVsort3', 'BVsort2', 'BVsort1']);
+    // created_at asc
+    assert.deepEqual(vids(listTasks(db, 20, 0, {}, 'created_at', false).items), ['BVsort1', 'BVsort2', 'BVsort3', 'BVsort4']);
+    // finished_at desc：200 > 100，NULL（未完成）恒排尾（NULLS LAST 不随方向翻转）
+    assert.deepEqual(vids(listTasks(db, 20, 0, {}, 'finished_at', true).items), ['BVsort2', 'BVsort1', 'BVsort4', 'BVsort3']);
+    // finished_at asc：NULL 仍排尾（升序看「最早完成」不被未完成行顶头）；NULL 组内 tie id 方向随主键（ASC）
+    assert.deepEqual(vids(listTasks(db, 20, 0, {}, 'finished_at', false).items), ['BVsort1', 'BVsort2', 'BVsort3', 'BVsort4']);
+    // status asc（字典序聚合运维视图）：dispatched < failed < pending < succeeded
+    assert.deepEqual(vids(listTasks(db, 20, 0, {}, 'status', false).items), ['BVsort4', 'BVsort2', 'BVsort3', 'BVsort1']);
+  } finally { cleanup(); }
+});
+
+// 批次补全 × 自定义排序：种子行按排序键取、补全成员并入后按同键重排（不只按 id）。
+test('listTasks：批次补全成员按当前排序键重排（sort=finished_at 时补全行归位）', () => {
+  const { db, cleanup } = setupDb();
+  try {
+    // 批次：3 条（t1 早完成 finished=100、t2 晚完成 finished=200、t3 未完成 NULL）+ 1 条批次外单任务（finished=50）
+    const r = createTasksBatch(db, ['BV1sort00001', 'BV1sort00002', 'BV1sort00003'], 'bilibili');
+    const single = createTask(db, { source: 'bilibili', source_vid: 'BV1sortsolo1', url: 'https://www.bilibili.com/video/BV1sortsolo1' });
+    const batchId = r.created[0].batch_id!;
+    const upd = db.prepare('UPDATE collect_tasks SET status = ?, finished_at = ? WHERE id = ?');
+    upd.run('succeeded', 100, r.created[0].id);
+    upd.run('succeeded', 200, r.created[1].id);
+    upd.run('pending', null, r.created[2].id);
+    upd.run('succeeded', 50, single.id);
+
+    // limit=1：种子只取排序最前 1 条（finished=200 的 t2），批次补全带出 t1/t3 后按 finished_at 重排：
+    // 200 > 100 > 50(NULL?) —— 单任务 50 不是批次成员不在结果里；NULL 的 t3 排尾
+    const res = listTasks(db, 1, 0, {}, 'finished_at', true);
+    const vids = res.items.map((t) => t.source_vid);
+    assert.deepEqual(vids, ['BV1sort00002', 'BV1sort00001', 'BV1sort00003'], '种子 t2(200) → 补全 t1(100)、t3(NULL 尾)按 finished_at 重排');
+    // 对照：不排序（缺省 id DESC）时 limit=1 种子是最新的单任务 solo（非批次成员，无补全）
+    const def = listTasks(db, 1, 0);
+    assert.deepEqual(def.items.map((t) => t.source_vid), ['BV1sortsolo1']);
+    // total 语义不变：与种子同 WHERE 的全量计数（无筛选 = 4 条任务）
+    assert.equal(res.total, 4);
+    assert.equal(def.total, 4);
+    // 释放引用
+    assert.ok(batchId.length > 0);
   } finally { cleanup(); }
 });

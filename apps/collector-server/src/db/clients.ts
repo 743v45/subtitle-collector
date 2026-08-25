@@ -1,8 +1,28 @@
 import type Database from 'better-sqlite3';
+import { cmpBySortKey } from './sort.js';
 
 // 客户端注册表读写（2026-08-24 popup 改名）：名字/登录态/版本/时间线的唯一持久层。
 // 在线态在 ws/server.ts 内存 connections（重启即失）；本表经 hello upsert / close touch 维护，
 // server 重启、客户端离线后名字与「首次/最后见到」时间线不丢。
+
+// 客户端列表排序键（2026-08-25 全端点排序）：last_seen=最近活跃（默认）、first_seen=首次见到、name=名字。
+// 排序在 ws/server.ts 的合并视图（DB + 在线态）上做；键清单与比较器定义在本模块供 HTTP/CLI 共用。
+export type ClientSortKey = 'last_seen' | 'first_seen' | 'name';
+export const CLIENT_SORT_KEYS: readonly ClientSortKey[] = ['last_seen', 'first_seen', 'name'];
+
+// 合并视图行的排序键列名映射（ws/server.ts ClientRow 的字段）。
+export const CLIENT_SORT_COLS: Record<ClientSortKey, 'last_seen_at' | 'first_seen_at' | 'client_name'> = {
+  last_seen: 'last_seen_at',
+  first_seen: 'first_seen_at',
+  name: 'client_name',
+};
+
+// 合并视图行排序（口径同 db/sort.ts：主键方向随 sort、client_id 文本 tie、name 可空 NULLS LAST）。
+export function compareClientRows<T extends { client_id: string; last_seen_at: number; first_seen_at: number; client_name: string | null }>(
+  a: T, b: T, sort: ClientSortKey, desc: boolean,
+): number {
+  return cmpBySortKey(a, b, CLIENT_SORT_COLS[sort], desc, 'client_id');
+}
 
 export interface KnownClient {
   client_id: string;

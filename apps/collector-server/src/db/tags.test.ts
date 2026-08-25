@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { openDb, migrate } from './migrate.js';
 import {
-  listTags, applyVideoTags, removeVideoTags, renameTag, deleteTag,
+  listTags, applyVideoTags, removeVideoTags, removeVideoTagsBySource, renameTag, deleteTag, deleteTagRelations,
   getVideoTagsByVideoIds, getVideoTagsForDetail, markNoSubtitle, unmarkNoSubtitle,
 } from './tags.js';
 import { ingestVideo } from './ingest.js';
@@ -246,5 +246,71 @@ test('system 档：unmarkNoSubtitle 只摘 system 档 + 幂等', () => {
     assert.deepEqual(detail, [{ name: 'no-subtitle', source: 'manual' }]);
     // 幂等：无 system 档可摘 → 0
     assert.equal(unmarkNoSubtitle(db, ref), 0);
+  } finally { db.close(); rmSync(dir, { recursive: true, force: true }); }
+});
+
+// ---- 按档全删 / 标签库按档删关联（2026-08-24）----
+
+test('removeVideoTagsBySource：只删该视频该档全部关系、missing 报告、幂等', () => {
+  const { db, dir } = freshDb();
+  try {
+    seedVideos(db);
+    applyVideoTags(db, [{ source: 'bilibili', source_vid: 'BV1a' }], ['x', 'y'], 'ai');
+    applyVideoTags(db, [{ source: 'bilibili', source_vid: 'BV1a' }], ['x'], 'manual');
+    applyVideoTags(db, [{ source: 'bilibili', source_vid: 'BV1b' }], ['x'], 'ai');
+    const vidOf = (sv: string) => (db.prepare('SELECT id FROM videos WHERE source_vid = ?').get(sv) as { id: number }).id;
+    const r = removeVideoTagsBySource(db, [{ source: 'bilibili', source_vid: 'BV1a' }, { source: 'bilibili', source_vid: 'BV404' }], 'ai');
+    assert.equal(r.removed, 2, 'BV1a 的 ai 档 x/y 两条被删');
+    assert.deepEqual(r.missing, [{ source: 'bilibili', source_vid: 'BV404' }]);
+    // manual 档与其他视频的 ai 档不受影响
+    assert.deepEqual(getVideoTagsForDetail(db, vidOf('BV1a')).map((t) => t.source + ':' + t.name), ['manual:x']);
+    assert.deepEqual(getVideoTagsForDetail(db, vidOf('BV1b')).map((t) => t.source + ':' + t.name), ['ai:x']);
+    // 幂等：再删一次 removed=0
+    assert.equal(removeVideoTagsBySource(db, [{ source: 'bilibili', source_vid: 'BV1a' }], 'ai').removed, 0);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('deleteTagRelations：只删该档关联、tags 实体保留', () => {
+  const { db, dir } = freshDb();
+  try {
+    seedVideos(db);
+    applyVideoTags(db, [{ source: 'bilibili', source_vid: 'BV1a' }, { source: 'bilibili', source_vid: 'BV1b' }], ['k'], 'ai');
+    applyVideoTags(db, [{ source: 'bilibili', source_vid: 'BV1a' }], ['k'], 'manual');
+    const tagId = (db.prepare("SELECT id FROM tags WHERE name = 'k'").get() as { id: number }).id;
+    assert.equal(deleteTagRelations(db, tagId, 'ai'), 2, '两条 ai 关联被删');
+    assert.ok(db.prepare('SELECT id FROM tags WHERE id = ?').get(tagId), 'tags 实体保留（空标签留着下次直接用）');
+    const cnt = db.prepare('SELECT COUNT(*) AS n FROM video_tags WHERE tag_id = ?').get(tagId) as { n: number };
+    assert.equal(cnt.n, 1, 'manual 档关联不受影响');
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+// ---- 2026-08-25 全端点排序：listTags sort=count/name/created_at + desc ----
+
+test('listTags：sort=count/name/created_at + desc 方向 + count 跟随 scope 档', () => {
+  const { db, dir } = freshDb();
+  try {
+    seedVideos(db);
+    // 计数形状：机器学习 total=1（ai）；面试题 total=2（ai=1 + manual=1）
+    applyVideoTags(db, [{ source: 'bilibili', source_vid: 'BV1a' }], ['机器学习'], 'ai');
+    applyVideoTags(db, [{ source: 'bilibili', source_vid: 'BV1a' }], ['面试题'], 'ai');
+    applyVideoTags(db, [{ source: 'bilibili', source_vid: 'BV1b' }], ['面试题'], 'manual');
+    // created_at 确定值（apply 同事务写 Date.now() 不可控）
+    db.prepare("UPDATE tags SET created_at = 300 WHERE name = '机器学习'").run();
+    db.prepare("UPDATE tags SET created_at = 100 WHERE name = '面试题'").run();
+    const names = (rows: ReturnType<typeof listTags>) => rows.map((t) => t.name);
+
+    // count 默认（desc）：面试题(2) > 机器学习(1)——与旧硬编码一致
+    assert.deepEqual(names(listTags(db)), ['面试题', '机器学习']);
+    // count 升序：机器学习(1) 在前
+    assert.deepEqual(names(listTags(db, { sort: 'count', desc: false })), ['机器学习', '面试题']);
+    // count 跟随 scope 档：scope=ai 时两标签 ai 计数同为 1 → tie name ASC（机器学习 < 面试题，码点序）
+    assert.deepEqual(names(listTags(db, { scope: 'ai', sort: 'count' })), ['机器学习', '面试题']);
+    // name 排序：升序字典序
+    assert.deepEqual(names(listTags(db, { sort: 'name', desc: false })), ['机器学习', '面试题']);
+    // name 降序
+    assert.deepEqual(names(listTags(db, { sort: 'name', desc: true })), ['面试题', '机器学习']);
+    // created_at 排序：升序 面试题(100) < 机器学习(300)
+    assert.deepEqual(names(listTags(db, { sort: 'created_at', desc: false })), ['面试题', '机器学习']);
+    assert.deepEqual(names(listTags(db, { sort: 'created_at', desc: true })), ['机器学习', '面试题']);
   } finally { db.close(); rmSync(dir, { recursive: true, force: true }); }
 });

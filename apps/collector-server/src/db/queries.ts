@@ -1,4 +1,5 @@
 import type Database from 'better-sqlite3';
+import { buildOrderBy } from './sort.js';
 
 export interface VideoListItem {
   id: number;
@@ -11,25 +12,8 @@ export interface VideoListItem {
   first_seen_at: number;
 }
 
-export function listVideos(db: Database.Database, q: string | undefined, page: number, size: number): { total: number; items: VideoListItem[] } {
-  const offset = (page - 1) * size;
-  const params: any[] = [];
-  let where = '';
-  if (q) {
-    where = "WHERE v.title LIKE ? OR c.name LIKE ?";
-    params.push(`%${q}%`, `%${q}%`);
-  }
-  const totalRow = db.prepare(`SELECT COUNT(*) as c FROM videos v LEFT JOIN creators c ON c.id = v.creator_id ${where}`).get(...params) as { c: number };
-  const rows = db.prepare(`
-    SELECT v.id, v.source, v.source_vid, v.title, c.name as creator_name, v.duration, v.first_seen_at,
-           (SELECT COUNT(*) FROM subtitle_tracks t WHERE t.video_id = v.id) as track_count
-    FROM videos v LEFT JOIN creators c ON c.id = v.creator_id
-    ${where}
-    ORDER BY v.first_seen_at DESC, v.id DESC
-    LIMIT ? OFFSET ?
-  `).all(...params, size, offset) as VideoListItem[];
-  return { total: totalRow.c, items: rows };
-}
+// 旧版 listVideos（仅 q 过滤）已删（2026-08-25 死代码清理：无 server 源码调用方，
+// 排序能力全面由 advanced.listVideosFiltered 承担）。
 
 export interface VersionRow { id: number; origin: string; source_url: string | null; asr_engine: string | null; captured_at: number; body_size: number | null; }
 export interface TrackRow { id: number; lan: string | null; lan_doc: string | null; track_type: number | null; versions: VersionRow[]; }
@@ -59,8 +43,9 @@ const versionPriority = (origin: string): number => {
 };
 
 export function getVideo(db: Database.Database, source: string, sourceVid: string): VideoDetail | null {
-  const video = db.prepare('SELECT v.*, c.name as creator_name, c.source_uid as creator_source_uid FROM videos v LEFT JOIN creators c ON c.id = v.creator_id WHERE v.source = ? AND v.source_vid = ?').get(source, sourceVid) as Record<string, unknown> | undefined;
+  const video = db.prepare('SELECT v.*, c.name as creator_name, c.source_uid as creator_source_uid, COALESCE(c.blocked, 0) as creator_blocked FROM videos v LEFT JOIN creators c ON c.id = v.creator_id WHERE v.source = ? AND v.source_vid = ?').get(source, sourceVid) as Record<string, unknown> | undefined;
   if (!video) return null;
+  video.creator_blocked = !!video.creator_blocked; // SQLite 存 0/1，出口布尔化
   const tracks = db.prepare('SELECT * FROM subtitle_tracks WHERE video_id = ? ORDER BY id').all(video.id) as Array<{ id: number; lan: string | null; lan_doc: string | null; track_type: number | null }>;
   const allVersions = db.prepare('SELECT * FROM subtitle_versions WHERE track_id = ? ORDER BY id');
   const result: VideoDetail = { video, tracks: [] };
@@ -105,6 +90,7 @@ export interface CreatorDetail {
   category_agent_name: string | null;
   category_human_id: number | null;
   category_human_name: string | null;
+  blocked: boolean;
   first_seen_at: number;
   updated_at: number;
 }
@@ -118,8 +104,8 @@ export function getCreator(db: Database.Database, id: number): CreatorDetail | n
      LEFT JOIN categories ca ON ca.id = c.category_agent_id
      LEFT JOIN categories ch ON ch.id = c.category_human_id
      WHERE c.id = ?`,
-  ).get(id) as CreatorDetail | undefined;
-  return row ?? null;
+  ).get(id) as (Omit<CreatorDetail, 'blocked'> & { blocked: number }) | undefined;
+  return row ? { ...row, blocked: !!row.blocked } : null; // SQLite 存 0/1，出口布尔化
 }
 
 // ── categories CRUD + creators 列表/打分类（股票 UP 主分类采集 + 后台管理）──
@@ -167,24 +153,45 @@ export interface CreatorListItem {
   name: string | null;
   avatar: string | null;
   fans: number | null;
+  following: number | null;   // 2026-08-25 排序键出参（--sort following 可观察）
+  level: number | null;       // 同上
   video_count: number;
   category_agent_id: number | null;
   category_agent_name: string | null;
   category_human_id: number | null;
   category_human_name: string | null;
+  blocked: boolean;
   first_seen_at: number;
+  updated_at: number;         // 同上（排序键出参）
 }
+
+// creators 列表排序（2026-08-25 全端点排序）：白名单 Record 先例同 advanced.ts SORT_EXPR。
+// 可空数值键 COALESCE 归零（先例：旧 fans 分支）；name 可空走 NULLS LAST。
+export type CreatorSortKey = 'first_seen' | 'fans' | 'video_count' | 'following' | 'level' | 'updated_at' | 'name';
+export const CREATOR_SORT_KEYS: readonly CreatorSortKey[] = ['first_seen', 'fans', 'video_count', 'following', 'level', 'updated_at', 'name'];
+const CREATOR_SORT_EXPRS: Record<CreatorSortKey, string> = {
+  first_seen: 'c.first_seen_at',
+  fans: 'COALESCE(c.fans, 0)',
+  video_count: 'video_count',
+  following: 'COALESCE(c.following, 0)',
+  level: 'COALESCE(c.level, 0)',
+  updated_at: 'c.updated_at',
+  name: 'c.name',
+};
+const CREATOR_SORT_NULLABLE: ReadonlySet<CreatorSortKey> = new Set(['name']);
 
 export function listCreators(
   db: Database.Database,
-  filter: { q?: string; category?: string; scope?: 'agent' | 'human'; source?: string },
+  filter: { q?: string; category?: string; scope?: 'agent' | 'human'; source?: string; blocked?: boolean },
   page: number,
   size: number,
-  sort: 'first_seen' | 'fans' | 'video_count' = 'first_seen',
+  sort: CreatorSortKey = 'first_seen',
+  desc = true,
 ): { total: number; items: CreatorListItem[] } {
   const where: string[] = []; const vals: unknown[] = [];
   if (filter.q) { where.push('(c.name LIKE ? OR c.source_uid LIKE ?)'); vals.push(`%${filter.q}%`, `%${filter.q}%`); }
   if (filter.source) { where.push('c.source = ?'); vals.push(filter.source); }
+  if (filter.blocked != null) { where.push('c.blocked = ?'); vals.push(filter.blocked ? 1 : 0); }
   if (filter.category && filter.scope) {
     where.push(filter.scope === 'agent'
       ? "c.category_agent_id IN (SELECT id FROM categories WHERE name = ? AND scope = 'agent')"
@@ -194,18 +201,20 @@ export function listCreators(
   const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
   const total = (db.prepare(`SELECT COUNT(*) AS n FROM creators c ${whereSql}`).get(...vals) as { n: number }).n;
   const offset = (page - 1) * size;
-  const items = db.prepare(
-    `SELECT c.id, c.source, c.source_uid, c.name, c.avatar, c.fans,
+  const rows = db.prepare(
+    `SELECT c.id, c.source, c.source_uid, c.name, c.avatar, c.fans, c.following, c.level,
        (SELECT COUNT(*) FROM videos v WHERE v.creator_id = c.id) AS video_count,
        c.category_agent_id, ca.name AS category_agent_name,
        c.category_human_id, ch.name AS category_human_name,
-       c.first_seen_at
+       c.blocked, c.first_seen_at, c.updated_at
      FROM creators c
      LEFT JOIN categories ca ON ca.id = c.category_agent_id
      LEFT JOIN categories ch ON ch.id = c.category_human_id
      ${whereSql}
-     ORDER BY ${sort === 'fans' ? 'COALESCE(c.fans, 0)' : sort === 'video_count' ? 'video_count' : 'c.first_seen_at'} DESC, c.id DESC LIMIT ? OFFSET ?`,
-  ).all(...vals, size, offset) as CreatorListItem[];
+     ${buildOrderBy(CREATOR_SORT_EXPRS[sort], desc, { nullable: CREATOR_SORT_NULLABLE.has(sort), tieExpr: 'c.id' })}
+     LIMIT ? OFFSET ?`,
+  ).all(...vals, size, offset) as Array<Omit<CreatorListItem, 'blocked'> & { blocked: number }>;
+  const items = rows.map((r) => ({ ...r, blocked: !!r.blocked })); // SQLite 存 0/1，出口布尔化
   return { total, items };
 }
 
@@ -226,18 +235,20 @@ export interface CreatorDetailFull {
   category_agent_name: string | null;
   category_human_id: number | null;
   category_human_name: string | null;
+  blocked: boolean;
   first_seen_at: number;
   updated_at: number;
 }
 
 export function getCreatorBySourceUid(db: Database.Database, source: string, source_uid: string): CreatorDetailFull | null {
-  return db.prepare(
+  const row = db.prepare(
     `SELECT c.*, ca.name AS category_agent_name, ch.name AS category_human_name
      FROM creators c
      LEFT JOIN categories ca ON ca.id = c.category_agent_id
      LEFT JOIN categories ch ON ch.id = c.category_human_id
      WHERE c.source = ? AND c.source_uid = ?`,
-  ).get(source, source_uid) as CreatorDetailFull | null;
+  ).get(source, source_uid) as (Omit<CreatorDetailFull, 'blocked'> & { blocked: number }) | undefined;
+  return row ? { ...row, blocked: !!row.blocked } : null; // SQLite 存 0/1，出口布尔化
 }
 
 // 打分类（通用）：查/建 category → upsert creator（不存在建最小行）→ 设对应列。返回最新 creator。
@@ -266,3 +277,16 @@ export function setCreatorCategory(
   return getCreatorBySourceUid(db, source, source_uid)!;
 }
 
+// 屏蔽/解除屏蔽 UP：采集入库不受影响，仅 CLI 消费链路默认过滤、web 展示标识。
+// 未入库返回 null（不建最小行——屏蔽对象必来自已入库列表，区别于 setCreatorCategory）。
+export function setCreatorBlocked(
+  db: Database.Database,
+  source: string,
+  source_uid: string,
+  blocked: boolean,
+): CreatorDetailFull | null {
+  const info = db.prepare('UPDATE creators SET blocked = ?, updated_at = ? WHERE source = ? AND source_uid = ?')
+    .run(blocked ? 1 : 0, Date.now(), source, source_uid);
+  if (info.changes === 0) return null;
+  return getCreatorBySourceUid(db, source, source_uid);
+}

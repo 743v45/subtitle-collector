@@ -798,3 +798,37 @@ test('POST /api/upper-videos/expand：YouTube channel 展开（合法 200 / 缺�
     ctx.cleanup();
   }
 });
+
+// ── 2026-08-25 全端点排序：GET /api/collect-tasks sort=created_at/finished_at/status + desc；非法 → 400 ──
+test('GET /api/collect-tasks：sort=finished_at NULLS LAST + status 聚合 + 非法 sort 400', async () => {
+  const ctx = await setup();
+  try {
+    // 三个任务：t1 succeeded(finished=100)、t2 failed(finished=200)、t3 pending(NULL)
+    const t1 = (await httpReq(ctx.port, 'POST', '/api/collect-tasks', { text: 'https://www.bilibili.com/video/BV1aa111c7mD' })).json.task;
+    const t2 = (await httpReq(ctx.port, 'POST', '/api/collect-tasks', { text: 'https://www.bilibili.com/video/BV1bb222c7mD' })).json.task;
+    const t3 = (await httpReq(ctx.port, 'POST', '/api/collect-tasks', { text: 'https://www.bilibili.com/video/BV1cc333c7mD' })).json.task;
+    const upd = ctx.db.prepare('UPDATE collect_tasks SET status = ?, finished_at = ? WHERE id = ?');
+    upd.run('succeeded', 100, t1.id);
+    upd.run('failed', 200, t2.id);
+    upd.run('pending', null, t3.id);
+    const vids = (r: Awaited<ReturnType<typeof httpReq>>) => r.json.items.map((t: { source_vid: string }) => t.source_vid);
+
+    // 缺省（created_at DESC）：最新在前
+    let r = await httpReq(ctx.port, 'GET', '/api/collect-tasks?limit=10');
+    assert.deepEqual(vids(r), ['BV1cc333c7mD', 'BV1bb222c7mD', 'BV1aa111c7mD']);
+    // created_at 升序
+    r = await httpReq(ctx.port, 'GET', '/api/collect-tasks?limit=10&sort=created_at&desc=0');
+    assert.deepEqual(vids(r), ['BV1aa111c7mD', 'BV1bb222c7mD', 'BV1cc333c7mD']);
+    // finished_at 降序：200 > 100，NULL（未完成）恒排尾
+    r = await httpReq(ctx.port, 'GET', '/api/collect-tasks?limit=10&sort=finished_at');
+    assert.deepEqual(vids(r), ['BV1bb222c7mD', 'BV1aa111c7mD', 'BV1cc333c7mD']);
+    // status 升序：failed < pending < succeeded（字典序聚合）
+    r = await httpReq(ctx.port, 'GET', '/api/collect-tasks?limit=10&sort=status&desc=0');
+    assert.deepEqual(vids(r), ['BV1bb222c7mD', 'BV1cc333c7mD', 'BV1aa111c7mD']);
+    // 非法 sort → 400
+    r = await httpReq(ctx.port, 'GET', '/api/collect-tasks?limit=10&sort=bogus');
+    assert.equal(r.status, 400);
+    assert.equal(r.json.ok, false);
+    assert.match(r.json.error, /sort must be one of created_at\|finished_at\|status/);
+  } finally { ctx.cleanup(); }
+});

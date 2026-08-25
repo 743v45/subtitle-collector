@@ -7,6 +7,7 @@
 // |---|---|---|---|
 // | R1 | list/reporting/command 成功 + 状态码归一化（404→NOT_FOUND，5xx→RUNTIME，不可达→SERVER_UNREACHABLE）+ state/timeout ARGS | 通过 | |
 // | R2 | task-dispatch（2026-08-23 仅上报状态）成功 + ARGS + 404 | 通过 | 与 reporting 同构 |
+// | R3 | 排序：--sort 成对下发 query + 未传不带 + 非法 --sort ARGS 退 2 | 通过 | 2026-08-25 全端点排序；pnpm qa 全绿 |
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -230,4 +231,29 @@ test('clients command：502 → RUNTIME 退 1（透传 body）', async () => {
     assert.equal(body.code, 'RUNTIME');
     assert.equal(body.status, 502);
   } finally { await srv.close(); }
+});
+
+// ── 2026-08-25 全端点排序：list --sort/--desc 成对下发 + 未传不带 query + 非法 --sort ARGS ──
+test('clients list：--sort 传 → sort+desc 成对下发；未传 → 无 query；非法 → ARGS 退 2', async () => {
+  // 未传 --sort：路径无 query（与旧版一致）
+  const srv0 = await startMockServer(() => ({ status: 200, json: { clients: [] } }));
+  try {
+    const r = await cli(args(srv0.url, ['clients', 'list']));
+    assert.equal(r.code, 0);
+    assert.equal(srv0.reqs[0]!.path, '/api/clients', '未传 --sort 不带排序 query');
+  } finally { await srv0.close(); }
+  // --sort name（缺省 desc=true）→ query 带 sort=name&desc=true
+  const srv = await startMockServer(() => ({ status: 200, json: { clients: [] } }));
+  try {
+    const r = await cli(args(srv.url, ['clients', 'list', '--sort', 'name']));
+    assert.equal(r.code, 0);
+    assert.equal(srv.reqs[0]!.path, '/api/clients?sort=name&desc=true');
+    const r2 = await cli(args(srv.url, ['clients', 'list', '--sort', 'first_seen', '--desc=false']));
+    assert.equal(r2.code, 0);
+    assert.equal(srv.reqs[1]!.path, '/api/clients?sort=first_seen&desc=false');
+  } finally { await srv.close(); }
+  // 非法 --sort → ARGS 退 2（不发请求）
+  const bad = await cli(args(DEAD, ['clients', 'list', '--sort', 'bogus']));
+  assert.equal(bad.code, 2);
+  assert.match(bad.err, /非法 --sort: bogus（可选: last_seen\|first_seen\|name）/);
 });

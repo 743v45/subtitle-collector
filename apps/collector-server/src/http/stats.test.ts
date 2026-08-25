@@ -142,18 +142,28 @@ test('GET /api/videos：向后兼容——只传 q 仍工作，返回 {total,pag
   } finally { ctx.cleanup(); }
 });
 
-test('GET /api/videos：非法参数不崩（tid/sort/has_subtitle 非法一律忽略，不 500）', async () => {
+test('GET /api/videos：过滤类非法参数忽略不崩；sort 非法 400（2026-08-25 起枚举严格化）', async () => {
   const ctx = await setup();
   try {
-    const r = await httpGet(ctx.port, '/api/videos?tid=abc&sort=bogus&has_subtitle=maybe&track_type=zzz&since=NaN&page=oops&size=huge');
+    // tid/has_subtitle/track_type/since/page/size 过滤类参数非法 → 一律忽略（不 500）
+    const r = await httpGet(ctx.port, '/api/videos?tid=abc&has_subtitle=maybe&track_type=zzz&since=NaN&page=oops&size=huge');
     assert.equal(r.status, 200);
     assert.equal(r.json.ok, true);
     assert.equal(r.json.total, 4); // 全部非法过滤被忽略 → 4 条
     assert.equal(r.json.page, 1);  // page 非法 → 默认 1
     assert.equal(r.json.size, 20); // size 非法 → 默认 20
+    // sort 枚举非法 → 400 + 错误列全合法键（取代旧「静默回落」：以为排了其实没排是暗坑）
+    const bad = await httpGet(ctx.port, '/api/videos?sort=bogus');
+    assert.equal(bad.status, 400);
+    assert.equal(bad.json.ok, false);
+    assert.match(bad.json.error, /sort must be one of first_seen\|published_at\|title\|duration\|view\|updated_at/);
     // 显式升序可用：sort=duration desc=0 → 升序 V4(60)<V2(300)<V1(600)<V3(1200)
     const asc = await httpGet(ctx.port, '/api/videos?sort=duration&desc=0');
     assert.deepEqual(titles(asc.json.items), ['标题D', '标题B', '标题A', '标题C']);
+    // desc 值非法（非布尔词）→ 宽松回落 true（布尔类参数不严格，对齐 page/size；只有枚举类 sort 严格）
+    const descBad = await httpGet(ctx.port, '/api/videos?sort=duration&desc=maybe');
+    assert.equal(descBad.status, 200);
+    assert.deepEqual(titles(descBad.json.items), ['标题C', '标题A', '标题B', '标题D'], 'desc=maybe 回落降序');
   } finally { ctx.cleanup(); }
 });
 
@@ -280,5 +290,30 @@ test('GET /api/creators/:id：返回富字段（sign/level/fans/official_*）—
     assert.equal(c.fans, 12345);
     assert.equal(c.official_title, '官方认证');
     assert.equal(c.name, 'Alpha UP');
+  } finally { ctx.cleanup(); }
+});
+
+// ── 2026-08-25 全端点排序：aggregate sort=count/key + desc；非法 → 400 ──
+test('GET /api/stats aggregate：sort=count/key + desc；非法 sort 400', async () => {
+  const ctx = await setup();
+  try {
+    // tname 榜（ingest 按 tid 反查标准分区名）：单机游戏(2)、日常(1, V4 tid21)、野生技术协会(1, V2 tid122)
+    const keys = (r: Awaited<ReturnType<typeof httpGet>>) => r.json.items.map((i: { key: string }) => i.key);
+    // 缺省 count DESC，tie key ASC（日常 < 野生技术协会）
+    let r = await httpGet(ctx.port, '/api/stats?type=aggregate&groupBy=tname');
+    assert.deepEqual(keys(r), ['单机游戏', '日常', '野生技术协会']);
+    // count 升序：tie 仍 key ASC
+    r = await httpGet(ctx.port, '/api/stats?type=aggregate&groupBy=tname&sort=count&desc=0');
+    assert.deepEqual(keys(r), ['日常', '野生技术协会', '单机游戏']);
+    // key 升序 / 降序（缺省 desc=true）
+    r = await httpGet(ctx.port, '/api/stats?type=aggregate&groupBy=tname&sort=key');
+    assert.deepEqual(keys(r), ['野生技术协会', '日常', '单机游戏']);
+    r = await httpGet(ctx.port, '/api/stats?type=aggregate&groupBy=tname&sort=key&desc=0');
+    assert.deepEqual(keys(r), ['单机游戏', '日常', '野生技术协会']);
+    // 非法 sort → 400
+    r = await httpGet(ctx.port, '/api/stats?type=aggregate&groupBy=tname&sort=bogus');
+    assert.equal(r.status, 400);
+    assert.equal(r.json.ok, false);
+    assert.match(r.json.error, /sort must be one of count\|key/);
   } finally { ctx.cleanup(); }
 });

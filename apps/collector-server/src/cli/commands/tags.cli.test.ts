@@ -6,6 +6,7 @@
 // | 轮次 | 范围 | 结果 | 备注 |
 // |---|---|---|---|
 // | R1 | list（默认/--source ai/--q）+ apply/remove 成功（断言请求体）+ ARGS ×2 + SERVER_UNREACHABLE + 5xx RUNTIME | 通过 | |
+// | R2 | 排序：list --sort name 升降 + 非法 --sort ARGS 退 2 | 通过 | 2026-08-25 全端点排序；pnpm qa 全绿 |
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -293,4 +294,23 @@ test('tags remove：server 500 → RUNTIME 退 1', async () => {
     assert.equal(r.code, 1);
     assert.equal(JSON.parse(r.out).code, 'RUNTIME');
   } finally { await srv.close(); rmSync(dir, { recursive: true, force: true }); }
+});
+
+// ── 2026-08-25 全端点排序：list --sort/--desc 透传 + 非法 --sort ARGS ──
+test('tags list：--sort name 升降 + 非法 --sort → ARGS 退 2', async () => {
+  const { dir, dbPath } = setup();
+  try {
+    // 种子用 setup 自带：精选(manual) + 面试题(ai)——字典序 精(U+7CBE) < 面(U+9762)
+    // --sort name --desc=false：字典序升序
+    const r = await cli(args(dbPath, DEAD, ['tags', 'list', '--sort', 'name', '--desc=false']));
+    assert.equal(r.code, 0);
+    assert.deepEqual((JSON.parse(r.out).items as Array<{ name: string }>).map((t) => t.name), ['精选', '面试题']);
+    // --sort name（缺省 desc）：降序
+    const r2 = await cli(args(dbPath, DEAD, ['tags', 'list', '--sort', 'name']));
+    assert.deepEqual((JSON.parse(r2.out).items as Array<{ name: string }>).map((t) => t.name), ['面试题', '精选']);
+    // 非法 --sort → ARGS 退 2
+    const bad = await cli(args(dbPath, DEAD, ['tags', 'list', '--sort', 'bogus']));
+    assert.equal(bad.code, 2);
+    assert.match(bad.err, /非法 --sort: bogus（可选: count\|name\|created_at）/);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
 });
