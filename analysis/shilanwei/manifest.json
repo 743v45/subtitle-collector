@@ -1,0 +1,412 @@
+{
+  "generated_at": 1787535352212,
+  "filters": {
+    "q": "士兰微",
+    "hasSubtitle": true,
+    "since": 1787270400000
+  },
+  "total_matched": 19,
+  "exported": 19,
+  "limit": 500,
+  "videos": [
+    {
+      "id": 5150,
+      "source": "bilibili",
+      "source_vid": "BV1fr8e6TEFz",
+      "title": "士兰微VS华微电子：功率半导体双雄对决",
+      "creator_name": "硬科技公司投研局",
+      "creator_source_uid": "552166670",
+      "duration": 485,
+      "published_at": 1787529732000,
+      "first_seen_at": 1787535157876,
+      "track_count": 1,
+      "subtitle": {
+        "file": "videos/BV1fr8e6TEFz.txt",
+        "lan": "ai-zh",
+        "lan_doc": "中文",
+        "track_type": 1,
+        "version_id": 12075,
+        "origin": "external"
+      },
+      "pot_limited": false
+    },
+    {
+      "id": 5151,
+      "source": "bilibili",
+      "source_vid": "BV1Kx8e6EEKQ",
+      "title": "士兰微VS宏微科技：功率半导体双核PK",
+      "creator_name": "硬科技公司投研局",
+      "creator_source_uid": "552166670",
+      "duration": 471,
+      "published_at": 1787529224000,
+      "first_seen_at": 1787535159472,
+      "track_count": 1,
+      "subtitle": {
+        "file": "videos/BV1Kx8e6EEKQ.txt",
+        "lan": "ai-zh",
+        "lan_doc": "中文",
+        "track_type": 1,
+        "version_id": 12076,
+        "origin": "external"
+      },
+      "pot_limited": false
+    },
+    {
+      "id": 5153,
+      "source": "bilibili",
+      "source_vid": "BV13i8x6zEe9",
+      "title": "精讲：中国巨石这次反弹大概能到哪里？功率半导体涨价，士兰微下周会继续开始反弹吗？创业板指数超跌反弹，这一次大概能反弹到哪里去？",
+      "creator_name": "吴姐有规律",
+      "creator_source_uid": "3707055674231620",
+      "duration": 476,
+      "published_at": 1787475307000,
+      "first_seen_at": 1787535162444,
+      "track_count": 1,
+      "subtitle": {
+        "file": "videos/BV13i8x6zEe9.txt",
+        "lan": "ai-zh",
+        "lan_doc": "中文",
+        "track_type": 1,
+        "version_id": 12077,
+        "origin": "external"
+      },
+      "pot_limited": false
+    },
+    {
+      "id": 5158,
+      "source": "bilibili",
+      "source_vid": "BV1Cv8m6SEWi",
+      "title": "半导体-士兰微基本面分析",
+      "creator_name": "二郎黑杰克",
+      "creator_source_uid": "39197170",
+      "duration": 133,
+      "published_at": 1787449813000,
+      "first_seen_at": 1787535187827,
+      "track_count": 1,
+      "subtitle": {
+        "file": "videos/BV1Cv8m6SEWi.txt",
+        "lan": "ai-zh",
+        "lan_doc": "中文",
+        "track_type": 1,
+        "version_id": 12080,
+        "origin": "external"
+      },
+      "pot_limited": false
+    },
+    {
+      "id": 5164,
+      "source": "bilibili",
+      "source_vid": "BV18A8U68EwJ",
+      "title": "士兰微业绩增速难以支撑130倍的市盈率",
+      "creator_name": "涂山资本-收徒中",
+      "creator_source_uid": "1765051891",
+      "duration": 527,
+      "published_at": 1787447400000,
+      "first_seen_at": 1787535231941,
+      "track_count": 1,
+      "subtitle": {
+        "file": "videos/BV18A8U68EwJ.txt",
+        "lan": "ai-zh",
+        "lan_doc": "中文",
+        "track_type": 1,
+        "version_id": 12083,
+        "origin": "external"
+      },
+      "pot_limited": false
+    },
+    {
+      "id": 5165,
+      "source": "bilibili",
+      "source_vid": "BV17C8p6TEVf",
+      "title": "士兰微VS扬杰科技：功率半导体双雄PK",
+      "creator_name": "硬科技公司投研局",
+      "creator_source_uid": "552166670",
+      "duration": 440,
+      "published_at": 1787443764000,
+      "first_seen_at": 1787535233514,
+      "track_count": 1,
+      "subtitle": {
+        "file": "videos/BV17C8p6TEVf.txt",
+        "lan": "ai-zh",
+        "lan_doc": "中文",
+        "track_type": 1,
+        "version_id": 12084,
+        "origin": "external"
+      },
+      "pot_limited": false
+    },
+    {
+      "id": 5166,
+      "source": "bilibili",
+      "source_vid": "BV1B68p6uEoe",
+      "title": "士兰微VS新洁能：功率半导体双强对决",
+      "creator_name": "硬科技公司投研局",
+      "creator_source_uid": "552166670",
+      "duration": 525,
+      "published_at": 1787443457000,
+      "first_seen_at": 1787535235090,
+      "track_count": 1,
+      "subtitle": {
+        "file": "videos/BV1B68p6uEoe.txt",
+        "lan": "ai-zh",
+        "lan_doc": "中文",
+        "track_type": 1,
+        "version_id": 12085,
+        "origin": "external"
+      },
+      "pot_limited": false
+    },
+    {
+      "id": 5167,
+      "source": "bilibili",
+      "source_vid": "BV14p8p6DEqc",
+      "title": "士兰微VS斯达半导：功率半导体双核PK",
+      "creator_name": "硬科技公司投研局",
+      "creator_source_uid": "552166670",
+      "duration": 390,
+      "published_at": 1787443083000,
+      "first_seen_at": 1787535236658,
+      "track_count": 1,
+      "subtitle": {
+        "file": "videos/BV14p8p6DEqc.txt",
+        "lan": "ai-zh",
+        "lan_doc": "中文",
+        "track_type": 1,
+        "version_id": 12086,
+        "origin": "external"
+      },
+      "pot_limited": false
+    },
+    {
+      "id": 5168,
+      "source": "bilibili",
+      "source_vid": "BV14H8p6HESY",
+      "title": "士兰微VS华润微：半导体IDM双雄对决",
+      "creator_name": "硬科技公司投研局",
+      "creator_source_uid": "552166670",
+      "duration": 468,
+      "published_at": 1787442213000,
+      "first_seen_at": 1787535238287,
+      "track_count": 1,
+      "subtitle": {
+        "file": "videos/BV14H8p6HESY.txt",
+        "lan": "ai-zh",
+        "lan_doc": "中文",
+        "track_type": 1,
+        "version_id": 12087,
+        "origin": "external"
+      },
+      "pot_limited": false
+    },
+    {
+      "id": 5169,
+      "source": "bilibili",
+      "source_vid": "BV1Up8m6oEFy",
+      "title": "主力高度控盘：士兰微涨停 功率半导体+IDM模式+U型反转 20260822周六",
+      "creator_name": "波波大帅2025",
+      "creator_source_uid": "3546754658077149",
+      "duration": 503,
+      "published_at": 1787402537000,
+      "first_seen_at": 1787535239945,
+      "track_count": 1,
+      "subtitle": {
+        "file": "videos/BV1Up8m6oEFy.txt",
+        "lan": "ai-zh",
+        "lan_doc": "中文",
+        "track_type": 1,
+        "version_id": 12088,
+        "origin": "external"
+      },
+      "pot_limited": false
+    },
+    {
+      "id": 5170,
+      "source": "bilibili",
+      "source_vid": "BV1M68y6UE5E",
+      "title": "5w满仓实盘，年底挑战100w，从回踩恐慌到涨停狂喜，士兰微主升浪开启？",
+      "creator_name": "超级鬼哥",
+      "creator_source_uid": "3706975823071875",
+      "duration": 50,
+      "published_at": 1787393575000,
+      "first_seen_at": 1787535241456,
+      "track_count": 1,
+      "subtitle": {
+        "file": "videos/BV1M68y6UE5E.txt",
+        "lan": "ai-zh",
+        "lan_doc": "中文",
+        "track_type": 1,
+        "version_id": 12089,
+        "origin": "external"
+      },
+      "pot_limited": false
+    },
+    {
+      "id": 5172,
+      "source": "bilibili",
+      "source_vid": "BV1HG8261Eap",
+      "title": "士兰微MOS电源IC芯片 SVF14N60CFJ高压MOS\t14A 650 V TO-220FJ-3L 贴片式封装",
+      "creator_name": "LED兆驰",
+      "creator_source_uid": "3707030600682244",
+      "duration": 12,
+      "published_at": 1787382378000,
+      "first_seen_at": 1787535244280,
+      "track_count": 1,
+      "subtitle": {
+        "file": "videos/BV1HG8261Eap.txt",
+        "lan": "ai-zh",
+        "lan_doc": "中文",
+        "track_type": 1,
+        "version_id": 12090,
+        "origin": "external"
+      },
+      "pot_limited": false
+    },
+    {
+      "id": 5173,
+      "source": "bilibili",
+      "source_vid": "BV18o816dE5N",
+      "title": "士兰微MOS电源IC芯片 SVF14N60CFJ高压MOS\t14A 650 V TO-220FJ-3L 贴片式封装 应用于：设备小型化，适合开关电源、电视机",
+      "creator_name": "光源兆驰灯珠士兰微",
+      "creator_source_uid": "3546591969413244",
+      "duration": 13,
+      "published_at": 1787380541000,
+      "first_seen_at": 1787535245789,
+      "track_count": 1,
+      "subtitle": {
+        "file": "videos/BV18o816dE5N.txt",
+        "lan": "ai-zh",
+        "lan_doc": "中文",
+        "track_type": 1,
+        "version_id": 12091,
+        "origin": "external"
+      },
+      "pot_limited": false
+    },
+    {
+      "id": 5175,
+      "source": "bilibili",
+      "source_vid": "BV1CL8q6QEna",
+      "title": "21日士兰微：主力抢筹建仓！后市或有大行情？",
+      "creator_name": "每天分享干货",
+      "creator_source_uid": "3546800002697555",
+      "duration": 155,
+      "published_at": 1787378400000,
+      "first_seen_at": 1787535247330,
+      "track_count": 1,
+      "subtitle": {
+        "file": "videos/BV1CL8q6QEna.txt",
+        "lan": "ai-zh",
+        "lan_doc": "中文",
+        "track_type": 1,
+        "version_id": 12092,
+        "origin": "external"
+      },
+      "pot_limited": false
+    },
+    {
+      "id": 5176,
+      "source": "bilibili",
+      "source_vid": "BV1tc8y6LEgK",
+      "title": "士兰微：归母翻倍，扣非没动，士兰微的钱哪来的？",
+      "creator_name": "鑫观点",
+      "creator_source_uid": "384763156",
+      "duration": 274,
+      "published_at": 1787370765000,
+      "first_seen_at": 1787535248835,
+      "track_count": 1,
+      "subtitle": {
+        "file": "videos/BV1tc8y6LEgK.txt",
+        "lan": "ai-zh",
+        "lan_doc": "中文",
+        "track_type": 1,
+        "version_id": 12093,
+        "origin": "external"
+      },
+      "pot_limited": false
+    },
+    {
+      "id": 5180,
+      "source": "bilibili",
+      "source_vid": "BV1Uw8q6hEzE",
+      "title": "半导体猛将 士兰微 量级反转",
+      "creator_name": "展昭论市",
+      "creator_source_uid": "3706956378278034",
+      "duration": 308,
+      "published_at": 1787309469000,
+      "first_seen_at": 1787535291190,
+      "track_count": 1,
+      "subtitle": {
+        "file": "videos/BV1Uw8q6hEzE.txt",
+        "lan": "ai-zh",
+        "lan_doc": "中文",
+        "track_type": 1,
+        "version_id": 12095,
+        "origin": "external"
+      },
+      "pot_limited": false
+    },
+    {
+      "id": 5181,
+      "source": "bilibili",
+      "source_vid": "BV1Xe8q6zE49",
+      "title": "金牛化工水下成功起飞！士兰微成功涨停！四川黄金午后拉升！2w满仓攻坚第9天！挑战带粉丝冲击100w！",
+      "creator_name": "青羽渡川",
+      "creator_source_uid": "515230126",
+      "duration": 109,
+      "published_at": 1787304152000,
+      "first_seen_at": 1787535292754,
+      "track_count": 1,
+      "subtitle": {
+        "file": "videos/BV1Xe8q6zE49.txt",
+        "lan": "ai-zh",
+        "lan_doc": "中文",
+        "track_type": 1,
+        "version_id": 12096,
+        "origin": "external"
+      },
+      "pot_limited": false
+    },
+    {
+      "id": 5182,
+      "source": "bilibili",
+      "source_vid": "BV1cE8q6DE3Z",
+      "title": "1w满仓打满，目标年前88w！只做马前炮！第44天：潜伏士兰微成功，继续潜伏新标贵研，周五收益9.92%！下周继续带粉抓龙头!",
+      "creator_name": "鹤隐淞涧",
+      "creator_source_uid": "500435043",
+      "duration": 195,
+      "published_at": 1787303509000,
+      "first_seen_at": 1787535294170,
+      "track_count": 1,
+      "subtitle": {
+        "file": "videos/BV1cE8q6DE3Z.txt",
+        "lan": "ai-zh",
+        "lan_doc": "中文",
+        "track_type": 1,
+        "version_id": 12097,
+        "origin": "external"
+      },
+      "pot_limited": false
+    },
+    {
+      "id": 5184,
+      "source": "bilibili",
+      "source_vid": "BV1Yz8T69E2B",
+      "title": "每天了解一家上市公司-士兰微",
+      "creator_name": "星寻遐蝶",
+      "creator_source_uid": "3546913261488654",
+      "duration": 252,
+      "published_at": 1787295729000,
+      "first_seen_at": 1787535297090,
+      "track_count": 1,
+      "subtitle": {
+        "file": "videos/BV1Yz8T69E2B.txt",
+        "lan": "ai-zh",
+        "lan_doc": "中文",
+        "track_type": 1,
+        "version_id": 12098,
+        "origin": "external"
+      },
+      "pot_limited": false
+    }
+  ]
+}

@@ -1,0 +1,761 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>士兰微（600460）B 站观点汇总 · 2026-08-21 ~ 08-24</title>
+<style>
+/* ── 调色板（dataviz 参考 palette，双色组合已过 validate_palette 双模式全检） ── */
+:root {
+  color-scheme: light;
+  --page:        #f9f9f7;
+  --surface-1:   #fcfcfb;
+  --text-1:      #0b0b0b;
+  --text-2:      #52514e;
+  --muted:       #898781;
+  --grid:        #e1e0d9;
+  --baseline:    #c3c2b7;
+  --border:      rgba(11,11,11,0.10);
+  --series-1:    #2a78d6;  /* 蓝：对照公司 / 单系列折线 / 看空端 */
+  --series-2:    #eb6834;  /* 橙：士兰微（主角） */
+  --div-red:     #e34948;  /* diverging 看多端（A 股红涨） */
+  --neutral-mid: #f0efec;
+  --ghost:       rgba(11,11,11,0.05);
+}
+@media (prefers-color-scheme: dark) {
+  :root:where(:not([data-theme="light"])) {
+    color-scheme: dark;
+    --page:      #0d0d0d;
+    --surface-1: #1a1a19;
+    --text-1:    #ffffff;
+    --text-2:    #c3c2b7;
+    --muted:     #898781;
+    --grid:      #2c2c2a;
+    --baseline:  #383835;
+    --border:    rgba(255,255,255,0.10);
+    --series-1:  #3987e5;
+    --series-2:  #d95926;
+    --div-red:   #e66767;
+    --neutral-mid:#383835;
+    --ghost:     rgba(255,255,255,0.07);
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --page:      #0d0d0d;
+  --surface-1: #1a1a19;
+  --text-1:    #ffffff;
+  --text-2:    #c3c2b7;
+  --muted:     #898781;
+  --grid:      #2c2c2a;
+  --baseline:  #383835;
+  --border:    rgba(255,255,255,0.10);
+  --series-1:  #3987e5;
+  --series-2:  #d95926;
+  --div-red:   #e66767;
+  --neutral-mid:#383835;
+  --ghost:     rgba(255,255,255,0.07);
+}
+:root[data-theme="light"] {
+  color-scheme: light;
+  --page:      #f9f9f7;
+  --surface-1: #fcfcfb;
+  --text-1:    #0b0b0b;
+  --text-2:    #52514e;
+  --muted:     #898781;
+  --grid:      #e1e0d9;
+  --baseline:  #c3c2b7;
+  --border:    rgba(11,11,11,0.10);
+  --series-1:  #2a78d6;
+  --series-2:  #eb6834;
+  --div-red:   #e34948;
+  --neutral-mid:#f0efec;
+  --ghost:     rgba(11,11,11,0.05);
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  font-family: system-ui, -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+  background: var(--page); color: var(--text-1);
+  line-height: 1.65; padding: 0 0 80px;
+}
+.wrap { max-width: 1080px; margin: 0 auto; padding: 0 24px; }
+a { color: var(--series-1); text-decoration: none; }
+a:hover { text-decoration: underline; }
+
+/* ── 头部 ── */
+header { padding: 40px 0 8px; }
+.kicker { font-size: 13px; letter-spacing: .12em; color: var(--muted); text-transform: uppercase; }
+h1 { font-size: 30px; font-weight: 700; margin: 6px 0 10px; }
+.meta { font-size: 13.5px; color: var(--text-2); }
+.meta b { color: var(--text-1); font-weight: 600; }
+.theme-btn {
+  position: absolute; top: 22px; right: 24px;
+  background: var(--surface-1); border: 1px solid var(--border); color: var(--text-2);
+  border-radius: 8px; padding: 6px 14px; font-size: 13px; cursor: pointer;
+}
+.theme-btn:hover { color: var(--text-1); }
+
+/* ── stat tiles ── */
+.tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 14px; margin: 26px 0 8px; }
+.tile { background: var(--surface-1); border: 1px solid var(--border); border-radius: 12px; padding: 16px 18px; }
+.tile .v { font-size: 30px; font-weight: 700; }
+.tile .v small { font-size: 15px; font-weight: 500; color: var(--text-2); margin-left: 2px; }
+.tile .k { font-size: 13px; color: var(--text-2); margin-top: 2px; }
+.tile .s { font-size: 12px; color: var(--muted); margin-top: 6px; }
+
+/* ── 章节 ── */
+section { margin-top: 44px; }
+h2 { font-size: 21px; font-weight: 700; padding-bottom: 8px; border-bottom: 1px solid var(--grid); margin-bottom: 4px; }
+h2 .no { color: var(--muted); font-weight: 500; margin-right: 8px; }
+.lede { font-size: 13.5px; color: var(--text-2); margin: 8px 0 18px; }
+
+/* ── 时间线 ── */
+.timeline { border-left: 2px solid var(--baseline); margin: 10px 0 6px 6px; padding-left: 22px; }
+.tl-item { position: relative; padding: 7px 0 13px; }
+.tl-item::before {
+  content: ""; position: absolute; left: -28px; top: 15px;
+  width: 10px; height: 10px; border-radius: 50%;
+  background: var(--series-2); box-shadow: 0 0 0 3px var(--surface-1), 0 0 0 4px var(--baseline);
+}
+.tl-item.dim::before { background: var(--muted); }
+.tl-date { font-size: 12.5px; font-weight: 600; color: var(--series-2); letter-spacing: .04em; }
+.src-inline { display: block; font-size: 12px; color: var(--muted); margin-top: 3px; }
+.tl-item.dim .tl-date { color: var(--muted); }
+.tl-body { font-size: 14.5px; margin-top: 2px; }
+
+/* ── 图表通用 ── */
+.chart-card { background: var(--surface-1); border: 1px solid var(--border); border-radius: 12px; padding: 18px 20px 14px; margin: 14px 0; }
+.chart-card h3 { font-size: 15.5px; font-weight: 600; }
+.chart-card .sub { font-size: 12.5px; color: var(--muted); margin: 2px 0 14px; }
+.legend { display: flex; flex-wrap: wrap; gap: 16px; font-size: 12.5px; color: var(--text-2); margin: 0 0 10px; }
+.legend .sw { display: inline-block; width: 11px; height: 11px; border-radius: 3px; margin-right: 6px; vertical-align: -1px; }
+.grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+@media (max-width: 760px) { .grid2 { grid-template-columns: 1fr; } }
+
+/* 条形图 */
+.bars { display: flex; flex-direction: column; gap: 9px; }
+.bar-row { display: grid; grid-template-columns: 88px 1fr; align-items: center; gap: 10px; }
+.bar-row .lbl { font-size: 13px; color: var(--text-2); text-align: right; }
+.bar-row.hero .lbl { color: var(--text-1); font-weight: 600; }
+.bar-track { position: relative; height: 22px; }
+.bar-fill {
+  height: 100%; border-radius: 0 4px 4px 0; min-width: 2px;
+  background: var(--series-1); position: relative;
+}
+.bar-fill.hero { background: var(--series-2); }
+.bar-fill.dim { background: color-mix(in srgb, var(--series-1) 55%, var(--surface-1)); }
+.bar-val {
+  position: absolute; left: calc(100% + 8px); top: 50%; transform: translateY(-50%);
+  font-size: 12.5px; color: var(--text-1); font-variant-numeric: tabular-nums; white-space: nowrap;
+}
+.bar-row { cursor: default; }
+.bar-row:hover .bar-fill { filter: brightness(1.08); }
+
+/* SVG 折线 */
+svg text { font-family: inherit; }
+.line-axis-line { stroke: var(--baseline); stroke-width: 1; }
+.line-grid { stroke: var(--grid); stroke-width: 1; }
+.line-path { fill: none; stroke: var(--series-1); stroke-width: 2; }
+.line-dot { fill: var(--series-1); stroke: var(--surface-1); stroke-width: 2; }
+.line-dot:hover { r: 6; }
+.svg-lbl { fill: var(--text-1); font-size: 12px; font-weight: 600; }
+.svg-lbl2 { fill: var(--text-2); font-size: 11.5px; }
+.svg-axis-lbl { fill: var(--muted); font-size: 11.5px; }
+
+/* diverging 光谱 */
+.spectrum { margin: 6px 0 4px; }
+.spec-row { display: grid; grid-template-columns: 1fr 1fr; align-items: center; min-height: 30px; margin: 4px 0; }
+.spec-l, .spec-r { position: relative; height: 20px; }
+.spec-l .seg { position: absolute; right: 0; top: 0; height: 100%; border-radius: 3px 0 0 3px; }
+.spec-r .seg { position: absolute; left: 0; top: 0; height: 100%; border-radius: 0 3px 3px 0; }
+.spec-seg-bull { background: var(--div-red); }
+.spec-seg-bear { background: var(--series-1); }
+.spec-name {
+  position: absolute; font-size: 12.5px; color: var(--text-1); white-space: nowrap; font-weight: 500;
+}
+.spec-name.r { left: 100%; margin-left: 9px; }
+.spec-name.l { right: 100%; margin-right: 9px; }
+.spec-axis { display: flex; justify-content: space-between; font-size: 11.5px; color: var(--muted); margin-top: 8px; }
+.spec-axis .mid { color: var(--muted); }
+.spec-zero { border-top: 2px solid var(--baseline); }
+
+/* 观点卡 */
+.camp { margin: 18px 0; }
+.camp h3 { font-size: 16px; margin-bottom: 10px; }
+.camp h3 .dot { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 8px; }
+.cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(310px, 1fr)); gap: 12px; }
+.card { background: var(--surface-1); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; font-size: 14px; }
+.card .who { font-weight: 600; font-size: 13.5px; margin-bottom: 4px; }
+.card p { color: var(--text-1); }
+.card .why { color: var(--text-2); font-size: 13px; margin-top: 4px; }
+.src { margin-top: 10px; padding-top: 8px; border-top: 1px dashed var(--grid); font-size: 12px; color: var(--muted); line-height: 1.55; }
+.src a { color: var(--muted); text-decoration: underline dotted; text-underline-offset: 3px; }
+.src a:hover { color: var(--series-1); }
+
+/* VS 卡 */
+.vs-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 12px; }
+.vs-card { background: var(--surface-1); border: 1px solid var(--border); border-radius: 10px; padding: 15px 17px; font-size: 13.5px; }
+.vs-card .vs-title { font-weight: 600; font-size: 14.5px; margin-bottom: 6px; }
+.vs-card .vs-verdict { padding: 7px 10px; background: var(--ghost); border-radius: 7px; margin: 8px 0; font-size: 13px; }
+.vs-card .vs-data { color: var(--text-2); font-size: 12.8px; }
+.vs-card .vs-data b { color: var(--text-1); font-weight: 600; }
+
+/* 共识/分歧 */
+.agree-item, .dis-item { padding: 10px 0 12px; border-bottom: 1px solid var(--grid); font-size: 14.5px; }
+.agree-item:last-child, .dis-item:last-child { border-bottom: none; }
+.agree-item .t, .dis-item .t { font-weight: 600; }
+.agree-item .d, .dis-item .d { color: var(--text-2); font-size: 13.5px; margin-top: 2px; }
+
+/* 提示/盲区 */
+.notice { background: var(--surface-1); border: 1px solid var(--border); border-left: 3px solid var(--series-1); border-radius: 8px; padding: 12px 16px; font-size: 13.5px; color: var(--text-2); margin: 10px 0; }
+.notice b { color: var(--text-1); }
+
+/* 表格 */
+details.tbl { margin-top: 12px; font-size: 12.8px; }
+details.tbl summary { cursor: pointer; color: var(--muted); font-size: 12.5px; user-select: none; }
+details.tbl summary:hover { color: var(--text-2); }
+table { border-collapse: collapse; width: 100%; margin-top: 8px; font-size: 12.5px; }
+th, td { text-align: left; padding: 5px 10px; border-bottom: 1px solid var(--grid); }
+th { color: var(--text-2); font-weight: 600; font-size: 12px; }
+td.num { font-variant-numeric: tabular-nums; text-align: right; }
+td.r { text-align: right; font-variant-numeric: tabular-nums; }
+
+/* tooltip */
+#tip {
+  position: fixed; pointer-events: none; z-index: 99; display: none;
+  background: var(--surface-1); border: 1px solid var(--border); border-radius: 8px;
+  box-shadow: 0 4px 18px rgba(0,0,0,.14); padding: 8px 12px; font-size: 12.5px; max-width: 320px;
+}
+#tip .tt { font-weight: 600; margin-bottom: 2px; }
+#tip .tb { color: var(--text-2); font-size: 12px; line-height: 1.5; }
+
+footer { margin-top: 56px; padding-top: 18px; border-top: 1px solid var(--grid); font-size: 12.5px; color: var(--muted); }
+</style>
+</head>
+<body>
+<div class="wrap">
+<button class="theme-btn" id="themeBtn" onclick="toggleTheme()">🌓 深浅切换</button>
+
+<header>
+  <div class="kicker">B 站字幕观点汇总 · 分析产物</div>
+  <h1>士兰微（600460）：涨停之后，多空怎么说</h1>
+  <p class="meta">
+    原料：<b>19 个视频 / 14 位 UP 主</b>（关键词「士兰微」，发布于 2026-08-21 00:00 之后，采集于 2026-08-24）
+    · 字幕轨均为 B 站 AI 中文（ai-zh） · 生成：2026-08-24
+    · 原料包：<a href="manifest.json">manifest.json</a> + <a href="videos/">videos/*.txt</a>
+  </p>
+  <p class="meta" style="margin-top:6px">
+    采集路径：28 条候选（collect find）→ 19 条采到字幕入库（9 条确认无字幕自动打标）→ export bundle 落盘本目录。
+  </p>
+</header>
+
+<div class="tiles">
+  <div class="tile"><div class="v">19<small>条</small></div><div class="k">分析原料视频</div><div class="s">14 位 UP · 周五 08-21 至周一 08-24</div></div>
+  <div class="tile"><div class="v">35.89<small>元</small></div><div class="k">08-21 周五涨停收盘价</div><div class="s">当日成交 26.99 亿 · 「量级反转」</div></div>
+  <div class="tile"><div class="v">≈130<small>倍</small></div><div class="k">市盈率（多视频口径）</div><div class="s">对应中报扣非预告增速仅 2.8%</div></div>
+  <div class="tile"><div class="v">14.98<small>亿</small></div><div class="k">2025 经营活动现金流</div><div class="s">同比 +238.44% · 空头多头共同引用</div></div>
+</div>
+
+<!-- ══════════ 一、行情时间线 ══════════ -->
+<section id="timeline">
+  <h2><span class="no">一</span>行情背景：这四天发生了什么</h2>
+  <p class="lede">时间线由视频字幕中的行情描述拼出，非行情数据源；每条注明出处。</p>
+  <div class="timeline">
+    <div class="tl-item dim"><div class="tl-date">6 月下旬（科技行情尾声）</div><div class="tl-body">32 元涨至 57 元，涨幅 70%+，未及翻倍。<span class="src-inline">来源: 主力高度控盘：士兰微涨停… [00:24]</span></div></div>
+    <div class="tl-item dim"><div class="tl-date">7 月 ~ 8 月上旬</div><div class="tl-body">随科技股调整深度回调至 27–28 元，接近 -50%。<span class="src-inline">来源: 主力高度控盘… [00:44]</span></div></div>
+    <div class="tl-item dim"><div class="tl-date">08-12</div><div class="tl-body">趋势指标金叉转上升趋势（黄线上穿红线），此后短线回调被解读为洗盘。<span class="src-inline">来源: 21日士兰微：主力抢筹建仓 [00:56]</span></div></div>
+    <div class="tl-item"><div class="tl-date">08-20 周四</div><div class="tl-body">盘中近跌停；周内成交额序列 27 → 41 → 70 → 50 亿（洗一天）→ 27 亿。<span class="src-inline">来源: 主力高度控盘… [01:17] [05:03]</span></div></div>
+    <div class="tl-item"><div class="tl-date">08-21 周五 · 事件锚点</div><div class="tl-body"><b>涨停封死，收盘 35.89 元，成交 26.99 亿，巨幅放量</b>——对比此前长期缩量阴跌，被称为「量级反转」；同日功率半导体板块轮动（斯达半导、士兰微先后涨停）。<span class="src-inline">来源: 半导体猛将 士兰微 量级反转 [00:35-00:49]</span></div></div>
+    <div class="tl-item"><div class="tl-date">08-22/23 周末</div><div class="tl-body">消息面：英伟达服务器产业链继续传涨价超 15%；功率半导体涨价的下一验证点放在周一盘面。<span class="src-inline">来源: 精讲：中国巨石这次反弹… [00:32] [06:59]</span></div></div>
+    <div class="tl-item dim"><div class="tl-date">08-24 周一（数据截止）</div><div class="tl-body">吴姐的观察清单：周一市场对士兰微/功率半导体涨价的反馈是关键；她自己判断创业板超跌反弹仅剩约 5 个交易日，反弹目标前高附近。</div></div>
+  </div>
+</section>
+
+<!-- ══════════ 二、财务数据对比 ══════════ -->
+<section id="charts">
+  <h2><span class="no">二</span>财务横面：视频里引用的 2025 年报数据</h2>
+  <p class="lede">数据均取自视频字幕（各 UP 引用口径），<b>未与公司公告核对</b>；不同 UP 引用同一指标存在出入（见第五节「数据打架」）。橙色 = 士兰微，蓝色 = 对照公司。</p>
+
+  <div class="grid2">
+    <div class="chart-card">
+      <h3>2025 营收（亿元）</h3>
+      <div class="sub">六家功率半导体公司 · 悬停看出处</div>
+      <div class="legend"><span><span class="sw" style="background:var(--series-2)"></span>士兰微</span><span><span class="sw" style="background:var(--series-1)"></span>对照公司</span></div>
+      <div class="bars" id="chartRev"></div>
+      <details class="tbl"><summary>表视图（含出处）</summary>
+        <table><tr><th>公司</th><th class="r">营收(亿)</th><th>出处</th></tr>
+        <tr><td>士兰微</td><td class="r">130.52</td><td>VS宏微科技 [00:44]；VS扬杰 [00:37]；涂山资本 [03:51]</td></tr>
+        <tr><td>华润微</td><td class="r">110.50</td><td>VS华润微 [04:56]</td></tr>
+        <tr><td>扬杰科技</td><td class="r">71.30</td><td>VS扬杰 [00:52]</td></tr>
+        <tr><td>斯达半导</td><td class="r">42.19*</td><td>VS斯达 [02:56]（预告区间 40.12–44.26 中值）</td></tr>
+        <tr><td>新洁能</td><td class="r">18.77</td><td>VS新洁能 [01:28]</td></tr>
+        <tr><td>宏微科技</td><td class="r">13.48</td><td>VS宏微 [00:43]（同比 +1.23%）</td></tr></table>
+      </details>
+    </div>
+    <div class="chart-card">
+      <h3>2025 归母净利润（亿元）</h3>
+      <div class="sub">「净利润悖论」：营收 1/7 的新洁能净利与士兰微持平（VS新洁能 [02:05]）</div>
+      <div class="legend"><span><span class="sw" style="background:var(--series-2)"></span>士兰微</span><span><span class="sw" style="background:var(--series-1)"></span>对照公司</span></div>
+      <div class="bars" id="chartProfit"></div>
+      <details class="tbl"><summary>表视图（含出处）</summary>
+        <table><tr><th>公司</th><th class="r">归母净利(亿)</th><th>出处</th></tr>
+        <tr><td>扬杰科技</td><td class="r">12.59</td><td>VS扬杰 [00:59]</td></tr>
+        <tr><td>华润微</td><td class="r">6.61</td><td>VS华润微 [05:09]</td></tr>
+        <tr><td>斯达半导</td><td class="r">&gt;4.0*</td><td>VS斯达 [03:07]（预告口径）</td></tr>
+        <tr><td>士兰微</td><td class="r">3.99</td><td>VS扬杰 [00:31]；涂山资本 [03:59]（同比 +81.27%）</td></tr>
+        <tr><td>新洁能</td><td class="r">3.94</td><td>VS新洁能 [02:15]</td></tr>
+        <tr><td>宏微科技</td><td class="r">0.17</td><td>VS宏微 [03:55]（字幕作「1万7111万」，按上下文修正为 1711 万）</td></tr></table>
+      </details>
+    </div>
+  </div>
+
+  <div class="grid2">
+    <div class="chart-card">
+      <h3>2025 经营活动现金流净额（亿元）</h3>
+      <div class="sub">多空双方共同引用的「造血」指标 · 仅画有数据的 4 家</div>
+      <div class="legend"><span><span class="sw" style="background:var(--series-2)"></span>士兰微（+238.44%）</span><span><span class="sw" style="background:var(--series-1)"></span>对照公司</span></div>
+      <div class="bars" id="chartCash"></div>
+      <details class="tbl"><summary>表视图（含出处）</summary>
+        <table><tr><th>公司</th><th class="r">经营现金流(亿)</th><th>出处</th></tr>
+        <tr><td>华润微</td><td class="r">20.85</td><td>VS华润微 [01:38]</td></tr>
+        <tr><td>扬杰科技</td><td class="r">17.03</td><td>VS扬杰 [01:38]</td></tr>
+        <tr><td>士兰微</td><td class="r">14.98</td><td>VS华微 [00:40]；VS宏微 [04:17]；同比 +238.44% 见 VS宏微 [04:34]</td></tr>
+        <tr><td>宏微科技</td><td class="r">1.39</td><td>VS宏微 [04:21]</td></tr></table>
+      </details>
+    </div>
+    <div class="chart-card">
+      <h3>综合毛利率对比（%）</h3>
+      <div class="sub">2025 年 · 士兰微毛利率被指「5 年腰斩」（33% → 18.8%，鑫观点 [02:13]）</div>
+      <div class="legend"><span><span class="sw" style="background:var(--series-2)"></span>士兰微</span><span><span class="sw" style="background:var(--series-1)"></span>对照公司</span></div>
+      <div class="bars" id="chartGross"></div>
+      <details class="tbl"><summary>表视图（含出处）</summary>
+        <table><tr><th>公司</th><th class="r">毛利率(%)</th><th>出处</th></tr>
+        <tr><td>扬杰科技</td><td class="r">33.79</td><td>VS扬杰 [03:09]（字幕「30% 3.79」）</td></tr>
+        <tr><td>新洁能</td><td class="r">32.86</td><td>VS新洁能 [02:44]（字幕「30% 2.86」）</td></tr>
+        <tr><td>士兰微</td><td class="r">18.83</td><td>VS扬杰 [03:03]；鑫观点 [02:16]</td></tr></table>
+      </details>
+    </div>
+  </div>
+
+  <div class="grid2">
+    <div class="chart-card">
+      <h3>士兰微扣非增速：一条向下的斜线（%）</h3>
+      <div class="sub">鑫观点 [01:34-01:42]：行业回暖、抢产能，扣非增速却一路向下</div>
+      <div id="chartGrowth"></div>
+      <details class="tbl"><summary>表视图（含出处）</summary>
+        <table><tr><th>报告期</th><th class="r">扣非增速(%)</th><th>出处</th></tr>
+        <tr><td>2025 全年</td><td class="r">47.8</td><td>鑫观点 [01:36]</td></tr>
+        <tr><td>2026 Q1</td><td class="r">8.8</td><td>鑫观点 [01:39]；同期华润微 +117%、扬杰 +41% [01:51-01:58]</td></tr>
+        <tr><td>2026 中报（预告）</td><td class="r">2.8</td><td>鑫观点 [01:41]；涂山资本口径 2.7% [04:57]</td></tr></table>
+      </details>
+    </div>
+    <div class="chart-card">
+      <h3>士兰微 2025 分产品毛利率 vs 收入占比（%）</h3>
+      <div class="sub">鑫观点 [02:35-02:53]：「赚得最多的业务偏偏不是卖得最多的」</div>
+      <div class="legend"><span><span class="sw" style="background:var(--series-1)"></span>毛利率</span><span><span class="sw" style="background:var(--series-1);opacity:.35"></span>收入占比</span></div>
+      <div class="bars" id="chartMix"></div>
+      <details class="tbl"><summary>表视图（含出处）</summary>
+        <table><tr><th>产品线</th><th class="r">毛利率(%)</th><th class="r">收入占比(%)</th><th>出处</th></tr>
+        <tr><td>集成电路</td><td class="r">31.6</td><td class="r">37.7</td><td>鑫观点 [02:38-02:41]</td></tr>
+        <tr><td>分立器件</td><td class="r">12.2</td><td class="r">40.0</td><td>鑫观点 [02:43-02:46]</td></tr>
+        <tr><td>LED</td><td class="r">1.9</td><td class="r">—</td><td>鑫观点 [02:48]</td></tr></table>
+      </details>
+    </div>
+  </div>
+
+  <div class="notice"><b>口径提醒</b>：以上数字全部来自视频字幕引用（多为各 UP 转述年报/预告），存在 AI 语音识别噪声与 UP 引用口径差异；用作观点地图，<b>不作用数核对</b>。带 * 为预告区间推算值。</div>
+</section>
+
+<!-- ══════════ 三、多空光谱 ══════════ -->
+<section id="spectrum">
+  <h2><span class="no">三</span>观点光谱：谁看多，谁看空</h2>
+  <p class="lede">按视频明示立场排布（-2 强烈看空 ~ +2 强烈看多）；产品展示类 2 个号（LED兆驰、光源兆驰）不参与。<b>立场为分析者对各视频论述的归纳，非视频自评。</b></p>
+  <div class="chart-card">
+    <div class="spectrum" id="chartSpectrum"></div>
+    <div class="spec-axis"><span>← 看空（蓝）</span><span class="mid">0 = 中性/短线博弈</span><span>看多（红）→</span></div>
+  </div>
+
+  <div class="camp">
+    <h3><span class="dot" style="background:var(--series-1)"></span>看空 / 质疑阵营：估值撑不起增速</h3>
+    <div class="cards">
+      <div class="card">
+        <div class="who">涂山资本-收徒中 · 08-23</div>
+        <p>「今年中报的利润增长仅仅只有 2.7%，然而它的市盈率高达 130」——PEG 角度高估；拆单季看利润在走下坡：Q1 1.5 亿 → Q2 仅 1.1 亿；营收近 5 年增速 10–20%「配不上 130 倍的市盈率」。</p>
+        <div class="why">另有：IDM 重资产「建一条 12 英寸动辄上百亿投资」、规划 200 亿项目，折旧成本极高。</div>
+        <div class="src">来源: <a href="https://www.bilibili.com/video/BV18A8U68EwJ" target="_blank">《士兰微业绩增速难以支撑130倍的市盈率》</a> [04:57] [05:00] [07:16-07:23] [08:33-08:42]</div>
+      </div>
+      <div class="card">
+        <div class="who">鑫观点 · 08-22</div>
+        <p>翻倍成色拆解：上半年归母 5.19 亿里，扣非 2.76 亿只占 53%，公允价值变动（安路科技、裕能科技股票浮盈）占 37%——「这翻倍里头有一半是炒股炒出来的」。另指出 2025 年归母 3.99 亿 vs 合并净利 1.38 亿，差额 2.6 亿靠子公司亏损「记到少数股东头上」。</p>
+        <div class="why">结论：「这轮涨价再猛，本质上还是周期里的反弹，不是新成长的起点」；Q3 毛利率能否回 25%+ 是关键窗口。</div>
+        <div class="src">来源: <a href="https://www.bilibili.com/video/BV1tc8y6LEgK" target="_blank">《士兰微：归母翻倍，扣非没动，士兰微的钱哪来的？》</a> [00:43-01:03] [01:10-01:28] [03:38-03:41] [03:45-04:02]</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="camp">
+    <h3><span class="dot" style="background:var(--muted)"></span>中性 / 谨慎阵营：长期认可，短期不追</h3>
+    <div class="cards">
+      <div class="card">
+        <div class="who">星寻遐蝶 · 08-21</div>
+        <p>「当前估值处于较高位置，股价已经充分反映行业景气预期」；定性为周期成长股，给出跟踪清单：功率器件报价、12 英寸与碳化硅产线进度、车规客户导入、扣非净利变化——「不屑和盲目追高」。</p>
+        <div class="src">来源: <a href="https://www.bilibili.com/video/BV1Yz8T69E2B" target="_blank">《每天了解一家上市公司-士兰微》</a> [01:19-01:23] [03:33-03:42]</div>
+      </div>
+      <div class="card">
+        <div class="who">二郎黑杰克 · 08-23</div>
+        <p>数据基准派：当前总市值 597 亿（08-21 数据），而其给出的历史平均市值区间为 200–500 亿——当前处区间上方；公司分类归属「周期型」。</p>
+        <div class="src">来源: <a href="https://www.bilibili.com/video/BV1Cv8m6SEWi" target="_blank">《半导体-士兰微基本面分析》</a> [00:20-00:24] [01:53-01:57]</div>
+      </div>
+      <div class="card">
+        <div class="who">吴姐有规律 · 08-23</div>
+        <p>大盘框架派：创业板 7 月自 4380 跌到 3158 后的本轮反弹，按其「超跌反弹约 20 个交易日」经验律，已走 16 天、仅剩约 5 天，反弹目标周二高点 3750 附近，随后「震荡下跌走双底」；对士兰微/功率半导体涨价，答案放在周一盘面反馈。</p>
+        <div class="src">来源: <a href="https://www.bilibili.com/video/BV13i8x6zEe9" target="_blank">《精讲：…功率半导体涨价，士兰微下周会继续开始反弹吗？》</a> [04:37-05:41] [06:59-07:16]</div>
+      </div>
+      <div class="card">
+        <div class="who">硬科技公司投研局 · 08-22~24（6 条 VS 系列）</div>
+        <p>「首席战略官」人设的对比审计：对华微电子、宏微科技、新洁能三家呈碾压式看多士兰微（平台壁垒、现金流造血）；但对华润微、斯达半导、扬杰科技三家，把「资产安全/确定性」的裁决给了对手，士兰微被定性为「高贝塔、依赖周期上行与产线满载的激进尖刀」。</p>
+        <div class="why">综合立场：长期壁垒认可 + 短期利润难看的「弹性资产」，非稳健资产。</div>
+        <div class="src">来源: <a href="https://www.bilibili.com/video/BV14H8p6HESY" target="_blank">VS华润微</a> [06:24-07:41] 等 6 条（见第四节）</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="camp">
+    <h3><span class="dot" style="background:var(--div-red)"></span>看多阵营：主力进场 + 赛道风口</h3>
+    <div class="cards">
+      <div class="card">
+        <div class="who">展昭论市 · 08-21</div>
+        <p>涨停日复盘：「实打实的主力资金大举进场」；前期 32 元反复企稳成硬支撑、放量突破箱体「进入多头加速通道」。基本面底气=IDM 龙头踩中车载 IGBT、碳化硅、AI 服务器电源三风口，下半年产能集中落地。</p>
+        <div class="why">同时泼冷水：情绪拉满后「千万不要盲目无脑连板」，更可能震荡上行；业绩兑现跟不上则偏高估值面临回调。</div>
+        <div class="src">来源: <a href="https://www.bilibili.com/video/BV1Uw8q6hEzE" target="_blank">《半导体猛将 士兰微 量级反转》</a> [00:35-01:12] [02:17-02:52] [03:20-03:42] [04:21-04:37]</div>
+      </div>
+      <div class="card">
+        <div class="who">波波大帅2025 · 08-22</div>
+        <p>「主力高度控盘」论：6 月 32→57 后深度洗盘至 27–28；周四近跌停、周五 27 亿反包涨停=「你敢卖他敢买」；筹码低位集中、涨停缩量=获利盘被主力承接——若直接上 50 元「一点也不奇怪」。关键位：32 元下方买、年线附近是买点。</p>
+        <div class="src">来源: <a href="https://www.bilibili.com/video/BV1Up8m6oEFy" target="_blank">《主力高度控盘：士兰微涨停 功率半导体+IDM模式+U型反转》</a> [02:49-02:54] [04:12-04:15] [05:29-06:02]</div>
+      </div>
+      <div class="card">
+        <div class="who">每天分享干货 · 08-22</div>
+        <p>指标派：08-12 起黄线上穿红线转上升趋势；回调中红色网格保持锁仓=洗盘而非出货；周五盘中再现金叉反弹信号，子线在黄线上方则「耐心持股」。</p>
+        <div class="src">来源: <a href="https://www.bilibili.com/video/BV1CL8q6QEna" target="_blank">《21日士兰微：主力抢筹建仓！后市或有大行情？》</a> [00:56-01:09] [02:16-02:26]</div>
+      </div>
+      <div class="card">
+        <div class="who">超级鬼哥 · 08-22（实盘）</div>
+        <p>「周五这根涨停 K 线彻底打破之前的箱体博弈格局，多头重夺主动权」；下周初观察涨停溢价与前高抛压，「不盲目追涨也不轻易下车」。</p>
+        <div class="src">来源: <a href="https://www.bilibili.com/video/BV1M68y6UE5E" target="_blank">《…士兰微主升浪开启？》</a> [00:28-00:43]</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="camp">
+    <h3><span class="dot" style="background:var(--baseline)"></span>短线喊单（不构成观点增量）</h3>
+    <div class="cards">
+      <div class="card">
+        <div class="who">鹤隐淞涧 · 08-21</div>
+        <p>实盘第 44 天：「昨天水下加仓士兰微的家人今天吃到涨停大肉」；应对预案：下周低开走弱→连板预期落空→择机止盈；高开封不住板→分批落袋，「落袋为安」。</p>
+        <div class="src">来源: <a href="https://www.bilibili.com/video/BV1cE8q6DE3Z" target="_blank">《1w满仓打满…第44天：潜伏士兰微成功》</a> [00:00-00:04] [00:50-01:00]</div>
+      </div>
+      <div class="card">
+        <div class="who">青羽渡川 · 08-21</div>
+        <p>板块轮动观察：「周二分享的功率半导体，隔天斯达半导涨停，今天是蓝威（士兰微）涨停，下次是不是轮到新洁能了呢」；并透露自己士兰微是「割肉走的」。</p>
+        <div class="src">来源: <a href="https://www.bilibili.com/video/BV1Xe8q6zE49" target="_blank">《…士兰微成功涨停！…第9天！》</a> [00:10-00:23]</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ══════════ 四、VS 系列 ══════════ -->
+<section id="vs">
+  <h2><span class="no">四</span>硬科技投研局「VS 系列」六场裁决</h2>
+  <p class="lede">同一 UP（1.3 万粉）在 3 天内连发 6 条士兰微对比审计，模板化「首席战略官」话术；数据引用密度高，但裁决倾向随对手而变——注意其内在不一致（见第五节）。</p>
+  <div class="vs-grid">
+    <div class="vs-card">
+      <div class="vs-title">士兰微 VS 华润微 · 08-23</div>
+      <div class="vs-data">营收 <b>130.52 vs 110.50 亿</b>；净利 <b>3.99 vs 6.61 亿</b>；经营现金流 <b>14.98 vs 20.85 亿</b>；车规良率 <b>92% vs 99.65%</b>；华润微净资产 229.8 亿 [01:38-06:02]</div>
+      <div class="vs-verdict">裁决：华润微=防守极佳的稳健资产；士兰微=「最激进的成长性标的…风险拉满的尖刀」，生存逻辑死死绑在周期向上的弹性爆发上。</div>
+      <div class="src">来源: <a href="https://www.bilibili.com/video/BV14H8p6HESY" target="_blank">《士兰微VS华润微：半导体IDM双雄对决》</a> [06:24-07:41]</div>
+    </div>
+    <div class="vs-card">
+      <div class="vs-title">士兰微 VS 斯达半导 · 08-23</div>
+      <div class="vs-data">斯达预告营收 <b>40.12–44.26 亿</b>、归母 <b>&gt;4 亿</b>；轻资产模式+交易性金融资产 <b>28.25 亿</b>；士兰微在建转固后前置折旧「每年超 <b>12 亿</b>」；12 英寸 IGBT 良率 92% [02:56-05:30]</div>
+      <div class="vs-verdict">裁决：斯达=车规验证周期护城河下「确定性极强的优质成长资产」；士兰微=「周期巨兽」，熬过折旧高峰后 8 英寸 SiC + 12 英寸满载将释放「巨大的 Alpha」。</div>
+      <div class="src">来源: <a href="https://www.bilibili.com/video/BV14p8p6DEqc" target="_blank">《士兰微VS斯达半导：功率半导体双核PK》</a> [05:40-06:06]</div>
+    </div>
+    <div class="vs-card">
+      <div class="vs-title">士兰微 VS 扬杰科技 · 08-23</div>
+      <div class="vs-data">扬杰营收 <b>71.30 亿</b>、归母 <b>12.59 亿</b>（士兰微 3 倍+）；净利率 <b>17.66% vs 3.6%</b>；毛利率 <b>33.79% vs 18.83%</b>；负债率 <b>35-40% vs 52.10%</b>；扬杰外销占 23.09%、越南月产能 12 亿只 [00:52-05:22]</div>
+      <div class="vs-verdict">裁决：士兰微=「高贝塔重资产标的，必须依赖周期上行与满载摊薄才能修复净利率」；扬杰=「高质量全球化标的」。（本条对士兰微最不客气）</div>
+      <div class="src">来源: <a href="https://www.bilibili.com/video/BV17C8p6TEVf" target="_blank">《士兰微VS扬杰科技：功率半导体双雄PK》</a> [06:21-07:16]</div>
+    </div>
+    <div class="vs-card">
+      <div class="vs-title">士兰微 VS 新洁能 · 08-23</div>
+      <div class="vs-data">新洁能营收 <b>18.77 亿</b>（士兰微 1/7）却归母 <b>3.94 亿</b>≈持平——「净利润悖论」；毛利率 <b>32.86% vs 18.83%</b>；负债率 <b>&lt;20% vs ~46%</b>；士兰微 12 英寸月产 6 万片满载、IPM 年出货 2.5 亿颗、车规 SiC 模块破 100 万颗 [01:28-07:31]</div>
+      <div class="vs-verdict">裁决：新洁能短期成本与债务安全占优，但战略维度士兰微「平台型 IDM 碾压」；重资产现金流拐点「已经正式确立」。（本条对士兰微最捧）</div>
+      <div class="src">来源: <a href="https://www.bilibili.com/video/BV1B68p6uEoe" target="_blank">《士兰微VS新洁能：功率半导体双强对决》</a> [07:54-08:35]</div>
+    </div>
+    <div class="vs-card">
+      <div class="vs-title">士兰微 VS 华微电子 · 08-24</div>
+      <div class="vs-data">华微电子被控股股东非经营性占用资金 <b>14.9 亿</b>未还、2025 年初被罚 3780 万、曾挂退市风险警示（2026-05 撤销）；士兰微厦门 8 英寸 SiC 投资 120 亿、一期 42 万片 2026 年初通线，另 200 亿重仓 12 英寸模拟 [02:45-06:02]</div>
+      <div class="vs-verdict">裁决：士兰微=「契合国产替代主线的核心科技成长型资产」；华微电子=「劣迹斑斑…只具备超跌事件驱动性质的短期危险赌博」。</div>
+      <div class="src">来源: <a href="https://www.bilibili.com/video/BV1fr8e6TEFz" target="_blank">《士兰微VS华微电子：功率半导体双雄对决》</a> [06:41-07:40]</div>
+    </div>
+    <div class="vs-card">
+      <div class="vs-title">士兰微 VS 宏微科技 · 08-24</div>
+      <div class="vs-data">宏微营收 <b>13.48 亿</b>（体量约 1/10）、归母仅 <b>1711 万</b>、扣非 874 万；经营现金流 <b>1.39 vs 14.98 亿</b>；2026H1 应收账款暴增 130%+ 至 9.33 亿、占总资产近四成 [00:43-06:15]</div>
+      <div class="vs-verdict">裁决：士兰微=「现金流充沛的制造堡垒、行业不可或缺的产业基石」；宏微=「随时可能流动性失血的脆弱报表」。士兰微经营现金流同比 +238.44% 被重点引用。</div>
+      <div class="src">来源: <a href="https://www.bilibili.com/video/BV1Kx8e6EEKQ" target="_blank">《士兰微VS宏微科技：功率半导体双核PK》</a> [06:53-07:19]</div>
+    </div>
+  </div>
+</section>
+
+<!-- ══════════ 五、共识 / 分歧 / 盲区 ══════════ -->
+<section id="synth">
+  <h2><span class="no">五</span>共识、分歧与盲区</h2>
+
+  <h3 style="margin:16px 0 4px;font-size:16px">✅ 共识（多方一致）</h3>
+  <div class="agree-item"><span class="t">行业地位：国内功率半导体 IDM 龙头，稀缺的全链条（设计-制造-封测）自主产能。</span><span class="d">来源: 涂山资本 [02:37-03:39]（全球市占 3.3% 第六、国内第一）、星寻遐蝶 [00:02-00:30]、展昭论市 [03:08-03:20]、二郎黑杰克 [01:09-01:16]</span></div>
+  <div class="agree-item"><span class="t">三大需求风口：车规 IGBT / 碳化硅、AI 服务器电源、新能源——中期需求方向没人质疑。</span><span class="d">来源: 展昭论市 [03:20-03:42]、星寻遐蝶 [01:57-02:11]、涂山资本（引姜老师）[01:53-02:32]</span></div>
+  <div class="agree-item"><span class="t">重资产双刃剑：折旧是最大利润压制项（2025 年折旧 10.9→12.5 亿，转固后或超 12 亿/年）；经营现金流 14.98 亿是对冲底气。</span><span class="d">来源: 鑫观点 [02:59-03:18]、VS斯达 [04:21-04:42]、VS新洁能 [07:23-07:50]、VS扬杰 [03:26-03:17]</span></div>
+  <div class="agree-item"><span class="t">估值不便宜：130 倍上下 PE 是多空共同的事实起点，分歧只在未来增速。</span><span class="d">来源: 涂山资本 [05:00]、鑫观点 [04:05-04:11]、星寻遐蝶 [01:19-01:23]、二郎黑杰克（市值超历史区间）[01:53-01:57]</span></div>
+  <div class="agree-item"><span class="t">Q3 是关键验证窗口：3 月 +10%、7 月 +15% 的提价因旧订单上半年未兑现，红利在三季报——毛利率能否回 25%+。</span><span class="d">来源: 鑫观点 [03:45-04:02]、展昭论市 [04:21-04:31]（业绩兑现跟不上则回调）</span></div>
+
+  <h3 style="margin:22px 0 4px;font-size:16px">⚡ 分歧（说法相左）</h3>
+  <div class="dis-item"><span class="t">议题一：130 倍 PE 买的是什么？</span>
+    <span class="d"><b>空方</b>（涂山资本 [07:06-08:42]）：中报增速 2.7%、单季利润环比下滑、营收增速 10–20%，PEG 高估，「配不上」。<b>多方</b>（VS新洁能 [07:11-08:29]）：折旧是纸面成本，满载产能面前现金流拐点已确立，买的是「基础设施级」平台壁垒与 Alpha 弹性。<b>中间</b>（星寻遐蝶 [03:19-03:42]）：周期成长股，用跟踪清单代替站队。</span></div>
+  <div class="dis-item"><span class="t">议题二：翻倍利润的成色</span>
+    <span class="d">鑫观点 [00:41-01:03]：归母 5.19 亿中 37% 是炒股浮盈+少数股东承接亏损的借力，「一半是炒股炒出来的」。涂山资本引用的多头材料（引姜老师 [03:51-04:40]）则直接引「归母 +81.27%、Q1 +40.57%、毛利率环比改善 3pct」作为修复证据——同一份年报，一个拆非经常项，一个看同比趋势。</span></div>
+  <div class="dis-item"><span class="t">议题三：跟同行比，士兰微是掉队者还是平台王？</span>
+    <span class="d">鑫观点 [01:48-02:08]：Q1 扣非增速 8.8% vs 华润微 117%、扬杰 41%——「明显是掉队的那一个」。VS系列（6 条）：对手越弱士兰微越神（华微/宏微/新洁能），对手越强士兰微越险（华润微/斯达/扬杰拿走「确定性」）。两套叙事用了同一批数据。</span></div>
+
+  <h3 style="margin:22px 0 4px;font-size:16px">⚠️ 数据打架（引用出入，未核对公告）</h3>
+  <div class="dis-item"><span class="t">资产负债率：46%（VS新洁能 [06:37-06:41]）vs 52.10%（VS扬杰 [01:59]）</span><span class="d">两条视频相隔一天发布，同一 UP。</span></div>
+  <div class="dis-item"><span class="t">毛利率：18.8%（鑫观点 [02:16]、VS扬杰 [03:03]）vs「约10%」（二郎黑杰克 [00:59]，疑为口误或 ASR 错误）</span></div>
+  <div class="dis-item"><span class="t">2025 扣非归母：3.72 亿（VS系列 3 条一致引用）vs 鑫观点口径的「2026H1 扣非 2.76 亿、增速 2.8%」</span><span class="d">两者是不同报告期，但在视频叙事里常被混着比。</span></div>
+  <div class="dis-item"><span class="t">总市值：597 亿（二郎黑杰克，08-21 数据截止）vs「500 多亿」（波波大帅，08-22 谈周五盘面）</span></div>
+
+  <h3 style="margin:22px 0 4px;font-size:16px">🕳️ 覆盖盲区（如实声明）</h3>
+  <div class="notice"><b>真无字幕（不可挽回）</b>：同关键词同期另有 9 条视频确认无字幕轨（含作手座山客 8.24 核心标的 32 分钟长视频、作手实盘录多股列表、简单哥一点就通每日精选 3 条、拾金鲤、LED兆驰另一条、吴姐精讲复盘、爱吃韭菜的蛋总精讲），观点未纳入。</div>
+  <div class="notice"><b>字幕无实质内容</b>：LED兆驰、光源兆驰灯珠士兰微两条 12–13 秒产品展示视频，AI 字幕抓到的是背景音乐歌词，无信息量。</div>
+  <div class="notice"><b>AI 字幕噪声</b>：全部 19 条为 ai-zh 轨，「士兰微」在 ASR 中被写作 深蓝威/西兰威/史莱威/旭蓝威/施懒威/视蓝威/是蓝威 等；本报告已按上下文归一，数字亦可能有听写误差（如「1万7111万」→1711 万的修正已注明）。</div>
+</section>
+
+<!-- ══════════ 附录 ══════════ -->
+<section id="appendix">
+  <h2><span class="no">附录</span>原料清单（19 条）</h2>
+  <div class="chart-card" style="padding-top:12px">
+    <table>
+      <tr><th>BV / UP</th><th>发布</th><th class="r">时长</th><th>立场归纳</th><th>一句话</th></tr>
+      <tr><td><a href="https://www.bilibili.com/video/BV1Uw8q6hEzE" target="_blank">BV1Uw8q6hEzE</a> 展昭论市</td><td>08-21</td><td class="r">5:08</td><td>偏多（短期戒追高）</td><td>涨停=量级反转，三风口，震荡上行</td></tr>
+      <tr><td><a href="https://www.bilibili.com/video/BV1Xe8q6zE49" target="_blank">BV1Xe8q6zE49</a> 青羽渡川</td><td>08-21</td><td class="r">1:49</td><td>短线轮动</td><td>斯达→士兰微涨停，下次新洁能？</td></tr>
+      <tr><td><a href="https://www.bilibili.com/video/BV1cE8q6DE3Z" target="_blank">BV1cE8q6DE3Z</a> 鹤隐淞涧</td><td>08-21</td><td class="r">3:15</td><td>短线喊单</td><td>水下加仓吃涨停；下周走弱就止盈</td></tr>
+      <tr><td><a href="https://www.bilibili.com/video/BV1Yz8T69E2B" target="_blank">BV1Yz8T69E2B</a> 星寻遐蝶</td><td>08-21</td><td class="r">4:12</td><td>中性偏谨慎</td><td>估值已充分反映；给跟踪清单</td></tr>
+      <tr><td><a href="https://www.bilibili.com/video/BV1tc8y6LEgK" target="_blank">BV1tc8y6LEgK</a> 鑫观点</td><td>08-22</td><td class="r">4:34</td><td>偏空</td><td>翻倍一半是炒股；扣非增速向下</td></tr>
+      <tr><td><a href="https://www.bilibili.com/video/BV1CL8q6QEna" target="_blank">BV1CL8q6QEna</a> 每天分享干货</td><td>08-22</td><td class="r">2:35</td><td>偏多</td><td>趋势金叉+锁仓洗盘论</td></tr>
+      <tr><td><a href="https://www.bilibili.com/video/BV1HG8261Eap" target="_blank">BV1HG8261Eap</a> LED兆驰</td><td>08-22</td><td class="r">0:12</td><td>无关</td><td>产品展示，字幕为 BGM 歌词</td></tr>
+      <tr><td><a href="https://www.bilibili.com/video/BV18o816dE5N" target="_blank">BV18o816dE5N</a> 光源兆驰</td><td>08-22</td><td class="r">0:13</td><td>无关</td><td>同上</td></tr>
+      <tr><td><a href="https://www.bilibili.com/video/BV1M68y6UE5E" target="_blank">BV1M68y6UE5E</a> 超级鬼哥</td><td>08-22</td><td class="r">0:50</td><td>偏多</td><td>涨停破箱体，多头夺回主动权</td></tr>
+      <tr><td><a href="https://www.bilibili.com/video/BV1Up8m6oEFy" target="_blank">BV1Up8m6oEFy</a> 波波大帅2025</td><td>08-22</td><td class="r">8:23</td><td>偏多</td><td>主力高度控盘，U 型反转</td></tr>
+      <tr><td><a href="https://www.bilibili.com/video/BV14H8p6HESY" target="_blank">BV14H8p6HESY</a> 硬科技投研局</td><td>08-23</td><td class="r">7:48</td><td>中性（对手稳健/己方尖刀）</td><td>VS 华润微：安全边际给对手</td></tr>
+      <tr><td><a href="https://www.bilibili.com/video/BV14p8p6DEqc" target="_blank">BV14p8p6DEqc</a> 硬科技投研局</td><td>08-23</td><td class="r">6:30</td><td>中性</td><td>VS 斯达：确定性给对手，弹性给自己</td></tr>
+      <tr><td><a href="https://www.bilibili.com/video/BV1B68p6uEoe" target="_blank">BV1B68p6uEoe</a> 硬科技投研局</td><td>08-23</td><td class="r">8:45</td><td>中性偏多</td><td>VS 新洁能：平台碾压+现金流拐点</td></tr>
+      <tr><td><a href="https://www.bilibili.com/video/BV17C8p6TEVf" target="_blank">BV17C8p6TEVf</a> 硬科技投研局</td><td>08-23</td><td class="r">7:20</td><td>中性偏空</td><td>VS 扬杰：盈利质量被三倍碾压</td></tr>
+      <tr><td><a href="https://www.bilibili.com/video/BV18A8U68EwJ" target="_blank">BV18A8U68EwJ</a> 涂山资本</td><td>08-23</td><td class="r">8:47</td><td>偏空</td><td>PE130 配不上 2.7% 增速</td></tr>
+      <tr><td><a href="https://www.bilibili.com/video/BV1Cv8m6SEWi" target="_blank">BV1Cv8m6SEWi</a> 二郎黑杰克</td><td>08-23</td><td class="r">2:13</td><td>中性</td><td>市值 597 亿超历史区间</td></tr>
+      <tr><td><a href="https://www.bilibili.com/video/BV13i8x6zEe9" target="_blank">BV13i8x6zEe9</a> 吴姐有规律</td><td>08-23</td><td class="r">7:56</td><td>中性偏谨慎</td><td>反弹剩 5 日；周一验证涨价反馈</td></tr>
+      <tr><td><a href="https://www.bilibili.com/video/BV1Kx8e6EEKQ" target="_blank">BV1Kx8e6EEKQ</a> 硬科技投研局</td><td>08-24</td><td class="r">7:51</td><td>偏多</td><td>VS 宏微：现金流堡垒碾压</td></tr>
+      <tr><td><a href="https://www.bilibili.com/video/BV1fr8e6TEFz" target="_blank">BV1fr8e6TEFz</a> 硬科技投研局</td><td>08-24</td><td class="r">8:05</td><td>偏多</td><td>VS 华微：成长资产 vs 治理黑洞</td></tr>
+    </table>
+  </div>
+</section>
+
+<footer>
+  本页为字幕观点整理产物（analysis/shilanwei/观点汇总.html），所有观点与数字均转述自视频字幕并标注出处，区分「视频明说」与「分析者归纳（立场光谱、一句话摘要）」；字幕为 B 站 AI 转写存在噪声，未与公司公告核对。<b>不构成任何投资建议。</b>
+  原料可再生：export bundle --q 士兰微 --since 2026-08-21 --has-subtitle --force。
+</footer>
+</div>
+
+<div id="tip"></div>
+
+<script>
+/* ── 主题切换 ── */
+function toggleTheme() {
+  const r = document.documentElement;
+  const dark = r.getAttribute('data-theme') === 'dark'
+    || (r.getAttribute('data-theme') === null && matchMedia('(prefers-color-scheme: dark)').matches);
+  r.setAttribute('data-theme', dark ? 'light' : 'dark');
+}
+
+/* ── tooltip ── */
+const tip = document.getElementById('tip');
+function bindTip(el, title, body) {
+  el.addEventListener('mousemove', e => {
+    tip.innerHTML = '<div class="tt">' + title + '</div><div class="tb">' + body + '</div>';
+    tip.style.display = 'block';
+    const x = Math.min(e.clientX + 14, innerWidth - 340);
+    tip.style.left = x + 'px'; tip.style.top = (e.clientY + 16) + 'px';
+  });
+  el.addEventListener('mouseleave', () => tip.style.display = 'none');
+}
+
+/* ── 条形图渲染 ── */
+function renderBars(id, rows, max, unit) {
+  const host = document.getElementById(id);
+  rows.forEach(r => {
+    const row = document.createElement('div');
+    row.className = 'bar-row' + (r.hero ? ' hero' : '');
+    const track = document.createElement('div'); track.className = 'bar-track';
+    const fill = document.createElement('div');
+    fill.className = 'bar-fill' + (r.hero ? ' hero' : '') + (r.dim ? ' dim' : '');
+    fill.style.width = Math.max(r.v / max * 100, 0.8) + '%';
+    const val = document.createElement('span'); val.className = 'bar-val';
+    val.textContent = r.label + unit;
+    fill.appendChild(val); track.appendChild(fill);
+    row.innerHTML = '<div class="lbl">' + r.name + '</div>';
+    row.appendChild(track);
+    bindTip(row, r.name + ' · ' + r.label + unit, r.src);
+    host.appendChild(row);
+  });
+}
+
+/* 图：2025 营收 */
+renderBars('chartRev', [
+  {name:'士兰微', v:130.52, label:'130.52', hero:true, src:'VS宏微 [00:44]；VS扬杰 [00:37]；涂山资本 [03:51]（同比 +16.32%）'},
+  {name:'华润微', v:110.50, label:'110.50', src:'VS华润微 [04:56]'},
+  {name:'扬杰科技', v:71.30, label:'71.30', src:'VS扬杰 [00:52]'},
+  {name:'斯达半导', v:42.19, label:'42.19*', src:'VS斯达 [02:56]：预告区间 40.12–44.26 亿，取中值'},
+  {name:'新洁能', v:18.77, label:'18.77', src:'VS新洁能 [01:28]'},
+  {name:'宏微科技', v:13.48, label:'13.48', src:'VS宏微 [00:43]（同比 +1.23%）'},
+], 140, ' 亿');
+
+/* 图：归母净利 */
+renderBars('chartProfit', [
+  {name:'扬杰科技', v:12.59, label:'12.59', src:'VS扬杰 [00:59]——营收一半于士兰微，净利三倍于士兰微'},
+  {name:'华润微', v:6.61, label:'6.61', src:'VS华润微 [05:09]（扣非 4.7 亿 [05:11]）'},
+  {name:'斯达半导', v:4.0, label:'>4.0*', src:'VS斯达 [03:07]（预告口径「超 4 亿」）'},
+  {name:'士兰微', v:3.99, label:'3.99', hero:true, src:'VS扬杰 [00:31]；涂山资本 [03:59]（同比 +81.27%）'},
+  {name:'新洁能', v:3.94, label:'3.94', src:'VS新洁能 [02:15]——「净利润悖论」：营收 1/7 而净利持平'},
+  {name:'宏微科技', v:0.17, label:'0.17', src:'VS宏微 [03:55]（归母 1711 万、扣非 874 万）'},
+], 13.5, ' 亿');
+
+/* 图：经营现金流 */
+renderBars('chartCash', [
+  {name:'华润微', v:20.85, label:'20.85', src:'VS华润微 [01:38]——被引用为「最硬核的底层防御工事」'},
+  {name:'扬杰科技', v:17.03, label:'17.03', src:'VS扬杰 [01:38]（超过其净利润=造血真实）'},
+  {name:'士兰微', v:14.98, label:'14.98', hero:true, src:'VS华微 [00:40]；VS宏微 [04:17]；同比 +238.44%（VS宏微 [04:34]）'},
+  {name:'宏微科技', v:1.39, label:'1.39', src:'VS宏微 [04:21]'},
+], 22, ' 亿');
+
+/* 图：综合毛利率 */
+renderBars('chartGross', [
+  {name:'扬杰科技', v:33.79, label:'33.79', src:'VS扬杰 [03:09]（字幕「30% 3.79」→33.79%）'},
+  {name:'新洁能', v:32.86, label:'32.86', src:'VS新洁能 [02:44]（字幕「30% 2.86」→32.86%）'},
+  {name:'士兰微', v:18.83, label:'18.83', hero:true, src:'VS扬杰 [03:03]；鑫观点 [02:16]：2021 年 33% → 2025 年 18.8%，5 年腰斩；2026Q1 微回 19.8% [02:19]'},
+], 36, ' %');
+
+/* 图：分产品毛利率 vs 收入占比（双条并排画成 6 行） */
+(function(){
+  const host = document.getElementById('chartMix');
+  const rows = [
+    {name:'集成电路', gm:31.6, rev:37.7, src:'鑫观点 [02:38-02:41]：毛利最高'},
+    {name:'分立器件', gm:12.2, rev:40.0, src:'鑫观点 [02:43-02:46]：收入大头、毛利低'},
+    {name:'LED', gm:1.9, rev:null, src:'鑫观点 [02:48]：「更惨 1.9%」'},
+  ];
+  rows.forEach(r => {
+    const mk = (v, dim) => {
+      const row = document.createElement('div'); row.className = 'bar-row';
+      const track = document.createElement('div'); track.className = 'bar-track';
+      const fill = document.createElement('div'); fill.className = 'bar-fill' + (dim ? ' dim' : '');
+      fill.style.width = (v / 45 * 100) + '%';
+      const val = document.createElement('span'); val.className = 'bar-val';
+      val.textContent = v + '%';
+      fill.appendChild(val); track.appendChild(fill); row.appendChild(track);
+      bindTip(row, r.name, r.src);
+      return row;
+    };
+    const wrap = document.createElement('div');
+    wrap.innerHTML = '<div class="lbl" style="text-align:right;font-size:13px;color:var(--text-2)">' + r.name + '</div>';
+    wrap.style.display = 'grid'; wrap.style.gridTemplateColumns = '88px 1fr'; wrap.style.gap = '10px';
+    const inner = document.createElement('div');
+    inner.style.display = 'flex'; inner.style.flexDirection = 'column'; inner.style.gap = '3px';
+    inner.appendChild(mk(r.gm, false));
+    if (r.rev != null) inner.appendChild(mk(r.rev, true));
+    wrap.appendChild(inner);
+    host.appendChild(wrap);
+  });
+})();
+
+/* ── 扣非增速折线（SVG） ── */
+(function(){
+  const W = 460, H = 220, L = 46, R = 30, T = 26, B = 42;
+  const pts = [
+    {x:'2025 全年', v:47.8, src:'鑫观点 [01:36]'},
+    {x:'2026 Q1', v:8.8, src:'鑫观点 [01:39]：同期华润微 +117%、扬杰 +41%'},
+    {x:'2026 中报预告', v:2.8, src:'鑫观点 [01:41]；涂山资本口径 2.7% [04:57]'},
+  ];
+  const xs = pts.map((_, i) => L + i * (W - L - R) / 2);
+  const ymax = 55, ymin = 0;
+  const y = v => T + (H - T - B) * (1 - (v - ymin) / (ymax - ymin));
+  let g = '';
+  [0, 10, 20, 30, 40, 50].forEach(t => {
+    g += '<line class="line-grid" x1="' + L + '" y1="' + y(t) + '" x2="' + (W - R) + '" y2="' + y(t) + '"></line>'
+       + '<text class="svg-axis-lbl" x="' + (L - 8) + '" y="' + (y(t) + 4) + '" text-anchor="end">' + t + '</text>';
+  });
+  let path = 'M' + xs.map((x, i) => x + ',' + y(pts[i].v)).join(' L');
+  let dots = '';
+  xs.forEach((x, i) => {
+    dots += '<circle class="line-dot" data-i="' + i + '" cx="' + x + '" cy="' + y(pts[i].v) + '" r="5"></circle>'
+      + '<text class="svg-lbl" x="' + x + '" y="' + (y(pts[i].v) - 12) + '" text-anchor="middle">' + pts[i].v + '%</text>'
+      + '<text class="svg-lbl2" x="' + x + '" y="' + (H - B + 20) + '" text-anchor="middle">' + pts[i].x + '</text>';
+  });
+  document.getElementById('chartGrowth').innerHTML =
+    '<svg viewBox="0 0 ' + W + ' ' + H + '" style="width:100%;height:auto" role="img" aria-label="士兰微扣非增速折线">'
+    + g + '<line class="line-axis-line" x1="' + L + '" y1="' + (H - B) + '" x2="' + (W - R) + '" y2="' + (H - B) + '"></line>'
+    + '<path class="line-path" d="' + path + '"></path>' + dots + '</svg>';
+  document.querySelectorAll('#chartGrowth .line-dot').forEach(d => {
+    const p = pts[+d.dataset.i];
+    bindTip(d, p.x + ' · 扣非增速 ' + p.v + '%', p.src);
+  });
+})();
+
+/* ── 多空光谱（diverging） ── */
+(function(){
+  const host = document.getElementById('chartSpectrum');
+  /* score: -2..+2；红=看多(右)，蓝=看空(左) */
+  const rows = [
+    {n:'涂山资本', s:-2, note:'PE130 配不上 2.7% 增速；单季利润下滑'},
+    {n:'鑫观点', s:-1.5, note:'翻倍一半是炒股；扣非掉队；周期反弹非成长'},
+    {n:'星寻遐蝶', s:-0.5, note:'长期认可，估值已充分反映，不追高'},
+    {n:'二郎黑杰克', s:-0.5, note:'市值 597 亿超历史区间 200–500 亿'},
+    {n:'吴姐有规律', s:0, note:'反弹剩约 5 日；周一验证涨价反馈'},
+    {n:'青羽渡川', s:0, note:'短线轮动喊单（自己割肉走的）'},
+    {n:'鹤隐淞涧', s:0.2, note:'短线喊单：走弱即止盈'},
+    {n:'硬科技投研局', s:0.5, note:'壁垒认可；对手强则让出确定性'},
+    {n:'展昭论市', s:0.7, note:'三风口+多头通道；短期勿追高'},
+    {n:'超级鬼哥', s:1, note:'涨停破箱体，多头重夺主动权'},
+    {n:'每天分享干货', s:1, note:'趋势金叉+锁仓洗盘'},
+    {n:'波波大帅2025', s:1.5, note:'主力高度控盘，U 型反转'},
+  ];
+  const UNIT = 110; /* 每 1 分的像素 */
+  rows.forEach(r => {
+    const row = document.createElement('div'); row.className = 'spec-row';
+    const l = document.createElement('div'); l.className = 'spec-l';
+    const rt = document.createElement('div'); rt.className = 'spec-r';
+    rt.style.borderLeft = '2px solid var(--baseline)';
+    if (r.s < 0) {
+      const seg = document.createElement('div'); seg.className = 'seg spec-seg-bear';
+      seg.style.width = (-r.s * UNIT) + 'px'; l.appendChild(seg);
+      const nm = document.createElement('span'); nm.className = 'spec-name l'; nm.textContent = r.n; l.appendChild(nm);
+    } else {
+      const seg = document.createElement('div'); seg.className = 'seg spec-seg-bull';
+      seg.style.width = (r.s * UNIT) + 'px'; rt.appendChild(seg);
+      const nm = document.createElement('span'); nm.className = 'spec-name r'; nm.textContent = r.n; rt.appendChild(nm);
+    }
+    row.appendChild(l); row.appendChild(rt);
+    bindTip(row, r.n + '（立场 ' + r.s + '）', r.note + ' · 立场为分析者归纳');
+    host.appendChild(row);
+  });
+})();
+</script>
+</body>
+</html>
