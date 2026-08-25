@@ -42,7 +42,7 @@ docker exec collector-server node -e 'const db=require("better-sqlite3")("/data/
 
 历史教训(2026-08-24 两次 SQLITE_CORRUPT):旧 bind mount 走 virtiofs,宿主机进程直触挂载库(哪怕只读)会引发 mmap 一致性损坏;named volume 已根除此路径,但「宿主直读」习惯须保持禁用。
 
-**生产备份**:server 内置每小时容器内 `VACUUM INTO /data/backups/`(启动即备一次,滚动 24 份);导出到宿主走 `node scripts/backup-export.mjs [目标目录] [--all|--keep N]`(docker cp,默认最新 1 份到 `data/exports/`)。
+**生产备份**(2026-08-25 grilling 定案的四层体系):① server 内置每 **15min** 容器内 `VACUUM INTO /data/backups/`(启动即备一次,分层滚动:最近 8 份 + 每日末份 × 14 天,RPO 15min 保人工资产);② 每日 10:23 cron 导最新 1 份到群晖同步盘(异地,`crontab -l` 可查);③ 恢复走 `node scripts/backup-restore.mjs --list / --drill / --apply <文件名>`(--drill 恢复演练不碰生产,**每季度跑一次**);④ 连续失败 ≥2 次推飞书 webhook(.env 配 `COLLECTOR_BACKUP_WEBHOOK_URL`,缺省只打日志)。导出到任意宿主目录:`node scripts/backup-export.mjs [目录] [--all|--keep N]`。
 
 ## 命令组速查(细节靠 --help)
 
@@ -82,6 +82,7 @@ collect 子命令速记:`search <关键词>` 搜候选(不入库)/ `subtitle <vi
 | `scripts/proxy-collector-server.mjs` | 127.0.0.1:21528 → 内网 21527 转发 |
 | `scripts/verify-deployed.mjs` | 部署后服务状态自检(`pnpm verify:deployed -- --token <t> [--server <url>] [--db <路径>]`;HTTP 核心接口 + `--db` 时 SQLite integrity_check,坏页损坏探活测不出——2026-08-24 事故教训;生产库迁 volume 后 `--db` 传导出的备份文件或省略) |
 | `scripts/backup-export.mjs` | 生产备份导出(docker cp volume → 宿主;`node scripts/backup-export.mjs [目录] [--all\|--keep N]`,默认最新 1 份到 `data/exports/`) |
+| `scripts/backup-restore.mjs` | 生产备份恢复(`--list` 列卷内备份 / `--drill` 演练(临时卷+容器 21599,不碰生产,季度跑) / `--apply <文件名>` 真恢复(停服换库,旧库改名留证);事故现场不再靠记忆) |
 | `scripts/sqlite-rescue.mjs` | 损坏库抢救重建(`node scripts/sqlite-rescue.mjs <主库> <完好备份> <新库输出>`;分段绕坏页 + 备份兜底 + JSON 列降级 + 孤儿引用登记,2026-08-24 SQLITE_CORRUPT 事故产物) |
 | `scripts/verify-*.mjs` | 链路验收冒烟族(`pnpm test:ext` / `test:youtube`,按需不进 qa) |
 

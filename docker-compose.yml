@@ -37,6 +37,8 @@ services:
       COLLECTOR_TOKEN: ${COLLECTOR_TOKEN:-change-me-collector-token}
       # 从宿主 localhost（经 -p 映射）访问无需填；从局域网 IP/主机名访问则填上，逗号分隔。
       COLLECTOR_ALLOWED_HOSTS: ${COLLECTOR_ALLOWED_HOSTS:-}
+      # 备份连续失败 ≥2 次推飞书自定义 bot（.env 里配 webhook URL；缺省只打日志不推）。
+      COLLECTOR_BACKUP_WEBHOOK_URL: ${COLLECTOR_BACKUP_WEBHOOK_URL:-}
     volumes:
       - collector-data:/data
 

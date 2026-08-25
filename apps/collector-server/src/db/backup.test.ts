@@ -52,25 +52,36 @@ test('backupOnce：目标已存在（同秒重跑）→ 抛错可观察，不静
   } finally { db.close(); rmSync(dir, { recursive: true, force: true }); }
 });
 
-test('pruneBackups：保留最近 keep 份删旧；非备份文件不动；目录不存在静默', () => {
+test('pruneBackups 分层：保最近 8 份 ∪ 每日末份 × 14 天；非备份文件不动；目录不存在静默', () => {
   const dir = mkdtempSync(join(tmpdir(), 'collector-prune-'));
   try {
-    for (let i = 1; i <= 30; i++) {
-      writeFileSync(join(dir, `bilibili-collector-backup-20260824-2305${String(i).padStart(2, '0')}.db`), '');
+    // 构造 16 天跨度：D-15..D0；D0 当日 10 份（15min 级）、其余每日 2 份
+    const now = new Date('2026-08-25T12:00:00');
+    const names: string[] = [];
+    for (let d = 15; d >= 0; d--) {
+      const day = new Date(now.getTime() - d * 86_400_000);
+      const p = (n: number) => String(n).padStart(2, '0');
+      const base = `${day.getFullYear()}${p(day.getMonth() + 1)}${p(day.getDate())}`;
+      if (d === 0) {
+        for (let i = 0; i < 10; i++) names.push(`bilibili-collector-backup-${base}-${p(Math.floor(i * 1.5))}0000.db`);
+      } else {
+        names.push(`bilibili-collector-backup-${base}-010000.db`);
+        names.push(`bilibili-collector-backup-${base}-230000.db`); // 当日末份
+      }
     }
+    for (const n of names) writeFileSync(join(dir, n), '');
     writeFileSync(join(dir, 'unrelated.txt'), 'x'); // 非备份名：不删
-    const pruned = pruneBackups(dir, 24);
-    assert.equal(pruned.length, 6, '30 份保 24 删最旧 6');
-    assert.match(pruned[0], /230501\.db$/);
-    const rest = readdirSync(dir).filter((n) => n.endsWith('.db'));
-    assert.equal(rest.length, 24);
-    assert.equal(rest[0], 'bilibili-collector-backup-20260824-230507.db', '最旧的留存是第 7 新');
-    assert.equal(rest[23], 'bilibili-collector-backup-20260824-230530.db', '最新保留');
+
+    const pruned = pruneBackups(dir);
+    const rest = readdirSync(dir).filter((n) => n.endsWith('.db')).sort();
+    // 期望留存：D0 最近 8 份（2h 窗口，D0 头 2 份被清）+ D-1..D-14 各自末份 14 份 = 22 份
+    assert.equal(rest.length, 22, 'D0 的最近 8 份 + 14 个每日末份');
+    assert.ok(!rest.some((n) => n.includes('20260810')), 'D-15（cutoff 外）全删');
+    assert.equal(pruned.length, names.length - 22, '删除数 = 总数 - 留存');
     assert.ok(existsSync(join(dir, 'unrelated.txt')));
-    // keep 大于存量：全留不炸
-    assert.deepEqual(pruneBackups(dir, 100), []);
-    // 目录不存在：静默空
-    assert.deepEqual(pruneBackups(join(dir, 'nope'), 24), []);
+    // keep 大于存量：全留不炸；目录不存在：静默空
+    assert.deepEqual(pruneBackups(dir, 100, 14, now), []);
+    assert.deepEqual(pruneBackups(join(dir, 'nope'), 8, 14, now), []);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
