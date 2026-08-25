@@ -8,9 +8,11 @@
 // | R2 | 渲染：行时间码 + 内容；三个复制按钮 | 通过 | stub navigator.clipboard |
 // | R3 | 复制兜底路径（clipboard 不可用 → execCommand） | 通过 | writeText reject + execCommand spy |
 // | R4 | 下载三格式：createObjectURL + a.download 文件名 + revoke | 通过 | spy URL.createObjectURL / a.click |
+// | R5 | 复制结果 toast 反馈（成功/兜底成功/双路径失败） | 通过 | 包 ToastProvider 断言 toast 文案 |
 import { test, expect, vi, afterEach } from 'vitest';
 import { render, screen, fireEvent, cleanup, waitFor } from '@testing-library/react';
 import { SubtitleView, toTxt, toSrt, toVtt } from './SubtitleView';
+import { ToastProvider } from '@/components/ui/toast';
 
 const LINES = [
   { from: 3661.5, to: 3663.25, content: '第一句' },
@@ -87,6 +89,48 @@ test('复制兜底：clipboard 不可用 → textarea + execCommand（jsdom 无 
   await waitFor(() => expect(execCommand).toHaveBeenCalledWith('copy'));
   // 临时 textarea 用后即删，不残留 DOM
   expect(document.querySelector('textarea')).toBe(null);
+});
+
+// ── 复制结果 toast 反馈（R5）──
+
+test('复制成功（clipboard 路径）→ toast「已复制 SRT」', async () => {
+  const writeText = vi.fn().mockResolvedValue(undefined);
+  Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
+  render(
+    <ToastProvider>
+      <SubtitleView body={LINES} />
+    </ToastProvider>,
+  );
+  fireEvent.click(screen.getByRole('button', { name: '复制 SRT' }));
+  expect(await screen.findByText('已复制 SRT')).toBeInTheDocument();
+});
+
+test('复制成功（execCommand 兜底路径）→ toast「已复制 TXT」', async () => {
+  const writeText = vi.fn().mockRejectedValue(new Error('not allowed'));
+  Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
+  const execCommand = vi.fn().mockReturnValue(true);
+  (document as any).execCommand = execCommand;
+  render(
+    <ToastProvider>
+      <SubtitleView body={LINES} />
+    </ToastProvider>,
+  );
+  fireEvent.click(screen.getByRole('button', { name: '复制 TXT' }));
+  expect(await screen.findByText('已复制 TXT')).toBeInTheDocument();
+});
+
+test('复制失败（clipboard reject 且 execCommand 返回 false）→ error toast', async () => {
+  const writeText = vi.fn().mockRejectedValue(new Error('not allowed'));
+  Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
+  const execCommand = vi.fn().mockReturnValue(false);
+  (document as any).execCommand = execCommand;
+  render(
+    <ToastProvider>
+      <SubtitleView body={LINES} />
+    </ToastProvider>,
+  );
+  fireEvent.click(screen.getByRole('button', { name: '复制 VTT' }));
+  expect(await screen.findByText('复制 VTT 失败')).toBeInTheDocument();
 });
 
 test('下载三格式：Blob→createObjectURL→a[download=sourceVid.fmt].click()→revoke', () => {

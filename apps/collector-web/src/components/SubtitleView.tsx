@@ -1,4 +1,5 @@
 import { Button } from '@/components/ui/button';
+import { useToast } from '@/components/ui/toast';
 import { cn } from '@/lib/utils';
 
 export interface SubtitleLine { from: number; to: number; content: string; }
@@ -33,9 +34,12 @@ export function toVtt(body: SubtitleLine[]): string {
 }
 
 export function SubtitleView({ body, sourceVid }: { body: SubtitleLine[]; sourceVid?: string }) {
+  const toast = useToast();
   const fmt = (sec: number) => { const m = Math.floor(sec / 60); const s = Math.floor(sec % 60); return `${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`; };
   // navigator.clipboard 在非 secure context(http 域名,如 caddy 反代的 collector.work.taevas.host)不可用 → execCommand 兜底
-  const copy = async (text: string) => {
+  // 成功/失败都 toast 反馈(复制是静默操作,不报反馈用户无从得知是否已入剪贴板)
+  const copy = async (text: string, label: string) => {
+    let ok = true;
     try {
       await navigator.clipboard.writeText(text);
     } catch {
@@ -45,9 +49,11 @@ export function SubtitleView({ body, sourceVid }: { body: SubtitleLine[]; source
       ta.style.opacity = '0';
       document.body.appendChild(ta);
       ta.select();
-      try { document.execCommand('copy'); } catch {}
+      try { ok = document.execCommand('copy'); } catch { ok = false; }
       document.body.removeChild(ta);
     }
+    if (ok) toast(`已复制 ${label}`, 'success');
+    else toast(`复制 ${label} 失败`, 'error');
   };
   // 下载：生成文本 → Blob → 触发浏览器下载，文件名用 BV 号
   const download = (fmt: 'srt' | 'vtt' | 'txt') => {
@@ -63,9 +69,9 @@ export function SubtitleView({ body, sourceVid }: { body: SubtitleLine[]; source
   return (
     <div>
       <div className="flex flex-wrap gap-2 mb-2">
-        <Button variant="outline" size="sm" onClick={() => copy(toSrt(body))}>复制 SRT</Button>
-        <Button variant="outline" size="sm" onClick={() => copy(toVtt(body))}>复制 VTT</Button>
-        <Button variant="outline" size="sm" onClick={() => copy(toTxt(body))}>复制 TXT</Button>
+        <Button variant="outline" size="sm" onClick={() => copy(toSrt(body), 'SRT')}>复制 SRT</Button>
+        <Button variant="outline" size="sm" onClick={() => copy(toVtt(body), 'VTT')}>复制 VTT</Button>
+        <Button variant="outline" size="sm" onClick={() => copy(toTxt(body), 'TXT')}>复制 TXT</Button>
         <Button variant="outline" size="sm" onClick={() => download('srt')}>下载 SRT</Button>
         <Button variant="outline" size="sm" onClick={() => download('vtt')}>下载 VTT</Button>
         <Button variant="outline" size="sm" onClick={() => download('txt')}>下载 TXT</Button>
