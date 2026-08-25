@@ -27,6 +27,7 @@ function client(id: string, reporting: boolean, ver: string | null = '0.1.12', a
     client_name: null,
     ext_version: ver,
     bili_login: null,
+    yt_login: null,
     reporting_enabled: reporting,
     task_dispatch_enabled: acceptsTasks,
     connected,
@@ -231,6 +232,25 @@ test('登录态：已登录无昵称/无 mid/非大会员 → 兜底文案，无
   expect(screen.getByText(/（未取到昵称）/)).toBeInTheDocument();
   expect(screen.queryByText(/（\d+）/, { selector: 'span.text-muted-foreground' })).not.toBeInTheDocument();
   expect(screen.queryByText('大会员')).not.toBeInTheDocument();
+});
+
+// ── YouTube 登录态（2026-08-25 镜像 bili_login：年龄限制/pot 受限判因）──
+
+test('YouTube 登录态：已登录 → 绿标无账号字段；未登录 → 红徽章；null → 不渲染', async () => {
+  fetchMock.mockImplementation(() => Promise.resolve(ok({
+    clients: [
+      client('c-yt', true, '0.1.23', true, { yt_login: { is_login: true } }),
+      client('c-ytno', true, '0.1.23', true, { yt_login: { is_login: false } }),
+      client('c-old', true, '0.1.20'), // yt_login null（旧版扩展未上报）
+    ],
+  })));
+  render(<ClientsPage />);
+  expect(await screen.findByText('YouTube 已登录')).toBeInTheDocument();
+  expect(screen.getByText('YouTube 未登录')).toBeInTheDocument();
+  // 只有上报过 yt_login 的两个客户端渲染 YouTube 徽章（c-old null 不渲染）
+  expect(screen.getAllByText(/YouTube (已登录|未登录)/).length).toBe(2);
+  // YouTube 快照无账号字段：不渲染「（未取到昵称）」类兜底文案
+  expect(screen.queryByText(/（未取到昵称）/)).not.toBeInTheDocument();
 });
 
 test('空态：暂无已知客户端提示', async () => {

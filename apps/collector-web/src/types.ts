@@ -81,11 +81,18 @@ export interface BiliLoginInfo {
   vip?: boolean;
 }
 
+// YouTube 登录态快照（扩展从首页 HTML ytcfg LOGGED_IN 标记抽取；2026-08-25 镜像 bili_login）。
+// 背景：未登录时年龄限制视频播不了、字幕 pot 受限加重——批量 no_subtitle/pot_limited 判因依据。
+export interface YtLoginInfo {
+  is_login: boolean;
+}
+
 export interface ClientInfo {
   client_id: string;
   client_name: string | null; // popup 改名（id 不变；null=未命名或已清除）
   ext_version: string | null;
   bili_login: BiliLoginInfo | null; // 在线=现值；离线=DB 快照；null=旧版扩展未上报过
+  yt_login: YtLoginInfo | null;     // 同上（YouTube，2026-08-25 镜像）
   reporting_enabled: boolean | null; // 在线=实际开关；离线 null（远端切换须在线）
   task_dispatch_enabled: boolean | null;
   connected: boolean;              // false = 离线（DB 注册表留存，含历史客户端）

@@ -28,6 +28,7 @@ export interface KnownClient {
   client_id: string;
   name: string | null;
   bili_login: string | null; // B 站登录态 JSON 快照（原始字符串，解析容错在消费侧 listClients）
+  yt_login: string | null;   // YouTube 登录态 JSON 快照（同上，2026-08-25 镜像 bili_login）
   ext_version: string | null;
   first_seen_at: number;
   last_seen_at: number;
@@ -36,6 +37,7 @@ export interface KnownClient {
 /** hello / login-state 随带的落库元信息（三态语义与 name 一致：undefined=不上报不动，null=清除）。 */
 export interface ClientUpsertMeta {
   biliLogin?: string | null;
+  ytLogin?: string | null;
   extVersion?: string | null;
 }
 
@@ -56,6 +58,7 @@ export function upsertClient(
   const sets: string[] = ['last_seen_at = excluded.last_seen_at'];
   if (name !== undefined) { cols.push('name'); vals.push(name); sets.push('name = excluded.name'); }
   if (meta.biliLogin !== undefined) { cols.push('bili_login'); vals.push(meta.biliLogin); sets.push('bili_login = excluded.bili_login'); }
+  if (meta.ytLogin !== undefined) { cols.push('yt_login'); vals.push(meta.ytLogin); sets.push('yt_login = excluded.yt_login'); }
   if (meta.extVersion !== undefined) { cols.push('ext_version'); vals.push(meta.extVersion); sets.push('ext_version = excluded.ext_version'); }
   db.prepare(
     `INSERT INTO clients (${cols.join(', ')}) VALUES (${cols.map(() => '?').join(', ')})
@@ -71,6 +74,6 @@ export function touchClientLastSeen(db: Database.Database, clientId: string): vo
 /** 全量已知客户端（最近活跃在前）。 */
 export function listKnownClients(db: Database.Database): KnownClient[] {
   return db
-    .prepare('SELECT client_id, name, bili_login, ext_version, first_seen_at, last_seen_at FROM clients ORDER BY last_seen_at DESC')
+    .prepare('SELECT client_id, name, bili_login, yt_login, ext_version, first_seen_at, last_seen_at FROM clients ORDER BY last_seen_at DESC')
     .all() as KnownClient[];
 }

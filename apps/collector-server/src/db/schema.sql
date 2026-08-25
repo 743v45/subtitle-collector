@@ -168,6 +168,7 @@ CREATE TABLE IF NOT EXISTS clients (
   client_id     TEXT PRIMARY KEY,
   name          TEXT,
   bili_login    TEXT,     -- B 站登录态快照 JSON {is_login,mid,uname,vip}（hello/login-state 上报；NULL=旧版扩展未上报过。未登录时充电视频 AI 字幕接口返回空——2026-08-24 批量 1190 no_subtitle 根因）
+  yt_login      TEXT,     -- YouTube 登录态快照 JSON {is_login}（2026-08-25 镜像 bili_login；未登录时年龄限制视频播不了、pot 受限加重——批量 no_subtitle/pot_limited 判因依据）
   ext_version   TEXT,     -- 扩展版本（hello 上报；离线客户端经此列可见版本）
   first_seen_at INTEGER NOT NULL, -- server 首次见到该 client_id（hello upsert 插入时）
   last_seen_at  INTEGER NOT NULL  -- 最近一次连接建立/断开时刻（hello upsert / close touch）

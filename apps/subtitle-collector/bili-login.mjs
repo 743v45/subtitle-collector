@@ -31,8 +31,10 @@ export function warnLoggedOut(cur, bvid, log) {
 
 // 登录态缓存状态机（自 background.js 抽出，2026-08-25 偿还复杂度台账）：
 // TTL 缓存 + 变化即回调（background 拿回调发 login-state 推送）。探测失败保留旧值
-// （探测失败 ≠ 未登录）；TTL 内重复调用零请求。fetchNav 注入（返回 biliFetch 形态），便于测试。
-export function createLoginTracker({ fetchNav, onChange, ttlMs = 10 * 60 * 1000 }) {
+// （探测失败 ≠ 未登录）；TTL 内重复调用零请求。fetchNav 注入（返回 biliFetch 形态），
+// extract 注入（默认 B 站 nav 解析；YouTube 侧传 yt-login.mjs 的首页 HTML 解析，
+// 返回 null 视为页面不可识别 = 探测失败保留旧值），便于测试与双平台复用。
+export function createLoginTracker({ fetchNav, extract = extractLoginFromNav, onChange, ttlMs = 10 * 60 * 1000 }) {
   let login = null;
   let checkedAt = 0;
   return {
@@ -42,12 +44,13 @@ export function createLoginTracker({ fetchNav, onChange, ttlMs = 10 * 60 * 1000 
       try {
         const parsed = await fetchNav();
         if (parsed?.ok) {
-          const next = extractLoginFromNav(parsed);
+          const next = extract(parsed);
+          if (next == null) return login; // 页面不可识别（如 yt consent/风控页）≠ 未登录：保留旧值
           const changed = JSON.stringify(login) !== JSON.stringify(next);
           login = next; checkedAt = Date.now();
           if (changed && onChange) onChange(next);
         }
-      } catch { /* nav 异常静默：探测失败 ≠ 未登录 */ }
+      } catch { /* 探测异常静默：探测失败 ≠ 未登录 */ }
       return login;
     },
   };

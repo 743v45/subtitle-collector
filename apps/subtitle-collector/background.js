@@ -4,6 +4,7 @@ import { shouldAcceptTasks, TASK_DISPATCH_KEY, TASK_DISPATCH_DISABLED_ERROR } fr
 import { resolveConnectionMode, isStandalone, CONNECTION_MODE_KEY, MODE_SERVER, MODE_STANDALONE } from "./connection-mode.mjs";
 import { extractKeysFromNav } from "./wbi.js";
 import { createLoginTracker, loginInfoOf, warnLoggedOut } from "./bili-login.mjs";
+import { extractLoginFromYoutube, ytLoginInfoOf, warnYtLoggedOut } from "./yt-login.mjs";
 import { biliFetch, formatSearchResult, fetchSubtitleView } from "./bili-fetch.js";
 import { buildIngestPayload, normalizeUrl, normalizeTags } from "./ingest-payload.js";
 import {
@@ -53,14 +54,28 @@ async function ensureWbiKeys() {
 // B 站登录态缓存（状态机在 bili-login.mjs 的 createLoginTracker，2026-08-25 偿还复杂度台账抽出）。
 // 上报通道：hello / login-state 推送 / fetch-subtitle 回执 login 字段。背景（2026-08-24）：
 // 充电视频 AI 字幕接口未登录返回空，采集派到未登录浏览器时整批 no_subtitle——登录态必须可观察。
+// YouTube 登录态（2026-08-25 镜像）：探测走 ytFetchPage 首页 SSR（cookie 随 host_permissions
+// 自动带），标记缺失（consent/风控/改版）= 探测失败保留旧值；未登录是批量 no_subtitle
+// （年龄限制视频播不了）与 pot_limited（pot 受限加重）的判因维度。
 function sendLoginState() {
   const cur = loginTracker.current;
-  if (!cur || !authenticated || ws?.readyState !== WebSocket.OPEN) return;
-  ws.send(JSON.stringify({ type: "login-state", login: cur }));
-  extLog(`[login] 登录态上报：${cur.is_login ? `已登录 ${cur.uname ?? ''}(${cur.mid ?? '?'})${cur.vip ? ' 大会员' : ''}` : '未登录'}`);
+  const yt = ytLoginTracker.current;
+  if ((!cur && !yt) || !authenticated || ws?.readyState !== WebSocket.OPEN) return;
+  ws.send(JSON.stringify({ type: "login-state", ...(cur ? { login: cur } : {}), ...(yt ? { yt_login: yt } : {}) }));
+  const biliText = cur ? (cur.is_login ? `已登录 ${cur.uname ?? ''}(${cur.mid ?? '?'})${cur.vip ? ' 大会员' : ''}` : '未登录') : '未知';
+  const ytText = yt ? (yt.is_login ? '已登录' : '未登录') : '未知';
+  extLog(`[login] 登录态上报：B 站${biliText}；YouTube ${ytText}`);
 }
 const loginTracker = createLoginTracker({
   fetchNav: () => biliFetch('/x/web-interface/nav'),
+  onChange: () => sendLoginState(),
+});
+const ytLoginTracker = createLoginTracker({
+  fetchNav: async () => {
+    const r = await ytFetchPage('https://www.youtube.com/');
+    return { ok: r.status === 200 && r.text != null, data: r.text };
+  },
+  extract: extractLoginFromYoutube,
   onChange: () => sendLoginState(),
 });
 
@@ -494,11 +509,12 @@ async function connect() {
   ws.onopen = async () => {
     reconnectAttempts = 0;
     // hello 前刷登录态（TTL 命中时零开销）：连接即上报最新登录态，server 客户端页立即可见。
-    // 未握手期间 nav 已可并行发（fetch 不依赖 ws）。
+    // 未握手期间 nav / yt 首页已可并行发（fetch 不依赖 ws）。
     await loginTracker.maybeRefresh();
+    await ytLoginTracker.maybeRefresh();
     // token 可选（server 端可不要 token）：有则放 hello（兼容 server 从 hello body 取 token）；
     // wsUrl 原样含 ?token= query，兼容 server 从握手 URL 取 token——双兼容。
-    const hello = { type: "hello", ext_version: EXT_VERSION, client_id: clientId, client_name: clientName, reporting_enabled: reportingEnabled, task_dispatch_enabled: taskDispatchEnabled, ...(loginTracker.current ? { bili_login: loginTracker.current } : {}) };
+    const hello = { type: "hello", ext_version: EXT_VERSION, client_id: clientId, client_name: clientName, reporting_enabled: reportingEnabled, task_dispatch_enabled: taskDispatchEnabled, ...(loginTracker.current ? { bili_login: loginTracker.current } : {}), ...(ytLoginTracker.current ? { yt_login: ytLoginTracker.current } : {}) };
     if (activeServer.token) hello.token = activeServer.token;
     ws.send(JSON.stringify(hello));
     // flushPendingIngests 移到 hello-ack：鉴权通过后才补发（未握手发 ingest 会被 server 丢，server.ts:44 守卫）
@@ -704,12 +720,17 @@ async function connect() {
         }
         inFlightCollects.add(ytKey);
         try {
+          // 采集前刷 YouTube 登录态（镜像 fetch-subtitle 的 B 站先例）：回执带 yt_login 字段
+          // 判因——未登录时年龄限制视频播不了、pot 受限加重 → no_subtitle/pot_limited。
+          await ytLoginTracker.maybeRefresh();
+          const ytLoginInfo = ytLoginInfoOf(ytLoginTracker.current);
+          warnYtLoggedOut(ytLoginTracker.current, msg.videoId, extLog);
           // msg.id（server 命令 id）透传作 taskId，供 [yt-navigate] 日志与 server 任务关联
           // 无进展窗口可配：server 派发时随 msg.timeout_ms 下发（settings.collect_timeout_ms,
           // 慢视频轨加载极慢时调大）；popup 直采/旧 server 不带该字段回落内置 45s
           const windowMs = Number.isInteger(msg.timeout_ms) && msg.timeout_ms >= 15000 ? msg.timeout_ms : 45000;
           const data = await collectYoutubeViaNavigate(msg.videoId, windowMs, msg.id);
-          ws.send(JSON.stringify({ type: "result", id: msg.id, ok: true, data }));
+          ws.send(JSON.stringify({ type: "result", id: msg.id, ok: true, data: { ...data, ...ytLoginInfo } }));
         } catch (err) {
           ws.send(JSON.stringify({ type: "result", id: msg.id, ok: false, error: String(err.message || err) }));
         } finally {
@@ -973,6 +994,11 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     sendResponse({ ok: true });
   } else if (msg?.type === "WS_STATUS") {
     sendResponse({ ok: true, connected: authenticated, mode: connectionMode, activeServerId, error: lastError });
+  } else if (msg?.type === "GET_YT_LOGIN") {
+    // popup 平台头 YouTube 登录态：读 background TTL 缓存（首页 HTML ~1MB，不宜 popup 30s 轮询
+    // 直拉；TTL 内零请求）。login=null = 从未探测成功（未知 ≠ 未登录，popup 保持 loading 占位）。
+    ytLoginTracker.maybeRefresh().then((login) => sendResponse({ ok: true, login }));
+    return true;
   } else if (msg?.type === "FETCH_UPPER_ALL" && msg.mid) {
     // UP 全部视频全量拉取：异步长任务（页间节流），立即回执状态；数据经 storage 增量流出。
     // refresh=true 绕过缓存强制重拉（popup ↻ 按钮；inflight 进行中则忽略）。

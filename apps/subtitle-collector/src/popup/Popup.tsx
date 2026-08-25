@@ -14,6 +14,7 @@ import {
   useUpperAllVideos,
   useUpperEntry,
   useYoutubeChannelVideos,
+  useYtLogin,
   authInit,
   diffConsistency,
   type CollectedState,
@@ -114,6 +115,8 @@ export function Popup() {
   // httpBase 来自激活 server：热切换 server 后 useCollected/useCreator 自动重查新地址
   const { collected: serverCollected, currentVid, currentPlatform } = useCollected(serverCfg.httpBase);
   const login = useBiliLogin(currentPlatform?.id === 'bilibili');
+  // YouTube 登录态经 background 缓存（GET_YT_LOGIN）：仅 YouTube 页查，非 YouTube 不发请求
+  const ytLogin = useYtLogin(currentPlatform?.id === 'youtube');
   const { local } = useLocalCollected(currentVid);
   const consistency = diffConsistency(local, serverCollected);
   // 非视频页精简：只显示品牌头 + 底部上报开关；平台头/视频信息卡 / 手动补采是视频页专属。
@@ -222,7 +225,7 @@ export function Popup() {
       {/* 采集任务进度卡：全局信息（含手机端提交的任务），有在途才显示，非视频页也可见 */}
       {!standalone && <CollectTasksCard tasks={collectTasks} />}
       {/* 无关页 currentPlatform=null：不渲染平台头，自然只剩 BrandHeader + FooterActions（空状态） */}
-      {currentPlatform && <PlatformHead platform={currentPlatform} conn={conn} login={login} serverName={activeServerName} />}
+      {currentPlatform && <PlatformHead platform={currentPlatform} conn={conn} login={login} ytLogin={ytLogin} serverName={activeServerName} />}
       {currentVid && currentPlatform && (
         <>
           <CollectedBlock
@@ -372,16 +375,18 @@ function SubCatchLogo({ className }: { className?: string }) {
 
 // 平台头：平台 logo + 名称 + 全局连接状态点 + 该平台登录态。
 // 连接是采集服务端（全局），登录是平台特定；多平台时都按当前平台显示。
-// LoginBadge 仅 B 站显示（YouTube 无 B 站 nav 登录态概念，useBiliLogin 在非 bili 时不查）。
+// LoginBadge 按平台显示：B 站直连 nav（uname/UID 切换）；YouTube 经 background 缓存（无名称字段，只显已登录）。
 function PlatformHead({
   platform,
   conn,
   login,
+  ytLogin,
   serverName,
 }: {
   platform: Platform;
   conn: ConnInfo;
   login: LoginState;
+  ytLogin: LoginState;
   serverName?: string | null;
 }) {
   return (
@@ -398,6 +403,7 @@ function PlatformHead({
       </span>
       <span className="text-sm font-semibold">{platform.name}</span>
       {platform.id === 'bilibili' && <LoginBadge login={login} />}
+      {platform.id === 'youtube' && <LoginBadge login={ytLogin} />}
       <div className="ml-auto flex items-center gap-2">
         <ConnDot conn={conn} serverName={serverName} />
       </div>
@@ -448,7 +454,17 @@ function LoginBadge({ login }: { login: LoginState }) {
         检查失败
       </Badge>
     );
-  // logged：默认显示名称，点击切 UID，再点切回（toggle）
+  // logged：默认显示名称，点击切 UID，再点切回（toggle）；
+  // 无名称（YouTube：探测只有 is_login 布尔）→ 纯绿标「已登录」，无交互。
+  if (!login.uname)
+    return (
+      <span
+        title="已登录 YouTube（未登录时年龄限制视频播不了、字幕 pot 受限加重）"
+        className="inline-flex items-center rounded-md border border-transparent bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-700"
+      >
+        已登录
+      </span>
+    );
   return (
     <button
       type="button"

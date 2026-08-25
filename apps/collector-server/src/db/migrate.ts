@@ -235,6 +235,13 @@ export const MIGRATIONS: readonly MigrationStep[] = [
       'PRAGMA foreign_keys = ON',
     ],
   },
+  {
+    version: 17,
+    note: 'clients 补 yt_login（YouTube 登录态 JSON 快照 {is_login}：2026-08-25 镜像 v14 bili_login——未登录时年龄限制视频播不了、pot 受限加重，批量 no_subtitle/pot_limited 判因依据）。ADD COLUMN 撞 duplicate column name 容忍（双写 schema.sql）',
+    statements: [
+      'ALTER TABLE clients ADD COLUMN yt_login TEXT',
+    ],
+  },
 ];
 
 export function runMigrations(db: Database.Database): void {

@@ -79,31 +79,36 @@ test('listKnownClients：按 last_seen_at 降序（最近活跃在前）', () =>
 
 // ── 登录态/版本落库（2026-08-24 充电视频 no_subtitle 根因可观察化）──
 
-test('upsertClient meta：bili_login/ext_version 覆盖 → undefined 不动 → null 清除（三态同 name）', () => {
+test('upsertClient meta：bili_login/yt_login/ext_version 覆盖 → undefined 不动 → null 清除（三态同 name）', () => {
   const { db, dir } = freshDb();
   try {
     const login = JSON.stringify({ is_login: true, mid: '42', uname: '测试用户', vip: false });
-    upsertClient(db, 'ext-A', '书房', { biliLogin: login, extVersion: '0.1.21' });
+    const yt = JSON.stringify({ is_login: true });
+    upsertClient(db, 'ext-A', '书房', { biliLogin: login, ytLogin: yt, extVersion: '0.1.21' });
     let row = listKnownClients(db)[0];
     assert.equal(row.bili_login, login);
+    assert.equal(row.yt_login, yt);
     assert.equal(row.ext_version, '0.1.21');
 
-    // undefined（旧扩展 hello 不带 bili_login 字段）→ 旧值保留（只刷 last_seen_at）
+    // undefined（旧扩展 hello 不带 bili_login/yt_login 字段）→ 旧值保留（只刷 last_seen_at）
     upsertClient(db, 'ext-A', undefined);
     row = listKnownClients(db)[0];
     assert.equal(row.bili_login, login, '登录态快照不动');
+    assert.equal(row.yt_login, yt, 'YouTube 登录态快照不动');
     assert.equal(row.ext_version, '0.1.21', '版本不动');
 
     // null → 显式清除（探测失败重置场景）
-    upsertClient(db, 'ext-A', undefined, { biliLogin: null, extVersion: null });
+    upsertClient(db, 'ext-A', undefined, { biliLogin: null, ytLogin: null, extVersion: null });
     row = listKnownClients(db)[0];
     assert.equal(row.bili_login, null);
+    assert.equal(row.yt_login, null);
     assert.equal(row.ext_version, null);
 
     // 全新 client 只带 meta 不带 name：name 落 NULL，meta 正常入库
-    upsertClient(db, 'ext-B', undefined, { biliLogin: JSON.stringify({ is_login: false }), extVersion: '0.1.21' });
+    upsertClient(db, 'ext-B', undefined, { biliLogin: JSON.stringify({ is_login: false }), ytLogin: JSON.stringify({ is_login: false }), extVersion: '0.1.21' });
     const b = listKnownClients(db).find((r) => r.client_id === 'ext-B')!;
     assert.equal(b.name, null);
     assert.deepEqual(JSON.parse(b.bili_login!), { is_login: false });
+    assert.deepEqual(JSON.parse(b.yt_login!), { is_login: false });
   } finally { db.close(); rmSync(dir, { recursive: true, force: true }); }
 });

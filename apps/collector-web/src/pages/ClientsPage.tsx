@@ -67,8 +67,9 @@ function ClientCard({ c, now, busy, onToggleReporting, onToggleDispatch }: {
             }
             <span>· 版本 {c.ext_version ?? '-'}</span>
           </div>
-          {/* B 站登录态（2026-08-24 充电视频 no_subtitle 根因可观察化，徽章组件 ClientLoginBadge） */}
-          <ClientLoginBadge login={c.bili_login} />
+          {/* 平台登录态（B 站：2026-08-24 充电视频 no_subtitle 判因；YouTube：2026-08-25 镜像——年龄限制/pot 受限判因） */}
+          <ClientLoginBadge login={c.bili_login} platform="bilibili" />
+          <ClientLoginBadge login={c.yt_login} platform="youtube" />
         </div>
         {c.connected && (
           <div className="flex shrink-0 items-center gap-2">

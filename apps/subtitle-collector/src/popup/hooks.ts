@@ -173,9 +173,10 @@ export function useServerConfig(): ServerConfig {
 }
 
 // —— B 站登录态：每 30s 直连官方 nav 接口 ——
+// logged 的 uname/mid 可选：B 站侧恒有（nav 返回）；YouTube 复用同型（无名称字段，徽章只显已登录）。
 export type LoginState =
   | { state: 'loading' }
-  | { state: 'logged'; uname: string; mid: number }
+  | { state: 'logged'; uname?: string; mid?: number }
   | { state: 'guest' }
   | { state: 'error' };
 
@@ -194,6 +195,31 @@ export function useBiliLogin(enabled: boolean = true): LoginState {
           }
         })
         .catch(() => setLogin({ state: 'error' }));
+    };
+    check();
+    const t = setInterval(check, 30000);
+    return () => clearInterval(t);
+  }, [enabled]);
+  return login;
+}
+
+// —— YouTube 登录态：经 background TTL 缓存读取（GET_YT_LOGIN）——
+// 不直连首页轮询：首页 HTML ~1MB，popup 30s 一拉太浪费；background tracker 已为 server 上报
+// 维护同源缓存。login=null = 从未探测成功（未知 ≠ 未登录）→ 保持 loading 占位。
+export function useYtLogin(enabled: boolean = true): LoginState {
+  const [login, setLogin] = useState<LoginState>({ state: 'loading' });
+  useEffect(() => {
+    if (!enabled) return; // 非 YouTube 平台不查，保持 loading 占位
+    const check = () => {
+      chrome.runtime.sendMessage({ type: 'GET_YT_LOGIN' }, (resp) => {
+        if (chrome.runtime.lastError || !resp?.ok) {
+          setLogin({ state: 'error' });
+          return;
+        }
+        setLogin(
+          resp.login == null ? { state: 'loading' } : resp.login.is_login ? { state: 'logged' } : { state: 'guest' }
+        );
+      });
     };
     check();
     const t = setInterval(check, 30000);

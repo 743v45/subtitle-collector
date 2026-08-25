@@ -36,14 +36,15 @@ function setup() {
   });
 }
 // clientName 三态（2026-08-24 客户端命名）：string=hello 带名 / null=hello 带 client_name:null（显式清除）/
-// undefined=hello 不带该字段（旧扩展形态，DB 旧名不动）
-function wsConnect(port: number, clientId: string, enabled: boolean, acceptsTasks: boolean = true, clientName?: string | null, biliLogin?: Record<string, unknown>): Promise<WebSocket> {
+// undefined=hello 不带该字段（旧扩展形态，DB 旧名不动）；biliLogin/ytLogin 同理（undefined=旧扩展不带）
+function wsConnect(port: number, clientId: string, enabled: boolean, acceptsTasks: boolean = true, clientName?: string | null, biliLogin?: Record<string, unknown>, ytLogin?: Record<string, unknown>): Promise<WebSocket> {
   return new Promise((resolve) => {
     const ws = new WebSocket(`ws://127.0.0.1:${port}/ext`);
     ws.once('open', () => {
       const hello: Record<string, unknown> = { type: 'hello', ext_version: '0.1.0', token: 'test-token', client_id: clientId, reporting_enabled: enabled, task_dispatch_enabled: acceptsTasks };
       if (clientName !== undefined) hello.client_name = clientName;
       if (biliLogin !== undefined) hello.bili_login = biliLogin;
+      if (ytLogin !== undefined) hello.yt_login = ytLogin;
       ws.send(JSON.stringify(hello));
       resolve(ws);
     });
@@ -454,6 +455,60 @@ test('分支洼地：hello 无 ext_version 重连不抹 DB 旧版本；无 clien
     assert.equal(r.json.clients.length, 1, '无 client_id 连接不产生新行');
     assert.deepEqual(r.json.clients[0].bili_login, { is_login: false }, 'login-state 未被无 id 连接污染');
     ws2.close(); ws3.close();
+  } finally { ctx.cleanup(); }
+});
+
+// ── YouTube 登录态（2026-08-25 镜像 bili_login）：hello 上报 + login-state 单字段推送 + 离线留存 ──
+
+test('GET /api/clients：hello 带 yt_login → listClients 透传（与 bili_login 并存）', async () => {
+  const ctx = await setup();
+  try {
+    const bili = { is_login: true, mid: '3546645614562148', uname: '测试用户', vip: true };
+    const yt = { is_login: true };
+    const ws = await wsConnect(ctx.port, 'ext-A', true, true, undefined, bili, yt);
+    await new Promise(r => setTimeout(r, 50));
+    const r = await httpReq(ctx.port, 'GET', '/api/clients');
+    assert.equal(r.status, 200);
+    const c = r.json.clients[0];
+    assert.deepEqual(c.bili_login, bili);
+    assert.deepEqual(c.yt_login, yt);
+    ws.close();
+  } finally { ctx.cleanup(); }
+});
+
+test('login-state：yt_login 推送 → 连接表 + DB 即时可见；只带 yt_login 不动 B 站现值', async () => {
+  const ctx = await setup();
+  try {
+    const ws = await wsConnect(ctx.port, 'ext-A', true, true, undefined, { is_login: true, mid: '1', uname: '账号' }, { is_login: true });
+    await new Promise(r => setTimeout(r, 50));
+    // YouTube 退出登录 → 扩展单平台已知时只带 yt_login 字段（不带 login）
+    ws.send(JSON.stringify({ type: 'login-state', yt_login: { is_login: false } }));
+    await new Promise(r => setTimeout(r, 50));
+    let r = await httpReq(ctx.port, 'GET', '/api/clients');
+    assert.deepEqual(r.json.clients[0].yt_login, { is_login: false }, 'yt 推送落连接表');
+    assert.deepEqual(r.json.clients[0].bili_login, { is_login: true, mid: '1', uname: '账号' }, '缺 login 字段不动 B 站现值');
+    // 旧扩展形态：只带 login 不带 yt_login → yt 现值不动
+    ws.send(JSON.stringify({ type: 'login-state', login: { is_login: false } }));
+    await new Promise(r => setTimeout(r, 50));
+    r = await httpReq(ctx.port, 'GET', '/api/clients');
+    assert.deepEqual(r.json.clients[0].bili_login, { is_login: false }, 'bili 推送落连接表');
+    assert.deepEqual(r.json.clients[0].yt_login, { is_login: false }, '缺 yt_login 字段不动 yt 现值');
+    ws.close();
+  } finally { ctx.cleanup(); }
+});
+
+test('断开后 yt_login 离线留存：DB 快照带出（在线时上报过的最后状态）', async () => {
+  const ctx = await setup();
+  try {
+    const ws = await wsConnect(ctx.port, 'ext-A', true, true, undefined, undefined, { is_login: false });
+    await new Promise(r => setTimeout(r, 50));
+    ws.close();
+    await new Promise(r => setTimeout(r, 80));
+    const r = await httpReq(ctx.port, 'GET', '/api/clients');
+    const c = r.json.clients[0];
+    assert.equal(c.connected, false);
+    assert.deepEqual(c.yt_login, { is_login: false }, '离线回落 DB 快照');
+    assert.equal(c.bili_login, null, '未上报平台为 null');
   } finally { ctx.cleanup(); }
 });
 
