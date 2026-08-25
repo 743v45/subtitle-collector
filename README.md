@@ -138,6 +138,7 @@ pnpm verify:deployed -- --token <t> [--server <url>] [--db <库路径>]
 ## 项目约定
 
 - 开发规范、样式政策、测试质量政策、字幕/弹幕措辞红线：见 [CLAUDE.md](CLAUDE.md)。
+- 翻阅式操作手册（按任务切页，可用 Obsidian 打开仓库根直接翻）：见 [docs/help/INDEX.md](docs/help/INDEX.md)。
 - 服务端运维手册：见 [MANUAL-collector.md](MANUAL-collector.md)。
 - 设计文档与实现计划：见 [docs/superpowers/specs/](docs/superpowers/specs) 与 [docs/superpowers/plans/](docs/superpowers/plans)。
 - 变更记录：见 [CHANGELOG.md](CHANGELOG.md)。

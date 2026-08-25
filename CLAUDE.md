@@ -64,6 +64,8 @@ B 站**字幕（subtitle）**相关浏览器扩展的 monorepo（pnpm + turbo，
 
 所有与代码/文档相关的输出须带 `[file:行号](path#L行号)` 链接定位，禁止笼统描述。
 
+**help 手册同步纪律**：翻阅式操作手册在 [docs/help/](docs/help/INDEX.md)（obsidian-help 式按任务切页）。改动影响使用方式（命令/选项/界面行为/环境变量/部署）时，必须同步更新对应 help 页；新增可使用功能时补对应 help 页（或在新页登记）。help 页只写「怎么用」，需求状态锚点仍在 [README](README.md) Feature 列表，两者不重复维护同一信息。
+
 ## 6. Feature 列表纪律（README 需求锚点）
 
 [README.md](README.md) 的「目标与功能（Feature 列表）」是项目需求的唯一锚点，按「批量采集 → 查询导出 → 批量提取分析」链路组织，状态标记 ✅ 已实现 / 🚧 待建 / 📋 远期。

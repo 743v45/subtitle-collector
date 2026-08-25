@@ -45,3 +45,9 @@ coverage/
 
 # 本地 dev server 的内置备份产物（生产备份在 docker volume 内，不在此）
 apps/collector-server/backups/
+
+# Obsidian 本地仓库状态(把项目根当 vault 翻阅 docs/help 时的编辑器状态)
+.obsidian/
+
+# vite 增量构建缓存（turbo build 产物，不入库）
+apps/collector-web/tsconfig.tsbuildinfo
