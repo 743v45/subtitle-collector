@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-08-24T23:59:09.694Z",
+  "generatedAt": "2026-08-25T05:46:50.479Z",
   "rules": {
     "complexity": 15,
     "maxLines": 400
@@ -18,10 +18,10 @@
     },
     "apps/collector-server/src/db/advanced.ts": {
       "complexity": 25,
-      "maxLines": 517
+      "maxLines": 510
     },
     "apps/collector-server/src/db/ingest.ts": {
-      "complexity": 42
+      "complexity": 52
     },
     "apps/collector-server/src/http/categories.ts": {
       "complexity": 19
@@ -30,30 +30,31 @@
       "complexity": 19
     },
     "apps/collector-server/src/http/creators.ts": {
-      "complexity": 18
+      "complexity": 17
     },
     "apps/collector-server/src/http/filter.ts": {
       "complexity": 25
     },
     "apps/collector-server/src/http/queries.ts": {
-      "complexity": 47
+      "complexity": 46
     },
     "apps/collector-server/src/http/tags.ts": {
-      "complexity": 27
+      "complexity": 21
     },
     "apps/collector-server/src/http/tasks.ts": {
-      "complexity": 77
+      "complexity": 55
     },
     "apps/collector-server/src/tasks/tasks.ts": {
       "complexity": 30,
-      "maxLines": 673
+      "maxLines": 669
     },
     "apps/collector-server/src/ws/server.ts": {
-      "complexity": 30
+      "complexity": 32,
+      "maxLines": 405
     },
     "apps/collector-web/src/api.ts": {
       "complexity": 26,
-      "maxLines": 443
+      "maxLines": 436
     },
     "apps/collector-web/src/components/TaskCards.tsx": {
       "complexity": 24
@@ -100,7 +101,7 @@
     },
     "apps/subtitle-collector/content-yt.js": {
       "complexity": 40,
-      "maxLines": 467
+      "maxLines": 475
     },
     "apps/subtitle-collector/content.js": {
       "complexity": 27
@@ -112,7 +113,7 @@
       "complexity": 27
     },
     "apps/subtitle-collector/inject.js": {
-      "complexity": 34
+      "complexity": 41
     },
     "apps/subtitle-collector/scripts/probe-bili-subtitle-system.mjs": {
       "complexity": 24
