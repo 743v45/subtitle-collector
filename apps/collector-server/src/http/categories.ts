@@ -11,19 +11,20 @@ export async function handleCategoriesHttp(req: IncomingMessage, res: ServerResp
   const pathname = url.pathname;
 
   if (pathname === '/api/categories' && req.method === 'GET') {
+    // 分类已无 scope 属性（值域合一）：非空 scope 参数一律 400，暴露过时调用方；空串视同未传
     const scope = url.searchParams.get('scope');
-    if (scope && scope !== 'agent' && scope !== 'human') { json(res, 400, { ok: false, error: 'scope must be agent|human' }); return; }
-    json(res, 200, { ok: true, items: listCategories(db, (scope as 'agent' | 'human') ?? undefined) });
+    if (scope) { json(res, 400, { ok: false, error: 'category has no scope; use plain name' }); return; }
+    json(res, 200, { ok: true, items: listCategories(db) });
     return;
   }
   if (pathname === '/api/categories' && req.method === 'POST') {
-    const b = await readJsonBody(req) as { name?: string; scope?: string };
-    if (!b.name || (b.scope !== 'agent' && b.scope !== 'human')) { json(res, 400, { ok: false, error: 'name and scope(agent|human) required' }); return; }
+    const b = await readJsonBody(req) as { name?: string };
+    if (!b.name) { json(res, 400, { ok: false, error: 'name required' }); return; }
     try {
-      json(res, 200, { ok: true, category: createCategory(db, b.name, b.scope) });
+      json(res, 200, { ok: true, category: createCategory(db, b.name) });
     } catch (e) {
       const msg = (e as Error).message;
-      if (msg.includes('UNIQUE')) json(res, 409, { ok: false, error: 'category name+scope already exists' });
+      if (msg.includes('UNIQUE')) json(res, 409, { ok: false, error: 'category name already exists' });
       else json(res, 500, { ok: false, error: msg });
     }
     return;
@@ -33,9 +34,16 @@ export async function handleCategoriesHttp(req: IncomingMessage, res: ServerResp
     const id = Number(m[1]);
     if (req.method === 'PATCH') {
       const b = await readJsonBody(req) as { name?: string; sort_order?: number };
-      const c = updateCategory(db, id, b);
-      if (!c) { json(res, 404, { ok: false, error: 'not found' }); return; }
-      json(res, 200, { ok: true, category: c });
+      // 改名撞 UNIQUE(name) → 409（对齐 POST 先例；此前经兜底 500）
+      try {
+        const c = updateCategory(db, id, b);
+        if (!c) { json(res, 404, { ok: false, error: 'not found' }); return; }
+        json(res, 200, { ok: true, category: c });
+      } catch (e) {
+        const msg = (e as Error).message;
+        if (msg.includes('UNIQUE')) json(res, 409, { ok: false, error: 'category name already exists' });
+        else json(res, 500, { ok: false, error: msg });
+      }
       return;
     }
     if (req.method === 'DELETE') {

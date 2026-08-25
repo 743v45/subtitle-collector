@@ -297,22 +297,21 @@ test('setTaskDispatch：clientId 编码 + body {enabled}', async () => {
   expect(JSON.parse(String(init?.body))).toEqual({ enabled: false });
 });
 
-// ── 分类 ──
+// ── 分类（值域合一：无 scope 维度）──
 
-test('listCategories：无 scope 不带 query；带 scope 落 query；items 回落', async () => {
+test('listCategories：无参不带 query；items 回落', async () => {
   fetchMock.mockResolvedValueOnce(ok({ items: [{ id: 1, name: 'a' }] }));
   await expect(api.listCategories()).resolves.toEqual([{ id: 1, name: 'a' }]);
   expect(lastCall().url).toBe('/api/categories');
 
   fetchMock.mockResolvedValueOnce(ok({}));
-  await expect(api.listCategories('human')).resolves.toEqual([]);
-  expect(lastCall().url).toBe('/api/categories?scope=human');
+  await expect(api.listCategories()).resolves.toEqual([]);
 });
 
 test('createCategory / updateCategory：解包 category', async () => {
-  fetchMock.mockResolvedValueOnce(ok({ category: { id: 1, name: '新', scope: 'agent' } }));
-  await expect(api.createCategory('新', 'agent')).resolves.toEqual({ id: 1, name: '新', scope: 'agent' });
-  expect(JSON.parse(String(lastCall().init?.body))).toEqual({ name: '新', scope: 'agent' });
+  fetchMock.mockResolvedValueOnce(ok({ category: { id: 1, name: '新', creator_count: 0 } }));
+  await expect(api.createCategory('新')).resolves.toEqual({ id: 1, name: '新', creator_count: 0 });
+  expect(JSON.parse(String(lastCall().init?.body))).toEqual({ name: '新' });
 
   fetchMock.mockResolvedValueOnce(ok({ category: { id: 1, name: '改' } }));
   await expect(api.updateCategory(1, { name: '改', sort_order: 2 })).resolves.toEqual({ id: 1, name: '改' });

@@ -7,6 +7,13 @@ import type Database from 'better-sqlite3';
 import { listCreators, getCreator, setCreatorCategory, CREATOR_SORT_KEYS, type CreatorSortKey } from '../db/queries.js';
 import { json, readJsonBody, parseSortParams } from './http-util.js';
 
+// scope query 解析（列表端点）：合法值原样、空串/缺省归 undefined、非空非法 → 错误（400 口径）
+function parseScopeParam(raw: string | undefined): { scope?: 'agent' | 'human' } | { error: string } {
+  if (!raw) return {};
+  if (raw === 'agent' || raw === 'human') return { scope: raw };
+  return { error: 'scope must be agent|human' };
+}
+
 export async function handleCreatorsHttp(req: IncomingMessage, res: ServerResponse, db: Database.Database): Promise<void> {
   const url = new URL(req.url ?? '/', 'http://localhost');
   const pathname = url.pathname;
@@ -15,14 +22,17 @@ export async function handleCreatorsHttp(req: IncomingMessage, res: ServerRespon
   if (pathname === '/api/creators' && req.method === 'GET') {
     const q = qp('q');
     const category = qp('category');
-    const scopeRaw = qp('scope');
     const source = qp('source'); // 平台过滤（bilibili|youtube）
     const page = Math.max(1, Number(url.searchParams.get('page') ?? 1));
     const size = Math.min(100, Math.max(1, Number(url.searchParams.get('size') ?? 20)));
-    // sort 非法 → 400（2026-08-25 起取代旧「非法静默回落」）；desc 缺省 true（旧恒 DESC 行为不变）
+    // sort/scope 非法 → 400（2026-08-25 起取代旧「非法静默回落」，scope 随分类值域合一收紧）；
+    // desc 缺省 true（旧恒 DESC 行为不变）。scope 语义：category 的匹配槽位（省略=两列任一），
+    // 单独使用=筛该槽位已打标的 UP。
     const sp = parseSortParams(url.searchParams, CREATOR_SORT_KEYS, 'first_seen');
     if ('error' in sp) { json(res, 400, { ok: false, error: sp.error }); return; }
-    const r = listCreators(db, { q, category, source, scope: scopeRaw === 'agent' || scopeRaw === 'human' ? scopeRaw : undefined }, page, size, sp.sort as CreatorSortKey, sp.desc);
+    const sc = parseScopeParam(qp('scope'));
+    if ('error' in sc) { json(res, 400, { ok: false, error: sc.error }); return; }
+    const r = listCreators(db, { q, category, source, scope: sc.scope }, page, size, sp.sort as CreatorSortKey, sp.desc);
     json(res, 200, { ok: true, ...r });
     return;
   }

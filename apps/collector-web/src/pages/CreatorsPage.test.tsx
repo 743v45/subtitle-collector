@@ -1,9 +1,10 @@
-// CreatorsPage 测试：列表渲染 / 搜索防抖 300ms / scope 与分类筛选联动 / 排序 / 分页 / 行内分类变更 / 空错态。
+// CreatorsPage 测试：列表渲染 / 搜索防抖 300ms / 槽位三态筛选（全部/Agent/人工）/ 分类筛选 / 排序 / 分页 / 行内分类变更 / 空错态。
 //
 // 测试轮次记录表（对齐全局 8.2）：
 // | 轮次 | 范围 | 结果 | 备注 |
 // |---|---|---|---|
 // | R1 | 渲染 + 防抖 + URL 筛选流 + Select 分类变更 + 空错态 | 通过 | 防抖 fake timers；输入期间防抖未触发 |
+// | R2 | 值域合一（2026-08-25）：三态槽位筛选；分类下拉一套；cat 筛选请求不带 scope | 通过 | 缺省从 human 改「全部」 |
 import { test, expect, vi, beforeEach, afterEach, beforeAll } from 'vitest';
 import { render, screen, fireEvent, cleanup, waitFor, act } from '@testing-library/react';
 import { ToastProvider } from '@/components/ui/toast';
@@ -25,14 +26,16 @@ function creatorItem(id: number, p: Partial<CreatorListItem> = {}): CreatorListI
     ...p,
   };
 }
-const AGENT_CATS: Category[] = [{ id: 1, name: '科技', scope: 'agent', sort_order: 1, created_at: 1 }];
-const HUMAN_CATS: Category[] = [{ id: 3, name: '优质', scope: 'human', sort_order: 1, created_at: 1 }];
+// 值域合一：一套分类，Agent/人工两个下拉共用
+const CATS: Category[] = [
+  { id: 1, name: '科技', sort_order: 1, created_at: 1, creator_count: 0 },
+  { id: 3, name: '优质', sort_order: 2, created_at: 1, creator_count: 0 },
+];
 
 function defaultRoutes(items: CreatorListItem[] = [creatorItem(1), creatorItem(2)], total = items.length) {
   return (url: string): Response | null => {
     if (url.startsWith('/api/creators?')) return ok({ total, items });
-    if (url === '/api/categories?scope=agent') return ok({ items: AGENT_CATS });
-    if (url === '/api/categories?scope=human') return ok({ items: HUMAN_CATS });
+    if (url === '/api/categories') return ok({ items: CATS });
     return null;
   };
 }
@@ -125,19 +128,31 @@ test('搜索防抖：输入后 300ms 才写 URL q 并重拉；期间不触发', 
   });
 });
 
-test('scope 切换：human→agent 写 query 并清 cat；再切回 human 清 scope', async () => {
-  window.history.replaceState(null, '', '#/creators?scope=agent&cat=科技');
+test('槽位三态切换：缺省全部（URL 无 scope）；agent/human 写 query；cat 不被清掉（值域共享）', async () => {
+  window.history.replaceState(null, '', '#/creators?cat=' + encodeURIComponent('科技'));
   render(<ToastProvider><CreatorsPage onOpen={() => {}} /></ToastProvider>);
   await screen.findByText('UP1');
-  fireEvent.click(screen.getByRole('button', { name: '人工分类' }));
-  await waitFor(() => expect(window.location.hash).toBe('#/creators')); // cat + scope 一并清
-  // 点当前 scope：no-op
-  fireEvent.click(screen.getByRole('button', { name: '人工分类' }));
+  const catQ = 'cat=' + encodeURIComponent('科技');
+  // 全部 → Agent：写 scope，cat 保留（一套分类值对任何槽位都有意义）；query 序由 useQueryUpdater 决定，断言顺序无关
+  fireEvent.click(screen.getByRole('button', { name: 'Agent 打标' }));
+  await waitFor(() => {
+    expect(window.location.hash).toContain('scope=agent');
+    expect(window.location.hash).toContain(catQ);
+  });
+  // Agent → 人工：scope 换值，cat 仍在
+  fireEvent.click(screen.getByRole('button', { name: '人工打标' }));
+  await waitFor(() => {
+    expect(window.location.hash).toContain('scope=human');
+    expect(window.location.hash).toContain(catQ);
+  });
+  // 点当前槽位：no-op
+  fireEvent.click(screen.getByRole('button', { name: '人工打标' }));
   await screen.findByText('UP1');
-  expect(window.location.hash).toBe('#/creators');
-  // agent → 写 scope=agent
-  fireEvent.click(screen.getByRole('button', { name: 'Agent 分类' }));
-  await waitFor(() => expect(window.location.hash).toBe('#/creators?scope=agent'));
+  expect(window.location.hash).toContain('scope=human');
+  expect(window.location.hash).toContain(catQ);
+  // 人工 → 全部：scope 删除，cat 保留
+  fireEvent.click(screen.getByRole('button', { name: '全部' }));
+  await waitFor(() => expect(window.location.hash).toBe('#/creators?' + catQ));
 });
 
 test('排序 select：fans → URL sort=fans；first_seen 默认删除', async () => {
@@ -204,16 +219,16 @@ test('行内分类变更：Select 选择 → POST + toast + reload；失败 toas
   expect(await screen.findByText(/失败：HTTP 400/)).toBeInTheDocument();
 });
 
-test('cat 筛选 Select：选择后写 cat（默认 human scope 不入 URL）并重拉', async () => {
+test('cat 筛选 Select：选择后写 cat（缺省全部槽位，请求不带 scope）并重拉', async () => {
   render(<ToastProvider><CreatorsPage onOpen={() => {}} /></ToastProvider>);
   await screen.findByText('UP1');
   fireEvent.pointerDown(screen.getAllByRole('combobox')[0], { button: 0, ctrlKey: false, pointerType: 'mouse' });
   fireEvent.click(await screen.findByRole('option', { name: '优质' }));
   await waitFor(() => expect(window.location.hash).toBe('#/creators?cat=' + encodeURIComponent('优质')));
-  // catFilter 存在时请求带 category+scope（human 默认）
+  // 三态缺省=全部：请求只带 category 不带 scope（两槽位任一命中）
   await waitFor(() => {
     const last = String(fetchMock.mock.calls.at(-1)![0]);
     expect(last).toContain('category=' + encodeURIComponent('优质'));
-    expect(last).toContain('scope=human');
+    expect(last).not.toContain('scope=');
   });
 });

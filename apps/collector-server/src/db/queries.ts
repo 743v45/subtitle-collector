@@ -113,30 +113,36 @@ export function getCreator(db: Database.Database, id: number): CreatorDetail | n
 export interface Category {
   id: number;
   name: string;
-  scope: 'agent' | 'human';
   sort_order: number;
   created_at: number;
+  creator_count: number;
 }
 
-export function listCategories(db: Database.Database, scope?: 'agent' | 'human'): Category[] {
-  if (scope) return db.prepare('SELECT id, name, scope, sort_order, created_at FROM categories WHERE scope = ? ORDER BY sort_order, id').all(scope) as Category[];
-  return db.prepare('SELECT id, name, scope, sort_order, created_at FROM categories ORDER BY scope, sort_order, id').all() as Category[];
+// 分类行连创作者计数（web 分类页数量列）：agent/human 两槽位任一指向该分类即计入
+// （OR join 每 (分类,创作者) 行组合至多产一行，无 fan-out，普通 COUNT 即去重数）。三处出口共用同一 SELECT 片段。
+const CATEGORY_WITH_COUNT_SQL = `SELECT ca.id, ca.name, ca.sort_order, ca.created_at, COUNT(cr.id) AS creator_count
+  FROM categories ca
+  LEFT JOIN creators cr ON cr.category_agent_id = ca.id OR cr.category_human_id = ca.id`;
+
+export function listCategories(db: Database.Database): Category[] {
+  return db.prepare(`${CATEGORY_WITH_COUNT_SQL} GROUP BY ca.id ORDER BY ca.sort_order, ca.id`).all() as Category[];
 }
 
-export function createCategory(db: Database.Database, name: string, scope: 'agent' | 'human'): Category {
+export function createCategory(db: Database.Database, name: string): Category {
   const now = Date.now();
-  const info = db.prepare('INSERT INTO categories (name, scope, sort_order, created_at) VALUES (?, ?, 0, ?)').run(name, scope, now);
-  return { id: Number(info.lastInsertRowid), name, scope, sort_order: 0, created_at: now };
+  const info = db.prepare('INSERT INTO categories (name, sort_order, created_at) VALUES (?, 0, ?)').run(name, now);
+  return { id: Number(info.lastInsertRowid), name, sort_order: 0, created_at: now, creator_count: 0 };
 }
 
 export function updateCategory(db: Database.Database, id: number, patch: { name?: string; sort_order?: number }): Category | null {
+  const sel = () => db.prepare(`${CATEGORY_WITH_COUNT_SQL} WHERE ca.id = ? GROUP BY ca.id`).get(id) as Category | null;
   const sets: string[] = []; const vals: unknown[] = [];
   if (patch.name != null) { sets.push('name = ?'); vals.push(patch.name); }
   if (patch.sort_order != null) { sets.push('sort_order = ?'); vals.push(patch.sort_order); }
-  if (sets.length === 0) return db.prepare('SELECT id, name, scope, sort_order, created_at FROM categories WHERE id = ?').get(id) as Category | null;
+  if (sets.length === 0) return sel();
   vals.push(id);
   db.prepare(`UPDATE categories SET ${sets.join(', ')} WHERE id = ?`).run(...vals);
-  return db.prepare('SELECT id, name, scope, sort_order, created_at FROM categories WHERE id = ?').get(id) as Category | null;
+  return sel();
 }
 
 export function deleteCategory(db: Database.Database, id: number): void {
@@ -192,11 +198,23 @@ export function listCreators(
   if (filter.q) { where.push('(c.name LIKE ? OR c.source_uid LIKE ?)'); vals.push(`%${filter.q}%`, `%${filter.q}%`); }
   if (filter.source) { where.push('c.source = ?'); vals.push(filter.source); }
   if (filter.blocked != null) { where.push('c.blocked = ?'); vals.push(filter.blocked ? 1 : 0); }
-  if (filter.category && filter.scope) {
-    where.push(filter.scope === 'agent'
-      ? "c.category_agent_id IN (SELECT id FROM categories WHERE name = ? AND scope = 'agent')"
-      : "c.category_human_id IN (SELECT id FROM categories WHERE name = ? AND scope = 'human')");
-    vals.push(filter.category);
+  // 分类筛选两独立子句（值域合一后）：category 按 scope 选匹配列——有 scope 筛对应槽位、无 scope 两列任一；
+  // 仅 scope 无 category = 该槽位已打标的 UP（三态筛选「Agent/人工」独立使用时的语义）。
+  if (filter.category) {
+    const nameSub = 'SELECT id FROM categories WHERE name = ?';
+    if (filter.scope === 'agent') {
+      where.push(`c.category_agent_id IN (${nameSub})`);
+      vals.push(filter.category);
+    } else if (filter.scope === 'human') {
+      where.push(`c.category_human_id IN (${nameSub})`);
+      vals.push(filter.category);
+    } else {
+      // 无 scope：两槽位任一命中（两个占位符各需一次绑定）
+      where.push(`(c.category_agent_id IN (${nameSub}) OR c.category_human_id IN (${nameSub}))`);
+      vals.push(filter.category, filter.category);
+    }
+  } else if (filter.scope) {
+    where.push(filter.scope === 'agent' ? 'c.category_agent_id IS NOT NULL' : 'c.category_human_id IS NOT NULL');
   }
   const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
   const total = (db.prepare(`SELECT COUNT(*) AS n FROM creators c ${whereSql}`).get(...vals) as { n: number }).n;
@@ -259,10 +277,11 @@ export function setCreatorCategory(
   scope: 'agent' | 'human',
   categoryName: string,
 ): CreatorDetailFull {
-  let cat = db.prepare('SELECT id FROM categories WHERE name = ? AND scope = ?').get(categoryName, scope) as { id: number } | undefined;
+  // 分类是共享实体（无 scope 属性）：按名查到的是同一行，agent/human 只决定写 creators 的哪一列
+  let cat = db.prepare('SELECT id FROM categories WHERE name = ?').get(categoryName) as { id: number } | undefined;
   if (!cat) {
     const now = Date.now();
-    const info = db.prepare('INSERT INTO categories (name, scope, sort_order, created_at) VALUES (?, ?, 0, ?)').run(categoryName, scope, now);
+    const info = db.prepare('INSERT INTO categories (name, sort_order, created_at) VALUES (?, 0, ?)').run(categoryName, now);
     cat = { id: Number(info.lastInsertRowid) };
   }
   const existing = db.prepare('SELECT id FROM creators WHERE source = ? AND source_uid = ?').get(source, source_uid) as { id: number } | undefined;

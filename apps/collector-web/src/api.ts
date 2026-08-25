@@ -1,19 +1,12 @@
 import type {
   VideoListItem, VideoDetail, VideoFilter, ClientInfo,
   StatsOverview, KeyValue, StatsGroupBy, CreatorDetail, ChangeRow,
-  TagSource, CollectTask, CollectTaskStatus, UpperVideoItem,
+  TagSource, CollectTask, CollectTaskStatus, UpperVideoItem, Category,
 } from './types';
 import type { SubtitleLine } from '@/components/SubtitleView';
+export type { Category };
 
 const BASE = '';
-
-export interface Category {
-  id: number;
-  name: string;
-  scope: 'agent' | 'human';
-  sort_order: number;
-  created_at: number;
-}
 
 export interface CreatorListItem {
   id: number;
@@ -275,18 +268,17 @@ export async function setTaskDispatch(clientId: string, enabled: boolean): Promi
   return ensureOk(r, (j) => j.task_dispatch_enabled);
 }
 
-// ── 分类 ──
-export async function listCategories(scope?: 'agent' | 'human'): Promise<Category[]> {
-  const q = scope ? `?scope=${scope}` : '';
-  const r = await fetch(`${BASE}/api/categories${q}`);
+// ── 分类（一套共享值域；agent/人工只体现在打标请求的 scope，列表本身无 scope）──
+export async function listCategories(): Promise<Category[]> {
+  const r = await fetch(`${BASE}/api/categories`);
   return ensureOk(r, (j) => j.items ?? []);
 }
 
-export async function createCategory(name: string, scope: 'agent' | 'human'): Promise<Category> {
+export async function createCategory(name: string): Promise<Category> {
   const r = await fetch(`${BASE}/api/categories`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ name, scope }),
+    body: JSON.stringify({ name }),
   });
   return ensureOk(r, (j) => j.category);
 }

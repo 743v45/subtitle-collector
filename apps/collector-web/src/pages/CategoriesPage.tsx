@@ -7,7 +7,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from 
 import { Skeleton } from '@/components/ui/skeleton';
 import { useToast } from '@/components/ui/toast';
 import { useAsync } from '@/lib/useAsync';
-import { useQueryUpdater, useRoute } from '../router';
+import { navigate } from '../router';
 import { listCategories, createCategory, updateCategory, deleteCategory, type Category } from '@/api';
 
 function errMsg(e: unknown): string {
@@ -16,12 +16,7 @@ function errMsg(e: unknown): string {
 
 export function CategoriesPage() {
   const toast = useToast();
-  // scope 进 URL（#/categories?scope=human），刷新/分享还原；默认 agent 省略不写
-  const route = useRoute();
-  const updateQuery = useQueryUpdater();
-  const scope: 'agent' | 'human' = route.query.get('scope') === 'human' ? 'human' : 'agent';
-  const setScope = (s: 'agent' | 'human') => updateQuery({ scope: s === 'agent' ? null : s });
-  const { data: items, loading, error, reload } = useAsync(() => listCategories(scope), [scope]);
+  const { data: items, loading, error, reload } = useAsync(() => listCategories(), []);
 
   // 新建
   const [createOpen, setCreateOpen] = useState(false);
@@ -41,7 +36,7 @@ export function CategoriesPage() {
     if (!n) return;
     setCreating(true);
     try {
-      await createCategory(n, scope);
+      await createCategory(n);
       toast('已新建', 'success');
       setCreateName('');
       setCreateOpen(false);
@@ -77,7 +72,7 @@ export function CategoriesPage() {
   }
 
   async function onDelete(c: Category) {
-    if (!window.confirm(`删除「${c.name}」？关联 创作者该分类将置空`)) return;
+    if (!window.confirm(`删除「${c.name}」？${c.creator_count > 0 ? `${c.creator_count} 个创作者的该分类将置空` : '无创作者关联'}`)) return;
     setDeletingId(c.id);
     try {
       await deleteCategory(c.id);
@@ -93,20 +88,19 @@ export function CategoriesPage() {
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
-        <h2 className="text-xl font-semibold tracking-tight">分类管理</h2>
+        <div>
+          <h2 className="text-xl font-semibold tracking-tight">创作者分类</h2>
+          {/* 分类只作用于创作者（打在 UP 主/频道上，视频与字幕不挂分类）；一套共享值域，Agent 与人工在 UP 主两个槽位分别打标 */}
+          <p className="mt-1 text-sm text-muted-foreground">只针对创作者：Agent 与人工共用同一套分类，在 UP 主页面分开选</p>
+        </div>
         <span className="text-sm text-muted-foreground">共 {items?.length ?? 0} 条</span>
       </div>
       <div className="flex gap-2 items-center">
-        {(['agent', 'human'] as const).map((s) => (
-          <Button key={s} variant={s === scope ? 'default' : 'outline'} size="sm" onClick={() => setScope(s)}>
-            {s === 'agent' ? 'Agent 分类' : '人工分类'}
-          </Button>
-        ))}
         <Dialog open={createOpen} onOpenChange={setCreateOpen}>
           <DialogTrigger asChild><Button size="sm">新建</Button></DialogTrigger>
           <DialogContent>
             <DialogHeader>
-              <DialogTitle>新建{scope === 'agent' ? ' Agent' : '人工'}分类</DialogTitle>
+              <DialogTitle>新建分类</DialogTitle>
             </DialogHeader>
             <div className="space-y-2">
               <Label htmlFor="cn">名称</Label>
@@ -141,6 +135,7 @@ export function CategoriesPage() {
           <TableHeader>
             <TableRow className="hover:bg-transparent">
               <TableHead>名称</TableHead>
+              <TableHead className="text-right">创作者</TableHead>
               <TableHead className="text-right">排序</TableHead>
               <TableHead className="text-right">操作</TableHead>
             </TableRow>
@@ -149,7 +144,8 @@ export function CategoriesPage() {
             {loading && Array.from({ length: 3 }).map((_, i) => (
               <TableRow key={`sk-${i}`}>
                 <TableCell><Skeleton className="h-4 w-32" /></TableCell>
-                <TableCell><Skeleton className="h-4 w-8" /></TableCell>
+                <TableCell><Skeleton className="ml-auto h-4 w-8" /></TableCell>
+                <TableCell><Skeleton className="ml-auto h-4 w-8" /></TableCell>
                 <TableCell className="text-right"><Skeleton className="ml-auto h-7 w-28" /></TableCell>
               </TableRow>
             ))}
@@ -158,6 +154,22 @@ export function CategoriesPage() {
               return (
                 <TableRow key={c.id}>
                   <TableCell className="font-medium">{c.name}</TableCell>
+                  <TableCell className="text-right tabular-nums">
+                    {/* 数量即该分类下创作者数（两槽位任一指向）；点击跳创作者列表按本分类过滤（不带 scope——两槽位任一命中） */}
+                    {c.creator_count > 0 ? (
+                      <Button
+                        variant="link"
+                        size="sm"
+                        className="h-auto p-0"
+                        title={`查看「${c.name}」下的 ${c.creator_count} 个创作者`}
+                        onClick={() => navigate(`/creators?cat=${encodeURIComponent(c.name)}`)}
+                      >
+                        {c.creator_count}
+                      </Button>
+                    ) : (
+                      <span className="text-muted-foreground">0</span>
+                    )}
+                  </TableCell>
                   <TableCell className="text-right tabular-nums text-muted-foreground">{c.sort_order}</TableCell>
                   <TableCell className="space-x-2 text-right">
                     <Button variant="outline" size="sm" disabled={rowBusy} onClick={() => openRename(c)}>
@@ -172,8 +184,8 @@ export function CategoriesPage() {
             })}
             {!loading && !error && (items?.length ?? 0) === 0 && (
               <TableRow>
-                <TableCell colSpan={3} className="py-8 text-center">
-                  <div className="text-sm text-muted-foreground">暂无分类——点右上「新建」创建第一个分类</div>
+                <TableCell colSpan={4} className="py-8 text-center">
+                  <div className="text-sm text-muted-foreground">暂无创作者分类——点右上「新建」创建第一个分类</div>
                 </TableCell>
               </TableRow>
             )}

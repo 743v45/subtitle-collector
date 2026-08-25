@@ -84,24 +84,25 @@ if (!await client.ping()) {
   process.exit(3);
 }
 
-// ─── 0. --category：解析为 categoryId（agent scope）+ 并入该分类下 mid ───
+// ─── 0. --category：解析为 categoryId + 并入该分类下 mid ───
 // 在 resolveClientId 之前跑：确定「采什么」先于「怎么采」，且无扩展时也能观察分类解析结果。
-let categoryAgentId: number | undefined;
+// 分类是一套共享值域（无 scope 属性）；取 UP 限定 scope=agent——即 Agent 槽位指向该分类的那批（AI 打标集合）。
+let categoryId: number | undefined;
 if (categoryName) {
   const authHeaders: Record<string, string> = { Authorization: `Bearer ${cfg.token}` };
-  const catResp = await fetch(`${cfg.serverUrl}/api/categories?scope=agent`, { headers: authHeaders });
+  const catResp = await fetch(`${cfg.serverUrl}/api/categories`, { headers: authHeaders });
   const catJson = await catResp.json() as { ok: boolean; items?: Array<{ id: number; name: string }> };
   const found = catJson.items?.find((c) => c.name === categoryName);
   if (!found) {
-    console.error(`分类不存在（agent scope）: ${categoryName}（先在后台或 POST /api/categories 建分类）`);
+    console.error(`分类不存在: ${categoryName}（先在后台或 POST /api/categories 建分类）`);
     process.exit(2);
   }
-  categoryAgentId = found.id;
-  // 从 DB（经 HTTP API）取该 agent 分类下的 mid，并入 mids
+  categoryId = found.id;
+  // 从 DB（经 HTTP API）取 Agent 槽位指向该分类的 mid，并入 mids
   const cr = await fetch(`${cfg.serverUrl}/api/creators?category=${encodeURIComponent(categoryName)}&scope=agent&size=100`, { headers: authHeaders });
   const crJson = await cr.json() as { ok: boolean; items?: Array<{ source_uid: string }> };
   for (const it of crJson.items ?? []) if (!mids.includes(it.source_uid)) mids.push(it.source_uid);
-  console.error(`[category] agent 分类「${categoryName}」(#${categoryAgentId})，并入后共 ${mids.length} 个 mid`);
+  console.error(`[category] 分类「${categoryName}」(#${categoryId})，Agent 槽位下并入后共 ${mids.length} 个 mid`);
   if (mids.length === 0) {
     console.error(`分类「${categoryName}」下无 UP 主，无可采集。`);
     process.exit(0);
@@ -212,20 +213,23 @@ for (const bv of missing) {
   await new Promise((r) => setTimeout(r, sleepMs));
 }
 
-// ─── 采后：--category 经 HTTP 给所有涉及的 mid 打 agent 分类 ───
-if (categoryAgentId && categoryName) {
+// ─── 采后：--category 经 HTTP 给所有涉及的 mid 打 agent 槽位分类 ───
+// 路径必须带平台段（server 路由 /by-uid/:source/:uid/category；本脚本只采 B 站）：缺段 404，
+// 2026-08-25 撞见存量 bug 已修——此前 URL 少 bilibili 段，采后打标恒 404、marked 计 0。
+if (categoryId && categoryName) {
   let marked = 0;
   for (const mid of mids) {
     try {
-      const r = await fetch(`${cfg.serverUrl}/api/creators/by-uid/${encodeURIComponent(mid)}/category`, {
+      const r = await fetch(`${cfg.serverUrl}/api/creators/by-uid/bilibili/${encodeURIComponent(mid)}/category`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${cfg.token}` },
         body: JSON.stringify({ scope: 'agent', name: categoryName }),
       });
       if (r.ok) marked++;
-    } catch { /* 单条失败不阻断整体 */ }
+      else console.error(`[category] 打标失败 mid=${mid}: HTTP ${r.status}`);
+    } catch (e) { console.error(`[category] 打标异常 mid=${mid}: ${(e as Error).message}`); /* 单条失败不阻断整体 */ }
   }
-  console.error(`[category] 已标记 ${marked}/${mids.length} 个 mid 的 agent 分类=「${categoryName}」`);
+  console.error(`[category] 已标记 ${marked}/${mids.length} 个 mid 的 agent 槽位分类=「${categoryName}」`);
 }
 
 console.error(`===完成: ok=${ok}  no_subtitle=${nosub}  fail=${fail}  共 ${missing.length}===`);

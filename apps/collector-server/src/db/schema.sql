@@ -1,13 +1,13 @@
--- UP 主分类（agent 自动分类 / human 人工分类，两套隔离）。
+-- UP 主分类：一套共享值域（agent 自动打标 / human 人工打标都从这同一套里选），
+-- 槽位是关系属性——creators.category_agent_id / category_human_id 两列分别引用（同 tags 的实体/关系分离哲学）。
 CREATE TABLE IF NOT EXISTS categories (
   id          INTEGER PRIMARY KEY AUTOINCREMENT,
   name        TEXT NOT NULL,
-  scope       TEXT NOT NULL CHECK(scope IN ('agent','human')),
   sort_order  INTEGER NOT NULL DEFAULT 0,
   created_at  INTEGER NOT NULL,
-  UNIQUE(name, scope)
+  UNIQUE(name)
 );
-CREATE INDEX IF NOT EXISTS idx_categories_scope ON categories(scope, sort_order);
+CREATE INDEX IF NOT EXISTS idx_categories_sort ON categories(sort_order);
 
 -- 四层 + 通用 change_log
 CREATE TABLE IF NOT EXISTS creators (

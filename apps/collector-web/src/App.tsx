@@ -27,7 +27,7 @@ const TABS: { key: Tab; label: string; icon: LucideIcon }[] = [
   { key: 'videos', label: '视频', icon: Film },
   { key: 'stats', label: '看板', icon: BarChart3 },
   { key: 'creators', label: '创作者', icon: Users },
-  { key: 'categories', label: '分类', icon: FolderTree },
+  { key: 'categories', label: '创作者分类', icon: FolderTree },
   { key: 'tags', label: '标签', icon: Tags },
   { key: 'clients', label: '客户端', icon: MonitorSmartphone },
   { key: 'changes', label: '日志', icon: ScrollText },

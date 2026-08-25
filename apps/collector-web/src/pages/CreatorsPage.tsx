@@ -17,6 +17,29 @@ import { cn } from '@/lib/utils';
 const PAGE_SIZE = 20;
 type CreatorSort = 'first_seen' | 'fans' | 'video_count';
 const SORTS: readonly CreatorSort[] = ['first_seen', 'fans', 'video_count'];
+type SlotScope = 'agent' | 'human';
+// 槽位筛选三态按钮：null=全部（缺省，URL 不写）——同一套分类值，只是限定看哪个槽位打的标
+const SLOT_TABS: ReadonlyArray<{ value: SlotScope | null; label: string }> = [
+  { value: null, label: '全部' },
+  { value: 'agent', label: 'Agent 打标' },
+  { value: 'human', label: '人工打标' },
+];
+
+// URL query → 列表筛选/分页状态一次解析（非法值收敛到缺省），组件内不再逐项条件判断
+function parseRouteFilters(query: URLSearchParams) {
+  const scopeRaw = query.get('scope');
+  const sourceRaw = query.get('source');
+  const sortRaw = query.get('sort');
+  const pageRaw = Number(query.get('page'));
+  return {
+    q: query.get('q') ?? '',
+    catFilter: query.get('cat') ?? '',
+    scope: SLOT_TABS.find((t) => t.value === scopeRaw)?.value ?? null,
+    source: sourceRaw === 'bilibili' || sourceRaw === 'youtube' ? sourceRaw : null,
+    sort: (SORTS as readonly string[]).includes(sortRaw ?? '') ? (sortRaw as CreatorSort) : 'first_seen',
+    page: Number.isInteger(pageRaw) && pageRaw > 1 ? pageRaw : 1,
+  };
+}
 
 export function CreatorsPage({ onOpen }: { onOpen: (id: number) => void }) {
   const toast = useToast();
@@ -24,15 +47,7 @@ export function CreatorsPage({ onOpen }: { onOpen: (id: number) => void }) {
   const route = useRoute();
   const updateQuery = useQueryUpdater();
   const setFilter = (patch: Record<string, string | null | undefined>) => updateQuery(patch, { resetPage: true });
-  const q = route.query.get('q') ?? '';
-  const catFilter = route.query.get('cat') ?? '';
-  const scope = (route.query.get('scope') === 'agent' ? 'agent' : 'human') as 'agent' | 'human';
-  const sourceRaw = route.query.get('source');
-  const source = sourceRaw === 'bilibili' || sourceRaw === 'youtube' ? sourceRaw : null;
-  const sortRaw = route.query.get('sort');
-  const sort: CreatorSort = (SORTS as readonly string[]).includes(sortRaw ?? '') ? (sortRaw as CreatorSort) : 'first_seen';
-  const pageRaw = Number(route.query.get('page'));
-  const page = Number.isInteger(pageRaw) && pageRaw > 1 ? pageRaw : 1;
+  const { q, catFilter, scope, source, sort, page } = parseRouteFilters(route.query);
   const [busyUid, setBusyUid] = useState<string | null>(null);
 
   // 搜索防抖（300ms）：本地回显,停止输入后写 URL
@@ -44,11 +59,12 @@ export function CreatorsPage({ onOpen }: { onOpen: (id: number) => void }) {
   }, [qInput]);
 
   // 列表：useAsync 驱动，error 显式落到 UI（不再 .catch 静默吞）。
+  // scope 独立于 catFilter（三态筛选）：有值时 server 按对应槽位筛（配合 cat=该槽位匹配列 / 单独=该槽位已打标），null=不限槽位
   const { data: listResult, loading, error, reload } = useAsync(
     () => listCreators({
       q: q || undefined,
       category: catFilter || undefined,
-      scope: catFilter ? scope : undefined,
+      scope: scope ?? undefined,
       source: source ?? undefined,
       sort,
       page,
@@ -60,15 +76,13 @@ export function CreatorsPage({ onOpen }: { onOpen: (id: number) => void }) {
   const total = listResult?.total ?? 0;
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
 
-  // 筛选下拉随 scope 切换重新拉；表格内两套可编辑选项各拉一次。
-  const { data: filterCats } = useAsync<Category[]>(() => listCategories(scope), [scope]);
-  const { data: agentCats } = useAsync<Category[]>(() => listCategories('agent'), []);
-  const { data: humanCats } = useAsync<Category[]>(() => listCategories('human'), []);
+  // 一套共享分类值：筛选下拉与表格内 Agent/人工两个编辑下拉共用同一次拉取
+  const { data: cats } = useAsync<Category[]>(() => listCategories(), []);
 
-  // 切 scope：旧分类名对新 scope 无意义，一并清掉
-  function switchScope(s: 'agent' | 'human') {
+  // 切槽位：分类值域共享，cat 对任何槽位都有意义，不清空
+  function switchScope(s: SlotScope | null) {
     if (s === scope) return;
-    updateQuery({ scope: s === 'human' ? null : s, cat: null }, { resetPage: true });
+    updateQuery({ scope: s }, { resetPage: true });
   }
 
   async function changeCategory(c: CreatorListItem, catScope: 'agent' | 'human', name: string) {
@@ -100,14 +114,14 @@ export function CreatorsPage({ onOpen }: { onOpen: (id: number) => void }) {
           className="max-w-xs"
         />
         <div className="flex gap-1">
-          {(['agent', 'human'] as const).map((s) => (
+          {SLOT_TABS.map((t) => (
             <Button
-              key={s}
-              variant={s === scope ? 'default' : 'outline'}
+              key={t.label}
+              variant={t.value === scope ? 'default' : 'outline'}
               size="sm"
-              onClick={() => switchScope(s)}
+              onClick={() => switchScope(t.value)}
             >
-              {s === 'agent' ? 'Agent 分类' : '人工分类'}
+              {t.label}
             </Button>
           ))}
         </div>
@@ -116,10 +130,11 @@ export function CreatorsPage({ onOpen }: { onOpen: (id: number) => void }) {
           onValueChange={(v) => setFilter({ cat: v || null })}
         >
           <SelectTrigger className="w-48">
-            <SelectValue placeholder={`按${scope === 'agent' ? 'Agent' : '人工'}分类筛选`} />
+            {/* 有槽位时占位符注明限定（该槽位匹配列），全部=两槽位任一 */}
+            <SelectValue placeholder={scope ? `按分类筛选（${scope === 'agent' ? 'Agent' : '人工'}槽位）` : '按分类筛选'} />
           </SelectTrigger>
           <SelectContent>
-            {(filterCats ?? []).map((c) => (
+            {(cats ?? []).map((c) => (
               <SelectItem key={c.id} value={c.name}>{c.name}</SelectItem>
             ))}
           </SelectContent>
@@ -202,7 +217,7 @@ export function CreatorsPage({ onOpen }: { onOpen: (id: number) => void }) {
                       <SelectValue placeholder="未分类" />
                     </SelectTrigger>
                     <SelectContent>
-                      {(agentCats ?? []).map((h) => (
+                      {(cats ?? []).map((h) => (
                         <SelectItem key={h.id} value={h.name}>{h.name}</SelectItem>
                       ))}
                     </SelectContent>
@@ -218,7 +233,7 @@ export function CreatorsPage({ onOpen }: { onOpen: (id: number) => void }) {
                       <SelectValue placeholder="未分类" />
                     </SelectTrigger>
                     <SelectContent>
-                      {(humanCats ?? []).map((h) => (
+                      {(cats ?? []).map((h) => (
                         <SelectItem key={h.id} value={h.name}>{h.name}</SelectItem>
                       ))}
                     </SelectContent>

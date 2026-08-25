@@ -202,6 +202,39 @@ export const MIGRATIONS: readonly MigrationStep[] = [
       'ALTER TABLE creators ADD COLUMN blocked INTEGER NOT NULL DEFAULT 0',
     ],
   },
+  {
+    // 值域合一（2026-08-25）：categories 去 scope 列——一套共享值域，agent/human 是 creators 两列的
+    // 打标关系属性（同 tags 的实体/关系分离哲学）。单事务表重建学 v9/v12，外加 FK 前后包裹：
+    // better-sqlite3 默认 foreign_keys=1，FK ON 下 DROP 被 creators 引用的表报 FOREIGN KEY constraint failed；
+    // PRAGMA foreign_keys 事务内是 no-op，OFF/ON 必须在 BEGIN 之前 / COMMIT 之后各自独立执行。
+    // ⚠ 语句一律不引用 scope 列（scope-free）：新库（schema.sql 建的无 scope 表，user_version=0 全量重放
+    // ——全新部署/抢救重建路径）上若中途抛 no such column 被容忍规则吞掉，会留下打开的事务 + FK 永久
+    // 关闭（user_version 写进未提交事务，后续写入随进程退出丢）。v9/v12 没踩此坑正因 SQL 不引用被删列。
+    // 事务串抛非容忍错误时 OFF 后的 ON 不会执行，但 runMigrations rethrow 使启动失败，可接受。
+    version: 16,
+    note: 'categories 去 scope 表重建：值域合一（agent/human 共用一套分类，UNIQUE(name)；同名行小 id 保留，creators 双列按名重定向到保留行）。scope-free 写法保证新库重放完整执行不残留脏事务',
+    statements: [
+      'PRAGMA foreign_keys = OFF',
+      `BEGIN IMMEDIATE;
+       CREATE TABLE categories_v16 (
+         id          INTEGER PRIMARY KEY AUTOINCREMENT,
+         name        TEXT NOT NULL,
+         sort_order  INTEGER NOT NULL DEFAULT 0,
+         created_at  INTEGER NOT NULL,
+         UNIQUE(name)
+       );
+       INSERT OR IGNORE INTO categories_v16 (id, name, sort_order, created_at)
+         SELECT id, name, sort_order, created_at FROM categories ORDER BY id;
+       UPDATE creators SET
+         category_agent_id = (SELECT v.id FROM categories_v16 v JOIN categories o ON o.name = v.name WHERE o.id = creators.category_agent_id),
+         category_human_id = (SELECT v.id FROM categories_v16 v JOIN categories o ON o.name = v.name WHERE o.id = creators.category_human_id);
+       DROP TABLE categories;
+       ALTER TABLE categories_v16 RENAME TO categories;
+       CREATE INDEX IF NOT EXISTS idx_categories_sort ON categories(sort_order);
+       COMMIT;`,
+      'PRAGMA foreign_keys = ON',
+    ],
+  },
 ];
 
 export function runMigrations(db: Database.Database): void {

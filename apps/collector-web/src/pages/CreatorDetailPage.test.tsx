@@ -34,15 +34,18 @@ function video(id: number, p: Partial<VideoListItem> = {}): VideoListItem {
     ...p,
   };
 }
-const AGENT_CATS: Category[] = [{ id: 1, name: '科技', scope: 'agent', sort_order: 1, created_at: 1 }, { id: 2, name: '游戏', scope: 'agent', sort_order: 2, created_at: 1 }];
-const HUMAN_CATS: Category[] = [{ id: 3, name: '优质', scope: 'human', sort_order: 1, created_at: 1 }];
+// 值域合一（2026-08-25）：一套分类，两个下拉共用；「游戏」在 agent 槽可选、「优质」在 human 槽可选，同源
+const CATS: Category[] = [
+  { id: 1, name: '科技', sort_order: 1, created_at: 1, creator_count: 0 },
+  { id: 2, name: '游戏', sort_order: 2, created_at: 1, creator_count: 0 },
+  { id: 3, name: '优质', sort_order: 3, created_at: 1, creator_count: 0 },
+];
 
-// 默认路由：detail + agent/human 分类 + 该 UP 视频
+// 默认路由：detail + 一套分类 + 该 UP 视频
 function defaultRoutes(c: CreatorDetail = creator(), vids: VideoListItem[] = [video(1), video(2)], total = vids.length) {
   return (url: string): Response | null => {
     if (url === '/api/creators/7') return ok({ creator: c });
-    if (url === '/api/categories?scope=agent') return ok({ items: AGENT_CATS });
-    if (url === '/api/categories?scope=human') return ok({ items: HUMAN_CATS });
+    if (url === '/api/categories') return ok({ items: CATS });
     if (url.startsWith('/api/videos?')) return ok({ total, items: vids });
     return null;
   };

@@ -207,13 +207,13 @@ test('getCreator: 未命中返回 null', () => {
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
-test('getCreator: 详情带分类名（join categories，agent/human 两套）', () => {
+test('getCreator: 详情带分类名（join categories，agent/human 两槽位）', () => {
   const { db, dir } = freshDb();
   try {
-    // 建两个分类 + 一个 creator 关联到两个分类
+    // 建两个分类 + 一个 creator 两槽位各关联一个
     const now = Date.now();
-    const ca = db.prepare("INSERT INTO categories (name, scope, sort_order, created_at) VALUES ('股票','agent',0,?)").run(now);
-    const ch = db.prepare("INSERT INTO categories (name, scope, sort_order, created_at) VALUES ('关注','human',0,?)").run(now);
+    const ca = db.prepare("INSERT INTO categories (name, sort_order, created_at) VALUES ('股票',0,?)").run(now);
+    const ch = db.prepare("INSERT INTO categories (name, sort_order, created_at) VALUES ('关注',0,?)").run(now);
     db.prepare(
       "INSERT INTO creators (source, source_uid, name, first_seen_at, updated_at, category_agent_id, category_human_id) " +
       "VALUES ('bilibili','123','up1',1,2,?,?)",
@@ -234,24 +234,20 @@ function memDb() {
 
 test('categories CRUD', () => {
   const db = memDb();
-  const a = createCategory(db, '股票', 'agent');
+  const a = createCategory(db, '股票');
   assert.equal(a.name, '股票');
-  assert.equal(a.scope, 'agent');
-  // UNIQUE(name, scope) 冲突
-  assert.throws(() => createCategory(db, '股票', 'agent'));
-  // 同名不同 scope 允许
-  const h = createCategory(db, '股票', 'human');
-  assert.notEqual(a.id, h.id);
-  // list by scope
-  const agentCats = listCategories(db, 'agent');
-  assert.equal(agentCats.length, 1);
-  assert.equal(agentCats[0].name, '股票');
+  assert.equal(a.creator_count, 0); // 新建即零关联
+  // UNIQUE(name) 冲突（值域合一：同名词是同一实体，不再有 scope 隔离）
+  assert.throws(() => createCategory(db, '股票'));
+  // list 全量（一套值域，无 scope 维度）
+  assert.equal(listCategories(db).length, 1);
+  assert.equal(listCategories(db)[0].name, '股票');
   // update
   updateCategory(db, a.id, { name: 'A股' });
-  assert.equal(listCategories(db, 'agent')[0].name, 'A股');
+  assert.equal(listCategories(db)[0].name, 'A股');
   // delete
   deleteCategory(db, a.id);
-  assert.equal(listCategories(db, 'agent').length, 0);
+  assert.equal(listCategories(db).length, 0);
 });
 
 test('setCreatorCategory upsert creator 并设分类', () => {
@@ -265,6 +261,22 @@ test('setCreatorCategory upsert creator 并设分类', () => {
   assert.equal(c2.category_human_name, '关注');
 });
 
+test('setCreatorCategory 值域合一：同一分类名 agent/human 两槽位指向同一 id（共享实体）', () => {
+  const db = memDb();
+  const c1 = setCreatorCategory(db, 'bilibili', '123', 'agent', '股票');
+  setCreatorCategory(db, 'bilibili', '456', 'human', '股票');
+  // 两槽位引用的是同一行分类（不因 scope 各建一份）
+  const row = db.prepare("SELECT category_agent_id AS a FROM creators WHERE source_uid = '123'").get() as { a: number };
+  const row2 = db.prepare("SELECT category_human_id AS h FROM creators WHERE source_uid = '456'").get() as { h: number };
+  assert.equal(row.a, row2.h, 'agent 与 human 槽位应指向同一 category id');
+  assert.equal(listCategories(db).length, 1, '全库只有一个「股票」分类');
+  // 同一 UP 两槽位都选同一分类也合法
+  setCreatorCategory(db, 'bilibili', '123', 'human', '股票');
+  const c3 = setCreatorCategory(db, 'bilibili', '123', 'agent', '股票');
+  assert.equal(c3.category_agent_name, '股票');
+  assert.equal(c3.category_human_name, '股票');
+});
+
 test('listCreators 按分类筛选', () => {
   const db = memDb();
   setCreatorCategory(db, 'bilibili', '1', 'agent', '股票');
@@ -272,6 +284,58 @@ test('listCreators 按分类筛选', () => {
   setCreatorCategory(db, 'bilibili', '3', 'agent', '基金');
   const r = listCreators(db, { category: '股票', scope: 'agent' }, 1, 20);
   assert.equal(r.total, 2);
+});
+
+test('listCreators 分类筛选三态：无 scope 两列任一 / 仅 scope 筛该槽位已打标的 UP', () => {
+  const db = memDb();
+  // uid1: agent→股票；uid2: human→股票；uid3: 无分类；uid4: agent→基金
+  setCreatorCategory(db, 'bilibili', '1', 'agent', '股票');
+  setCreatorCategory(db, 'bilibili', '2', 'human', '股票');
+  db.prepare("INSERT INTO creators (source, source_uid, first_seen_at, updated_at) VALUES ('bilibili','3',1,1)").run();
+  setCreatorCategory(db, 'bilibili', '4', 'agent', '基金');
+  // 无 scope：两列任一命中（uid1 agent 槽 + uid2 human 槽都算）
+  assert.deepEqual(
+    listCreators(db, { category: '股票' }, 1, 20).items.map((c) => c.source_uid).sort(),
+    ['1', '2'],
+    'category 无 scope 应两槽位任一命中',
+  );
+  // scope=agent：只匹配 agent 槽位（uid1）
+  assert.deepEqual(
+    listCreators(db, { category: '股票', scope: 'agent' }, 1, 20).items.map((c) => c.source_uid),
+    ['1'],
+  );
+  // 仅 scope 无 category：筛该槽位已打标的 UP（uid1/uid4 有 agent 标，uid2 只有 human 标，uid3 无）
+  assert.deepEqual(
+    listCreators(db, { scope: 'agent' }, 1, 20).items.map((c) => c.source_uid).sort(),
+    ['1', '4'],
+    '仅 scope=agent 应筛 agent 槽位非空的 UP',
+  );
+  assert.deepEqual(
+    listCreators(db, { scope: 'human' }, 1, 20).items.map((c) => c.source_uid),
+    ['2'],
+    '仅 scope=human 应筛 human 槽位非空的 UP',
+  );
+});
+
+test('listCategories/updateCategory 带 creator_count：两槽位任一指向即计（同名 UP 双槽同分类不双计），删除置空后归零', () => {
+  const db = memDb();
+  // 值域合一：一个「股票」分类实体
+  const a = createCategory(db, '股票');
+  createCategory(db, '基金');
+  setCreatorCategory(db, 'bilibili', '1', 'agent', '股票');
+  setCreatorCategory(db, 'bilibili', '2', 'agent', '股票');
+  setCreatorCategory(db, 'bilibili', '1', 'human', '股票'); // uid1 两槽位都指向同一分类
+  // OR join 无 fan-out：uid1 双槽位同分类只计 1 → 「股票」计 2（uid1+uid2），「基金」计 0
+  assert.equal(listCategories(db).find((c) => c.id === a.id)?.creator_count, 2);
+  assert.equal(listCategories(db).find((c) => c.name === '基金')?.creator_count, 0);
+  // updateCategory 回读也带计数
+  assert.equal(updateCategory(db, a.id, { name: 'A股' })?.creator_count, 2);
+  // 删分类：creators 两槽位引用都置空（deleteCategory 应用层双列清 NULL），计数归零
+  deleteCategory(db, a.id);
+  const remaining = listCategories(db);
+  assert.equal(remaining.length, 1);
+  const cleared = db.prepare("SELECT COUNT(*) AS n FROM creators WHERE category_agent_id IS NOT NULL OR category_human_id IS NOT NULL").get() as { n: number };
+  assert.equal(cleared.n, 0, '被删分类的两槽位引用应都置空');
 });
 
 // ── 分支洼地补齐：track/version 优先级镜像、categories 空补丁、listCreators 排序与 q ──
@@ -294,19 +358,19 @@ test('getVideo: en 无 type 轨（优先级 2）排在其他语言轨（5）之�
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
-test('listCategories: 省略 scope → 全量（scope 排序）', () => {
+test('listCategories: 全量（一套值域，sort_order 后 id 排序）', () => {
   const db = memDb();
-  createCategory(db, '股票', 'agent');
-  createCategory(db, '关注', 'human');
+  createCategory(db, '关注');
+  createCategory(db, '股票');
   const all = listCategories(db);
   assert.equal(all.length, 2);
-  // ORDER BY scope：agent < human
-  assert.deepEqual(all.map((c) => c.scope), ['agent', 'human']);
+  // ORDER BY sort_order, id：同 sort_order 时按建序（关注 先建 id 小）
+  assert.deepEqual(all.map((c) => c.name), ['关注', '股票']);
 });
 
 test('updateCategory: 仅 sort_order / 空 patch（原样返回不改名）', () => {
   const db = memDb();
-  const a = createCategory(db, '股票', 'agent');
+  const a = createCategory(db, '股票');
   // 只改 sort_order（不带 name）
   const u1 = updateCategory(db, a.id, { sort_order: 7 });
   assert.equal(u1?.name, '股票');

@@ -82,10 +82,11 @@ test('hash 直达 tags → 真实 TagsPage 挂载', async () => {
   expect(await screen.findByText('标签管理')).toBeInTheDocument();
 });
 
-test('侧栏点击切 tab：分类 → 真实 CategoriesPage', async () => {
+test('侧栏点击切 tab：创作者分类 → 真实 CategoriesPage', async () => {
   render(<App />);
-  fireEvent.click(withinNav(desktopNav(), '分类'));
-  expect(await screen.findByText('分类管理')).toBeInTheDocument();
+  fireEvent.click(withinNav(desktopNav(), '创作者分类'));
+  // heading 定位：侧栏按钮同名，纯 text 查询会多匹配
+  expect(await screen.findByRole('heading', { name: '创作者分类' })).toBeInTheDocument();
   expect(window.location.hash).toBe('#/categories');
 });
 
@@ -116,7 +117,7 @@ test('「更多」弹层：低频入口网格 → 点设置切 tab 并关闭', a
   fireEvent.click(screen.getByRole('button', { name: '更多入口' }));
   expect(await screen.findByRole('dialog')).toBeInTheDocument();
   // 二级入口齐全（history/creators/categories/tags/clients/changes/settings）
-  ['历史', '创作者', '分类', '标签', '客户端', '日志', '设置'].forEach((t) => {
+  ['历史', '创作者', '创作者分类', '标签', '客户端', '日志', '设置'].forEach((t) => {
     expect(screen.getByRole('dialog')!.querySelector('button')! && withinDialogButton(t)).toBeTruthy();
   });
   fireEvent.click(withinDialogButton('设置'));

@@ -26,6 +26,13 @@ test('migrate + runMigrations 幂等：跑两次不报错且字段存在', () =>
   // videos.paid 列存在（schema.sql 新建库 + runMigrations 旧库补列双轨）
   const vcols = db.prepare("PRAGMA table_info(videos)").all() as Array<{ name: string }>;
   assert.ok(vcols.map((c) => c.name).includes('paid'), 'videos.paid 应存在');
+
+  // v16 值域合一后 categories 无 scope 列（新库重放路径防回归——Hazard A 见 v16 专项测试）
+  const cacols = db.prepare("PRAGMA table_info(categories)").all() as Array<{ name: string }>;
+  assert.ok(!cacols.map((c) => c.name).includes('scope'), 'categories.scope 应不存在（值域合一）');
+  // 新库重放 v16 后不留脏事务、FK 恢复开启（PRAGMA OFF/ON 包裹正确执行的直接证据）
+  assert.equal(db.inTransaction, false, '迁移后不应残留打开的事务');
+  assert.equal(db.pragma('foreign_keys', { simple: true }), 1, '迁移后 foreign_keys 应恢复开启');
 });
 
 // ── 版本账本（PRAGMA user_version）+ paid 回填 ──
@@ -318,4 +325,82 @@ test('v15：旧库（creators 无 blocked 列）跑 runMigrations → 列补齐�
   const row = db.prepare('SELECT blocked FROM creators WHERE source_uid = 9').get() as { blocked: number };
   assert.equal(row.blocked, 0, '存量行 blocked 默认 0');
   db.close();
+});
+
+// ---- v16（2026-08-25）：categories 去 scope 值域合一（单事务表重建 + FK 前后包裹）----
+
+/**
+ * 模拟 v15 形态旧库：完整 schema 建库后把 categories 重建为带 scope 的旧 DDL（scope 参与 UNIQUE，
+ * 无法用 DROP COLUMN 模拟——DROP COLUMN 不能删被 UNIQUE 约束引用的列），种入跨 scope 数据，账本停在 v15。
+ */
+function dbWithScopedCategories(): Database.Database {
+  const db = new Database(':memory:');
+  migrate(db);
+  db.exec('DROP TABLE categories');
+  db.exec(`CREATE TABLE categories (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    name        TEXT NOT NULL,
+    scope       TEXT NOT NULL CHECK(scope IN ('agent','human')),
+    sort_order  INTEGER NOT NULL DEFAULT 0,
+    created_at  INTEGER NOT NULL,
+    UNIQUE(name, scope)
+  )`);
+  db.exec('CREATE INDEX idx_categories_scope ON categories(scope, sort_order)');
+  const ins = db.prepare('INSERT INTO categories (name, scope, sort_order, created_at) VALUES (?, ?, 0, ?)');
+  // id 1=agent 财经；id 2=human 财经（跨 scope 同名，id 大 → 被丢，引用需重定向到 1）；
+  // id 3=human 关注（非重名 human 行，id 保留）；id 4=agent 科技
+  ins.run('财经', 'agent', 1); ins.run('财经', 'human', 1); ins.run('关注', 'human', 1); ins.run('科技', 'agent', 1);
+  const insCr = db.prepare('INSERT INTO creators (source, source_uid, category_agent_id, category_human_id, first_seen_at, updated_at) VALUES (?, ?, ?, ?, 1, 1)');
+  // u1：agent→1 自映射 + human→2 重定向对象；u2：双列自映射（4/3）；u3：双列 NULL 保持
+  insCr.run('bilibili', 'u1', 1, 2); insCr.run('bilibili', 'u2', 4, 3); insCr.run('bilibili', 'u3', null, null);
+  db.pragma('user_version = 15');
+  return db;
+}
+
+test('v16：带 scope 旧库重建 → scope 列删除、同名行小 id 保留、双列引用按名重定向', () => {
+  const db = dbWithScopedCategories();
+  try {
+    runMigrations(db);
+    assert.equal(db.pragma('user_version', { simple: true }), MIGRATIONS[MIGRATIONS.length - 1].version, '账本应写到最新');
+    // scope 列删除 + 表形态
+    const cols = db.prepare('PRAGMA table_info(categories)').all() as Array<{ name: string }>;
+    assert.ok(!cols.map((c) => c.name).includes('scope'), 'scope 列应被删除');
+    // 数据：同名行小 id 保留（id1 agent 财经留下、id2 human 财经被丢），非重名行 id 原样
+    const rows = db.prepare('SELECT id, name FROM categories ORDER BY id').all() as Array<{ id: number; name: string }>;
+    assert.deepEqual(rows, [
+      { id: 1, name: '财经' }, { id: 3, name: '关注' }, { id: 4, name: '科技' },
+    ], '同名行小 id 保留、非重名行 id 不变');
+    // 引用：u1 的 human 列从被丢的 2 重定向到同名保留行 1；u2 双列自映射；u3 NULL 保持
+    const crs = db.prepare('SELECT source_uid AS u, category_agent_id AS a, category_human_id AS h FROM creators ORDER BY source_uid').all() as Array<{ u: string; a: number | null; h: number | null }>;
+    assert.deepEqual(crs, [
+      { u: 'u1', a: 1, h: 1 }, { u: 'u2', a: 4, h: 3 }, { u: 'u3', a: null, h: null },
+    ], '双列引用按名重定向（NULL 保持、自映射不变）');
+    // 新约束生效：UNIQUE(name) 拦截同名、旧索引消失新索引在
+    assert.throws(() => db.prepare("INSERT INTO categories (name, sort_order, created_at) VALUES ('财经', 0, 1)").run(), /UNIQUE/, '同名应撞 UNIQUE(name)');
+    assert.ok(!db.prepare("SELECT name FROM sqlite_master WHERE type='index' AND name='idx_categories_scope'").get(), '旧 scope 索引应随表重建消失');
+    assert.ok(db.prepare("SELECT name FROM sqlite_master WHERE type='index' AND name='idx_categories_sort'").get(), '新 sort 索引应存在');
+    // FK 完整性 + 无脏事务 + FK 恢复开启
+    assert.deepEqual(db.pragma('foreign_key_check'), [], '迁移后外键检查应干净');
+    assert.equal(db.inTransaction, false, '不应残留打开的事务');
+    assert.equal(db.pragma('foreign_keys', { simple: true }), 1, 'foreign_keys 应恢复开启');
+    // 重放幂等
+    runMigrations(db);
+    assert.deepEqual(
+      db.prepare('SELECT id, name FROM categories ORDER BY id').all(),
+      [{ id: 1, name: '财经' }, { id: 3, name: '关注' }, { id: 4, name: '科技' }],
+      '重放不再改数据',
+    );
+  } finally { db.close(); }
+});
+
+test('v16：新库（schema.sql 无 scope 表）重放迁移不残留脏事务且表可用（Hazard A 防回归）', () => {
+  const db = new Database(':memory:');
+  try {
+    migrate(db);
+    assert.doesNotThrow(() => runMigrations(db), '新库重放 v16 应完整执行不报错');
+    // 若 v16 语句引用 scope 列：no such column 被容忍吞掉会留下打开的事务 + FK 关闭——两者都在此暴露
+    assert.equal(db.inTransaction, false, '不应残留打开的事务');
+    assert.equal(db.pragma('foreign_keys', { simple: true }), 1, 'foreign_keys 应为开启');
+    assert.equal(db.prepare("INSERT INTO categories (name, sort_order, created_at) VALUES ('新库行', 0, 1)").run().changes, 1, 'categories 应可写（写入未滞留在未提交事务）');
+  } finally { db.close(); }
 });

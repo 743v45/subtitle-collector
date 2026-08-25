@@ -127,16 +127,45 @@ test('creators 打分类：缺参/非法 scope 400；合法 200（分类不存�
     assert.equal(r.json.creator.category_human_name, '待观察');
     assert.equal(r.json.creator.source_uid, 'uid/空间');
 
-    // 列表按分类 + scope 过滤：agent 财经只 UP甲；scope 非法 → 过滤忽略
+    // 列表按分类 + scope 过滤：agent 财经只 UP甲
     r = await call(port, 'GET', '/api/creators?category=%E8%B4%A2%E7%BB%8F&scope=agent'); // 财经
     assert.equal(r.json.total, 1);
     assert.equal(r.json.items[0].name, 'UP甲');
+    // scope 非法 → 400（2026-08-25 随「非法 400」新政收紧：此前静默忽略不过滤）
     r = await call(port, 'GET', '/api/creators?category=%E8%B4%A2%E7%BB%8F&scope=bogus');
-    assert.equal(r.json.total, 3); // 不过滤（含新建的最小行 UP）
+    assert.equal(r.status, 400);
+    assert.equal(r.json.error, 'scope must be agent|human');
 
     // 详情路由只认 GET：POST /api/creators/:id → 404
     r = await call(port, 'POST', '/api/creators/100', {});
     assert.equal(r.status, 404);
+  } finally { cleanup(); }
+});
+
+test('creators 列表分类筛选三态：category 无 scope 两列任一命中；仅 scope 筛该槽位已打标的 UP', async () => {
+  const { port, cleanup } = await setup();
+  try {
+    // 值域合一验证：同一「财经」被 agent/human 两槽位分别打给两个 UP
+    let r = await call(port, 'POST', '/api/creators/by-uid/bilibili/100/category', { scope: 'agent', name: '财经' });
+    assert.equal(r.status, 200);
+    r = await call(port, 'POST', '/api/creators/by-uid/bilibili/200/category', { scope: 'human', name: '财经' });
+    assert.equal(r.status, 200);
+
+    // category 无 scope：两槽位任一命中（UP甲 agent 槽 + UP乙 human 槽都算）
+    r = await call(port, 'GET', '/api/creators?category=%E8%B4%A2%E7%BB%8F');
+    assert.equal(r.json.total, 2);
+    // scope=human：只匹配 human 槽位（UP乙）
+    r = await call(port, 'GET', '/api/creators?category=%E8%B4%A2%E7%BB%8F&scope=human');
+    assert.equal(r.json.total, 1);
+    assert.equal(r.json.items[0].source_uid, '200');
+    // 仅 scope 无 category：筛该槽位已打标的 UP——human 槽只有 UP乙（UP甲仅 agent 槽）
+    r = await call(port, 'GET', '/api/creators?scope=human');
+    assert.equal(r.json.total, 1);
+    assert.equal(r.json.items[0].source_uid, '200');
+    // agent 槽：UP甲
+    r = await call(port, 'GET', '/api/creators?scope=agent');
+    assert.equal(r.json.total, 1);
+    assert.equal(r.json.items[0].source_uid, '100');
   } finally { cleanup(); }
 });
 

@@ -2,6 +2,15 @@ import type { TagSource } from './lib/tagSources';
 
 // ── 视频元数据（extra 是服务端 JSON 字符串，由 api.ts 在入口处 JSON.parse 成对象）──
 export type { TagSource };
+// 创作者分类:只挂创作者;一套共享值域(agent/人工都从同一套里选,UNIQUE(name));
+// 槽位是打标关系——creators 两列分开选。creator_count = 该分类下创作者数(两槽位任一指向即计),web 分类页数量列消费
+export interface Category {
+  id: number;
+  name: string;
+  sort_order: number;
+  created_at: number;
+  creator_count: number;
+}
 // 标签明细：name + 四档来源（列表按优先级 winner 去重；详情全档不去重）
 export interface TagDetail { name: string; source: TagSource; }
 export interface VideoTag { tag_id?: number; tag_name: string; }

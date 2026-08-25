@@ -89,8 +89,8 @@ export function CreatorDetailPage({
     () => getCreatorDetail(id),
     [id],
   );
-  const { data: agentCats } = useAsync(() => listCategories('agent'), []);
-  const { data: humanCats } = useAsync(() => listCategories('human'), []);
+  // 一套共享分类值:拉一次,Agent/人工两个下拉共用(分开选,各写各的槽位)
+  const { data: cats } = useAsync(() => listCategories(), []);
   // 该 UP 已采集视频（按发布时间倒序，最多 100 条）
   const { data: videosData, loading: videosLoading } = useAsync(
     () => listVideos({ creator_id: id, size: 100, sort: 'published_at', desc: true }),
@@ -197,7 +197,7 @@ export function CreatorDetailPage({
                       <SelectValue placeholder="选择分类" />
                     </SelectTrigger>
                     <SelectContent>
-                      {(agentCats ?? []).map((c) => (
+                      {(cats ?? []).map((c) => (
                         <SelectItem key={c.id} value={c.name}>{c.name}</SelectItem>
                       ))}
                     </SelectContent>
@@ -214,7 +214,7 @@ export function CreatorDetailPage({
                       <SelectValue placeholder="选择分类" />
                     </SelectTrigger>
                     <SelectContent>
-                      {(humanCats ?? []).map((c) => (
+                      {(cats ?? []).map((c) => (
                         <SelectItem key={c.id} value={c.name}>{c.name}</SelectItem>
                       ))}
                     </SelectContent>
