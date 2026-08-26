@@ -19,9 +19,13 @@ function ok(json: unknown, status = 200): Response {
 
 const fetchMock = vi.fn();
 
+// 相对时间对齐分钟整点：构造与渲染间隔 <60s 时分钟档恒定——否则全量跑慢跨分钟边界，
+// 「离线 70 分钟」渲染成 71 分钟致断言精确匹配挂（时间边界 flake，2026-08-26 修）。
+const minuteFloor = (t: number): number => Math.floor(t / 60_000) * 60_000;
+
 function client(id: string, reporting: boolean, ver: string | null = '0.1.12', acceptsTasks = true, overrides: Partial<ClientInfo> = {}): ClientInfo {
   const connected = overrides.connected ?? true;
-  const now = Date.now();
+  const now = minuteFloor(Date.now());
   return {
     client_id: id,
     client_name: null,
@@ -164,25 +168,25 @@ test('离线客户端：显示离线时长与最后在线；不渲染远程操�
       client('c-on', true),
       client('c-off', true, '0.1.20', true, {
         connected: false, reporting_enabled: null, task_dispatch_enabled: null, client_name: '旧笔记本',
-        last_seen_at: Date.now() - 70 * 60_000, // 70 分钟 →「1 小时 10 分」（覆盖 m%60 分支）
+        last_seen_at: minuteFloor(Date.now()) - 70 * 60_000, // 70 分钟 →「1 小时 10 分」（覆盖 m%60 分支）
       }),
       client('c-off2', true, '0.1.20', true, {
         connected: false, reporting_enabled: null, task_dispatch_enabled: null,
-        last_seen_at: Date.now() - 26 * 3_600_000, // 26 小时 →「1 天 2 小时」（覆盖天级分支）
+        last_seen_at: minuteFloor(Date.now()) - 26 * 3_600_000, // 26 小时 →「1 天 2 小时」（覆盖天级分支）
       }),
       client('c-off3', true, '0.1.20', true, {
         connected: false, reporting_enabled: null, task_dispatch_enabled: null,
-        last_seen_at: Date.now() - 2 * 3_600_000, // 整 2 小时 →「2 小时」（m%60=0 不带分）
+        last_seen_at: minuteFloor(Date.now()) - 2 * 3_600_000, // 整 2 小时 →「2 小时」（m%60=0 不带分）
       }),
       client('c-off4', true, '0.1.20', true, {
         connected: false, reporting_enabled: null, task_dispatch_enabled: null,
-        last_seen_at: Date.now() - 48 * 3_600_000, // 整 48 小时 →「2 天」（h%24=0 不带小时）
+        last_seen_at: minuteFloor(Date.now()) - 48 * 3_600_000, // 整 48 小时 →「2 天」（h%24=0 不带小时）
       }),
     ],
   })));
   render(<ClientsPage />);
   expect(await screen.findByText('旧笔记本')).toBeInTheDocument();
-  expect(screen.getByText(/离线 1 小时 10 分/)).toBeInTheDocument();
+  expect(screen.getByText(/离线 1 小时 1[01] 分/)).toBeInTheDocument(); // 70±1 分钟档（构造/渲染跨分钟边界裕度）
   expect(screen.getByText(/离线 1 天 2 小时/)).toBeInTheDocument();
   expect(screen.getByText(/离线 2 小时 ·/)).toBeInTheDocument();
   expect(screen.getByText(/离线 2 天 ·/)).toBeInTheDocument();

@@ -23,7 +23,7 @@ B 站**字幕（subtitle）**相关浏览器扩展与配套服务的 monorepo（
 - ✅ 客户端命名：popup 底栏「改名」（id 不变，名字本地落盘并经 hello/client-name-state 同步 server `clients` 注册表持久化，清空保存即删除）；web 客户端页 / CLI `clients list` 显示名字、在线/离线时长，**列表含离线客户端**（server 重启不丢，旧 client_id 会留存）
 - ✅ 客户端登录态可观察（B 站 + YouTube 双平台）：扩展探测登录态（B 站 nav 接口 / YouTube 首页 ytcfg `LOGGED_IN` 标记）经 hello/login-state 上报，web 客户端页徽章（B 站带昵称/UID/大会员，YouTube 已/未登录）与 CLI `clients list` 可见、离线留存；采集回执带 login 字段——B 站未登录时充电视频 AI 字幕接口返回空（批量 no_subtitle 判因，2026-08-24 批次 1190 例根因）、YouTube 未登录时年龄限制视频播不了且 pot 受限加重（no_subtitle/pot_limited 判因，2026-08-25 镜像）
 - ✅ **无字幕标记**：采集确认无字幕（UP 未传 CC 且平台未生成 AI 字幕，两平台对齐）自动打 `no-subtitle` 系统档标签（`videos list --tag no-subtitle` 圈定），采到字幕轨时自动摘标——历史存量回填 `scripts/backfill-no-subtitle-tags.mjs`（两平台）
-- 🚧 无字幕视频兜底：subtitle-extractor 浏览器本地 Whisper 转写（旁挂手动工具，未集成入库链路——转写产物暂无回流 bundle 的桥）；📋 远期改为服务端 ASR 批量转写 `no-subtitle` 标圈定的视频（落地前置：✅ 无字幕标记已就位）
+- 🚧 无字幕视频兜底(ASR 批量):`asr backfill` 链路已建(2026-08-26 有条件解冻首建,CLAUDE.md §6)——CLI 圈定 no-subtitle B 站视频(server HTTP,tag 过滤纳入 system 档)→ wbi playurl 拉音轨(移植扩展签名)→ 本机 fireredasr-ui(FireRedASR-AED-L,verbose_json 段级出参+批推理 RTF≈0.2)→ `POST /api/asr/submit` 入 `asr-zh` 轨(origin='asr' 幂等去重、成功自动摘标、bundle/export/检索同等可用);⏳ 生产首跑验证待做;subtitle-extractor(voicetxt 失源,休眠)退役为备选;📋 YouTube 侧(yt-dlp+引擎选型)另行决策
 - 📋 YouTube 频道完整统计入库（订阅数等 about 页指标；web 频道批量已落 creator 最小行 channelId+名称）
 
 ### 查询与导出（✅）

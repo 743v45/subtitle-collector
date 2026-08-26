@@ -39,7 +39,7 @@ export function parseVideoFilter(p: URLSearchParams): VideoFilter {
   if (tname) f.tname = tname;
   const tag = p.get('tag');
   if (tag) f.tag = tag;
-  // tags：逗号分隔精确名（AND 语义）；tag_source：逗号分隔档位（manual/batch/ai/bili/season 子集）
+  // tags：逗号分隔精确名（AND 语义）；tag_source：逗号分隔档位（manual/batch/ai/system/bili/season 子集）
   const tagsRaw = p.get('tags');
   if (tagsRaw) {
     const names = tagsRaw.split(',').map((s) => s.trim()).filter(Boolean);
@@ -47,7 +47,7 @@ export function parseVideoFilter(p: URLSearchParams): VideoFilter {
   }
   const tagSourceRaw = p.get('tag_source');
   if (tagSourceRaw) {
-    const sources = tagSourceRaw.split(',').map((s) => s.trim()).filter((s) => ['manual', 'batch', 'ai', 'bili', 'season'].includes(s));
+    const sources = tagSourceRaw.split(',').map((s) => s.trim()).filter((s) => ['manual', 'batch', 'ai', 'system', 'bili', 'season'].includes(s));
     if (sources.length > 0) f.tag_source = sources;
   }
   const subtitle_q = p.get('subtitle_q');

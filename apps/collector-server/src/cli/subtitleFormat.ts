@@ -195,3 +195,21 @@ export function resolveSubtitle(db: Database.Database, opts: ExportSubtitleOpts)
     trackLan: track.lan, trackLanDoc: track.lan_doc, trackType: track.track_type, versionOrigin: ver.origin,
   };
 }
+
+/**
+ * fireredasr verbose_json segments → asr submit cues（剔空文本与非法时段；from<to 强约束）。
+ * 2026-08-26 随 asr backfill 自 asr-bili.ts 归位（cue/payload 映射属字幕格式域）。
+ */
+export function segmentsToCues(segments: unknown): Array<{ from: number; to: number; content: string }> {
+  if (!Array.isArray(segments)) return [];
+  const cues: Array<{ from: number; to: number; content: string }> = [];
+  for (const s of segments) {
+    if (typeof s !== 'object' || s === null) continue;
+    const { start, end, text } = s as Record<string, unknown>;
+    if (typeof start !== 'number' || typeof end !== 'number' || typeof text !== 'string') continue;
+    if (!(start >= 0) || !(end > start)) continue;
+    if (!text.trim()) continue;
+    cues.push({ from: start, to: end, content: text });
+  }
+  return cues;
+}

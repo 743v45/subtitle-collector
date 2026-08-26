@@ -15,9 +15,9 @@ export interface VideoFilter {
   source?: string;           // videos.source 精确
   tid?: number;              // extra.tid 精确
   tname?: string;            // extra.tname 模糊
-  tag?: string;              // 标签名模糊（五档并查：bili/season extra + manual/batch/ai 关系表）
-  tags?: string[];           // 标签名精确（AND 语义，五档并查）
-  tag_source?: string[];     // 档位过滤（manual/batch/ai/bili/season 子集；省略=五档全查）
+  tag?: string;              // 标签名模糊（六档并查：bili/season extra + manual/batch/ai/system 关系表）
+  tags?: string[];           // 标签名精确（AND 语义，六档并查）
+  tag_source?: string[];     // 档位过滤（manual/batch/ai/system/bili/season 子集；省略=六档全查）
   subtitle_q?: string;       // 字幕正文关键词模糊（命中 subtitle_versions.payload）
   lang?: string;             // subtitle_tracks.lan 模糊（zh 命中 zh-Hans）
   track_type?: number;       // subtitle_tracks.track_type 精确（1=AI 2=CC 3=翻译轨）
@@ -102,10 +102,11 @@ export interface Overview {
 
 // 标签匹配 EXISTS 片段：一个标签名（精确 = 或模糊 LIKE）× 档位（tag_source 过滤）。
 // bili 档查 extra json_each $.tags；season 档查 extra json_extract $.ugc_season.title（同为只读实时读）；
-// manual/batch/ai 档查 video_tags 关系表。OR 连接。
-// tag_source 省略/含全部五档 → 各路都拼；只含 bili → 只 extra tags 路；只含 season → 只 season 路；只含关系档 → 只关系路。
+// manual/batch/ai/system 档查 video_tags 关系表（2026-08-26 纳入 system：no-subtitle 系统标经
+// --tag no-subtitle 圈定是 ASR 兜底链路的入口，此前五档不含 system 导致系统标恒不可查）。OR 连接。
+// tag_source 省略/含全部六档 → 各路都拼；只含 bili → 只 extra tags 路；只含 season → 只 season 路；只含关系档 → 只关系路。
 function tagMatchCond(name: string, mode: 'exact' | 'like', tagSource?: string[]): { cond: string; params: unknown[] } {
-  const allSources = ['manual', 'batch', 'ai', 'bili', 'season'];
+  const allSources = ['manual', 'batch', 'ai', 'system', 'bili', 'season'];
   const sources = tagSource?.length ? tagSource.filter((s) => allSources.includes(s)) : allSources;
   if (sources.length === 0) sources.push(...allSources);
   const op = mode === 'exact' ? '=' : 'LIKE';

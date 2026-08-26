@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { openDb, migrate } from './migrate.js';
 import { ingestVideo } from './ingest.js';
+import { markNoSubtitle } from './tags.js';
 import {
   listVideosFiltered,
   getVideoByDbId,
@@ -846,5 +847,24 @@ test('aggregateStats: sort=count/key + desc（缺省 count DESC, key ASC 与旧�
     const tagKeys = (rows: Array<{ key: string }>) => rows.map((r) => r.key);
     assert.deepEqual(tagKeys(aggregateStats(db, 'tag', {}, 20, 'key', false)), ['实况', '数码', '游戏']);
     assert.deepEqual(tagKeys(aggregateStats(db, 'tag', {}, 20, 'key', true)), ['游戏', '数码', '实况']);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+// 2026-08-26 system 档纳入 tag 值域：no-subtitle 系统标（asr backfill 圈定入口）此前恒不可查
+test('listVideosFiltered: tags 精确匹配命中 system 档（no-subtitle 圈定）', () => {
+  const { db, dir } = setup();
+  try {
+    // V4（无轨）打 no-subtitle 系统标——真实链路里由采集确认无字幕时自动打
+    markNoSubtitle(db, { source: 'bilibili', source_vid: 'BV4' });
+    // 圈定：不带 tag_source（六档全查）应命中 system 标
+    const r = listVideosFiltered(db, { tags: ['no-subtitle'] });
+    assert.equal(r.total, 1);
+    assert.equal(r.items[0].source_vid, 'BV4');
+    // 显式 tag_source: ['system'] 只查 system 档，同样命中
+    const r2 = listVideosFiltered(db, { tags: ['no-subtitle'], tag_source: ['system'] });
+    assert.equal(r2.total, 1);
+    // tag_source 排除 system（只查关系三档）则查不到
+    const r3 = listVideosFiltered(db, { tags: ['no-subtitle'], tag_source: ['manual', 'batch', 'ai'] });
+    assert.equal(r3.total, 0);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });

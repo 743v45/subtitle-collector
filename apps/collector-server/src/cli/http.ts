@@ -130,6 +130,22 @@ export class ServerClient {
     });
   }
 
+  // ASR 转写写回：POST /api/asr/submit。cues 是段级字幕（from/to 秒 + content），
+  // payload 合成与 no-subtitle 摘标在 server 端完成（server 侧 http/asr.ts）。
+  async asrSubmit(source: string, vid: string, engine: string, cues: Array<{ from: number; to: number; content: string }>): Promise<unknown> {
+    return this.requestJson('POST', '/api/asr/submit', { source, vid, engine, cues });
+  }
+
+  // 视频列表：GET /api/videos（查询参数透传 server 侧 filter 解析，如 tags/source/max_duration/sort）。
+  // asr backfill 圈定用（生产库在 docker volume，宿主 CLI 直读有 virtiofs 风险，一律走 server HTTP）。
+  async listVideos(params: Record<string, string | number | boolean>): Promise<{ total: number; items: Array<Record<string, unknown>> }> {
+    const qs = new URLSearchParams();
+    for (const [k, v] of Object.entries(params)) qs.set(k, String(v));
+    const data = await this.requestJson('GET', `/api/videos?${qs.toString()}`);
+    const page = data as { total?: number; items?: Array<Record<string, unknown>> } | null;
+    return { total: page?.total ?? 0, items: Array.isArray(page?.items) ? page!.items! : [] };
+  }
+
   // 统一请求：fetch + JSON 解析 + 错误归一化。
   // 连不上 → ServerUnreachableError；非 2xx → ServerResponseError；2xx → 解析后的 JSON（无 body 时返回 null）。
   private async requestJson(method: 'GET' | 'POST' | 'PATCH' | 'DELETE', path: string, body?: Record<string, unknown>): Promise<unknown> {

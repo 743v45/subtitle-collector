@@ -72,7 +72,9 @@ test('pruneBackups 分层：保最近 8 份 ∪ 每日末份 × 14 天；非备�
     for (const n of names) writeFileSync(join(dir, n), '');
     writeFileSync(join(dir, 'unrelated.txt'), 'x'); // 非备份名：不删
 
-    const pruned = pruneBackups(dir);
+    // 显式传 now：与文件构造同一时钟。缺省会走真实时钟——D0 次日跑测试时 D0 已非「今天」，
+    // 末份分层期望值漂移（2026-08-26 跨天首跑即 flake，21!==22）。
+    const pruned = pruneBackups(dir, 8, 14, now);
     const rest = readdirSync(dir).filter((n) => n.endsWith('.db')).sort();
     // 期望留存：D0 最近 8 份（2h 窗口，D0 头 2 份被清）+ D-1..D-14 各自末份 14 份 = 22 份
     assert.equal(rest.length, 22, 'D0 的最近 8 份 + 14 个每日末份');
