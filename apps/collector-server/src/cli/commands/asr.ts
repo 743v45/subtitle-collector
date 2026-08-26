@@ -100,6 +100,12 @@ async function processVideo(deps: BackfillDeps, item: Record<string, unknown>, w
   const cues = segmentsToCues(t.segments);
   log(`[asr] ${vid} 转写完成 ${cues.length} 段`);
   if (cues.length === 0) return { ok: false, code: 'asr_empty', message: '转写完成但无有效段（全静音？）', wbiKeys: keys };
+  // 覆盖率校验（2026-08-26 实测踩坑）：playurl 降级 durl 可能给 30s 试看片段（音轨仅开头），
+  // 转写末段远早于视频时长 → 拒入库（入了库会摘标，错误固化且不再可圈定）
+  const covered = cues[cues.length - 1].to;
+  if (covered < audio.duration * 0.5) {
+    return { ok: false, code: 'truncated', message: `疑似试看片段：转写仅覆盖 ${Math.round(covered)}s / 视频 ${audio.duration}s（音轨被 B 站降级截断？）`, wbiKeys: keys };
+  }
 
   try {
     const out = await deps.client.asrSubmit('bilibili', vid, deps.engine, cues);

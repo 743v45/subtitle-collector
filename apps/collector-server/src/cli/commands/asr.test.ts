@@ -33,7 +33,7 @@ function mockFetch(opts: { playurlData?: unknown; viewData?: unknown; taskResult
     const url = String(input);
     const method = init?.method ?? 'GET';
     const json = (data: unknown, status = 200) => new Response(JSON.stringify(data), { status, headers: { 'Content-Type': 'application/json' } });
-    if (url.startsWith(`${BILI}/x/web-interface/view`)) return json(opts.viewData ?? { code: 0, data: { cid: 123, duration: 60, pages: [{}] } });
+    if (url.startsWith(`${BILI}/x/web-interface/view`)) return json(opts.viewData ?? { code: 0, data: { cid: 123, duration: 6, pages: [{}] } });
     if (url.startsWith(`${BILI}/x/web-interface/nav`)) {
       return json({ code: 0, data: { wbi_img: { img_url: `https://i0.hdslb.com/bfs/wbi/${WBI_IMG}.png`, sub_url: `https://i0.hdslb.com/bfs/wbi/${WBI_SUB}.png` } } });
     }
@@ -231,7 +231,7 @@ test('asr backfill：写回抛错 → submit_error 不中断；多 P 视频仍�
 
   // 2. 多 P（pages×2）→ 日志警告但仍转 P1 成功
   const logs: string[] = [];
-  const multiP = mockFetch({ viewData: { code: 0, data: { cid: 123, duration: 60, pages: [{}, {}] } } });
+  const multiP = mockFetch({ viewData: { code: 0, data: { cid: 123, duration: 6, pages: [{}, {}] } } });
   r = await runBackfill({ ...deps(mockClient(submitted), multiP, submitted), log: (m) => logs.push(m) }, { size: 1, page: 1 });
   assert.equal(r.done, 1);
   assert.ok(logs.some((m) => m.includes('多 P 视频')), '多 P 警告日志');
@@ -356,6 +356,20 @@ test('asr backfill：依赖缺省走全局实现（不注入 log/biliApi/fetchIm
   assert.equal(r.done, 1, '缺省 biliApi（真域名）链路成功');
 });
 
+test('asr backfill：转写覆盖远小于视频时长 → truncated 拒入库（30s 试看片段防线）', async () => {
+  const submitted: Array<{ vid: string; cues: unknown }> = [];
+  // 2026-08-26 实测踩坑：BV1PmgF6qE4a（604s）playurl 降级给 30s 试看 durl，转写 2 段到 30s——
+  // 若入库会摘标固化错误。防线：末段 to < duration × 0.5 → truncated
+  const fetchImpl = mockFetch({
+    viewData: { code: 0, data: { cid: 123, duration: 604, pages: [{}] } },
+    taskResult: { status: 'done', segments: [{ id: 1, start: 0, end: 7.8, text: '句一' }, { id: 2, start: 7.9, end: 30, text: '句二' }] },
+  });
+  const r = await runBackfill(deps(mockClient(submitted), fetchImpl, submitted), { size: 1, page: 1 });
+  assert.equal(r.done, 0);
+  assert.equal(r.failed.truncated, 1);
+  assert.equal(submitted.length, 0, 'truncated 零写回');
+});
+
 test('asr backfill dry-run：圈定项缺 duration 显示 ? 兜底', async () => {
   const submitted: Array<{ vid: string; cues: unknown }> = [];
   const clientNoDur: BackfillClient = {
@@ -393,7 +407,7 @@ test('asr backfill：轮询瞬时网络异常被吞、下轮恢复 → 成功；
     // 第二个视频的 view 换 cid（区分 URL 用）
     if (url.startsWith(`${BILI}/x/web-interface/view`)) {
       const vid = new URL(url).searchParams.get('bvid');
-      return new Response(JSON.stringify({ code: 0, data: { cid: vid === 'BV9' ? 999 : 123, duration: 60, pages: [{}] } }));
+      return new Response(JSON.stringify({ code: 0, data: { cid: vid === 'BV9' ? 999 : 123, duration: 6, pages: [{}] } }));
     }
     return mockFetch()(input, init);
   }) as typeof fetch;
