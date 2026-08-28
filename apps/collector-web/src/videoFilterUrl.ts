@@ -78,7 +78,7 @@ export function videoListToQuery(s: VideoListQueryState): URLSearchParams {
   if (s.sq) u.set('sq', s.sq);
   if (s.source) u.set('source', s.source);
   if (s.tname) u.set('tname', s.tname);
-  // 标签名按本系统构造不含半角逗号（bili 档来自 B 站逐个录入的 tag 列表、manual 档录入时
+  // 标签名按本系统构造不含半角逗号（bili 档来自平台自带标签：B 站 tag 列表/抖音话题、manual 档录入时
   // VideoDetail.onAddTags 即按逗号切分），join(',') 无歧义；万一出现含逗号名则序列化时丢弃
   // （server split(',') 无法表达单名含逗号，防御性最小处理）
   const tags = s.tags.filter((t) => t && !t.includes(','));

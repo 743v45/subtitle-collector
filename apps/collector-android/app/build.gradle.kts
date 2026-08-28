@@ -15,7 +15,7 @@ android {
         minSdk = 26
         targetSdk = 35
         // 版本纪律（对齐 CLAUDE.md §7 扩展版本号精神）：涉 app 改动的提交必须 bump versionCode
-        versionCode = 1
+        versionCode = 2
         versionName = "0.1.0"
     }
 

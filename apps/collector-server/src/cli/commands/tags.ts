@@ -8,6 +8,7 @@ import { emitResult, emitError } from '../output.js';
 import { getCliContext } from '../context.js';
 import { openReadonlyDb } from '../db.js';
 import { listTags, TAG_SORT_KEYS, type TagSource, type TagSortKey } from '../../db/tags.js';
+import type { Source } from '../../tasks/source.js';
 import { parseDesc } from './videos.js';
 
 // ── 纯处理函数（可测：注入依赖，不直接碰 stdout/exit） ──
@@ -33,7 +34,7 @@ export async function tagsApply(
   vids: string[],
   names: string[],
   scope: TagSource,
-  platform: 'bilibili' | 'youtube' = 'bilibili',
+  platform: Source = 'bilibili',
 ): Promise<unknown> {
   return client.applyTags(vids, names, scope, platform);
 }
@@ -44,7 +45,7 @@ export async function tagsRemove(
   vids: string[],
   names: string[],
   scope?: TagSource,
-  platform: 'bilibili' | 'youtube' = 'bilibili',
+  platform: Source = 'bilibili',
 ): Promise<unknown> {
   return client.removeTags(vids, names, scope, platform);
 }
@@ -60,8 +61,8 @@ function isTagSource(v: string): v is TagSource {
   return v === 'manual' || v === 'batch' || v === 'ai' || v === 'system';
 }
 
-function isPlatform(v: string): v is 'bilibili' | 'youtube' {
-  return v === 'bilibili' || v === 'youtube';
+function isPlatform(v: string): v is Source {
+  return v === 'bilibili' || v === 'youtube' || v === 'douyin';
 }
 
 export function buildTagsCommand(): Command {
@@ -71,7 +72,7 @@ export function buildTagsCommand(): Command {
   cmd.command('list')
     .description('标签库列表（含各档计数；--scope 过滤该档计数>0 的标签，--source 平台收窄计数）')
     .option('--scope <scope>', '档位过滤 manual|batch|ai|system')
-    .option('--source <src>', '平台过滤（bilibili|youtube），计数只算该平台视频')
+    .option('--source <src>', '平台过滤（bilibili|youtube|douyin），计数只算该平台视频')
     .option('--q <keyword>', '名称模糊')
     .option('--topN <n>', '最多返回条数（默认 500）', '500')
     .option('--sort <key>', `排序键：${TAG_SORT_KEYS.join('|')}（count 语义跟随 --scope 档）`)
@@ -84,7 +85,7 @@ export function buildTagsCommand(): Command {
           return;
         }
         if (opts.source && !isPlatform(opts.source)) {
-          emitError(`--source 必须是 bilibili/youtube`, "ARGS");
+          emitError(`--source 必须是 bilibili/youtube/douyin`, "ARGS");
           return;
         }
         // sort 白名单校验（非法 → ARGS 退 2，对齐 HTTP 400 口径）
@@ -113,7 +114,7 @@ export function buildTagsCommand(): Command {
     .action(async (vids: string[], opts) => {
       const ctx = getCliContext();
       if (!isTagSource(opts.scope)) { emitError('--scope 必须是 manual/batch/ai/system', 'ARGS'); return; }
-      if (!isPlatform(opts.source)) { emitError('--source 必须是 bilibili/youtube', 'ARGS'); return; }
+      if (!isPlatform(opts.source)) { emitError('--source 必须是 bilibili/youtube/douyin', 'ARGS'); return; }
       const names = parseNames(opts.names);
       if (names.length === 0) { emitError('--names 不能为空', 'ARGS'); return; }
       try {
@@ -134,7 +135,7 @@ export function buildTagsCommand(): Command {
     .action(async (vids: string[], opts) => {
       const ctx = getCliContext();
       if (opts.scope && !isTagSource(opts.scope)) { emitError('--scope 必须是 manual/batch/ai/system', 'ARGS'); return; }
-      if (!isPlatform(opts.source)) { emitError('--source 必须是 bilibili/youtube', 'ARGS'); return; }
+      if (!isPlatform(opts.source)) { emitError('--source 必须是 bilibili/youtube/douyin', 'ARGS'); return; }
       const names = parseNames(opts.names);
       if (names.length === 0) { emitError('--names 不能为空', 'ARGS'); return; }
       try {

@@ -1,6 +1,7 @@
 // 标签六档来源（与 server tag-priority 六档一致）：
 // manual=手动 / batch=批量 / bili=视频自带 / season=合集（只读，实时读 extra.ugc_season.title）/ ai=AI 标记 /
 // system=系统状态（2026-08-23，采集链路自动打，如 no-subtitle 确认无字幕）。
+// bili 档 2026-08-29 douyin 接入后涵盖 B 站 tags 与抖音话题标签，展示文案改「平台自带」。
 // 颜色全部用静态 Tailwind 类字面量（JIT 扫描源码识别），禁内联 style / 动态拼接类名。
 
 export type TagSource = 'manual' | 'batch' | 'bili' | 'season' | 'ai' | 'system';
@@ -18,7 +19,7 @@ export const TAG_SOURCE_CLASS: Record<TagSource, string> = {
 export const TAG_SOURCE_LABEL: Record<TagSource, string> = {
   manual: '手动',
   batch: '批量',
-  bili: 'B站',
+  bili: '平台自带',
   season: '合集',
   ai: 'AI',
   system: '系统',

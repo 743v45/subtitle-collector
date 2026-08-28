@@ -13,6 +13,7 @@ import { navigate, useQueryUpdater, useRoute } from '../router';
 import { GripVertical } from 'lucide-react';
 import { listTags, renameTag, deleteTag, getTagPriority, putTagPriority, type TagItem } from '@/api';
 import { PlatformSelect } from '@/components/PlatformSelect';
+import { parseSourceFilter } from '@/lib/platformSource';
 import { TAG_SOURCE_DOT, TAG_SOURCE_LABEL, type TagSource } from '@/lib/tagSources';
 
 function errMsg(e: unknown): string {
@@ -45,7 +46,7 @@ export function TagsPage() {
     ? (scopeRaw as LibraryScope)
     : '';
   const sourceRaw = route.query.get('source');
-  const source = sourceRaw === 'bilibili' || sourceRaw === 'youtube' ? sourceRaw : null;
+  const source = parseSourceFilter(sourceRaw);
   // scope=档位过滤（该档计数>0）；source=平台过滤（计数只算该平台视频——标签本体跨平台共用）
   const { data: items, loading, error, reload } = useAsync(
     () => listTags({ scope: scope || undefined, source: source ?? undefined }),

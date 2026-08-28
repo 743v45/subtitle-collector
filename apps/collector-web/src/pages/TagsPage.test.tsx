@@ -5,6 +5,7 @@
 // | 轮次 | 范围 | 结果 | 备注 |
 // |---|---|---|---|
 // | R1 | 优先级操作 + 档位过滤 + CRUD + 空错态 + 名称跳转 | 通过 | 拖拽用 dragStart/drop 事件模拟 |
+// | R2 | bili 档文案「平台自带」（2026-08-29 douyin 接入，正则同步）；douyin 平台白名单 URL 透传 + 下拉第四项 | 通过 | |
 import { test, expect, vi, beforeEach, afterEach, beforeAll } from 'vitest';
 import { render, screen, fireEvent, cleanup, waitFor } from '@testing-library/react';
 import { ToastProvider } from '@/components/ui/toast';
@@ -77,7 +78,7 @@ test('服务端优先级：非默认序回显', async () => {
   });
   render(<ToastProvider><TagsPage /></ToastProvider>);
   await screen.findByText('展示优先级');
-  const rows = screen.getAllByText(/手动|批量|B站|合集|AI/).map((e) => e.textContent);
+  const rows = screen.getAllByText(/手动|批量|平台自带|合集|AI/).map((e) => e.textContent);
   expect(rows[0]).toBe('AI');
   expect(rows[4]).toBe('批量');
 });
@@ -92,7 +93,7 @@ test('上移/下移：本地重排 + 保存按钮启用 + 边界禁用', async (
   fireEvent.click(upButtons[1]); // 批量 上移
   expect(screen.getByRole('button', { name: '保存排序' })).toBeEnabled();
   // 首行变成 批量
-  const first = screen.getAllByText(/手动|批量|B站|合集|AI/)[0];
+  const first = screen.getAllByText(/手动|批量|平台自带|合集|AI/)[0];
   expect(first.textContent).toBe('批量');
 });
 
@@ -106,8 +107,8 @@ test('moveItem 无操作：from===to / 越界不改序', async () => {
 test('拖拽：dragStart + drop 重排', async () => {
   render(<ToastProvider><TagsPage /></ToastProvider>);
   await screen.findByText('展示优先级');
-  const rows = () => screen.getAllByText(/手动|批量|B站|合集|AI/).map((e) => e.textContent);
-  const rowEls = () => screen.getAllByText(/手动|批量|B站|合集|AI/).map((e) => e.closest('div.border')!);
+  const rows = () => screen.getAllByText(/手动|批量|平台自带|合集|AI/).map((e) => e.textContent);
+  const rowEls = () => screen.getAllByText(/手动|批量|平台自带|合集|AI/).map((e) => e.closest('div.border')!);
   fireEvent.dragStart(rowEls()[4]); // AI 拖到最前
   fireEvent.drop(rowEls()[0]);
   expect(rows()[0]).toBe('AI');
@@ -166,6 +167,17 @@ test('平台筛选 Select：切换写 URL source 且按平台重拉', async () =
   fireEvent.click(await screen.findByRole('option', { name: '哔哩哔哩' }));
   await waitFor(() => expect(window.location.hash).toBe('#/tags?source=bilibili'));
   await waitFor(() => expect(String(fetchMock.mock.calls.at(-1)![0])).toContain('source=bilibili'));
+});
+
+// douyin URL 白名单（2026-08-29）：source=douyin 直入 → 计数按平台重拉；下拉第四项在列
+test('douyin：URL source=douyin 直入 → 计数按平台重拉；抖音选项在列', async () => {
+  window.history.replaceState(null, '', '#/tags?source=douyin');
+  render(<ToastProvider><TagsPage /></ToastProvider>);
+  await screen.findByText('游戏');
+  // 只看 /api/tags? 调用（priority 请求并发，at(-1) 不稳定）
+  await waitFor(() => expect(String(fetchMock.mock.calls.filter((c) => String(c[0]).startsWith('/api/tags?')).at(-1)![0])).toContain('source=douyin'));
+  fireEvent.pointerDown(screen.getByRole('combobox', { name: '平台筛选' }), { button: 0, ctrlKey: false, pointerType: 'mouse' });
+  expect(await screen.findByRole('option', { name: '抖音' })).toBeInTheDocument();
 });
 
 test('点击标签名 → 跳视频页 tags 过滤', async () => {

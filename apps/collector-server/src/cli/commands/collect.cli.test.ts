@@ -7,6 +7,7 @@
 // | 轮次 | 范围 | 结果 | 备注 |
 // |---|---|---|---|
 // | R1 | search/subtitle/dedupe/season/upper-info/upper-videos/yt-videos/new-videos/discover/find 全 action | 通过 | 长流程逐分支喂 mock 响应 |
+// | R4 | collect subtitle --source douyin（fetch-douyin-subtitle + awemeId + 打标 items source=douyin） | 通过 | 2026-08-29 S2 抖音平台化 |
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -853,5 +854,33 @@ test('collect subtitle：正常采到轨 → 不打标（无 /api/tags/apply 请
     const r = await cli(args(NO_DB, srv.url, ['collect', 'subtitle', 'BV1', '--client', 'ext-1']));
     assert.equal(r.code, 0);
     assert.equal(srv.reqs.some((q) => q.path === '/api/tags/apply'), false, '正常轨不触发打标');
+  } finally { await srv.close(); }
+});
+
+// ── collect subtitle --source douyin（2026-08-29 S2 抖音平台化）：action=fetch-douyin-subtitle(awemeId) ──
+test('collect subtitle --source douyin：派发 fetch-douyin-subtitle(awemeId) + no-subtitle 标 items source=douyin', async () => {
+  const srv = await startMockServer((req) => {
+    if (req.body?.action === 'fetch-douyin-subtitle') return { status: 200, json: { ok: true, client_id: 'ext-1', action: 'fetch-douyin-subtitle', result: { reason: 'no_subtitle', tracks: 0, ingested: true } } };
+    if (req.path === '/api/tags/apply') return { status: 200, json: { ok: true, inserted: 1 } };
+    return { status: 404 };
+  });
+  try {
+    const r = await cli(args(NO_DB, srv.url, ['collect', 'subtitle', '7123456789012345678', '--source', 'douyin', '--client', 'ext-1']));
+    assert.equal(r.code, 0);
+    const fetchReq = srv.reqs.find((q) => q.path.includes('/command'));
+    assert.equal(fetchReq!.body!.action, 'fetch-douyin-subtitle');
+    assert.deepEqual(fetchReq!.body!.awemeId, '7123456789012345678'); // 抖音参数名 awemeId（对齐扩展侧）
+    const applyReq = srv.reqs.find((q) => q.path === '/api/tags/apply');
+    assert.ok(applyReq, '抖音无字幕同样打标（no-subtitle 三平台对齐）');
+    assert.deepEqual(applyReq!.body!.items, [{ source: 'douyin', source_vid: '7123456789012345678' }]);
+  } finally { await srv.close(); }
+});
+
+test('collect subtitle --source 非法值（含旧两平台外的 bogus）→ ARGS 退 2', async () => {
+  const srv = await startMockServer(() => ({ status: 404 }));
+  try {
+    const r = await cli(args(NO_DB, srv.url, ['collect', 'subtitle', 'x', '--source', 'bogus', '--client', 'ext-1']));
+    assert.equal(r.code, 2);
+    assert.match(JSON.parse(r.out).error, /bilibili\/youtube\/douyin/);
   } finally { await srv.close(); }
 });

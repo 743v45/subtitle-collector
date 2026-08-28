@@ -1,3 +1,11 @@
+// http 层 tags/settings/queries handler 单测：真 HTTP server + 临时库，覆盖 body 校验 400 族与读写往返。
+//
+// 测试轮次记录表（对齐全局 8.2）：
+// | 轮次 | 范围 | 结果 | 备注 |
+// |---|---|---|---|
+// | R1 | tags apply/remove 校验 + tag-priority/collect-timeout 读写 | 通过 | |
+// | R2 | collect-timeout 三键化（douyin 档；缺键 400） | 通过 | 2026-08-29 S2 抖音平台化 |
+
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
@@ -240,20 +248,22 @@ test('season 档 HTTP：列表/详情富化 + 只读 400 + 过滤 + 聚合', asy
 });
 
 // ── 采集超时配置端点（2026-08-22）：GET/PUT /api/settings/collect-timeout ──
-test('settings API：collect-timeout 默认值 → PUT 覆盖 → 非法 400', async () => {
+test('settings API：collect-timeout 默认值 → PUT 覆盖 → 非法 400（三键，douyin 档 2026-08-29 加入）', async () => {
   const { port, cleanup } = await setup();
   try {
     let r = await call(port, 'GET', '/api/settings/collect-timeout');
     assert.equal(r.status, 200);
-    assert.deepEqual({ bilibili: r.json.bilibili, youtube: r.json.youtube }, { bilibili: 90_000, youtube: 45_000 });
+    assert.deepEqual({ bilibili: r.json.bilibili, youtube: r.json.youtube, douyin: r.json.douyin }, { bilibili: 90_000, youtube: 45_000, douyin: 45_000 });
 
-    r = await call(port, 'PUT', '/api/settings/collect-timeout', { bilibili: 120_000, youtube: 90_000 });
+    r = await call(port, 'PUT', '/api/settings/collect-timeout', { bilibili: 120_000, youtube: 90_000, douyin: 60_000 });
     assert.equal(r.status, 200);
     r = await call(port, 'GET', '/api/settings/collect-timeout');
-    assert.deepEqual({ bilibili: r.json.bilibili, youtube: r.json.youtube }, { bilibili: 120_000, youtube: 90_000 });
+    assert.deepEqual({ bilibili: r.json.bilibili, youtube: r.json.youtube, douyin: r.json.douyin }, { bilibili: 120_000, youtube: 90_000, douyin: 60_000 });
 
-    // 越界（<15s）→ 400 失败可见;值不变
-    r = await call(port, 'PUT', '/api/settings/collect-timeout', { bilibili: 5_000, youtube: 90_000 });
+    // 越界（<15s）→ 400 失败可见;值不变；缺 douyin 键（两平台时代旧调用）同样 400
+    r = await call(port, 'PUT', '/api/settings/collect-timeout', { bilibili: 5_000, youtube: 90_000, douyin: 45_000 });
+    assert.equal(r.status, 400);
+    r = await call(port, 'PUT', '/api/settings/collect-timeout', { bilibili: 120_000, youtube: 90_000 });
     assert.equal(r.status, 400);
     r = await call(port, 'GET', '/api/settings/collect-timeout');
     assert.equal(r.json.bilibili, 120_000);

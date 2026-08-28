@@ -9,6 +9,7 @@
 // | R2 | bilibili 全字段（含分区/版权/P数/投币…）+ youtube 精简字段 | 通过 | copyright 1/2/其他三分支 |
 // | R3 | 标签增删（POST/DELETE 端点契约 + toast + reload） | 通过 | 包 ToastProvider 断言文案 |
 // | R4 | 轨/版本：URL 参数命中/非法回落默认、切换写回 query、正文/失败重试 | 通过 | hash 直改 + hashchange |
+// | R5 | douyin（2026-08-29）：B 站专属字段降级、stat 同构、douyin 外链、bili 档话题标签只读 | 通过 | |
 import { test, expect, vi, afterEach } from 'vitest';
 import { render, screen, fireEvent, cleanup, waitFor } from '@testing-library/react';
 import { VideoDetail } from './VideoDetail';
@@ -168,6 +169,41 @@ test('youtube：无分区/版权/P数/投币等B站专属字段；统计只播/�
   expect(screen.queryByText('P 数')).toBe(null);
   expect(screen.getByText('暂无标签——在下方输入框添加，多个用逗号分隔')).toBeInTheDocument();
   expect(screen.getByText('原站打开').closest('a')?.getAttribute('href')).toBe('https://www.youtube.com/watch?v=dQw4w9WgXcQ');
+});
+
+// douyin（2026-08-29）：无 B 站专属字段合理降级不炸；stat 键名与 B 站对齐（view/like 同构渲染）；
+// 外链走 douyin 域名；话题标签入 bili 档只读。
+test('douyin：无分区/版权/P数/投币；stat 同构只播/赞；外链/作者主页走 douyin 域名', async () => {
+  stubFetch((url) => {
+    if (url.includes('/api/videos/')) {
+      return detailPayload({
+        // douyin extra：无 tid/tname/copyright/pages；stat 键名对齐 B 站（R5 定案）
+        extra: JSON.stringify({ desc: '抖音视频简介', stat: { view: 99999, like: 8888, share: 77, comment: 6 } }),
+        tags: [{ name: '话题标签', source: 'bili' }],
+        video: { creator_source_uid: 'MS4wLjABAAAAsec_uid_x' },
+      });
+    }
+    if (url.includes('/api/versions/')) return versionBody('dy line');
+  });
+  renderDetail('douyin', '7300000000000000001');
+  await screen.findByText('详情页视频');
+  // B 站专属字段不渲染
+  expect(screen.queryByText('分区')).toBe(null);
+  expect(screen.queryByText('版权')).toBe(null);
+  expect(screen.queryByText('P 数')).toBe(null);
+  expect(screen.queryByText('投币')).toBe(null);
+  expect(screen.queryByText('收藏')).toBe(null);
+  // stat 同构：view/like 渲染（99999 千分位）；share/comment 键不在展示集（B 站档 gated）
+  expect(screen.getByText('99,999')).toBeInTheDocument();
+  expect(screen.getByText('8,888')).toBeInTheDocument();
+  // 简介
+  expect(screen.getByText('抖音视频简介')).toBeInTheDocument();
+  // 外链：视频页 + 作者主页（sec_uid）
+  expect(screen.getByText('原站打开').closest('a')?.getAttribute('href')).toBe('https://www.douyin.com/video/7300000000000000001');
+  expect(screen.getByLabelText('在原站打开 测试UP 的空间').getAttribute('href')).toBe('https://www.douyin.com/user/MS4wLjABAAAAsec_uid_x');
+  // 话题标签入 bili 档：只读（无移除按钮）
+  expect(screen.getByText('话题标签')).toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: '移除标签 话题标签' })).toBe(null);
 });
 
 test('作者字段：无 uid → 纯文本回落；无名字 → -', async () => {

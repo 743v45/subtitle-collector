@@ -1,16 +1,10 @@
 {
-  "generatedAt": "2026-08-25T19:33:04.564Z",
+  "generatedAt": "2026-08-28T21:21:21.307Z",
   "rules": {
     "complexity": 15,
     "maxLines": 400
   },
   "files": {
-    "apps/collector-server/src/cli/asr-bili.ts": {
-      "complexity": 19
-    },
-    "apps/collector-server/src/cli/commands/asr.ts": {
-      "complexity": 42
-    },
     "apps/collector-server/src/cli/commands/collect.ts": {
       "maxLines": 1017,
       "complexity": 21
@@ -23,14 +17,11 @@
       "maxLines": 458
     },
     "apps/collector-server/src/db/advanced.ts": {
-      "complexity": 25,
-      "maxLines": 511
+      "complexity": 21,
+      "maxLines": 468
     },
     "apps/collector-server/src/db/ingest.ts": {
       "complexity": 52
-    },
-    "apps/collector-server/src/http/asr.ts": {
-      "complexity": 16
     },
     "apps/collector-server/src/http/categories.ts": {
       "complexity": 16
@@ -51,11 +42,11 @@
       "complexity": 21
     },
     "apps/collector-server/src/http/tasks.ts": {
-      "complexity": 55
+      "complexity": 48
     },
     "apps/collector-server/src/tasks/tasks.ts": {
-      "complexity": 30,
-      "maxLines": 669
+      "complexity": 20,
+      "maxLines": 538
     },
     "apps/collector-server/src/ws/server.ts": {
       "complexity": 32,
@@ -63,7 +54,7 @@
     },
     "apps/collector-web/src/api.ts": {
       "complexity": 26,
-      "maxLines": 435
+      "maxLines": 434
     },
     "apps/collector-web/src/components/TaskCards.tsx": {
       "complexity": 24
@@ -72,11 +63,11 @@
       "complexity": 17
     },
     "apps/collector-web/src/pages/ChangesLog.tsx": {
-      "complexity": 18
+      "complexity": 16
     },
     "apps/collector-web/src/pages/CollectPage.tsx": {
       "complexity": 18,
-      "maxLines": 528
+      "maxLines": 506
     },
     "apps/collector-web/src/pages/CreatorDetailPage.tsx": {
       "complexity": 29
@@ -85,18 +76,18 @@
       "complexity": 18
     },
     "apps/collector-web/src/pages/TagsPage.tsx": {
-      "complexity": 23
+      "complexity": 21
     },
     "apps/collector-web/src/pages/TasksHistoryPage.tsx": {
-      "complexity": 46,
-      "maxLines": 409
+      "complexity": 45,
+      "maxLines": 403
     },
     "apps/collector-web/src/pages/VideoDetail.tsx": {
       "complexity": 45
     },
     "apps/collector-web/src/pages/VideoList.tsx": {
       "complexity": 52,
-      "maxLines": 605
+      "maxLines": 533
     },
     "apps/collector-web/src/taskHistoryFilterUrl.ts": {
       "complexity": 17
@@ -105,8 +96,8 @@
       "complexity": 21
     },
     "apps/subtitle-collector/background.js": {
-      "complexity": 168,
-      "maxLines": 1354
+      "complexity": 161,
+      "maxLines": 1353
     },
     "apps/subtitle-collector/content-yt.js": {
       "complexity": 40,
@@ -133,11 +124,10 @@
     },
     "apps/subtitle-collector/src/popup/Popup.tsx": {
       "complexity": 34,
-      "maxLines": 1789
+      "maxLines": 1786
     },
     "apps/subtitle-collector/src/popup/hooks.ts": {
-      "maxLines": 920,
-      "complexity": 19
+      "maxLines": 658
     },
     "apps/subtitle-collector/yt-channel.mjs": {
       "complexity": 26

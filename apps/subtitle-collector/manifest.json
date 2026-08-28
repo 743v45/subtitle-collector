@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "SubCatch — 字幕捕手",
   "short_name": "SubCatch",
-  "version": "0.1.23",
+  "version": "0.1.25",
   "description": "一键捕获 B 站 / 抖音 / 小红书 / YouTube 视频字幕，采集到本地服务端",
   "permissions": [
     "activeTab",
@@ -66,6 +66,27 @@
       ],
       "js": [
         "content-yt.js"
+      ],
+      "run_at": "document_start"
+    },
+    {
+      "matches": [
+        "*://www.douyin.com/*",
+        "*://www.iesdouyin.com/*"
+      ],
+      "js": [
+        "inject-dy.js"
+      ],
+      "world": "MAIN",
+      "run_at": "document_start"
+    },
+    {
+      "matches": [
+        "*://www.douyin.com/*",
+        "*://www.iesdouyin.com/*"
+      ],
+      "js": [
+        "content-dy.js"
       ],
       "run_at": "document_start"
     }

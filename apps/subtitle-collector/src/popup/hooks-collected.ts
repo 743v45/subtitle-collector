@@ -6,7 +6,8 @@ import { authInit } from './hooks';
 
 // —— UP 已采集合：server /api/videos?creator_uid 分页拉已采 vid 集合（采集状态标注用）——
 // server-down / standalone → null（列表照常展示，采集状态与批量按钮隐藏）。
-// source 参数化（2026-08-21，YouTube 频道卡用；uid 语义=bilibili mid / youtube channelId）。
+// source 参数化（2026-08-21，YouTube 频道卡用；uid 语义=bilibili mid / youtube channelId /
+// douyin sec_uid——S3 抖音接入）。
 // 分页上限 10 页（×100 条）：万级视频的 UP 极罕见，防失控足够。
 // 刷新（2026-08-24 修复「已采不随采集入库同步」）：INGEST_RESULT / TASK_UPDATE 终态经
 // createCollectedRefresh 去抖 bump refreshKey 重拉——popup 开着时绿点与「已采 N」随采集落地更新，
@@ -15,7 +16,7 @@ export function useCreatorCollected(
   mid: string | null | undefined,
   httpBase: string,
   enabled: boolean,
-  source: 'bilibili' | 'youtube' = 'bilibili',
+  source: 'bilibili' | 'youtube' | 'douyin' = 'bilibili',
 ): Set<string> | null {
   const [set, setSet] = useState<Set<string> | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);

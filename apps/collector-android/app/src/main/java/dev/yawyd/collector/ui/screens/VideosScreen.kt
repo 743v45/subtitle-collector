@@ -133,7 +133,7 @@ private fun SourceFilterRow(selected: String, onSelect: (String) -> Unit) {
         horizontalArrangement = Arrangement.spacedBy(8.dp),
         modifier = Modifier.padding(vertical = 8.dp),
     ) {
-        listOf("" to "全部", "bilibili" to "B站", "youtube" to "YouTube").forEach { (v, label) ->
+        listOf("" to "全部", "bilibili" to "B站", "youtube" to "YouTube", "douyin" to "抖音").forEach { (v, label) ->
             FilterChip(selected = selected == v, onClick = { onSelect(v) }, label = { Text(label) })
         }
     }

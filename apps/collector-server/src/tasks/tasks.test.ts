@@ -1,3 +1,15 @@
+// tasks.ts 任务系统单测：URL 三件套解析（B 站/YouTube/抖音）、任务 CRUD/批量/重试、expandUpperVideos
+//（经 fake WS 桥注入扩展回执）、派发映射与调度器（attachTaskScheduler + kick 驱动）。
+// 夹具：setupDb 临时库（真实迁移）；registerWsBridge 注册 no-op/fake 桥（本测试不加载 ws/server）。
+//
+// 测试轮次记录表（对齐全局 8.2）：
+// | 轮次 | 范围 | 结果 | 备注 |
+// |---|---|---|---|
+// | R1 | bilibili/youtube 全量（CRUD/筛选/排序/派发/打标） | 通过 | |
+// | R2 | douyin 平台化（URL 三件套/19 位边界/批量 VID_RE/dispatchPayload/派发集成/expand 骨架） | 通过 | 2026-08-29 S2 |
+// | R3 | douyin not_video（图集）回执 → failed 映射 | 通过 | 2026-08-29 S4 收口接线 #2 |
+// | R4 | douyin expand 接线（expand-douyin-upper 回执映射/契约/失败路径，替换骨架 503 测试） | 通过 | 2026-08-29 S8 收口接线 #1 |
+
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -6,7 +18,7 @@ import { join } from 'node:path';
 import type Database from 'better-sqlite3';
 import { openDb, migrate } from '../db/migrate.js';
 import { ingestVideo } from '../db/ingest.js';
-import { extractVideoUrl, expandShortLink, parseVideoUrl, createTask, createTasksBatch, findActiveTask, pickClientForTask, commandTimeoutMs, expandUpperVideos, getTask, retryTask, listTasks, resetDispatched, attachTaskScheduler, kickTaskScheduler, type FetchLike, type UpperExpandDeps, type CollectTask } from './tasks.js';
+import { extractVideoUrl, expandShortLink, parseVideoUrl, createTask, createTasksBatch, findActiveTask, pickClientForTask, commandTimeoutMs, dispatchPayload, expandUpperVideos, getTask, retryTask, listTasks, resetDispatched, attachTaskScheduler, kickTaskScheduler, type FetchLike, type UpperExpandDeps, type CollectTask } from './tasks.js';
 import { registerWsBridge, type WsBridge } from './wsBridge.js';
 
 // 测试桥注册：tasks.ts 不再 import ws/server（分层规则 server-tasks-no-upward），pushTask 经
@@ -42,6 +54,27 @@ test('extractVideoUrl：非视频站 URL / 无 URL → null', () => {
   assert.equal(extractVideoUrl('https://example.com/foo'), null);
   assert.equal(extractVideoUrl('没有链接的纯文本'), null);
   assert.equal(extractVideoUrl(''), null);
+});
+
+// ── 抖音 URL 三件套（2026-08-29 douyin 平台化）──
+
+test('extractVideoUrl：抖音分享文案提取 v.douyin.com 短链 / www.douyin.com 直链', () => {
+  const text = '10/ 一条视频 https://v.douyin.com/iMbkSsss/ 复制此链接，打开抖音';
+  assert.equal(extractVideoUrl(text), 'https://v.douyin.com/iMbkSsss/');
+  assert.equal(extractVideoUrl('https://www.douyin.com/video/7123456789012345678?modeFrom='),
+    'https://www.douyin.com/video/7123456789012345678?modeFrom=');
+});
+
+test('expandShortLink：v.douyin.com 跟随 302 → 最终 URL；douyin 标准域不展开（不发请求）', async () => {
+  const fetcher: FetchLike = async () => ({ url: 'https://www.iesdouyin.com/share/video/7123456789012345678/?region=CN' } as unknown as Response);
+  assert.equal(
+    await expandShortLink('https://v.douyin.com/iMbkSsss/', fetcher),
+    'https://www.iesdouyin.com/share/video/7123456789012345678/?region=CN',
+  );
+  let called = false;
+  const noFetch: FetchLike = async () => { called = true; return new Response(''); };
+  assert.equal(await expandShortLink('https://www.douyin.com/video/7123456789012345678', noFetch), 'https://www.douyin.com/video/7123456789012345678');
+  assert.equal(called, false);
 });
 
 // ── expandShortLink：短链跟随重定向 ──
@@ -112,6 +145,32 @@ test('parseVideoUrl：分支洼地——m 站 / 裸域 host、youtu.be 空 id、
   assert.equal(parseVideoUrl('https://youtu.be/'), null);
   // youtube watch 无 v 参数 → null
   assert.equal(parseVideoUrl('https://www.youtube.com/watch?t=10s'), null);
+});
+
+// ── parseVideoUrl 抖音分支：三形态归一 + 19 位 aweme_id 边界 ──
+
+test('parseVideoUrl：抖音 /video/<19位> 标准形态（含短链展开后的 iesdouyin 分享页落点）', () => {
+  const id = '7123456789012345678';
+  assert.deepEqual(parseVideoUrl(`https://www.douyin.com/video/${id}?modeFrom=userad`), { source: 'douyin', source_vid: id, url: `https://www.douyin.com/video/${id}` });
+  // v.douyin.com 短链 302 的常见落点：iesdouyin 分享页（/share/video/ 同样命中 /video/ 段）
+  assert.deepEqual(parseVideoUrl(`https://www.iesdouyin.com/share/video/${id}/?region=CN`), { source: 'douyin', source_vid: id, url: `https://www.douyin.com/video/${id}` });
+});
+
+test('parseVideoUrl：抖音 ?modal_id= 旧形态 / /note/<id> 图集形态归一到同一 aweme_id', () => {
+  // modal_id 是旧 URL 查询参数形态；note 是图集（aweme_type≠0），与视频同 ID 空间——
+  // 是否可采由扩展端回执 reason='not_video' 区分，server 侧一律归一建任务
+  const id = '7123456789012345679';
+  assert.equal(parseVideoUrl(`https://www.douyin.com/?modal_id=${id}`)?.source_vid, id);
+  assert.equal(parseVideoUrl(`https://www.douyin.com/note/${id}?previous_page=app_code_link`)?.source_vid, id);
+  assert.equal(parseVideoUrl(`https://www.douyin.com/note/${id}`)?.source, 'douyin');
+});
+
+test('parseVideoUrl：抖音 ID 边界——19 位收；18/20 位、非数字、无视频路径拒', () => {
+  assert.notEqual(parseVideoUrl('https://www.douyin.com/video/7123456789012345678'), null); // 19 位 ✓
+  assert.equal(parseVideoUrl('https://www.douyin.com/video/712345678901234567'), null);   // 18 位 ✗（早期短 id 不收，判据统一 19 位）
+  assert.equal(parseVideoUrl('https://www.douyin.com/video/71234567890123456789'), null); // 20 位 ✗
+  assert.equal(parseVideoUrl('https://www.douyin.com/video/abc'), null);                  // 非数字 ✗
+  assert.equal(parseVideoUrl('https://www.douyin.com/user/MS4wLjABxxxx'), null);          // 主页链接非视频页 ✗
 });
 
 // ── 任务 CRUD ──
@@ -269,6 +328,25 @@ test('createTasksBatch：source=youtube（11 位 vid 校验 + watch URL + 独立
     const r3 = createTasksBatch(db, ['gaDdrDdczO4'], 'youtube');
     assert.equal(r3.created.length, 0);
     assert.deepEqual(r3.skipped, ['gaDdrDdczO4']);
+  } finally { cleanup(); }
+});
+
+test('createTasksBatch：source=douyin（19 位 aweme_id 校验 + watch URL + 独立去重域）', () => {
+  const { db, cleanup } = setupDb();
+  try {
+    const r = createTasksBatch(db, [
+      '7123456789012345678',  // 合法 19 位 → created
+      '7123456789012345678',  // 重复 → 忽略
+      '71234567890123456',    // 17 位 → 忽略
+      'BV1aa411c7mD',         // B 站 BV 串在 douyin 域非法 → 忽略
+    ], 'douyin');
+    assert.equal(r.created.length, 1);
+    assert.equal(r.created[0].source, 'douyin');
+    assert.equal(r.created[0].source_vid, '7123456789012345678');
+    assert.equal(r.created[0].url, 'https://www.douyin.com/video/7123456789012345678');
+    // douyin 侧再次提交同 vid（pending 未终态）→ skipped（同 BV 号在 bilibili 域不互斥，域隔离）
+    const r2 = createTasksBatch(db, ['7123456789012345678'], 'douyin');
+    assert.deepEqual(r2.skipped, ['7123456789012345678']);
   } finally { cleanup(); }
 });
 
@@ -514,6 +592,78 @@ test('expandUpperVideos YouTube：creator 不存在 → 落最小行（批量任
   } finally { cleanup(); }
 });
 
+// ── expandUpperVideos douyin（2026-08-29 S8 接线，此前骨架抛「尚未实现」→ http 层 503）──
+// 回执形态（扩展 background.js expandDouyinUpper）：{channel_id, channel_name, total,
+// items:[{bvid(=aweme_id),title,created,play,length,pic}]}；图集扩展侧已过滤；creators 由扩展
+// 顺带 ingest-upper 落库（server 不重复落——区别于 YouTube 分支的 server 侧最小行）。
+test('expandUpperVideos douyin：全量回执映射（bvid=aweme_id）+ collected 标注 + channel 回传 + 契约（action/secUid/180s）', async () => {
+  const { db, cleanup } = setupDb();
+  try {
+    // 库里已有该博主 1 条已采视频（douyin 命中标注）
+    db.prepare("INSERT INTO creators (source, source_uid, name, first_seen_at, updated_at) VALUES ('douyin', 'MS4wLjABAAAAtest123', '抖音博主', 1, 1)").run();
+    const cid = (db.prepare("SELECT id FROM creators WHERE source_uid='MS4wLjABAAAAtest123'").get() as { id: number }).id;
+    db.prepare("INSERT INTO videos (source, source_vid, creator_id, title, first_seen_at, updated_at) VALUES ('douyin', '7123456789012345678', ?, '已采', 1, 1)").run(cid);
+
+    const calls: Array<{ clientId: string; action: string; params: Record<string, unknown>; timeoutMs?: number }> = [];
+    const deps: UpperExpandDeps = {
+      listClients: () => [{ client_id: 'ext-A' }],
+      requestCommand: async (clientId, action, params, timeoutMs) => {
+        calls.push({ clientId, action, params, timeoutMs });
+        return {
+          ok: true as const,
+          result: { ok: true, data: {
+            channel_id: 'MS4wLjABAAAAtest123',
+            channel_name: '抖音博主',
+            total: 2,
+            items: [
+              { bvid: '7123456789012345678', title: '已采', created: 1787896381, play: 0, length: '0:47', pic: 'https://p3-pc.douyinpic.com/cover.jpg' },
+              { bvid: '7223456789012345678', title: '未采', created: 1787896481, play: 0 }, // 缺 length/pic → null
+            ],
+          } },
+        };
+      },
+      sleep: async () => {},
+    };
+    const r = await expandUpperVideos(db, { source: 'douyin', secUid: 'MS4wLjABAAAAtest123' }, deps);
+    assert.equal(r.total, 2);
+    assert.deepEqual(r.items.map((x) => x.bvid), ['7123456789012345678', '7223456789012345678']);
+    assert.deepEqual(r.items.map((x) => x.collected), [true, false]);
+    assert.deepEqual(r.items.map((x) => x.length), ['0:47', null]);
+    // channel_id/channel_name → channel.id/name 映射（web 展示复用两平台字段）
+    assert.deepEqual(r.channel, { id: 'MS4wLjABAAAAtest123', name: '抖音博主' });
+    // 契约：action=expand-douyin-upper + params {secUid} + 超时 180s（对齐 YouTube 全量档）
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].clientId, 'ext-A');
+    assert.equal(calls[0].action, 'expand-douyin-upper');
+    assert.deepEqual(calls[0].params, { secUid: 'MS4wLjABAAAAtest123' });
+    assert.equal(calls[0].timeoutMs, 180_000);
+    // creators 不由 server 侧落（扩展顺带 ingest-upper 已落；此处验证不覆盖已有行名字之外的副作用）
+    assert.equal((db.prepare("SELECT COUNT(*) AS n FROM creators WHERE source = 'douyin'").get() as { n: number }).n, 1);
+  } finally { cleanup(); }
+});
+
+test('expandUpperVideos douyin：扩展离线抛错；回执失败抛错（http 层转 503 可重试）', async () => {
+  const { db, cleanup } = setupDb();
+  try {
+    await assert.rejects(
+      expandUpperVideos(db, { source: 'douyin', secUid: 'MS4wLjABAAAAtest123' }, {
+        listClients: () => [],
+        requestCommand: async () => ({ ok: false, code: 'offline' as const }),
+        sleep: async () => {},
+      }),
+      /扩展离线/,
+    );
+    await assert.rejects(
+      expandUpperVideos(db, { source: 'douyin', secUid: 'MS4wLjABAAAAtest123' }, {
+        listClients: () => [{ client_id: 'ext-A' }],
+        requestCommand: async () => ({ ok: true, result: { ok: false, error: 'post 列表 200 空体：该浏览器未登录抖音' } }),
+        sleep: async () => {},
+      }),
+      /未登录抖音/,
+    );
+  } finally { cleanup(); }
+});
+
 // ── expandUpperVideos 客户端选择（2026-08-23 任务派发池）：优先可派池，池空回退任意在线 ──
 
 test('expandUpperVideos：优先选接受任务派发的客户端（批量编排落在采集机，不占仅上报客户端）', async () => {
@@ -650,10 +800,28 @@ test('commandTimeoutMs：youtube 长预算（后台 tab+自限+宽限）、bilib
   assert.equal(commandTimeoutMs('bilibili'), 90_000);
 });
 
-test('commandTimeoutMs：随 settings 配置联动（youtube 预算 = 无进展窗口 + 135s 余量）', () => {
-  const t = { bilibili: 120_000, youtube: 90_000 };
+test('commandTimeoutMs：douyin 窗口式预算对齐 youtube（默认 45s 窗口 + 135s 余量 = 180s）', () => {
+  // douyin 同为 navigate 模式（无进展窗口），预算公式与 youtube 一致
+  assert.equal(commandTimeoutMs('douyin'), 180_000);
+});
+
+test('commandTimeoutMs：随 settings 配置联动（youtube/douyin 预算 = 无进展窗口 + 135s 余量）', () => {
+  const t = { bilibili: 120_000, youtube: 90_000, douyin: 60_000 };
   assert.equal(commandTimeoutMs('youtube', t), 225_000); // 90s 窗口 + 135s 余量（关 tab/INGEST）
+  assert.equal(commandTimeoutMs('douyin', t), 195_000);  // 60s 窗口 + 135s 余量（同公式）
   assert.equal(commandTimeoutMs('bilibili', t), 120_000); // B 站直接用配置预算（API 拉取无自限）
+});
+
+// ── dispatchPayload：派发 action/params 映射（2026-08-29 douyin 平台化抽出纯函数）──
+test('dispatchPayload：三平台映射——bvid / videoId+timeout_ms / awemeId+timeout_ms', () => {
+  const timeouts = { bilibili: 90_000, youtube: 45_000, douyin: 45_000 };
+  assert.deepEqual(dispatchPayload({ source: 'bilibili', source_vid: 'BV1xx411c7mD' }, timeouts),
+    { action: 'fetch-subtitle', params: { bvid: 'BV1xx411c7mD' } });
+  assert.deepEqual(dispatchPayload({ source: 'youtube', source_vid: 'gaDdrDdczO4' }, timeouts),
+    { action: 'fetch-youtube-subtitle', params: { videoId: 'gaDdrDdczO4', timeout_ms: 45_000 } });
+  // douyin：action 与参数键对齐扩展侧 handler（awemeId + 窗口随命令下发）
+  assert.deepEqual(dispatchPayload({ source: 'douyin', source_vid: '7123456789012345678' }, timeouts),
+    { action: 'fetch-douyin-subtitle', params: { awemeId: '7123456789012345678', timeout_ms: 45_000 } });
 });
 
 // ── listTasks 多维筛选（2026-08-22 历史页）：creator/q 是入库元数据维度 ──
@@ -999,6 +1167,63 @@ test('dispatchTask：youtube no_subtitle 回执 → succeeded + no-subtitle 系�
        WHERE v.source = 'youtube' AND v.source_vid = 'ytns1' AND t.name = 'no-subtitle' AND vt.source = 'system'`,
     ).get();
     assert.equal(tagged != null, true, 'YouTube 无字幕同样进 ASR 圈选锚点');
+  } finally { cleanup(); }
+});
+
+// ── dispatchTask 派发映射（2026-08-29 douyin）：action=fetch-douyin-subtitle + {awemeId, timeout_ms} ──
+test('dispatchTask：douyin 任务派发 fetch-douyin-subtitle（awemeId + 窗口下发）→ 回执成功落 succeeded', async () => {
+  const { db, cleanup } = setupDb();
+  const calls: Array<{ action: string; params: Record<string, unknown>; timeoutMs?: number }> = [];
+  registerWsBridge({
+    listClients: () => [{ client_id: 'ext-dy', ext_version: null, reporting_enabled: true, task_dispatch_enabled: true, connected: true }],
+    requestCommand: async (_cid, action, params, timeoutMs) => {
+      calls.push({ action, params, timeoutMs });
+      return { ok: true, result: { ok: true, data: { awemeId: (params as { awemeId?: unknown }).awemeId, captured: 1, tracks: 1 } } };
+    },
+    broadcastEvent: () => {},
+  } satisfies WsBridge);
+  try {
+    createTask(db, { source: 'douyin', source_vid: '7123456789012345678', url: 'https://www.douyin.com/video/7123456789012345678' }, 'ext-dy');
+    attachTaskScheduler(db);
+    kickTaskScheduler();
+    const id = (db.prepare('SELECT id FROM collect_tasks').get() as { id: number }).id;
+    for (let i = 0; i < 40; i++) {
+      if (getTask(db, id)?.status === 'succeeded') break;
+      await new Promise((r) => setTimeout(r, 50));
+    }
+    // 契约：action 与参数键对齐扩展侧 douyin handler；窗口 45s 随命令下发；等回执预算 45+135s
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].action, 'fetch-douyin-subtitle');
+    assert.deepEqual(calls[0].params, { awemeId: '7123456789012345678', timeout_ms: 45_000 });
+    assert.equal(calls[0].timeoutMs, 180_000);
+    const t = getTask(db, id)!;
+    assert.equal(t.status, 'succeeded');
+    assert.ok(t.result?.includes('"captured":1'));
+  } finally { cleanup(); }
+});
+
+// ── dispatchTask 图集回执（2026-08-29 douyin，收口接线清单 #2）：reason=not_video → failed ──
+// S3 扩展对图集（aweme_type≠0）按 ok:true + reason='not_video' 回执——「成功但什么都没采」不诚实，
+// server 侧映射 failed（error='图文/图集,无视频轨'），与 pot_limited→limited 同构位置（R4 定案）。
+test('dispatchTask：douyin not_video 回执（图集）→ failed（error=图文/图集,无视频轨），不落 succeeded', async () => {
+  const { db, cleanup } = setupDb();
+  registerWsBridge({
+    listClients: () => [{ client_id: 'ext-dy-nv', ext_version: null, reporting_enabled: true, task_dispatch_enabled: true, connected: true }],
+    requestCommand: async () => ({ ok: true, result: { ok: true, data: { reason: 'not_video', tracks: 0 } } }),
+    broadcastEvent: () => {},
+  } satisfies WsBridge);
+  try {
+    createTask(db, { source: 'douyin', source_vid: '7123456789012345679', url: 'https://www.douyin.com/video/7123456789012345679' }, 'ext-dy-nv');
+    attachTaskScheduler(db);
+    kickTaskScheduler();
+    const id = (db.prepare('SELECT id FROM collect_tasks').get() as { id: number }).id;
+    for (let i = 0; i < 40; i++) {
+      if (getTask(db, id)?.status === 'failed') break;
+      await new Promise((r) => setTimeout(r, 50));
+    }
+    const t = getTask(db, id)!;
+    assert.equal(t.status, 'failed', 'not_video 终态是 failed 而非 succeeded');
+    assert.equal(t.error, '图文/图集,无视频轨');
   } finally { cleanup(); }
 });
 

@@ -26,15 +26,16 @@ export function defaultSleep(ms: number): Promise<void> { return new Promise((r)
 /**
  * 风控退避通用重试：attempt 每轮跑一次 fn(result)，结果风控（isRiskControl 或 HTTP 412 标记）则退避重试。
  * fn 返回非风控结果即短路返回；三档退避（30s/2min/5min）后返回最后一次结果。
+ * label 是重试日志前缀（默认 [bili]；抖音侧复用本机制传 [douyin]，2026-08-29 douyin 平台化）。
  */
 export async function withRiskRetry<T extends { risk?: boolean }>(
-  deps: NetDeps, fn: () => Promise<T>,
+  deps: NetDeps, fn: () => Promise<T>, label = '[bili]',
 ): Promise<T> {
   const sleep = deps.sleep ?? defaultSleep;
   const log = deps.log ?? (() => {});
   let last = await fn();
   for (let attempt = 0; attempt < RISK_BACKOFF_MS.length && last.risk; attempt++) {
-    log(`[bili] 风控，退避 ${RISK_BACKOFF_MS[attempt] / 1000}s 重试（第 ${attempt + 1}/${RISK_BACKOFF_MS.length} 次）`);
+    log(`${label} 请求被拦截，退避 ${RISK_BACKOFF_MS[attempt] / 1000}s 重试（第 ${attempt + 1}/${RISK_BACKOFF_MS.length} 次）`);
     await sleep(RISK_BACKOFF_MS[attempt]);
     last = await fn();
   }

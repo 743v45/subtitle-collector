@@ -22,6 +22,10 @@ export default defineConfig({
   test: {
     environment: 'jsdom',
     setupFiles: ['./src/test-setup.ts'],
+    // 默认 5s 在三平台并行用例全量跑时对 jsdom 重交互用例（Radix Dialog/Select 连开多轮）偏紧——
+    // 2026-08-29 douyin 接入用例扩容后满负荷机器上偶发超时（单文件跑均 <1.2s），放宽到 15s 只放
+    // 宽墙钟预算不放宽断言。
+    testTimeout: 15_000,
     coverage: {
       provider: 'v8',
       include: ['src/**/*.{ts,tsx}'],

@@ -12,6 +12,7 @@
 // | R4 | Radix Select 三下拉 + 排序/升降序切换 | 通过 | combobox 无可访问名（Radix 未设 aria-label），按显示文本定位 trigger；jsdom 需 scrollIntoView stub |
 // | R5 | 更多筛选：TagMultiSelect 开合/外点关闭/勾选与徽章移除/暂无标签；次要输入（lang/时长/播放/日期/仅含字幕） | 通过 | |
 // | R6 | URL 复合筛选 → listVideos 请求参数全量断言（分钟→秒、万→绝对值、日期→ms、非法数字容错）；外部 hash 变化同步输入框；重置 | 通过 | |
+// | R7 | douyin（2026-08-29）：平台第四项/URL 透传、档位文案「平台自带」、行降级渲染（黑系图标/外链/分区 —） | 通过 | |
 import { test, expect, vi, afterEach } from 'vitest';
 import { render, screen, fireEvent, cleanup, waitFor } from '@testing-library/react';
 import { VideoList } from './VideoList';
@@ -235,6 +236,57 @@ test('平台下拉：选哔哩哔哩 → source=bilibili 重拉；选全部平�
   fireEvent.click(combo('哔哩哔哩'));
   fireEvent.click(await screen.findByRole('option', { name: '全部平台' }));
   await waitFor(() => expect(window.location.hash).toBe('#/videos'));
+});
+
+// ── douyin（2026-08-29 接入）：平台第四项、URL 白名单透传、档位文案、行降级渲染 ──
+
+test('douyin：平台下拉第四项 + 选中写 source=douyin；URL source=douyin 直入透传请求', async () => {
+  const calls = setup();
+  await screen.findByText('B站完整字段视频');
+  fireEvent.click(combo('全部平台'));
+  fireEvent.click(await screen.findByRole('option', { name: '抖音' }));
+  await waitFor(() => expect(window.location.hash).toContain('source=douyin'));
+  await waitFor(() => expect(qp(calls).get('source')).toBe('douyin'));
+});
+
+test('douyin：URL source=douyin 直入 → 请求透传（白名单收录）', async () => {
+  const calls = setup(defaultHandler(() => emptyVideos), '#/videos?source=douyin');
+  await waitFor(() => expect(qp(calls).get('source')).toBe('douyin'));
+});
+
+test('档位文案：bili 档显示「平台自带」（抖音话题标签同入此档，不再叫「B站」）', async () => {
+  setup();
+  await screen.findByText('B站完整字段视频');
+  fireEvent.click(screen.getByRole('button', { name: /更多筛选/ }));
+  fireEvent.click(combo('全部档位'));
+  expect(await screen.findByRole('option', { name: '平台自带' })).toBeInTheDocument();
+  expect(screen.queryByRole('option', { name: 'B站' })).toBe(null);
+});
+
+test('douyin 行渲染：黑系图标 + 原站/主页外链 + 分区列降级 —', async () => {
+  // douyin 无 tid/tname（B 站专属），分区列降级占位；外链走 douyin 域名形态
+  const rows = {
+    total: 1,
+    items: [{
+      id: 9, source: 'douyin', source_vid: '7300000000000000001', title: '抖音视频标题',
+      creator_name: '抖音博主', creator_source_uid: 'MS4wLjABAAAAsec_uid_x', duration: 61,
+      published_at: new Date('2026-02-03T04:05:06').getTime(), track_count: 1,
+      tname: null, tag_details: [{ name: '话题标', source: 'bili' }], view: 21000, pic: null,
+    }],
+  };
+  setup(defaultHandler(() => rows));
+  expect(await screen.findByText('抖音视频标题')).toBeInTheDocument();
+  expect(screen.getByLabelText('在原站打开视频').getAttribute('href')).toBe('https://www.douyin.com/video/7300000000000000001');
+  expect(screen.getByLabelText('在原站打开 抖音博主 的空间').getAttribute('href')).toBe('https://www.douyin.com/user/MS4wLjABAAAAsec_uid_x');
+  expect(screen.getByText('2.1万')).toBeInTheDocument(); // view 格式化同构（21000）
+  expect(screen.getByText('1:01')).toBeInTheDocument(); // 时长同构
+  expect(screen.getByText('话题标')).toBeInTheDocument(); // douyin 话题标签入 bili 档渲染
+  expect(screen.getByText('—')).toBeInTheDocument(); // 分区列降级（douyin 无 tid/tname）
+  // 图标类：douyin 黑系（行内 iconColor 与共享 platformIconClass 同源）
+  const titleCell = screen.getByText('抖音视频标题').closest('td')!;
+  const icon = titleCell.querySelector('svg');
+  expect(icon?.getAttribute('class')).toContain('text-black');
+  expect(icon?.getAttribute('class')).toContain('dark:text-white');
 });
 
 test('分区下拉选择 → tname 参数', async () => {

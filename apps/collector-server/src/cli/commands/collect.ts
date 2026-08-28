@@ -109,26 +109,27 @@ export async function collectSearch(
   return sendExtCommand(client, clientId, 'search', params, timeout);
 }
 
-/** `collect subtitle <vid>`：按平台下发采集（bilibili→fetch-subtitle / youtube→fetch-youtube-subtitle）→ 扩展 fetch 元信息+字幕体→ingest。
- *  vid=平台视频 ID：B 站 BV 号 / YouTube 11 位 ID（--source 定平台，默认 bilibili）。 */
+/** `collect subtitle <vid>`：按平台下发采集（fetch-subtitle / fetch-youtube-subtitle / fetch-douyin-subtitle）
+ *  → 扩展 fetch 元信息+字幕体→ingest。vid=平台视频 ID：B 站 BV 号 / YouTube 11 位 ID / 抖音 19 位 aweme_id。 */
 export async function collectSubtitle(
   client: CollectClient,
   clientId: string,
   vid: string,
   timeout: number,
-  source: 'bilibili' | 'youtube' = 'bilibili',
+  source: Source = 'bilibili',
 ): Promise<unknown> {
-  // 参数名对齐扩展侧 handler：B 站收 bvid，YouTube 收 videoId（与 server 任务派发 tasks.ts 同构）
-  const params: Record<string, unknown> = source === 'bilibili' ? { bvid: vid } : { videoId: vid };
-  return sendExtCommand(client, clientId, source === 'bilibili' ? 'fetch-subtitle' : 'fetch-youtube-subtitle', params, timeout);
+  // 参数名对齐扩展 handler（bvid/videoId/awemeId），action 映射与 server 派发 dispatchPayload 同构
+  const params: Record<string, unknown> = source === 'bilibili' ? { bvid: vid } : source === 'youtube' ? { videoId: vid } : { awemeId: vid };
+  const action = source === 'bilibili' ? 'fetch-subtitle' : source === 'youtube' ? 'fetch-youtube-subtitle' : 'fetch-douyin-subtitle';
+  return sendExtCommand(client, clientId, action, params, timeout);
 }
 
 /** `collect dedupe <bvid...>`：直读 SQLite，判据=video 是否存在（无字幕视频采过后也入 videos）。
- *  source 参数化（2026-08-21，YouTube 频道批量用）。 */
+ *  source 参数化（2026-08-21，YouTube 频道批量；2026-08-29 加 douyin）。 */
 export function collectDedupe(
   db: Database.Database,
   bvids: string[],
-  source: 'bilibili' | 'youtube' = 'bilibili',
+  source: Source = 'bilibili',
 ): { collected: string[]; missing: string[] } {
   if (bvids.length === 0) return { collected: [], missing: [] };
   const placeholders = bvids.map(() => '?').join(',');
@@ -243,10 +244,9 @@ export function collectNosub(
 // ── YouTube 频道（2026-08-21）：CLI 参数解析 + 全量列表 + 逐条采集 ──
 // 2026-08-24 解析下沉 tasks/tasks.ts（http 的 /api/upper-videos/expand YouTube 分支复用），
 // 此处 import 供本文件使用并 re-export 保持 CLI 外部接口不变。
-import { parseYtChannelArg } from '../../tasks/tasks.js';
-import type { YtChannelIdent } from '../../tasks/tasks.js';
+import { parseYtChannelArg, type YtChannelIdent, type Source } from '../../tasks/tasks.js';
 export { parseYtChannelArg };
-export type { YtChannelIdent };
+export type { YtChannelIdent, Source };
 
 /** 单条 YouTube 频道视频（list-yt-channel-videos 扩展回执 data.items 形状）。 */
 export interface YtChannelVideoItem {
@@ -690,12 +690,12 @@ export function buildCollectCommand(): Command {
 
   collect
     .command('subtitle <vid>')
-    .description('采集单个视频字幕入库（vid=BV 号或 YouTube 11 位 ID；扩展 fetch 元信息+字幕体）')
+    .description('采集单个视频字幕入库（vid=BV 号、YouTube 11 位 ID 或抖音 19 位 aweme_id；扩展 fetch 元信息+字幕体）')
     .option('--source <src>', '视频来源平台（默认 bilibili）', 'bilibili')
     .option('--client <id>', '扩展 client_id（缺省取第一个在线）')
     .option('--timeout <ms>', '超时毫秒（默认 180000）', (v) => Number.parseInt(v, 10), DEFAULT_COLLECT_TIMEOUT_MS)
     .action(async (vid: string, opts: { source?: string; client?: string; timeout: number }) => {
-      if (opts.source !== 'bilibili' && opts.source !== 'youtube') emitError(`--source 必须是 bilibili/youtube: ${opts.source}`, 'ARGS');
+      if (opts.source !== 'bilibili' && opts.source !== 'youtube' && opts.source !== 'douyin') emitError(`--source 必须是 bilibili/youtube/douyin: ${opts.source}`, 'ARGS');
       if (!Number.isFinite(opts.timeout) || opts.timeout <= 0) emitError(`invalid --timeout: ${opts.timeout}`, 'ARGS');
       const ctx = getCliContext();
       const client = new ServerClient(ctx.serverUrl, ctx.token);
@@ -718,7 +718,7 @@ export function buildCollectCommand(): Command {
     .description('批量判重：按 video 是否已入库分 collected/missing（直读 SQLite；vid=平台视频 ID）')
     .option('--source <src>', '视频来源平台（默认 bilibili）', 'bilibili')
     .action((vids: string[], opts: { source?: string }) => {
-      if (opts.source !== 'bilibili' && opts.source !== 'youtube') emitError(`--source 必须是 bilibili/youtube: ${opts.source}`, 'ARGS');
+      if (opts.source !== 'bilibili' && opts.source !== 'youtube' && opts.source !== 'douyin') emitError(`--source 必须是 bilibili/youtube/douyin: ${opts.source}`, 'ARGS');
       const ctx = getCliContext();
       let db: Database.Database;
       try {

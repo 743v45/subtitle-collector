@@ -242,6 +242,34 @@ export const MIGRATIONS: readonly MigrationStep[] = [
       'ALTER TABLE clients ADD COLUMN yt_login TEXT',
     ],
   },
+  {
+    version: 18,
+    note: 'collect_tasks.source CHECK 放行 douyin（2026-08-29 抖音平台接入，S2）。SQLite 无法 ALTER CHECK，学 v9/v12 单事务表重建；中断回滚重放幂等（回滚后旧表结构原样）。SQL 不引用被删列（v16 Hazard A 注），新库（schema.sql 已带 douyin CHECK）全量重放安全',
+    statements: [
+      `BEGIN IMMEDIATE;
+       CREATE TABLE collect_tasks_v18 (
+         id          INTEGER PRIMARY KEY AUTOINCREMENT,
+         source      TEXT NOT NULL CHECK(source IN ('bilibili','youtube','douyin')),
+         source_vid  TEXT NOT NULL,
+         url         TEXT NOT NULL,
+         status      TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','dispatched','succeeded','failed','limited')),
+         client_id   TEXT,
+         creator_client_id TEXT,
+         error       TEXT,
+         result      TEXT,
+         batch_id    TEXT,
+         creator_uid TEXT,
+         created_at  INTEGER NOT NULL,
+         finished_at INTEGER
+       );
+       INSERT INTO collect_tasks_v18 (id, source, source_vid, url, status, client_id, creator_client_id, error, result, batch_id, creator_uid, created_at, finished_at)
+         SELECT id, source, source_vid, url, status, client_id, creator_client_id, error, result, batch_id, creator_uid, created_at, finished_at FROM collect_tasks;
+       DROP TABLE collect_tasks;
+       ALTER TABLE collect_tasks_v18 RENAME TO collect_tasks;
+       CREATE INDEX idx_tasks_status ON collect_tasks(status, created_at);
+       COMMIT;`,
+    ],
+  },
 ];
 
 export function runMigrations(db: Database.Database): void {

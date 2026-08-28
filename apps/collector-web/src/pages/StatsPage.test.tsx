@@ -4,6 +4,7 @@
 // | 轮次 | 范围 | 结果 | 备注 |
 // |---|---|---|---|
 // | R1 | overview + groupBy 切换 + 榜单 + 空错态 + 非法 groupBy 回落 | 通过 | fmtTime null → '-' |
+// | R2 | douyin（2026-08-29 接入）：URL source=douyin 白名单透传 + 榜单 key 中文化「抖音」 | 通过 | |
 import { test, expect, vi, beforeEach, afterEach, beforeAll } from 'vitest';
 import { render, screen, fireEvent, cleanup, waitFor } from '@testing-library/react';
 import { StatsPage } from './StatsPage';
@@ -146,6 +147,29 @@ test('平台筛选 Select：交互切换写 URL 并带参重拉', async () => {
   fireEvent.click(await screen.findByRole('option', { name: 'YouTube' }));
   await waitFor(() => expect(window.location.hash).toBe('#/stats?source=youtube'));
   await waitFor(() => expect(String(fetchMock.mock.calls.at(-1)![0])).toContain('source=youtube'));
+});
+
+// douyin（2026-08-29）：URL source=douyin 白名单透传 → 卡片切 by_source.douyin、聚合带参；
+// groupBy=source 榜单 key=douyin 中文化「抖音」
+test('douyin：URL source=douyin → by_source.douyin 卡片 + 聚合带参；榜单 key 中文化', async () => {
+  const DY: StatsOverview = { ...OVERVIEW, videos: 66, tracks: 666, creators: 6 };
+  fetchMock.mockImplementation((url: string) => {
+    if (url === '/api/stats?type=overview') {
+      return Promise.resolve(ok({ total: OVERVIEW, by_source: { bilibili: OVERVIEW, douyin: DY } }));
+    }
+    if (url.startsWith('/api/stats?')) return Promise.resolve(ok(aggregate([{ key: 'douyin', count: 66 }])));
+    return Promise.reject(new Error(`unmatched: ${url}`));
+  });
+  window.history.replaceState(null, '', '#/stats?source=douyin&groupBy=source');
+  render(<StatsPage />);
+  // 卡片数字来自 by_source.douyin（tracks=666 唯一）
+  expect(await screen.findByText('666')).toBeInTheDocument();
+  expect(screen.queryByText('123')).not.toBeInTheDocument(); // 全库数字不再出现
+  await waitFor(() => expect(String(fetchMock.mock.calls.find((c) => String(c[0]).includes('aggregate'))![0])).toContain('source=douyin'));
+  // 榜单 key=douyin → 中文「抖音」（SOURCE_LABEL 新增项），原始 key 不出现；
+  // 「抖音」同时出现在下拉回显与榜单行 → getAllByText 至少 2 处
+  expect((await screen.findAllByText('抖音')).length).toBeGreaterThanOrEqual(2);
+  expect(screen.queryByText('douyin')).not.toBeInTheDocument();
 });
 
 test('榜单：排序编号 + 计数 + 最大值满宽档（w-[100%]）', async () => {

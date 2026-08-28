@@ -8,7 +8,7 @@
 // 「现在」重算）；custom 档只写日期串。
 export interface TaskHistoryQueryState {
   status: string;      // 状态档 key（''=全部 / 'pending,dispatched' / 'succeeded' / 'limited' / 'failed'）
-  source: string;      // '' | 'bilibili' | 'youtube'
+  source: string;      // '' | 'bilibili' | 'youtube' | 'douyin'
   creator: string;     // UP 名或 B站 mid（输入框原样单串，判别见上）
   q: string;           // 标题关键词
   range: '' | 'today' | '7d' | '30d' | 'custom';
@@ -24,6 +24,15 @@ export const TASK_HISTORY_DEFAULTS: TaskHistoryQueryState = {
 };
 
 const RANGE_PRESETS: readonly string[] = ['today', '7d', '30d'];
+
+// 今日本地 00:00（时间快捷档按「现在」重算:分享 URL 次日打开=新的一天,正是期望语义）。
+// preset → since 的伴生计算（2026-08-29 从 TasksHistoryPage 移入，时间档纯函数归档）。
+export function todayStart(): number {
+  const d = new Date();
+  d.setHours(0, 0, 0, 0);
+  return d.getTime();
+}
+export const DAY_MS = 86_400_000;
 
 // 纯数字输入按 mid 精确查（creator_uid）；其余按 UP 名模糊（creator）
 export function isMidLike(input: string): boolean {

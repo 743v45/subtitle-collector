@@ -13,6 +13,7 @@
 // | R5 | 重试本页未成功 / 单行重试 / 删除单条与批次（toast + reload） | 通过 | 包 ToastProvider |
 // | R6 | 活跃任务轮询：2s 重拉 → 终态转移发系统通知、全终态即停 | 通过 | fake timers + Notification stub |
 // | R7 | 失败分支补口：单删失败 reload / 批次删除部分失败 toast / 多成员批次行单删 / 单行重试失败 | 通过 | 行覆盖收尾 |
+// | R8 | douyin（2026-08-29）：平台下拉第四项 + URL source=douyin 白名单透传 | 通过 | |
 import { test, expect, vi, afterEach } from 'vitest';
 import { render, screen, fireEvent, cleanup, waitFor, act } from '@testing-library/react';
 import { TasksHistoryPage } from './TasksHistoryPage';
@@ -165,9 +166,22 @@ test('平台/方式 select → 请求参数', async () => {
   fireEvent.click(await screen.findByRole('option', { name: 'YouTube' }));
   await waitFor(() => expect(qp(calls).get('source')).toBe('youtube'));
 
+  // douyin 第四项（2026-08-29）：选中写 source=douyin
+  fireEvent.click(combo('YouTube'));
+  fireEvent.click(await screen.findByRole('option', { name: '抖音' }));
+  await waitFor(() => expect(qp(calls).get('source')).toBe('douyin'));
+
   fireEvent.click(combo('全部方式'));
   fireEvent.click(await screen.findByRole('option', { name: '批量采集' }));
   await waitFor(() => expect(qp(calls).get('batch')).toBe('batch'));
+});
+
+// douyin URL 白名单（2026-08-29）：source=douyin 直入 → 请求透传，不再被收敛成 undefined
+test('URL source=douyin 直入 → 请求带 source=douyin', async () => {
+  const calls = setup('#/history?source=douyin');
+  // source 筛选激活 → 空态走「放宽筛选」分支（anySecondary 含 source）
+  expect(await screen.findByText('没有匹配的任务记录——试试放宽筛选条件')).toBeInTheDocument();
+  expect(qp(calls).get('source')).toBe('douyin');
 });
 
 test('时间档：preset → since 参数；切 preset 清日期；custom 档经 URL 激活后日期输入可改', async () => {

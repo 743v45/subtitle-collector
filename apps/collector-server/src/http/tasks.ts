@@ -1,6 +1,7 @@
 import { type IncomingMessage, type ServerResponse } from 'node:http';
 import type Database from 'better-sqlite3';
 import { extractVideoUrl, expandShortLink, parseVideoUrl, createTask, createTasksBatch, findActiveTask, expandUpperVideos, parseYtChannelArg, getTask, deleteTask, retryTask, listTasks, kickTaskScheduler, type FetchLike, type TaskListFilter, type TaskStatus } from '../tasks/tasks.js';
+import { parseDouyinSecUid } from '../tasks/douyin-url.js';
 import { TASK_SORT_KEYS, type TaskSortKey } from '../db/sort.js';
 import { json, readJsonBody, parseSortParams } from './http-util.js';
 import { toInt } from './filter.js';
@@ -46,7 +47,7 @@ function handleListTasksHttp(res: ServerResponse, url: URL, db: Database.Databas
   const filter: TaskListFilter = {};
   if (statusFilter?.length) filter.status = statusFilter;
   const sourceParam = url.searchParams.get('source');
-  if (sourceParam === 'bilibili' || sourceParam === 'youtube') filter.source = sourceParam;
+  if (sourceParam === 'bilibili' || sourceParam === 'youtube' || sourceParam === 'douyin') filter.source = sourceParam;
   const batchId = url.searchParams.get('batch_id');
   if (batchId) filter.batchId = batchId;
   const batchScope = url.searchParams.get('batch');
@@ -67,6 +68,39 @@ function handleListTasksHttp(res: ServerResponse, url: URL, db: Database.Databas
   json(res, 200, { ok: true, ...(paged ? { page, page_size: limit } : {}), ...listTasks(db, limit, offset, filter, sp.sort as TaskSortKey, sp.desc) });
 }
 
+// POST /api/upper-videos/expand：{ source: 'bilibili', mid } | { source: 'youtube', channel } |
+//   { source: 'douyin', sec_uid } → 经扩展 WS 代理拉全量列表（2026-08-24 双平台；2026-08-29
+//   douyin 骨架）。抽出降 handleTasksHttp 圈复杂度（对齐 handleListTasksHttp 先例）。
+// 拉取失败（扩展离线/超时/风控）抛错 → 调用方 503（可重试临时态）；参数问题直接 400。
+async function handleUpperExpandHttp(res: ServerResponse, body: Record<string, unknown> | null, db: Database.Database): Promise<void> {
+  const source = body?.source === 'douyin' ? 'douyin' : body?.source === 'youtube' ? 'youtube' : 'bilibili';
+  if (source === 'youtube') {
+    // 频道参数解析在 server 单点完成（tasks.parseYtChannelArg），web 只传原始输入
+    const channel = typeof body?.channel === 'string' ? body.channel.trim() : '';
+    if (!channel) { json(res, 400, { ok: false, error: 'channel（@handle / UC 开头 channelId / 频道页 URL）required' }); return; }
+    let ident: { handle?: string; channelId?: string; custom?: string };
+    try { ident = parseYtChannelArg(channel); } catch (e) { json(res, 400, { ok: false, error: String((e as Error).message) }); return; }
+    const r = await expandUpperVideos(db, { source: 'youtube', ident });
+    json(res, 200, { ok: true, ...r });
+    return;
+  }
+  if (source === 'douyin') {
+    // 抖音博主（2026-08-29 S8 接线）：sec_uid 直传或用户主页链接，server 单点归一（对齐 youtube
+    // channel 模式）；拉取走扩展 expand-douyin-upper（扩展内 max_cursor 游标翻页聚合成一次回传）。
+    const secUidRaw = typeof body?.sec_uid === 'string' ? body.sec_uid.trim() : '';
+    if (!secUidRaw) { json(res, 400, { ok: false, error: 'sec_uid（抖音博主 sec_uid / 用户主页链接）required' }); return; }
+    let secUid: string;
+    try { secUid = parseDouyinSecUid(secUidRaw); } catch (e) { json(res, 400, { ok: false, error: String((e as Error).message) }); return; }
+    const r = await expandUpperVideos(db, { source: 'douyin', secUid });
+    json(res, 200, { ok: true, ...r });
+    return;
+  }
+  const mid = typeof body?.mid === 'string' ? body.mid.trim() : '';
+  if (!/^\d+$/.test(mid)) { json(res, 400, { ok: false, error: 'mid（B 站用户数字 ID）required' }); return; }
+  const r = await expandUpperVideos(db, { source: 'bilibili', mid });
+  json(res, 200, { ok: true, ...r });
+}
+
 export async function handleTasksHttp(req: IncomingMessage, res: ServerResponse, db: Database.Database): Promise<void> {
   const url = new URL(req.url ?? '/', 'http://localhost');
   const pathname = url.pathname;
@@ -77,10 +111,10 @@ export async function handleTasksHttp(req: IncomingMessage, res: ServerResponse,
       const body = await readJsonBody(req);
       const text = typeof body?.text === 'string' ? body.text : '';
       const rawUrl = extractVideoUrl(text);
-      if (!rawUrl) { json(res, 400, { ok: false, error: '未找到视频链接（支持 B 站 / YouTube 分享或视频页链接）' }); return; }
+      if (!rawUrl) { json(res, 400, { ok: false, error: '未找到视频链接（支持 B 站 / YouTube / 抖音 分享或视频页链接）' }); return; }
       const expanded = await expandShortLink(rawUrl, fetcher);
       const target = parseVideoUrl(expanded);
-      if (!target) { json(res, 400, { ok: false, error: '链接无法识别为 B 站 / YouTube 视频' }); return; }
+      if (!target) { json(res, 400, { ok: false, error: '链接无法识别为 B 站 / YouTube / 抖音 视频' }); return; }
       // 未终态去重（判据同批量端点）：同 (source, source_vid) 已有 pending/dispatched → 返回既有任务
       //（created:false）不新建——手机分享文本双击提交不再产生两条 pending（可能双采）
       const active = findActiveTask(db, target.source, target.source_vid);
@@ -108,14 +142,14 @@ export async function handleTasksHttp(req: IncomingMessage, res: ServerResponse,
     //     创建者扩展 ID —— sticky 派发（任务跟随创建者，离线降级任意）
     // force（2026-08-25）：默认 false——已有字幕轨的入库视频跳过（skipped_collected 计数返回）；
     //   true = 强制重采（字幕刷新场景，勾选已采视频提交即重采）。
-    const source = body?.source === 'youtube' ? 'youtube' : 'bilibili';
+    const source = body?.source === 'douyin' ? 'douyin' : body?.source === 'youtube' ? 'youtube' : 'bilibili';
     const vids = Array.isArray(body?.vids) ? body.vids : null;
     const clientId = typeof body?.client_id === 'string' && body.client_id ? body.client_id : null;
     // creator_uid（可选）：批量提交入口已知的 UP 归属（B 站 mid / YouTube channelId）——
     // 落任务行冗余列，未入库/失败任务也能在历史页按 UP 筛（不传则靠建任务查库/ingest 回填兜底）
     const creatorUid = typeof body?.creator_uid === 'string' && body.creator_uid ? body.creator_uid : null;
     const force = body?.force === true;
-    const label = source === 'youtube' ? 'YouTube 视频 ID（11 位）' : 'BV 号';
+    const label = source === 'youtube' ? 'YouTube 视频 ID（11 位）' : source === 'douyin' ? '抖音 aweme_id（19 位数字）' : 'BV 号';
     if (!vids || vids.length === 0) { json(res, 400, { ok: false, error: `vids: string[] required（至少一个${label}）` }); return; }
     const r = createTasksBatch(db, vids, source, clientId, creatorUid, force);
     if (r.created.length > 0) kickTaskScheduler(); // 事件驱动：建任务立即尝试派发
@@ -148,30 +182,17 @@ export async function handleTasksHttp(req: IncomingMessage, res: ServerResponse,
     return;
   }
 
-  // UP/频道全部视频列表（经扩展代理拉取；main.ts 把 /api/upper-videos 前缀路由到本 handler）
+  // UP/频道/博主全部视频列表（经扩展代理拉取；main.ts 把 /api/upper-videos 前缀路由到本 handler）
   // 2026-08-24 双平台：body { source: 'bilibili', mid } | { source: 'youtube', channel: <@handle|UCxxx|URL> }；
-  // source 缺省 bilibili（兼容旧 web 只传 mid 的调用）。
+  // 2026-08-29 douyin：{ source: 'douyin', sec_uid }（S8 接线扩展 expand-douyin-upper）。source 缺省 bilibili
+  //（兼容旧 web 只传 mid 的调用）。分派细节在 handleUpperExpandHttp。
   if (pathname === '/api/upper-videos/expand') {
     if (req.method !== 'POST') { json(res, 405, { ok: false, error: 'method not allowed' }); return; }
     const body = await readJsonBody(req);
-    const source = body?.source === 'youtube' ? 'youtube' : 'bilibili';
     try {
-      if (source === 'youtube') {
-        // 频道参数解析在 server 单点完成（tasks.parseYtChannelArg），web 只传原始输入
-        const channel = typeof body?.channel === 'string' ? body.channel.trim() : '';
-        if (!channel) { json(res, 400, { ok: false, error: 'channel（@handle / UC 开头 channelId / 频道页 URL）required' }); return; }
-        let ident: { handle?: string; channelId?: string; custom?: string };
-        try { ident = parseYtChannelArg(channel); } catch (e) { json(res, 400, { ok: false, error: String((e as Error).message) }); return; }
-        const r = await expandUpperVideos(db, { source: 'youtube', ident });
-        json(res, 200, { ok: true, ...r });
-      } else {
-        const mid = typeof body?.mid === 'string' ? body.mid.trim() : '';
-        if (!/^\d+$/.test(mid)) { json(res, 400, { ok: false, error: 'mid（B 站用户数字 ID）required' }); return; }
-        const r = await expandUpperVideos(db, { source: 'bilibili', mid });
-        json(res, 200, { ok: true, ...r });
-      }
+      await handleUpperExpandHttp(res, body, db);
     } catch (e) {
-      // 扩展离线/超时/风控 → 503（可重试的临时态）
+      // 扩展离线/超时/风控/尚未实现 → 503（可重试的临时态）
       json(res, 503, { ok: false, error: String((e as Error)?.message ?? e) });
     }
     return;

@@ -17,6 +17,12 @@
  *   chrome.runtime.onMessage.addListener((m) => ctrl.notify(m));
  *   // unmount:ctrl.dispose()
  */
+// JSDoc 参数类型(tsc 推断修复):JS 解构参数无 JSDoc 时 tsc 只按默认值推断参数形状,
+// onRefresh(无默认值)被丢出类型 → hooks-collected.ts 调用处 TS2353「onRefresh 不存在」。
+// 基线既有错(非 douyin 引入),2026-08-29 S6b 补注解修复——纯类型标注零行为变化。
+/**
+ * @param {{ delay?: number, onRefresh: () => void }} [opts]
+ */
 export function createCollectedRefresh({ delay = 1500, onRefresh } = {}) {
   if (typeof onRefresh !== 'function') throw new Error('createCollectedRefresh: onRefresh 必填');
   let timer = null;

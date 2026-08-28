@@ -17,6 +17,9 @@ import { createPendingQueue } from "./pending-ingests.mjs";
 import { pruneExpired } from "./storage-prune.mjs";
 import { selectStaleFetches } from "./fetch-resume.mjs";
 import { upperAllCacheHit } from "./upper-cache.mjs";
+import { createDouyinCommands } from "./dy-navigate.mjs";
+import { navGate } from "./nav-gate.mjs";
+import { fmtLength, cmdError } from "./format.mjs";
 const EXT_VERSION = chrome.runtime.getManifest().version;
 
 let ws = null;
@@ -247,15 +250,7 @@ async function fetchAllSeasonVideos(seasonId, refresh = false) {
   return { status: 'done', error };
 }
 
-// duration 秒 → "M:SS" / "H:MM:SS"（与 B 站 arc/search 的 length 字段同构）
-function fmtLength(sec) {
-  const t = Math.floor(sec);
-  const h = Math.floor(t / 3600);
-  const m = Math.floor((t % 3600) / 60);
-  const s = t % 60;
-  const ss = String(s).padStart(2, '0');
-  return h > 0 ? `${h}:${String(m).padStart(2, '0')}:${ss}` : `${m}:${ss}`;
-}
+// duration 秒 → "M:SS" / "H:MM:SS"：fmtLength（2026-08-29 S8 抽出 format.mjs，三平台共用）
 
 // ── YouTube 频道（UP 主页）视频：全量分页拉取（2026-08-21）──
 // 对齐 fetchAllUpperVideos 模式：storage 唯一真相 + 页间节流 + 去重 + 中断保部分结果。
@@ -595,7 +590,7 @@ async function connect() {
             ws.send(JSON.stringify({ type: "result", id: msg.id, ok: true, data: formatSearchResult(parsed.data) }));
           }
         } catch (err) {
-          ws.send(JSON.stringify({ type: "result", id: msg.id, ok: false, error: String(err.message || err) }));
+          ws.send(JSON.stringify({ type: "result", id: msg.id, ok: false, error: cmdError(err) }));
         }
       } else if (msg.action === "fetch-subtitle") {
         // 仅上报状态防御：本机开关本机说了算——旧 server 不识别 hello 新字段照派 / 旁路派发时按此回执
@@ -700,7 +695,7 @@ async function connect() {
             }));
           }
         } catch (err) {
-          ws.send(JSON.stringify({ type: "result", id: msg.id, ok: false, error: String(err.message || err) }));
+          ws.send(JSON.stringify({ type: "result", id: msg.id, ok: false, error: cmdError(err) }));
         } finally {
           inFlightCollects.delete(vidKey);
         }
@@ -732,10 +727,13 @@ async function connect() {
           const data = await collectYoutubeViaNavigate(msg.videoId, windowMs, msg.id);
           ws.send(JSON.stringify({ type: "result", id: msg.id, ok: true, data: { ...data, ...ytLoginInfo } }));
         } catch (err) {
-          ws.send(JSON.stringify({ type: "result", id: msg.id, ok: false, error: String(err.message || err) }));
+          ws.send(JSON.stringify({ type: "result", id: msg.id, ok: false, error: cmdError(err) }));
         } finally {
           inFlightCollects.delete(ytKey);
         }
+      } else if (msg.action === "fetch-douyin-subtitle" || msg.action === "expand-douyin-upper") {
+        // 抖音命令域（dy-navigate.mjs，S8 抽出）：采集/博主展开的校验、防重、编排与回执整体下沉
+        dyCommands.handleCommand(msg, (result) => ws.send(JSON.stringify(result)));
       } else if (msg.action === "get-upper-info") {
         try {
           await ensureWbiKeys();
@@ -765,7 +763,7 @@ async function connect() {
           // 4. 回执
           ws.send(JSON.stringify({ type: "result", id: msg.id, ok: true, data: { mid, ...creator, stat_failed: statFailed } }));
         } catch (err) {
-          ws.send(JSON.stringify({ type: "result", id: msg.id, ok: false, error: String(err.message || err) }));
+          ws.send(JSON.stringify({ type: "result", id: msg.id, ok: false, error: cmdError(err) }));
         }
       } else if (msg.action === "list-upper-videos") {
         // 缓存复用（忽略 page/page_size）：popup 全量任务（fetchAllUpperVideos）拉完的完整结果
@@ -802,7 +800,7 @@ async function connect() {
             }));
           }
         } catch (err) {
-          ws.send(JSON.stringify({ type: "result", id: msg.id, ok: false, error: String(err.message || err) }));
+          ws.send(JSON.stringify({ type: "result", id: msg.id, ok: false, error: cmdError(err) }));
         }
       } else if (msg.action === "list-yt-channel-videos") {
         // YouTube 频道视频全量列表（CLI collect yt-videos 用）：拉完（或命中 inflight/缓存）从
@@ -834,7 +832,7 @@ async function connect() {
             },
           }));
         } catch (err) {
-          ws.send(JSON.stringify({ type: "result", id: msg.id, ok: false, error: String(err.message || err) }));
+          ws.send(JSON.stringify({ type: "result", id: msg.id, ok: false, error: cmdError(err) }));
         }
       } else if (msg.action === "yt-search") {
         // YouTube 关键词搜索（CLI collect yt-search 用，2026-08-24）：编排/解析/tab 管理全在
@@ -849,7 +847,7 @@ async function connect() {
           });
           ws.send(JSON.stringify({ type: "result", id: msg.id, ok: true, data }));
         } catch (err) {
-          ws.send(JSON.stringify({ type: "result", id: msg.id, ok: false, error: String(err.message || err) }));
+          ws.send(JSON.stringify({ type: "result", id: msg.id, ok: false, error: cmdError(err) }));
         }
       } else if (msg.action === "list-season-videos") {
         // 合集视频列表（CLI collect season 用,2026-08-22）：同步分页拉全量回执。
@@ -903,7 +901,7 @@ async function connect() {
           await chrome.storage.local.set({ [cacheKey]: { items, total, done: true, error: null, fetchedAt: Date.now(), mid } });
           ws.send(JSON.stringify({ type: "result", id: msg.id, ok: true, data: { season_id: seasonId, mid, total, items } }));
         } catch (err) {
-          ws.send(JSON.stringify({ type: "result", id: msg.id, ok: false, error: String(err.message || err) }));
+          ws.send(JSON.stringify({ type: "result", id: msg.id, ok: false, error: cmdError(err) }));
         }
       } else if (msg.action === "set-reporting") {
         const newEnabled = await applyReporting(msg.enabled === true);
@@ -920,7 +918,7 @@ async function connect() {
         ws.send(JSON.stringify({ type: "result", id: msg.id, ok: false, error: "unknown action: " + msg.action, needs_update: true }));
       }
     } catch (err) {
-      ws.send(JSON.stringify({ type: "result", id: msg.id, ok: false, error: String(err.message || err) }));
+      ws.send(JSON.stringify({ type: "result", id: msg.id, ok: false, error: cmdError(err) }));
     }
   };
   ws.onclose = () => {
@@ -1119,22 +1117,25 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
 });
 
 // navigate 采集：主动采集对充电视频（字幕加密拿不到）打开页面，复用被动采集链路入库。
-// 频率控制：同时只 1 个 navigate（navCollectBusy 锁）；tab 关闭后间隔 = navGapBaseMs + 随机 navGapRandomMs（防风控）。
-let navCollectBusy = false;
+// 频率控制（nav-gate.mjs）：同时只 1 个 navigate（互斥锁）；tab 关闭后间隔 = base + 随机（防风控）。
 const pendingNavCollect = new Map(); // bvid -> { resolve }
 const activeYtCollects = new Set();
 // 同视频采集互斥：server 重启重派（resetDispatched）或双入口（CLI 直发 + 调度器）会对同一视频
 // 并发下发采集命令——两套上游请求并发跑（风控暴露翻倍）。执行中的视频直接拒绝重复命令。
-const inFlightCollects = new Set(); // 正在 fetch-youtube-subtitle 的 videoId 集合（其被动 INGEST 视为主动采集,绕过上报开关）
+const inFlightCollects = new Set(); // 正在 fetch-*-subtitle 的视频 ID 集合（其被动 INGEST 视为主动采集,绕过上报开关）
 // settled 后宽限期：菜单触发翻译轨（CC→原轨→翻译,~2s 起步 + 每步 800ms）迟到 body 的等待窗口
-const YT_SETTLE_GRACE_MS = 8000;// 间隔配置（chrome.storage.local 可覆盖：nav_gap_base_ms / nav_gap_random_ms，单位 ms）。默认 1s + 随机 0-2s。
-let navGapBaseMs = 1000;
-let navGapRandomMs = 2000;
-async function loadNavGapConfig() {
-  const cfg = await chrome.storage.local.get(['nav_gap_base_ms', 'nav_gap_random_ms']);
-  if (typeof cfg.nav_gap_base_ms === 'number' && cfg.nav_gap_base_ms >= 0) navGapBaseMs = cfg.nav_gap_base_ms;
-  if (typeof cfg.nav_gap_random_ms === 'number' && cfg.nav_gap_random_ms >= 0) navGapRandomMs = cfg.nav_gap_random_ms;
-}
+const YT_SETTLE_GRACE_MS = 8000;
+
+// 抖音命令域（dy-navigate.mjs）：依赖经闭包桥注入（读实时状态）；协议/行为 2026-08-29 S8 抽出前后一致。
+const dyCommands = createDouyinCommands({
+  extLog, sendIngest, inFlightCollects,
+  canDispatch: () => taskDispatchEnabled,
+  sendUpper: (creator) => { // ingest-upper 直发（鉴权/连接态守卫，对齐抽出前内联判据）
+    if (authenticated && ws?.readyState === WebSocket.OPEN) { try { ws.send(JSON.stringify({ type: "ingest-upper", payload: { source: "douyin", creator } })); } catch {} }
+  },
+});
+
+// 间隔配置（chrome.storage.local 可覆盖 nav_gap_base_ms / nav_gap_random_ms）：见 nav-gate.mjs。
 async function loadReconnectConfig() {
   const cfg = await chrome.storage.local.get(['reconnect_base_ms', 'reconnect_max_ms', 'auto_reconnect']);
   if (typeof cfg.reconnect_base_ms === 'number' && cfg.reconnect_base_ms >= 0) reconnectBaseMs = cfg.reconnect_base_ms;
@@ -1147,8 +1148,7 @@ chrome.storage.onChanged.addListener((changes, area) => {
   if ('reconnect_base_ms' in changes || 'reconnect_max_ms' in changes || 'auto_reconnect' in changes) loadReconnectConfig();
 });
 async function collectViaNavigate(bvid, timeoutMs = 20000) {
-  while (navCollectBusy) await new Promise((r) => setTimeout(r, 500)); // 等锁（同时只 1 个 navigate）
-  navCollectBusy = true;
+  await navGate.acquire(); // 等锁（同时只 1 个 navigate）
   let tabId = null;
   const startedAt = Date.now();
   extLog(`[bili-navigate] start bvid=${bvid} tab=后台 timeout=${timeoutMs / 1000}s`);
@@ -1181,8 +1181,8 @@ async function collectViaNavigate(bvid, timeoutMs = 20000) {
     return false;
   } finally {
     if (tabId != null) { try { await chrome.tabs.remove(tabId); } catch {} }
-    navCollectBusy = false;
-    await new Promise((r) => setTimeout(r, navGapBaseMs + Math.random() * navGapRandomMs)); // 关闭间隔（base+随机，防风控）
+    navGate.release();
+    await navGate.gap(); // 关闭间隔（base+随机，防风控）
   }
 }
 
@@ -1207,8 +1207,7 @@ function extLog(msg, level = "info") {
 // 超时语义：无进展超时（timeoutMs 是「无进展窗口」而非绝对时长）——长视频轨/正文加载慢但
 // 持续出数据不该被一刀切杀掉;总时长由 server 侧命令预算兜底（迟到回执/迟到 INGEST 改判）。
 async function collectYoutubeViaNavigate(videoId, timeoutMs = 45000, taskId = null) {
-  while (navCollectBusy) await new Promise((r) => setTimeout(r, 500)); // 等锁（同时只 1 个 navigate）
-  navCollectBusy = true;
+  await navGate.acquire(); // 等锁（同时只 1 个 navigate）
   let reused = false;
   let tabId = null;
   const watchUrl = `https://www.youtube.com/watch?v=${videoId}`;
@@ -1308,8 +1307,8 @@ async function collectYoutubeViaNavigate(videoId, timeoutMs = 45000, taskId = nu
   } finally {
     activeYtCollects.delete(videoId);
     if (tabId != null && !reused) { try { await chrome.tabs.remove(tabId); } catch {} } // 复用的 tab 不关
-    navCollectBusy = false;
-    await new Promise((r) => setTimeout(r, navGapBaseMs + Math.random() * navGapRandomMs)); // 关闭间隔（防风控,对齐 B 站）
+    navGate.release();
+    await navGate.gap(); // 关闭间隔（防风控,对齐 B 站）
   }
 }
 
@@ -1348,7 +1347,7 @@ function flushPendingIngests() {
   });
 }
 
-loadPersistedState().then(() => loadNavGapConfig()).then(() => loadReconnectConfig()).then(() => {
+loadPersistedState().then(() => navGate.loadConfig(chrome.storage)).then(() => loadReconnectConfig()).then(() => {
   // 纯扩展模式：启动不连 server（模式由 storage 持久，SW 回收重启后仍生效）
   if (!isStandalone(connectionMode)) connect();
 });

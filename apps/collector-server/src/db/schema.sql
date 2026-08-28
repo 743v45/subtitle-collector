@@ -146,7 +146,7 @@ CREATE TABLE IF NOT EXISTS settings (
 -- server 重启恢复：启动时把 dispatched 重置回 pending（没等到回执就不确认，重新派发）。
 CREATE TABLE IF NOT EXISTS collect_tasks (
   id          INTEGER PRIMARY KEY AUTOINCREMENT,
-  source      TEXT NOT NULL CHECK(source IN ('bilibili','youtube')),
+  source      TEXT NOT NULL CHECK(source IN ('bilibili','youtube','douyin')), -- douyin 2026-08-29 平台化（v18 表重建迁移同步改 CHECK）
   source_vid  TEXT NOT NULL,
   url         TEXT NOT NULL,
   status      TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','dispatched','succeeded','failed','limited')),

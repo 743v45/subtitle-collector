@@ -10,11 +10,12 @@ B 站**字幕（subtitle）**相关浏览器扩展与配套服务的 monorepo（
 
 状态标记：✅ 已实现 ｜ 🚧 待建（当前优先级）｜ 📋 远期规划
 
-### 批量采集（✅ 四入口全通）
+### 批量采集（✅ 五入口全通）
 
 - ✅ **单视频**：浏览被动入库（打开 B 站视频页自动采）+ 手动补采 `collect subtitle <bvid>`
 - ✅ **UP 主批量**：`collect upper-videos <mid>` / `collect new-videos <mid>` / `collect discover <mid...>` + popup「UP 全部视频」卡勾选批量
 - ✅ **YouTube 频道批量**：popup 频道卡（`@handle/**` 任意子页识别，ytInitialData + InnerTube 全量分页，勾选批量 navigate 采集）+ CLI `collect yt-videos <@handle|UCxxx|URL> [--since-days N] [--collect]` + **web 采集页「按 UP / 频道批量」**（2026-08-24：`@handle`/`UC…`/频道链接展开勾选批量，`/api/upper-videos/expand` 双平台——YouTube 复用扩展 `list-yt-channel-videos` 一次全量回执，顺带落频道 creator 最小行供历史页按 UP 筛）
+- ✅ **抖音平台接入**（2026-08-29，用户现场指令解冻采集侧冻结政策后的全量集成）：**单视频三入口**（CLI `collect subtitle <aweme_id> --source douyin` / web 采集页粘贴 / 手机分享；分享短链 `v.douyin.com`、标准页 `/video/`、`modal_id`、图集 `/note/` 四形态归一，图集回执 `not_video`→failed；采集经扩展后台 tab 导航页面上下文取数，抖音接口带页面签名 server 不可直连）+ **博主批量**（web 采集页贴博主主页链接 / sec_uid，`/api/upper-videos/expand` 扩展滚动翻页聚合成一次回传）+ **web 全展示**（平台筛选/图标/原站外链）+ **ASR 兜底**（见下方 ASR 条目）+ popup 抖音视频页信息卡；超时对齐 YouTube 窗口式（默认 45s 无进展窗口，settings 三键可调）；搜索/话题采集、直播、登录徽章不在本期范围
 - ✅ **合集批量**：popup 合集卡（视频属合集时列出全集 `seasons_archives_list` 全量分页，勾选批量采集上报）
 - ✅ **搜索批量**：`collect search <keyword>` / `collect find <keyword>`（粉丝数/发布时间/播放量等条件过滤）；YouTube 关键词搜索 `collect yt-search <keyword> [--order relevance|newest|views] [--since-days N] [--collect]`（候选 + 未入库串行采集）
 - ✅ 充电专属视频采集 + 付费标记（`videos list --paid`）
@@ -22,13 +23,13 @@ B 站**字幕（subtitle）**相关浏览器扩展与配套服务的 monorepo（
 - ✅ 客户端任务派发管控：popup/options「仅上报状态」开关（关后调度器不向该客户端派采集任务，保持连接上报；多客户端时任务派给其他机器，全关留 pending）+ web 客户端页 / CLI `clients task-dispatch <id> <on|off>` 远程切换 + `clients list` 可见状态
 - ✅ 客户端命名：popup 底栏「改名」（id 不变，名字本地落盘并经 hello/client-name-state 同步 server `clients` 注册表持久化，清空保存即删除）；web 客户端页 / CLI `clients list` 显示名字、在线/离线时长，**列表含离线客户端**（server 重启不丢，旧 client_id 会留存）
 - ✅ 客户端登录态可观察（B 站 + YouTube 双平台）：扩展探测登录态（B 站 nav 接口 / YouTube 首页 ytcfg `LOGGED_IN` 标记）经 hello/login-state 上报，web 客户端页徽章（B 站带昵称/UID/大会员，YouTube 已/未登录）与 CLI `clients list` 可见、离线留存；采集回执带 login 字段——B 站未登录时充电视频 AI 字幕接口返回空（批量 no_subtitle 判因，2026-08-24 批次 1190 例根因）、YouTube 未登录时年龄限制视频播不了且 pot 受限加重（no_subtitle/pot_limited 判因，2026-08-25 镜像）
-- ✅ **无字幕标记**：采集确认无字幕（UP 未传 CC 且平台未生成 AI 字幕，两平台对齐）自动打 `no-subtitle` 系统档标签（`videos list --tag no-subtitle` 圈定），采到字幕轨时自动摘标——历史存量回填 `scripts/backfill-no-subtitle-tags.mjs`（两平台）
-- 🚧 无字幕视频兜底(ASR 批量):`asr backfill` 链路已建(2026-08-26 有条件解冻首建,CLAUDE.md §6)——CLI 圈定 no-subtitle B 站视频(server HTTP,tag 过滤纳入 system 档)→ wbi playurl 拉音轨(移植扩展签名)→ 本机 fireredasr-ui(FireRedASR-AED-L,verbose_json 段级出参+批推理 RTF≈0.2)→ `POST /api/asr/submit` 入 `asr-zh` 轨(origin='asr' 幂等去重、成功自动摘标、bundle/export/检索同等可用);⏳ 生产首跑验证待做;subtitle-extractor(voicetxt 失源,休眠)退役为备选;📋 YouTube 侧(yt-dlp+引擎选型)另行决策
+- ✅ **无字幕标记**：采集确认无字幕（UP 未传 CC 且平台未生成 AI 字幕，三平台对齐）自动打 `no-subtitle` 系统档标签（`videos list --tag no-subtitle` 圈定），采到字幕轨时自动摘标——历史存量回填 `scripts/backfill-no-subtitle-tags.mjs`（B 站/YouTube 存量；抖音随平台接入无存量）
+- 🚧 无字幕视频兜底(ASR 批量):`asr backfill` 链路已建(2026-08-26 有条件解冻首建,CLAUDE.md §6)——CLI 圈定 no-subtitle B 站视频(server HTTP,tag 过滤纳入 system 档)→ wbi playurl 拉音轨(移植扩展签名)→ 本机 fireredasr-ui(FireRedASR-AED-L,verbose_json 段级出参+批推理 RTF≈0.2)→ `POST /api/asr/submit` 入 `asr-zh` 轨(origin='asr' 幂等去重、成功自动摘标、bundle/export/检索同等可用);**2026-08-29 抖音接入**:`--source douyin` 圈定 no-subtitle 抖音视频→入库 extra.play_uri 直构 snssdk 直链下载 mp4(零 cookie,500MB 上限)→同一 fireredasr 链路转写入库;⏳ 生产首跑验证待做;subtitle-extractor(voicetxt 失源,休眠)退役为备选;📋 YouTube 侧(yt-dlp+引擎选型)另行决策
 - 📋 YouTube 频道完整统计入库（订阅数等 about 页指标；web 频道批量已落 creator 最小行 channelId+名称）
 
 ### 查询与导出（✅）
 
-- ✅ web 后台：视频库**列表布局**（一行一视频：平台图标+标题 / 创作者 / 播放 / 时长 / 轨道数 / 发布时间 / 分区 / 标签列，窄屏自动折叠次要列）、多维筛选搜索（关键词、字幕正文、**多标签下拉多选**、标签档位、分区、时间、时长/播放区间等；全部 URL query 承载，刷新/分享还原，视频详情的轨/版本选择亦进 URL）、UP 主 / 创作者分类管理（一套共享分类值——Agent 与人工在 UP 主两个槽位分开打标，创作者页按槽位 全部/Agent/人工 筛选，数量列点击跳转创作者列表按分类过滤） / 采集日志；**原站外链跳转**（视频标题旁 ↗ 开 B 站/YouTube 视频页、UP 名/创作者 ↗ 开空间页/频道页，覆盖视频库/详情/创作者/任务卡各处，站内详情整行点击不受影响）
+- ✅ web 后台：视频库**列表布局**（一行一视频：平台图标+标题 / 创作者 / 播放 / 时长 / 轨道数 / 发布时间 / 分区 / 标签列，窄屏自动折叠次要列）、多维筛选搜索（关键词、字幕正文、**多标签下拉多选**、标签档位、分区、时间、时长/播放区间等；全部 URL query 承载，刷新/分享还原，视频详情的轨/版本选择亦进 URL）、UP 主 / 创作者分类管理（一套共享分类值——Agent 与人工在 UP 主两个槽位分开打标，创作者页按槽位 全部/Agent/人工 筛选，数量列点击跳转创作者列表按分类过滤） / 采集日志；**原站外链跳转**（视频标题旁 ↗ 开 B 站/YouTube/抖音视频页、UP 名/创作者 ↗ 开空间页/频道页/博主主页，覆盖视频库/详情/创作者/任务卡各处，站内详情整行点击不受影响）
 - ✅ 采集任务历史页多维查询：按 UP（名字模糊 / mid 精确；任务行 UP 归属冗余——批量提交/重采/ingest 回填，未入库/失败任务也命中）、时间范围（今天 / 近7天 / 近30天 / 自定义）、平台、采集方式（批量/单点）、标题/关键词（vid 段搜 BV 号）、批次聚焦筛选；URL query 承载，可刷新/分享还原；重试并入原批次（聚焦视图实时看重试行，不另开新批）、任务全部到终态时浏览器系统通知（提交/重试后切走标签页，跑完即被提醒）
 - ✅ 视频标签六档：manual/batch/ai/system（落表，system=系统状态标如 no-subtitle，采集链路自动打/摘）+ bili（视频自带）/ **season（合集，只读实时读 extra.ugc_season.title）**，tag_priority 可调 + 按档位过滤/聚合
 - ✅ 字幕正文全文检索：`sub search <keyword>`（带时间戳定位片段）
@@ -48,7 +49,7 @@ B 站**字幕（subtitle）**相关浏览器扩展与配套服务的 monorepo（
 
 ### 移动端（🚧 Android 原生 app，2026-08-26 立项）
 
-- 🚧 **Android 采集客户端**（Kotlin + Jetpack Compose，[apps/collector-android](apps/collector-android)）：真用优先的手机入口——系统分享菜单接收 B 站/YouTube 链接（app 内粘贴同）→ 确认页展示解析出的视频 → `POST /api/collect-tasks` 建任务由扩展客户端执行；MVP 四件：提交采集 / 任务列表+重试删除 / 视频库搜索 / 视频详情+字幕正文。server URL + token 首启配置（Bearer 认证，server 侧零改动）；每次涉 app 改动 bump `versionCode`
+- 🚧 **Android 采集客户端**（Kotlin + Jetpack Compose，[apps/collector-android](apps/collector-android)）：真用优先的手机入口——系统分享菜单接收 B 站/YouTube/抖音链接（app 内粘贴同；抖音分享短链识别透传由 server 展开）→ 确认页展示解析出的视频 → `POST /api/collect-tasks` 建任务由扩展客户端执行；MVP 四件：提交采集 / 任务列表+重试删除 / 视频库搜索 / 视频详情+字幕正文。server URL + token 首启配置（Bearer 认证，server 侧零改动）；每次涉 app 改动 bump `versionCode`
 - 📋 第二批：统计看板、客户端在线状态页（手动刷新，不轮询）
 - 📋 远期：创作者/分类/标签管理、iOS 端（做时再定分发方式）、任务完成推送、离线缓存
 - **不做**：导出（复制代替）、CLI 功能进移动端；公网/组网通路单独立项（真用后评估 Tailscale）
@@ -57,7 +58,7 @@ B 站**字幕（subtitle）**相关浏览器扩展与配套服务的 monorepo（
 
 | App | 类型 | 作用 |
 |---|---|---|
-| [apps/subtitle-collector](apps/subtitle-collector) | 浏览器扩展（MV3，Vite + @crxjs 构建） | 在 B 站页面注入、抽取字幕元信息，经 WebSocket 上报给本地服务端 |
+| [apps/subtitle-collector](apps/subtitle-collector) | 浏览器扩展（MV3，Vite + @crxjs 构建） | 在 B 站/YouTube/抖音页面注入、抽取字幕元信息（YouTube/抖音为后台 tab 导航主动采集），经 WebSocket 上报给本地服务端 |
 | [apps/collector-server](apps/collector-server) | 后端（Node + TS） | 本地回环服务：收扩展上报（WS `/ext`）+ HTTP API（`/api/*`）+ 静态托管 web 产物 |
 | [apps/collector-web](apps/collector-web) | 前端（React + Vite） | 字幕库浏览/详情 UI；`vite build` 产物直接写入 `apps/collector-server/public/`，由 server 托管 |
 | [apps/subtitle-extractor](apps/subtitle-extractor) | 浏览器扩展（MV3，Vite + transformers.js） | B站音轨提取 → 浏览器本地 Whisper 转写 → SRT/VTT 导出（无字幕视频兜底，零后端、数据不出本机） |
@@ -66,7 +67,7 @@ B 站**字幕（subtitle）**相关浏览器扩展与配套服务的 monorepo（
 数据流（默认部署为本地闭环，`127.0.0.1`；暴露部署见「环境变量」）：
 
 ```
-浏览器(B站页面) ──MV3扩展──WS──▶ collector-server(21527) ◀──HTTP── 浏览器(collector-web UI)
+浏览器(B站/YouTube/抖音 页面) ──MV3扩展──WS──▶ collector-server(21527) ◀──HTTP── 浏览器(collector-web UI)
                                       │
                                       ▼
                                  SQLite (.db)

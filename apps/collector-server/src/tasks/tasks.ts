@@ -5,6 +5,14 @@ import { DEFAULT_COLLECT_TIMEOUT_MS, getCollectTimeout, type CollectTimeoutMs } 
 import { markNoSubtitle } from '../db/tags.js';
 import { inFlight } from './inflight.js';
 import { buildOrderBy, cmpBySortKey, TASK_SORT_KEYS, type TaskSortKey } from '../db/sort.js';
+import { DOUYIN_AWEME_ID_RE, DOUYIN_PAGE_HOSTS, DOUYIN_SHORT_HOSTS, douyinWatchUrl, parseDouyinUrl } from './douyin-url.js';
+import type { Source } from './source.js';
+
+// 平台枚举与 UP/频道展开族（2026-08-29 抽出到 ./source.ts 与 ./upper-expand.ts，防本文件台账
+// 恶化）；在此 re-export 保持既有 import 路径（http 层 / CLI / 测试）不变。
+export type { Source };
+export type { UpperVideoItem, YtChannelIdent, UpperExpandDeps, ExpandUpperQuery } from './upper-expand.js';
+export { expandUpperVideos, parseYtChannelArg } from './upper-expand.js';
 
 // ── 采集任务系统：手机/网页提交 → server 派发给桌面扩展 → 扩展采集回执 ──
 // 设计依据：docs/superpowers/specs/2026-08-13-mobile-collect-task-design.md
@@ -15,7 +23,7 @@ export type TaskStatus = 'pending' | 'dispatched' | 'succeeded' | 'failed' | 'li
 
 export interface CollectTask {
   id: number;
-  source: 'bilibili' | 'youtube';
+  source: Source;
   source_vid: string;
   url: string;
   status: TaskStatus;
@@ -50,14 +58,15 @@ const TASK_WITH_TITLE = `${TASK_SELECT} WHERE t.id = ?`;
 // 单任务在扩展侧的执行预算（按平台分档，可经 settings.collect_timeout_ms 配置）——须覆盖扩展
 // 全链路（导航加载 + 多请求 + 宽限 + 关 tab 间隔），超时早于扩展实际完成会落假失败（扩展仍在
 // 跑并落库，任务页却显示失败，用户重试 = 重复采集）。
-// bilibili：navigate ~20s + view/tags/player 拉取；youtube：后台 tab + 无进展窗口 + 8s 宽限 + 关 tab 间隔。
-// youtube 等回执预算 = 无进展窗口 + 135s 余量（窗口本身可配置下发扩展,余量覆盖关 tab/INGEST 落库,
-// 对齐原硬编码 45s 窗口 + 180s 预算的关系）。
+// bilibili：navigate ~20s + view/tags/player 拉取；youtube / douyin：后台 tab navigate +
+// 无进展窗口 + 8s 宽限 + 关 tab 间隔（窗口可配置下发扩展）。
+// youtube / douyin 等回执预算 = 无进展窗口 + 135s 余量（窗口本身可配置下发扩展,余量覆盖关
+// tab/INGEST 落库,对齐原硬编码 45s 窗口 + 180s 预算的关系）。
 export function commandTimeoutMs(
-  source: 'bilibili' | 'youtube',
+  source: Source,
   timeouts: CollectTimeoutMs = DEFAULT_COLLECT_TIMEOUT_MS,
 ): number {
-  return source === 'youtube' ? timeouts.youtube + 135_000 : timeouts.bilibili;
+  return source === 'bilibili' ? timeouts.bilibili : timeouts[source] + 135_000;
 }
 // 兜底轮询周期（事件驱动派发之外，防事件遗漏）
 const SWEEP_MS = 15_000;
@@ -71,35 +80,41 @@ const URL_RE = /https?:\/\/[^\s<>"')\]]+/g;
 export type FetchLike = (url: string, init?: RequestInit) => Promise<Response>;
 
 export interface ParsedTarget {
-  source: 'bilibili' | 'youtube';
+  source: Source;
   source_vid: string;
   url: string; // 解析出 videoId 后回填的标准 watch URL
 }
 
-// 从粘贴文本提取第一个视频 URL（b23.tv / youtu.be / bilibili.com / youtube.com）
+// 三平台视频页/短链域白名单（手机分享文案里的视频 URL 判定；抖音域见 douyin-url.ts）
+const VIDEO_URL_HOSTS: ReadonlySet<string> = new Set([
+  'b23.tv', 'bili2233.cn', 'bili2233.com',
+  'www.bilibili.com', 'bilibili.com', 'm.bilibili.com',
+  'youtu.be', 'www.youtu.be', 'www.youtube.com', 'youtube.com', 'm.youtube.com', 'music.youtube.com',
+  ...DOUYIN_SHORT_HOSTS, ...DOUYIN_PAGE_HOSTS,
+]);
+
+// 从粘贴文本提取第一个视频 URL（B 站 / YouTube / 抖音）
 export function extractVideoUrl(text: string): string | null {
   const urls = text.match(URL_RE) ?? [];
   for (const u of urls) {
     let host: string;
     try { host = new URL(u).hostname; } catch { continue; }
-    if (
-      host === 'b23.tv' || host === 'bili2233.cn' || host === 'bili2233.com'
-      || host === 'www.bilibili.com' || host === 'bilibili.com' || host === 'm.bilibili.com'
-      || host === 'youtu.be' || host === 'www.youtu.be'
-      || host === 'www.youtube.com' || host === 'youtube.com' || host === 'm.youtube.com' || host === 'music.youtube.com'
-    ) {
-      return u;
-    }
+    if (VIDEO_URL_HOSTS.has(host)) return u;
     return null; // 只认第一个 URL,非视频站直接拒
   }
   return null;
 }
 
-// 短链展开：b23.tv / youtu.be 跟随重定向拿最终 URL（Node fetch 默认跟 301/302）
+// 短链域（需跟随 301/302 展开拿最终 URL；Node fetch 默认跟重定向）
+const SHORT_LINK_HOSTS: ReadonlySet<string> = new Set([
+  'b23.tv', 'bili2233.cn', 'bili2233.com', 'youtu.be', 'www.youtu.be', ...DOUYIN_SHORT_HOSTS,
+]);
+
+// 短链展开：跟随重定向拿最终 URL（Response.url）
 export async function expandShortLink(url: string, fetcher: FetchLike): Promise<string> {
   let host: string;
   try { host = new URL(url).hostname; } catch { return url; }
-  if (host !== 'b23.tv' && host !== 'bili2233.cn' && host !== 'bili2233.com' && host !== 'youtu.be' && host !== 'www.youtu.be') return url;
+  if (!SHORT_LINK_HOSTS.has(host)) return url;
   try {
     const res = await fetcher(url, { redirect: 'follow' });
     return res.url || url; // Response.url = 重定向后的最终 URL
@@ -134,6 +149,11 @@ export function parseVideoUrl(url: string): ParsedTarget | null {
     if (shorts) return { source: 'youtube', source_vid: shorts[1], url: `https://www.youtube.com/watch?v=${shorts[1]}` };
     return null;
   }
+  // ── 抖音：/video/<id> / ?modal_id= / /note/<id>(图集)→ 19 位 aweme_id（解析细节在 douyin-url.ts）──
+  if (DOUYIN_PAGE_HOSTS.has(host)) {
+    const t = parseDouyinUrl(u);
+    return t ? { source: 'douyin', ...t } : null;
+  }
   return null;
 }
 
@@ -167,7 +187,7 @@ const ACTIVE_TASK_WHERE = "t.status IN ('pending', 'dispatched')";
 // 判据与批量端点一致：双击提交返回既有任务而非再建一条（双采）。
 export function findActiveTask(
   db: Database.Database,
-  source: 'bilibili' | 'youtube',
+  source: Source,
   sourceVid: string,
 ): CollectTask | null {
   const row = db.prepare(`
@@ -180,23 +200,27 @@ export function findActiveTask(
 
 // ── 批量建任务（popup/web 按 UP 批量采集）──
 // 去重：同 (source, source_vid) 已有未终态任务（pending/dispatched）跳过；终态（succeeded/failed）允许重采。
-// 入参 vid 非法（bilibili 非 BV 格式 / youtube 非 11 位）或重复直接忽略，不进 skipped 也不建任务。
-// source 参数化（2026-08-21，YouTube 频道批量）：默认 bilibili 兼容旧调用。
+// 入参 vid 非法（bilibili 非 BV 格式 / youtube 非 11 位 / douyin 非 19 位 aweme_id）或重复直接忽略，
+// 不进 skipped 也不建任务。source 参数化（2026-08-21，YouTube 频道批量）：默认 bilibili 兼容旧调用。
 const VID_RE: Record<string, RegExp> = {
   bilibili: /^BV[0-9A-Za-z]{10}$/,
   youtube: /^[\w-]{11}$/,
+  douyin: DOUYIN_AWEME_ID_RE, // 19 位 aweme_id（与 parseVideoUrl 的 URL 判据同源）
 };
 export function createTasksBatch(
   db: Database.Database,
   vids: unknown,
-  source: 'bilibili' | 'youtube' = 'bilibili',
+  source: Source = 'bilibili',
   creatorClientId: string | null = null,
-  creatorUid: string | null = null, // UP 归属（B 站 mid / YouTube channelId；批量提交入口已知）
+  creatorUid: string | null = null, // UP 归属（B 站 mid / YouTube channelId / 抖音 sec_uid；批量提交入口已知）
   force = false, // 2026-08-25：默认跳过「已有字幕轨」的入库视频（重采须显式 force）
 ): { created: CollectTask[]; skipped: string[]; skippedCollected: string[] } {
   const re = VID_RE[source];
-  const urlFor = (vid: string) =>
-    source === 'youtube' ? `https://www.youtube.com/watch?v=${vid}` : `https://www.bilibili.com/video/${vid}`;
+  const urlFor = (vid: string): string => {
+    if (source === 'youtube') return `https://www.youtube.com/watch?v=${vid}`;
+    if (source === 'douyin') return douyinWatchUrl(vid);
+    return `https://www.bilibili.com/video/${vid}`;
+  };
   // 已有字幕轨判定（批量默认不重采的判据）：videos 行存在且至少一条 subtitle_tracks。
   // 无字幕（no_subtitle/pot_limited 0 轨）不在跳过之列——后续平台可能出字幕，重试合理。
   const hasSubtitle = force ? null : db.prepare(
@@ -219,184 +243,9 @@ export function createTasksBatch(
   return { created, skipped, skippedCollected };
 }
 
-// ── UP/频道全部视频列表（web 端「按 UP 批量」用，server 经扩展 WS 代理拉取；2026-08-24 两平台）──
-// server 不直连平台（无浏览器 cookie/wbi 环境且数据中心 IP 易风控），复用扩展 action：
-// bilibili 逐页 list-upper-videos（background.js arc/search 封装，页间节流对齐 popup 的 500ms）；
-// youtube 一次 list-yt-channel-videos（扩展内全量分页 + 1h 缓存，refresh 绕过）。
-export interface UpperVideoItem {
-  bvid: string;          // 平台内视频 ID：B 站 BV 号 / YouTube 11 位 ID（沿用字段名兼容渲染层）
-  title: string;
-  created: number | null;
-  play: number | null;
-  length: string | null; // arc/search 原样 "MM:SS" / "HH:MM:SS"
-  pic: string | null;    // 封面 URL（"//" 协议头相对形式归一为 https:）
-  collected: boolean;    // 已入库（videos 表按平台命中）
-}
-
-// ── YouTube 频道标识与参数解析（2026-08-24 从 cli/commands/collect.ts 下沉，http 端点复用）──
-/** 频道标识（扩展 list-yt-channel-videos action 的 ident 参数）。 */
-export interface YtChannelIdent { handle?: string; channelId?: string; custom?: string; }
-
-/** 用户输入（@handle / UCxxx / 频道页 URL）→ ident。无法识别抛错（调用方转 400/ARGS）。 */
-export function parseYtChannelArg(arg: string): YtChannelIdent {
-  const a = arg.trim();
-  if (/^@[\w.-]{3,30}$/.test(a)) return { handle: a };
-  if (/^UC[\w-]{22}$/.test(a)) return { channelId: a };
-  try {
-    const u = new URL(a);
-    if (u.hostname === 'youtube.com' || u.hostname.endsWith('.youtube.com')) {
-      const seg = u.pathname.split('/').filter(Boolean);
-      if (seg[0] && /^@[\w.-]{3,30}$/.test(seg[0])) return { handle: seg[0] };
-      if (seg[0] === 'channel' && seg[1] && /^UC[\w-]{22}$/.test(seg[1])) return { channelId: seg[1] };
-      if ((seg[0] === 'c' || seg[0] === 'user') && seg[1] && /^[\w.-]+$/.test(seg[1])) return { custom: seg[1] };
-    }
-  } catch { /* 非 URL → 落到下面统一报错 */ }
-  throw new Error(`无法识别的频道参数：${arg}（支持 @handle / UC 开头 channelId / 频道页 URL）`);
-}
-
-/** expand 查询（联合类型分平台）：B 站按 mid 逐页；YouTube 按 ident 一次全量。 */
-export type ExpandUpperQuery =
-  | { source: 'bilibili'; mid: string }
-  | { source: 'youtube'; ident: YtChannelIdent };
-
-// 封面 URL 归一：arc/search 的 pic 常为 "//i2.hdslb.com/..." 协议头相对形式，补 https:
-function normalizePic(p: unknown): string | null {
-  if (typeof p !== 'string' || p === '') return null;
-  return p.startsWith('//') ? `https:${p}` : p;
-}
-
-// 依赖注入（测试 mock 用）；生产默认经 wsBridge 取真 WS 实现（ws/server.ts 加载时注册）。
-export interface UpperExpandDeps {
-  listClients?: () => Array<{ client_id: string; task_dispatch_enabled?: boolean }>;
-  requestCommand?: (
-    clientId: string,
-    action: string,
-    params: Record<string, unknown>,
-    timeoutMs?: number,
-  ) => Promise<{ ok: true; result: any } | { ok: false; code: 'offline' | 'timeout' }>;
-  sleep?: (ms: number) => Promise<void>;
-  pageGapMs?: number;
-}
-
-const UPPER_PAGE_TIMEOUT_MS = 30_000; // 单页（30 条）30s 上限，全量循环整体不设超时
-const YT_CHANNEL_TIMEOUT_MS = 180_000; // YouTube 全量分页在扩展内完成（大频道十几秒），对齐 CLI 默认采集超时
-
-// collected 标注：videos 表按平台 source_vid IN 分批查（SQLite 绑定变量上限兜底 chunk 500）
-function markCollected(db: Database.Database, items: UpperVideoItem[], source: 'bilibili' | 'youtube'): void {
-  for (let i = 0; i < items.length; i += 500) {
-    const chunk = items.slice(i, i + 500);
-    const ph = chunk.map(() => '?').join(',');
-    const rows = db.prepare(
-      `SELECT source_vid FROM videos WHERE source = ? AND source_vid IN (${ph})`,
-    ).all(source, ...chunk.map((x) => x.bvid)) as Array<{ source_vid: string }>;
-    const hit = new Set(rows.map((row) => row.source_vid));
-    for (const it of chunk) it.collected = hit.has(it.bvid);
-  }
-}
-
-// YouTube 频道展开：一次 list-yt-channel-videos 全量回执（扩展内分页 + 1h 缓存，refresh 绕过）。
-// 顺带落 creator 最小行（source_uid=channelId + name）——库里无该频道才写，批量任务的 UP 筛选归属；
-// 完整频道统计（订阅数等）需 about 页抓取，扩展侧后续补（见 README 待建）。
-async function expandYtChannelVideos(
-  db: Database.Database,
-  ident: YtChannelIdent,
-  reqCmd: NonNullable<UpperExpandDeps['requestCommand']>,
-  clientId: string,
-): Promise<{ total: number; items: UpperVideoItem[]; channel: { id: string | null; name: string | null } }> {
-  const r = await reqCmd(clientId, 'list-yt-channel-videos', { ident, refresh: true }, YT_CHANNEL_TIMEOUT_MS);
-  if (!r.ok) throw new Error(r.code === 'offline' ? '扩展离线（拉取中断）' : '扩展执行超时');
-  const result = r.result ?? {};
-  if (result.ok === false) throw new Error(String(result.error ?? 'list-yt-channel-videos 失败'));
-  const data = result.data ?? {};
-  const raw: Array<{ vid?: unknown; title?: unknown; created?: unknown; play?: unknown; length?: unknown; pic?: unknown }> =
-    Array.isArray(data.items) ? data.items : [];
-  const items: UpperVideoItem[] = [];
-  for (const v of raw) {
-    if (typeof v?.vid !== 'string') continue;
-    items.push({
-      bvid: v.vid,
-      title: typeof v.title === 'string' ? v.title : '',
-      created: typeof v.created === 'number' ? v.created : null,
-      play: typeof v.play === 'number' ? v.play : null,
-      length: typeof v.length === 'string' ? v.length : null,
-      pic: normalizePic(v.pic),
-      collected: false,
-    });
-  }
-  const channelId = typeof data.channel_id === 'string' && data.channel_id ? data.channel_id : null;
-  const channelName = typeof data.channel_name === 'string' && data.channel_name ? data.channel_name : null;
-  if (channelId) {
-    const exists = db.prepare("SELECT 1 FROM creators WHERE source = 'youtube' AND source_uid = ?").get(channelId);
-    if (!exists) {
-      const now = Date.now();
-      db.prepare('INSERT INTO creators (source, source_uid, name, first_seen_at, updated_at) VALUES (?, ?, ?, ?, ?)')
-        .run('youtube', channelId, channelName, now, now);
-    }
-  }
-  markCollected(db, items, 'youtube');
-  return { total: typeof data.total === 'number' ? data.total : items.length, items, channel: { id: channelId, name: channelName } };
-}
-
-export async function expandUpperVideos(
-  db: Database.Database,
-  query: ExpandUpperQuery,
-  deps: UpperExpandDeps = {},
-): Promise<{ total: number; items: UpperVideoItem[]; channel?: { id: string | null; name: string | null } }> {
-  const lsClients = deps.listClients ?? getWsBridge().listClients;
-  const reqCmd = deps.requestCommand ?? getWsBridge().requestCommand;
-  const sleep = deps.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
-  const gap = deps.pageGapMs ?? 500;
-
-  const clients = lsClients();
-  if (clients.length === 0) throw new Error('扩展离线：UP 视频列表需经桌面扩展拉取（连上扩展后重试）');
-  // 客户端选择（2026-08-23 任务派发池）：优先接受任务派发的客户端——批量采集编排尽量落在
-  // 专职采集机上（B 站 API 配额/风控压力同源）。池空（全仅上报）回退任意在线：
-  // list-upper-videos / list-yt-channel-videos 是纯 API 代理查询，无标签页/UI 干扰，不必拒绝。
-  const pool = clients.filter((c) => c.task_dispatch_enabled !== false);
-  const clientId = (pool[0] ?? clients[0]).client_id;
-
-  // 平台分派：YouTube 一次全量回执（扩展内分页），B 站走下方逐页循环
-  if (query.source === 'youtube') return expandYtChannelVideos(db, query.ident, reqCmd, clientId);
-
-  const mid = query.mid;
-  const items: UpperVideoItem[] = [];
-  const seen = new Set<string>(); // bvid 去重（页间新投稿导致分页位移重叠时防重复）
-  let total = 0;
-  let noNewStreak = 0; // 连续整页无新视频的页数（≥3 判定分页停滞/重叠死循环，终止）
-  for (let page = 1; ; page++) {
-    // 契约对齐 background.js list-upper-videos action：读 msg.page / msg.page_size（曾误用 pn/ps
-    // 导致扩展每页都回落第 1 页、列表整页重复 N 遍 —— 2026-08-19 回归修复）
-    const r = await reqCmd(clientId, 'list-upper-videos', { mid, page, page_size: 30 }, UPPER_PAGE_TIMEOUT_MS);
-    if (!r.ok) throw new Error(r.code === 'offline' ? '扩展离线（拉取中断）' : '扩展执行超时');
-    const result = r.result ?? {};
-    if (result.ok === false) throw new Error(String(result.error ?? 'list-upper-videos 失败'));
-    const data = result.data ?? {};
-    const pageItems: Array<{ bvid?: unknown; title?: unknown; created?: unknown; play?: unknown; length?: unknown; pic?: unknown }> = Array.isArray(data.items) ? data.items : [];
-    total = typeof data.total === 'number' ? data.total : items.length + pageItems.length;
-    let added = 0;
-    for (const v of pageItems) {
-      if (typeof v?.bvid !== 'string' || seen.has(v.bvid)) continue;
-      seen.add(v.bvid);
-      added++;
-      items.push({
-        bvid: v.bvid,
-        title: typeof v.title === 'string' ? v.title : '',
-        created: typeof v.created === 'number' ? v.created : null,
-        play: typeof v.play === 'number' ? v.play : null,
-        length: typeof v.length === 'string' ? v.length : null,
-        pic: normalizePic(v.pic),
-        collected: false,
-      });
-    }
-    if (pageItems.length === 0 || items.length >= total) break;
-    noNewStreak = added > 0 ? 0 : noNewStreak + 1;
-    if (noNewStreak >= 3) break; // 整页重复连续 3 页：分页停滞（重叠/回落），保已拉部分终止
-    await sleep(gap); // 页间节流防风控
-  }
-
-  markCollected(db, items, 'bilibili');
-  return { total, items };
-}
+// UP/频道/博主视频列表展开（expandUpperVideos / parseYtChannelArg / UpperExpandDeps 等）已抽出
+// 到 ./upper-expand.ts（2026-08-29 douyin 平台化时迁移，防本文件台账恶化）；本文件顶部 re-export
+// 保持既有 import 路径不变。
 
 export function getTask(db: Database.Database, id: number): CollectTask | null {
   const row = db.prepare(TASK_WITH_TITLE).get(id) as CollectTask | undefined;
@@ -461,7 +310,7 @@ export function retryTask(db: Database.Database, id: number): CollectTask | null
 // status/source/since/until/batchId 全走 t.* 列，覆盖全部任务。
 export interface TaskListFilter {
   status?: readonly TaskStatus[];
-  source?: 'bilibili' | 'youtube';
+  source?: Source;
   batchId?: string;
   batchScope?: 'batch' | 'single'; // 批量/单点档：batch=batch_id 非空（批量提交），single=空（单条/旧任务）
   creator?: string;    // UP 名模糊（归属关联的 creators.name LIKE）
@@ -589,6 +438,22 @@ function extNeedsUpdate(result: { error?: unknown; data?: unknown; needs_update?
   return typeof data === 'object' && data !== null && (data as { needs_update?: unknown }).needs_update === true;
 }
 
+// 任务 → 派发载荷映射（纯函数供测试）：action / params 按平台分叉，参数名对齐扩展侧
+// handler——bilibili 收 bvid；youtube 收 videoId + timeout_ms；douyin 收 awemeId + timeout_ms
+// （navigate 平台的无进展窗口随命令下发，settings.collect_timeout_ms 可配，旧扩展忽略未知
+// 字段回落内置窗口；2026-08-29 douyin 平台化加入）。
+export function dispatchPayload(
+  task: Pick<CollectTask, 'source' | 'source_vid'>,
+  timeouts: CollectTimeoutMs,
+): { action: string; params: Record<string, unknown> } {
+  const sv = task.source_vid;
+  switch (task.source) {
+    case 'bilibili': return { action: 'fetch-subtitle', params: { bvid: sv } };
+    case 'youtube': return { action: 'fetch-youtube-subtitle', params: { videoId: sv, timeout_ms: timeouts.youtube } };
+    default: return { action: 'fetch-douyin-subtitle', params: { awemeId: sv, timeout_ms: timeouts.douyin } };
+  }
+}
+
 export function attachTaskScheduler(db: Database.Database): void {
   resetDispatched(db); // 启动恢复
 
@@ -612,25 +477,29 @@ export function attachTaskScheduler(db: Database.Database): void {
     inFlight.set(clientId, taskId);
     db2.prepare("UPDATE collect_tasks SET status = 'dispatched', client_id = ? WHERE id = ? AND status = 'pending'").run(clientId, taskId);
     pushTask(db2, taskId);
-    const action = task.source === 'bilibili' ? 'fetch-subtitle' : 'fetch-youtube-subtitle';
-    // youtube：无进展窗口随命令下发（settings.collect_timeout_ms 可配;旧扩展忽略未知字段回落内置 45s）
     const timeouts = getCollectTimeout(db2);
-    const params = task.source === 'bilibili'
-      ? { bvid: task.source_vid }
-      : { videoId: task.source_vid, timeout_ms: timeouts.youtube };
+    const { action, params } = dispatchPayload(task, timeouts);
     const r = await getWsBridge().requestCommand(clientId, action, params, commandTimeoutMs(task.source, timeouts));
     if (r.ok && r.result?.ok) {
       const data = r.result.data ?? {};
-      // 字幕受限（pot_limited：扩展全轨 body 为空，0 轨入库，元信息已入库）→ limited 终态：
-      // 执行本身成功但产出受限，区别于 succeeded（展示「受限」而非「已完成」，允许重试重采）。
-      const status = data?.reason === 'pot_limited' ? 'limited' : 'succeeded';
-      db2.prepare("UPDATE collect_tasks SET status = ?, result = ?, finished_at = ? WHERE id = ?")
-        .run(status, JSON.stringify(data), Date.now(), taskId);
-      pushTask(db2, taskId);
-      // 确认无字幕（两平台回执均回 reason=no_subtitle）→ 打 no-subtitle 系统标（远期 ASR 定位锚点；
-      // 视频元信息行已由扩展 ingest 先行落库，打标必命中）。失败静默——状态行已更新，标可回填。
-      if (data?.reason === 'no_subtitle') {
-        try { markNoSubtitle(db2, { source: task.source, source_vid: task.source_vid }); } catch { /* 回填补 */ }
+      // 图集（douyin aweme_type≠0：S3 扩展按 ok:true + reason='not_video' 回执，R4 定案）→ failed——
+      // 「成功但什么都没采」不诚实，图集无视频轨对字幕系统无意义；与下方 pot_limited→limited 映射同构。
+      if (data?.reason === 'not_video') {
+        db2.prepare("UPDATE collect_tasks SET status = 'failed', error = ?, finished_at = ? WHERE id = ?")
+          .run('图文/图集,无视频轨', Date.now(), taskId);
+        pushTask(db2, taskId);
+      } else {
+        // 字幕受限（pot_limited：扩展全轨 body 为空，0 轨入库，元信息已入库）→ limited 终态：
+        // 执行本身成功但产出受限，区别于 succeeded（展示「受限」而非「已完成」，允许重试重采）。
+        const status = data?.reason === 'pot_limited' ? 'limited' : 'succeeded';
+        db2.prepare("UPDATE collect_tasks SET status = ?, result = ?, finished_at = ? WHERE id = ?")
+          .run(status, JSON.stringify(data), Date.now(), taskId);
+        pushTask(db2, taskId);
+        // 确认无字幕（两平台回执均回 reason=no_subtitle）→ 打 no-subtitle 系统标（远期 ASR 定位锚点；
+        // 视频元信息行已由扩展 ingest 先行落库，打标必命中）。失败静默——状态行已更新，标可回填。
+        if (data?.reason === 'no_subtitle') {
+          try { markNoSubtitle(db2, { source: task.source, source_vid: task.source_vid }); } catch { /* 回填补 */ }
+        }
       }
     } else {
       // 失败分类：未收到回执（offline/timeout）→ 连接层文案；收到失败回执 →

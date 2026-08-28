@@ -112,7 +112,7 @@ export interface ConsistencyIssue {
 // result 是 JSON 字符串（succeeded 时含 captured/tracks 等）;title 为库内视频标题,未入库 null。
 export interface CollectTask {
   id: number;
-  source: 'bilibili' | 'youtube';
+  source: 'bilibili' | 'youtube' | 'douyin';
   source_vid: string;
   url: string;
   status: 'pending' | 'dispatched' | 'succeeded' | 'failed' | 'limited';

@@ -1,5 +1,11 @@
 // migrate 幂等测试：验证 categories 表创建 + creators 两列追加（schema.sql + runMigrations 双轨）。
 // 用 :memory: 库跑 migrate（执行 schema.sql）+ runMigrations（ALTER 旧库补列），第二次不报错。
+//
+// 测试轮次记录表（对齐全局 8.2）：
+// | 轮次 | 范围 | 结果 | 备注 |
+// |---|---|---|---|
+// | R1 | 版本账本/幂等/v5-v16 各步骤 | 通过 | |
+// | R2 | v18 collect_tasks.source CHECK 放行 douyin（旧库重建/新库重放） | 通过 | 2026-08-29 S2 抖音平台化 |
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -402,5 +408,57 @@ test('v16：新库（schema.sql 无 scope 表）重放迁移不残留脏事务�
     assert.equal(db.inTransaction, false, '不应残留打开的事务');
     assert.equal(db.pragma('foreign_keys', { simple: true }), 1, 'foreign_keys 应为开启');
     assert.equal(db.prepare("INSERT INTO categories (name, sort_order, created_at) VALUES ('新库行', 0, 1)").run().changes, 1, 'categories 应可写（写入未滞留在未提交事务）');
+  } finally { db.close(); }
+});
+
+// ── v18（2026-08-29 douyin 平台化）：collect_tasks.source CHECK 放行 douyin（单事务表重建）──
+test('v18 迁移：旧 CHECK(2 平台)库重建后可写 douyin；存量数据/索引完整；重放幂等', () => {
+  const db = new Database(':memory:');
+  try {
+    // 模拟 v17 形态旧库：重建为旧 CHECK（不含 douyin；列集 = v11 后全量，含 creator_uid）+ 存量行
+    migrate(db);
+    db.exec('DROP TABLE collect_tasks');
+    db.exec(`CREATE TABLE collect_tasks (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      source TEXT NOT NULL CHECK(source IN ('bilibili','youtube')),
+      source_vid TEXT NOT NULL, url TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','dispatched','succeeded','failed','limited')),
+      client_id TEXT, creator_client_id TEXT, error TEXT, result TEXT, batch_id TEXT, creator_uid TEXT,
+      created_at INTEGER NOT NULL, finished_at INTEGER)`);
+    const ins = db.prepare(
+      "INSERT INTO collect_tasks (source, source_vid, url, status, creator_uid, batch_id, created_at, finished_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+    );
+    ins.run('youtube', 'gaDdrDdczO4', 'https://y1', 'succeeded', 'UC1', 'batch-a', 1, 2);
+    ins.run('bilibili', 'BV1xx411c7mD', 'https://b1', 'failed', '42', null, 3, 4);
+    db.pragma('user_version = 17');
+
+    runMigrations(db);
+    assert.equal(db.pragma('user_version', { simple: true }), MIGRATIONS[MIGRATIONS.length - 1].version, '账本应写到最新');
+    // 旧 CHECK 下这会抛约束；重建后 douyin 合法可写
+    db.prepare("INSERT INTO collect_tasks (source, source_vid, url, status, created_at) VALUES ('douyin', '7123456789012345678', 'https://dy', 'pending', 5)").run();
+    // 存量行完整迁移（id/终态/冗余列逐字段比对——表重建丢列是最需要盯的回归面）
+    const rows = db.prepare(
+      'SELECT id, source, source_vid, status, creator_uid, batch_id, finished_at FROM collect_tasks ORDER BY id',
+    ).all() as Array<Record<string, unknown>>;
+    assert.deepEqual(rows, [
+      { id: 1, source: 'youtube', source_vid: 'gaDdrDdczO4', status: 'succeeded', creator_uid: 'UC1', batch_id: 'batch-a', finished_at: 2 },
+      { id: 2, source: 'bilibili', source_vid: 'BV1xx411c7mD', status: 'failed', creator_uid: '42', batch_id: null, finished_at: 4 },
+      { id: 3, source: 'douyin', source_vid: '7123456789012345678', status: 'pending', creator_uid: null, batch_id: null, finished_at: null },
+    ]);
+    // 索引随重建恢复；重放幂等（版本短路，不动数据）
+    assert.ok(db.prepare("SELECT name FROM sqlite_master WHERE type='index' AND name='idx_tasks_status'").get(), 'idx_tasks_status 应随重建恢复');
+    runMigrations(db);
+    assert.equal((db.prepare('SELECT COUNT(*) AS n FROM collect_tasks').get() as { n: number }).n, 3, '重放不增不减');
+  } finally { db.close(); }
+});
+
+test('v18 迁移：新库（schema.sql 已带 douyin CHECK）全量重放安全，不留脏事务（scope-free 写法）', () => {
+  const db = new Database(':memory:');
+  try {
+    migrate(db);
+    assert.doesNotThrow(() => runMigrations(db), '新库重放 v18 表重建应完整执行不报错');
+    assert.equal(db.inTransaction, false, '不应残留打开的事务');
+    // 新库 CHECK 本就含 douyin，重放后仍可写
+    assert.equal(db.prepare("INSERT INTO collect_tasks (source, source_vid, url, status, created_at) VALUES ('douyin', '7123456789012345678', 'https://dy', 'pending', 1)").run().changes, 1);
   } finally { db.close(); }
 });

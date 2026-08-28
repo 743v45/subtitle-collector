@@ -1,7 +1,7 @@
 // HTTP handler：server 侧设置（settings KV）。
 // 路由：GET/PUT /api/settings/tag-priority（标签展示优先级，六档精确排列）
-//       GET/PUT /api/settings/collect-timeout（采集超时 {bilibili, youtube} 毫秒,
-//             youtube=扩展无进展窗口,bilibili=server 等回执预算;范围 [15s, 600s]）
+//       GET/PUT /api/settings/collect-timeout（采集超时 {bilibili, youtube, douyin} 毫秒,
+//             youtube/douyin=扩展无进展窗口,bilibili=server 等回执预算;范围 [15s, 600s]）
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type Database from 'better-sqlite3';
 import { getTagPriority, setTagPriority, getCollectTimeout, setCollectTimeout } from '../db/settings.js';

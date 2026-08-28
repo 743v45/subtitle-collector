@@ -9,11 +9,7 @@ import {
   useClientId,
   useReporting,
   useTaskDispatch,
-  useSeasonVideos,
   useServerConfig,
-  useUpperAllVideos,
-  useUpperEntry,
-  useYoutubeChannelVideos,
   useYtLogin,
   authInit,
   diffConsistency,
@@ -23,11 +19,12 @@ import {
   type CreatorState,
   type LocalCollectedState,
   type LoginState,
-  type SeasonAllState,
-  type UpperAllState,
-  type YtChannelIdent,
-  type YtChannelState,
 } from './hooks';
+// UP/频道/博主 hooks 家族已拆至 hooks-upper.ts（2026-08-29 S8 偿还行数/复杂度台账）
+import {
+  useSeasonVideos, useUpperAllVideos, useUpperEntry, useYoutubeChannelVideos,
+  type SeasonAllState, type UpperAllState, type YtChannelIdent, type YtChannelState,
+} from './hooks-upper';
 import { useCreatorCollected } from './hooks-collected';
 // 客户端标识栏（改名入口）与 copyText 已拆至 ClientIdFoot.tsx（2026-08-24 偿还行数台账）
 import { ClientIdFoot, copyText } from './ClientIdFoot';

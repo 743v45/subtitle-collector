@@ -842,8 +842,8 @@ describe('C. 派发超时 → failed「扩展执行超时」→ 迟到 result / 
   before(async () => {
     const r = await startServer();
     srv = r.handle!;
-    // bilibili 采集超时调到下限 15s（PUT 校验 ≥15s，低于会 400）
-    const put = await api(srv.base, 'PUT', '/api/settings/collect-timeout', { bilibili: 15_000, youtube: 45_000 });
+    // bilibili 采集超时调到下限 15s（PUT 校验 ≥15s，低于会 400；三键齐全——douyin 档 2026-08-29 加入）
+    const put = await api(srv.base, 'PUT', '/api/settings/collect-timeout', { bilibili: 15_000, youtube: 45_000, douyin: 45_000 });
     assert.equal(put.status, 200);
   });
 

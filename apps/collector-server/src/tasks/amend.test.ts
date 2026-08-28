@@ -6,6 +6,14 @@ import { join } from 'node:path';
 import { openDb, migrate } from '../db/migrate.js';
 import { amendLateResult, amendLateIngest } from './amend.js';
 
+// amend.ts 单测：迟到回执/迟到 INGEST 改判（bilibili/youtube/douyin 三平台的超时假失败补救）。
+//
+// 测试轮次记录表（对齐全局 8.2）：
+// | 轮次 | 范围 | 结果 | 备注 |
+// |---|---|---|---|
+// | R1 | bilibili/youtube 迟到回执与迟到 INGEST 全分支 | 通过 | |
+// | R2 | douyin 判据（awemeId 参数键 / 「抖音 采集超时（%」前缀 / result awemeId 键） | 通过 | 2026-08-29 S2 抖音平台化 |
+
 function freshDb() {
   const dir = mkdtempSync(join(tmpdir(), 'collector-amend-'));
   const db = openDb(join(dir, 't.db'));
@@ -13,7 +21,7 @@ function freshDb() {
   return { db, dir };
 }
 
-function seedTask(db: ReturnType<typeof openDb>, source: 'bilibili' | 'youtube', vid: string, status: string, error: string | null): number {
+function seedTask(db: ReturnType<typeof openDb>, source: string, vid: string, status: string, error: string | null): number {
   const info = db.prepare(
     'INSERT INTO collect_tasks (source, source_vid, url, status, error, created_at) VALUES (?, ?, ?, ?, ?, ?)',
   ).run(source, vid, 'https://x', status, error, Date.now());
@@ -21,7 +29,7 @@ function seedTask(db: ReturnType<typeof openDb>, source: 'bilibili' | 'youtube',
 }
 
 // 直插 videos + subtitle_tracks（不经 ingestVideo）：改判只关心库里已有的轨数（COUNT），不走入库逻辑
-function seedVideoWithTracks(db: ReturnType<typeof openDb>, source: 'bilibili' | 'youtube', vid: string, nTracks: number): void {
+function seedVideoWithTracks(db: ReturnType<typeof openDb>, source: string, vid: string, nTracks: number): void {
   const info = db.prepare(
     'INSERT INTO videos (source, source_vid, title, first_seen_at, updated_at) VALUES (?, ?, ?, ?, ?)',
   ).run(source, vid, 't', Date.now(), Date.now());
@@ -146,6 +154,45 @@ test('amendLateIngest：succeeded/limited 任务不被动；无产出（inserted
     // 无产出：仅元信息入库 / 轨全部已存在，不证明任务实际完成
     const id = seedTask(db, 'youtube', 'zzzzzzzzzzz', 'failed', 'YouTube 采集超时（45s）');
     assert.equal(amendLateIngest(db, { source: 'youtube', source_vid: 'zzzzzzzzzzz', inserted_tracks: 0 }), null);
+    assert.equal((db.prepare('SELECT status FROM collect_tasks WHERE id = ?').get(id) as any).status, 'failed');
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+// ── douyin 判据（2026-08-29 S2 抖音平台化）：awemeId 参数键定位 + 「抖音 采集超时（%」前缀 ──
+
+test('amendLateResult：awemeId 迟到回执 → douyin 超时任务改判 succeeded（判据=派发参数键）', () => {
+  const { db, dir } = freshDb();
+  try {
+    const id = seedTask(db, 'douyin', '7123456789012345678', 'failed', '扩展执行超时');
+    const amended = amendLateResult(db, { awemeId: '7123456789012345678' }, { ok: true, data: { captured: 2 } });
+    assert.equal(amended, id);
+    const t = db.prepare('SELECT status, error FROM collect_tasks WHERE id = ?').get(id) as any;
+    assert.equal(t.status, 'succeeded');
+    assert.equal(t.error, null);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('amendLateIngest：douyin 自限超时文案「抖音 采集超时（Ns）」前缀命中改判；result 带 awemeId 键', () => {
+  const { db, dir } = freshDb();
+  try {
+    seedVideoWithTracks(db, 'douyin', '7123456789012345678', 2);
+    // 与「YouTube 采集超时（」同构的抖音扩展端自限超时文案（秒数随 timeoutMs 变）
+    const id = seedTask(db, 'douyin', '7123456789012345678', 'failed', '抖音 采集超时（45s）');
+    assert.equal(amendLateIngest(db, { source: 'douyin', source_vid: '7123456789012345678', inserted_tracks: 2 }), id);
+    const r = JSON.parse((db.prepare('SELECT result FROM collect_tasks WHERE id = ?').get(id) as any).result);
+    assert.equal(r.awemeId, '7123456789012345678'); // 与 douyin 真实回执同键（web TaskCards resultSummary 同构）
+    assert.equal(r.captured, 2);
+    assert.equal(r.tracks, 2);
+    assert.equal(r.amended, 'late-ingest');
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('amendLateIngest：douyin 普通失败文案不以「抖音 采集超时（」开头 → LIKE 不误中', () => {
+  const { db, dir } = freshDb();
+  try {
+    seedVideoWithTracks(db, 'douyin', '7123456789012345679', 1);
+    const id = seedTask(db, 'douyin', '7123456789012345679', 'failed', '请求超时');
+    assert.equal(amendLateIngest(db, { source: 'douyin', source_vid: '7123456789012345679', inserted_tracks: 1 }), null);
     assert.equal((db.prepare('SELECT status FROM collect_tasks WHERE id = ?').get(id) as any).status, 'failed');
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });

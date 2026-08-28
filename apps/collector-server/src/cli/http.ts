@@ -1,6 +1,7 @@
 // CLI → server 的 HTTP 客户端（基于 Node 22 内置 fetch）。
 // 仅覆盖 CLI 需要的端点：探活、客户端列表、切上报、下发命令。
 // server 侧路由详见 [http/clients.ts](apps/collector-server/src/http/clients.ts)；POST /api/clients/:id/command 由同事阶段2 在 server 端补齐。
+import type { Source } from '../tasks/source.js';
 
 // server 连不上（DNS/TCP/ECONNREFUSED）专用错误类型：调用方捕获后 emitError SERVER_UNREACHABLE。
 export class ServerUnreachableError extends Error {
@@ -81,14 +82,14 @@ export class ServerClient {
     return this.requestJson('POST', `/api/clients/${encodeURIComponent(clientId)}/command`, body);
   }
 
-  // 批量打标：POST /api/tags/apply。vid 是平台视频 ID（B 站 BV 号 / YouTube 11 位 ID），
-  // platform 缺省 bilibili（对齐 CLI --source 默认）。scope=档位。
+  // 批量打标：POST /api/tags/apply。vid 是平台视频 ID（B 站 BV 号 / YouTube 11 位 ID / 抖音 19 位
+  // aweme_id），platform 缺省 bilibili（对齐 CLI --source 默认）。scope=档位。
   // system 档（no-subtitle 状态标）由采集链路自动打，CLI apply 同样放行（回填脚本/agent 调度用）。
   async applyTags(
     vids: string[],
     names: string[],
     scope: 'manual' | 'batch' | 'ai' | 'system',
-    platform: 'bilibili' | 'youtube' = 'bilibili',
+    platform: Source = 'bilibili',
   ): Promise<unknown> {
     return this.requestJson('POST', '/api/tags/apply', {
       items: vids.map((vid) => ({ source: platform, source_vid: vid })),
@@ -102,7 +103,7 @@ export class ServerClient {
     vids: string[],
     names: string[],
     scope?: 'manual' | 'batch' | 'ai' | 'system',
-    platform: 'bilibili' | 'youtube' = 'bilibili',
+    platform: Source = 'bilibili',
   ): Promise<unknown> {
     const body: Record<string, unknown> = {
       items: vids.map((vid) => ({ source: platform, source_vid: vid })),
@@ -116,7 +117,7 @@ export class ServerClient {
   // creator_uid 可选——合集/UP 批量的归属,未入库失败任务也能按 UP 筛）。
   async createCollectTasksBatch(body: {
     vids: string[];
-    source: 'bilibili' | 'youtube';
+    source: Source;
     creator_uid?: string | null;
   }): Promise<unknown> {
     return this.requestJson('POST', '/api/collect-tasks/batch', body);
@@ -144,6 +145,13 @@ export class ServerClient {
     const data = await this.requestJson('GET', `/api/videos?${qs.toString()}`);
     const page = data as { total?: number; items?: Array<Record<string, unknown>> } | null;
     return { total: page?.total ?? 0, items: Array.isArray(page?.items) ? page!.items! : [] };
+  }
+
+  // 视频详情：GET /api/videos/:source/:vid → video 行（含 extra，JSON 字符串）。列表端点不回 extra
+  // （server http/queries.ts enrichItems 只富化标签/封面），asr backfill douyin 分支取 extra.play_uri 用。
+  async getVideo(source: string, vid: string): Promise<Record<string, unknown> | null> {
+    const data = await this.requestJson('GET', `/api/videos/${encodeURIComponent(source)}/${encodeURIComponent(vid)}`);
+    return (data as { video?: Record<string, unknown> } | null)?.video ?? null;
   }
 
   // 统一请求：fetch + JSON 解析 + 错误归一化。

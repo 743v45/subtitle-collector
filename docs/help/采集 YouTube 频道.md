@@ -18,7 +18,7 @@ pnpm cli collect yt-videos @handle --collect           # 列表后直接逐个�
 ## 频道批量(界面)
 
 - **popup 频道卡**:在 YouTube 频道页弹出,勾选批量 navigate 采集
-- **web 采集页「按 UP / 频道批量」**:`@handle` / `UC…` / 频道链接展开勾选批量(`/api/upper-videos/expand` 双平台)
+- **web 采集页「按 UP / 频道 / 博主批量」**:`@handle` / `UC…` / 频道链接展开勾选批量(`/api/upper-videos/expand` 三平台入口;抖音博主用法见 [[批量采集 UP 主视频]])
 
 ## 关键词搜索
 

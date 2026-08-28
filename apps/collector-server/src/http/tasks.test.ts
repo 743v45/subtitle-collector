@@ -1,3 +1,13 @@
+// http/tasks.ts 集成测试：真 HTTP server + WS 扩展模拟（hello/result/ingest），覆盖任务创建/派发/
+// 回执全链路与多维筛选、upper-videos/expand。
+//
+// 测试轮次记录表（对齐全局 8.2）：
+// | 轮次 | 范围 | 结果 | 备注 |
+// |---|---|---|---|
+// | R1 | bilibili/youtube 全链路（创建/派发/去重/重试/推送/筛选/排序） | 通过 | |
+// | R2 | douyin（单条链接派发 fetch-douyin-subtitle / batch source 归一 / source 筛选 / expand 骨架 400·503） | 通过 | 2026-08-29 S2 抖音平台化 |
+// | R3 | douyin expand 全链路（合法 sec_uid → expand-douyin-upper 回执 200 映射，替换 503 骨架断言） | 通过 | 2026-08-29 S8 收口接线 #1 |
+
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer, request as httpRequest } from 'node:http';
@@ -831,4 +841,113 @@ test('GET /api/collect-tasks：sort=finished_at NULLS LAST + status 聚合 + 非
     assert.equal(r.json.ok, false);
     assert.match(r.json.error, /sort must be one of created_at\|finished_at\|status/);
   } finally { ctx.cleanup(); }
+});
+
+// ── douyin 平台化（2026-08-29 S2）：单条链接 → 派发 fetch-douyin-subtitle；batch source 归一 ──
+
+test('POST /api/collect-tasks：抖音链接 → source=douyin 任务 + fetch-douyin-subtitle 派发', async () => {
+  const ctx = await setup();
+  let ws: WebSocket | null = null;
+  try {
+    // 模拟扩展：对 fetch-douyin-subtitle 回成功回执（回显 awemeId，对齐真实回执键）
+    ws = new WebSocket(`ws://127.0.0.1:${ctx.port}/ext`);
+    await new Promise((r) => { ws!.once('open', r); });
+    ws!.send(JSON.stringify({ type: 'hello', ext_version: '0.1.0', token: 'test-token', client_id: 'ext-DY', reporting_enabled: true }));
+    ws!.on('message', (d) => {
+      const m = JSON.parse(d.toString());
+      if (m.action === 'fetch-douyin-subtitle') {
+        ws!.send(JSON.stringify({ type: 'result', id: m.id, ok: true, data: { awemeId: m.awemeId, captured: 1, tracks: 1 } }));
+      }
+    });
+    await wait(100);
+
+    const r = await httpReq(ctx.port, 'POST', '/api/collect-tasks', {
+      text: '看看这个 https://www.douyin.com/video/7123456789012345678 很有意思',
+    });
+    assert.equal(r.status, 200);
+    assert.equal(r.json.task.source, 'douyin');
+    assert.equal(r.json.task.source_vid, '7123456789012345678');
+    await wait(300);
+    const t = getTask(ctx.db, r.json.task.id)!;
+    assert.equal(t.status, 'succeeded');
+    assert.ok(t.result?.includes('"awemeId"'));
+  } finally { ws?.close(); ctx.cleanup(); }
+});
+
+test('POST /api/collect-tasks/batch：source=douyin 归一（不再吞成 bilibili）；错误文案含抖音档位', async () => {
+  const ctx = await setup();
+  try {
+    const r = await httpReq(ctx.port, 'POST', '/api/collect-tasks/batch', {
+      vids: ['7123456789012345678', '71234567890123456'], // 17 位忽略
+      source: 'douyin',
+    });
+    assert.equal(r.status, 200);
+    assert.equal(r.json.created, 1);
+    assert.equal(r.json.tasks[0].source, 'douyin');
+    assert.equal(r.json.tasks[0].url, 'https://www.douyin.com/video/7123456789012345678');
+    // 空 vids 的 400 文案指明抖音 aweme_id 档位（可观察性）
+    const bad = await httpReq(ctx.port, 'POST', '/api/collect-tasks/batch', { vids: [], source: 'douyin' });
+    assert.equal(bad.status, 400);
+    assert.match(bad.json.error, /抖音 aweme_id/);
+  } finally { ctx.cleanup(); }
+});
+
+test('GET /api/collect-tasks?source=douyin：平台筛选白名单含 douyin', async () => {
+  const ctx = await setup();
+  try {
+    await httpReq(ctx.port, 'POST', '/api/collect-tasks/batch', { vids: ['7123456789012345678'], source: 'douyin' });
+    await httpReq(ctx.port, 'POST', '/api/collect-tasks', { text: 'https://www.bilibili.com/video/BV1xx411c7mD' });
+    const dy = await httpReq(ctx.port, 'GET', '/api/collect-tasks?page=1&page_size=50&source=douyin');
+    assert.equal(dy.status, 200);
+    assert.equal(dy.json.total, 1);
+    assert.equal(dy.json.items[0].source_vid, '7123456789012345678');
+  } finally { ctx.cleanup(); }
+});
+
+// ── /api/upper-videos/expand douyin（S8 接线后全链路）：sec_uid 校验 400；合法 → 扩展回执 200 ──
+test('POST /api/upper-videos/expand：douyin——缺/非法 sec_uid 400；合法 sec_uid（直传/主页链接）→ expand-douyin-upper 回执映射', async () => {
+  const ctx = await setup();
+  let ws: WebSocket | null = null;
+  try {
+    // 模拟扩展：对 expand-douyin-upper 回一次全量回执（回显 secUid，形态对齐 background.js expandDouyinUpper）
+    ws = new WebSocket(`ws://127.0.0.1:${ctx.port}/ext`);
+    await new Promise((r) => { ws!.once('open', r); });
+    ws!.send(JSON.stringify({ type: 'hello', ext_version: '0.1.0', token: 'test-token', client_id: 'ext-DY2', reporting_enabled: true }));
+    ws!.on('message', (d) => {
+      const m = JSON.parse(d.toString());
+      if (m.action === 'expand-douyin-upper') {
+        ws!.send(JSON.stringify({
+          type: 'result', id: m.id, ok: true,
+          data: {
+            channel_id: m.secUid,
+            channel_name: '抖音测试博主',
+            total: 1,
+            items: [{ bvid: '7123456789012345678', title: '抖音视频一', created: 1787896381, play: 0, length: '0:47', pic: 'https://p3-pc.douyinpic.com/cover.jpg' }],
+          },
+        }));
+      }
+    });
+    await wait(100);
+
+    const bad1 = await httpReq(ctx.port, 'POST', '/api/upper-videos/expand', { source: 'douyin' });
+    assert.equal(bad1.status, 400);
+    assert.match(bad1.json.error, /sec_uid/);
+    const bad2 = await httpReq(ctx.port, 'POST', '/api/upper-videos/expand', { source: 'douyin', sec_uid: 'not-a-uid' });
+    assert.equal(bad2.status, 400);
+    assert.match(bad2.json.error, /无法识别的抖音博主参数/);
+
+    // 合法 sec_uid 直传 → 200 + 回执映射（bvid=aweme_id、channel.id/name）
+    const r1 = await httpReq(ctx.port, 'POST', '/api/upper-videos/expand', { source: 'douyin', sec_uid: 'MS4wLjABAAAAabcdef123456' });
+    assert.equal(r1.status, 200);
+    assert.equal(r1.json.channel.id, 'MS4wLjABAAAAabcdef123456');
+    assert.equal(r1.json.channel.name, '抖音测试博主');
+    assert.equal(r1.json.total, 1);
+    assert.equal(r1.json.items[0].bvid, '7123456789012345678');
+    // 主页链接形态同样可达（server parseDouyinSecUid 归一）
+    const r2 = await httpReq(ctx.port, 'POST', '/api/upper-videos/expand', {
+      source: 'douyin', sec_uid: 'https://www.douyin.com/user/MS4wLjABAAAAabcdef123456?from=web',
+    });
+    assert.equal(r2.status, 200);
+    assert.equal(r2.json.channel.id, 'MS4wLjABAAAAabcdef123456');
+  } finally { ws?.close(); ctx.cleanup(); }
 });

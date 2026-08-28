@@ -69,7 +69,7 @@ export interface ChangeRow {
   old_value: string | null;
   new_value: string | null;
   changed_at: number;
-  source?: string | null; // 派生列：实体行所属平台（bilibili|youtube；不可判 null）
+  source?: string | null; // 派生列：实体行所属平台（bilibili|youtube|douyin；不可判 null）
 }
 
 // B 站登录态快照（扩展从 /x/web-interface/nav 抽取；hello / login-state 上报）。
@@ -106,7 +106,7 @@ export interface ClientInfo {
 export type CollectTaskStatus = 'pending' | 'dispatched' | 'succeeded' | 'failed' | 'limited';
 export interface CollectTask {
   id: number;
-  source: 'bilibili' | 'youtube';
+  source: 'bilibili' | 'youtube' | 'douyin';
   source_vid: string;
   url: string;
   status: CollectTaskStatus;
@@ -135,7 +135,7 @@ export interface UpperVideoItem {
 // ── 视频多维筛选（对应 server advanced.ts VideoFilter + ListFilter）──
 export interface VideoFilter {
   q?: string;
-  source?: string; // 平台过滤（bilibili/youtube）
+  source?: string; // 平台过滤（bilibili/youtube/douyin）
   tid?: number;
   tname?: string;
   tag?: string;

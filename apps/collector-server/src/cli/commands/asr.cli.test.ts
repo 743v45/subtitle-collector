@@ -1,6 +1,7 @@
 // asr.ts commander 装配层测试：子进程跑真 CLI，server 侧 mock HTTP（圈定 + 写回）。
 // 覆盖：dry-run 参数映射（--dry-run/--size/--page kebab→camel，2026-08-26 修复的装配 bug 回归）
-// + 圈定请求参数（tags/source/sort/desc/page/size 逐项断言）+ cookie-file 读取与缺省提示。
+// + 圈定请求参数（tags/source/sort/desc/page/size 逐项断言）+ cookie-file 读取与缺省提示
+// + --source 平台参数（2026-08-29 douyin 平台化：douyin 透传圈定且不发 cookie 提示；youtube 拒绝 ARGS）。
 // 编排纯函数见 asr.test.ts。
 //
 // 测试轮次记录表（对齐全局规则）：
@@ -8,6 +9,7 @@
 // |---|---|---|---|
 // | R1 | dry-run（参数映射 + 圈定 query 断言）+ cookie-file 不可读 ARGS | 通过 | |
 // | R2 | --dry-run 修复（曾因读 opts['dry-run'] 恒 false）后补 | 通过 | kebab→camel 回归锚点 |
+// | R3 | --source douyin dry-run 透传 + --source youtube ARGS | 通过 | |
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -127,5 +129,35 @@ test('asr backfill：--cookie-file 内容为空 → 按未配置处理（走完 
   } finally {
     await srv.close();
     rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('asr backfill --source douyin --dry-run：圈定 source=douyin 透传；不发 B 站 cookie 提示（平台分支装配）', async () => {
+  const srv = await startMockServer();
+  try {
+    const r = await cli(['asr', 'backfill', '--source', 'douyin', '--dry-run', '--server', srv.url]);
+    assert.equal(r.code, 0, `exit 0（stderr: ${r.err.slice(-300)}）`);
+    const out = JSON.parse(r.out);
+    assert.equal(out.dry_run, true);
+    assert.equal(out.source, 'douyin', 'summary 带平台');
+    // 圈定请求带 source=douyin；dry-run 只发这一次请求（详情/直链/转写全不发）
+    assert.equal(srv.reqs.length, 1);
+    const u = new URL(srv.reqs[0].path, 'http://x');
+    assert.equal(u.searchParams.get('source'), 'douyin');
+    assert.doesNotMatch(r.err, /未配置 cookie/, 'cookie 是 B 站分支专属提示，douyin 不发');
+  } finally {
+    await srv.close();
+  }
+});
+
+test('asr backfill：--source youtube → ARGS 退出码（youtube 无 ASR backfill 链路）', async () => {
+  const srv = await startMockServer();
+  try {
+    const r = await cli(['asr', 'backfill', '--source', 'youtube', '--server', srv.url]);
+    assert.equal(r.code, 2, 'ARGS 退出码');
+    assert.match(r.err, /--source 必须是 bilibili\/douyin/);
+    assert.equal(srv.reqs.length, 0, '参数非法不发圈定请求');
+  } finally {
+    await srv.close();
   }
 });

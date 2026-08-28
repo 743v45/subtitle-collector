@@ -11,6 +11,7 @@
 // | R3 | 重试：成功 toast（dispatched/alreadyOk 组合）与失败 toast | 通过 | |
 // | R4 | 按 UP 批量：mid/链接解析、非法输入、过滤 pill（状态/时间/播放）、全选未采、勾选、批量提交、>50 confirm 双分支、缺播放/日期计数 | 通过 | Date.now 真实时间构造数据 |
 // | R5 | 轮询：pending → 2s 后重拉 → succeeded 转移发系统通知 + 摘要行刷新 | 通过 | fake timers + advanceTimersByTimeAsync + Notification stub |
+// | R6 | douyin 博主批量：裸 sec_uid / /user/<sec_uid> 链接解析 → expand {source:douyin,channel}；批量提交 source=douyin/creator_uid=sec_uid | 通过 | 2026-08-29 douyin 接入 |
 import { test, expect, vi, afterEach } from 'vitest';
 import { render, screen, fireEvent, cleanup, waitFor, act } from '@testing-library/react';
 import { CollectPage } from './CollectPage';
@@ -120,7 +121,7 @@ test('任务渲染：单任务卡 / 批次聚合卡 / 单成员批次回落 Task
 test('提交：输入 → 采集 → POST + toast + 输入清空 + 立即 refresh', async () => {
   const calls = setup();
   await screen.findByText('还没有采集任务。粘贴一个视频链接试试。');
-  const input = screen.getByPlaceholderText('粘贴视频链接或分享文本（B站 / YouTube）');
+  const input = screen.getByPlaceholderText('粘贴视频链接或分享文本（B站 / YouTube / 抖音）');
   fireEvent.change(input, { target: { value: 'https://www.bilibili.com/video/BV1cp1' } });
   fireEvent.click(screen.getByRole('button', { name: '采集' }));
   expect(await screen.findByText('已提交采集任务')).toBeInTheDocument();
@@ -139,7 +140,7 @@ test('提交：Enter 触发；失败 → 错误提示 + toast，输入保留', a
     return baseHandler()(url, init);
   });
   await screen.findByText('还没有采集任务。粘贴一个视频链接试试。');
-  const input = screen.getByPlaceholderText('粘贴视频链接或分享文本（B站 / YouTube）');
+  const input = screen.getByPlaceholderText('粘贴视频链接或分享文本（B站 / YouTube / 抖音）');
   fireEvent.change(input, { target: { value: '随便写' } });
   fireEvent.keyDown(input, { key: 'Enter' });
   expect(await screen.findByText(/提交失败：HTTP 400：链接无法识别/)).toBeInTheDocument();
@@ -260,10 +261,10 @@ function setupUpper(expand: unknown = { total: 4, items: upperItems }) {
 test('按 UP 批量：非法输入 → 提示不发请求；数字 UID / 空间链接都能解析', async () => {
   const calls = setupUpper();
   await screen.findByText('还没有采集任务。粘贴一个视频链接试试。');
-  const upperInput = screen.getByPlaceholderText('B 站 UID / 空间链接，或 YouTube 频道 @handle / UC… / 频道页链接（需桌面扩展在线）');
+  const upperInput = screen.getByPlaceholderText('B 站 UID / 空间链接，YouTube 频道 @handle / UC… / 频道页链接，或抖音主页链接 / sec_uid（需桌面扩展在线）');
   fireEvent.change(upperInput, { target: { value: '不是UID' } });
   fireEvent.click(screen.getByRole('button', { name: '拉取' }));
-  expect(await screen.findByText('输入 UP 的数字 UID / 空间页链接，或 YouTube 频道 @handle / UC 开头 ID / 频道页链接')).toBeInTheDocument();
+  expect(await screen.findByText('输入 UP 的数字 UID / 空间页链接，YouTube 频道 @handle / UC 开头 ID / 频道页链接，或抖音博主主页链接 / sec_uid')).toBeInTheDocument();
   expect(calls.find((c) => c.url.includes('expand'))).toBe(undefined);
 
   fireEvent.change(upperInput, { target: { value: 'https://space.bilibili.com/296399504/upload/video' } });
@@ -277,7 +278,7 @@ test('按 UP 批量：非法输入 → 提示不发请求；数字 UID / 空间�
 test('按 UP 批量：拉取失败 → 错误文案；列表渲染（摘要/过滤 pill/封面占位/日期）', async () => {
   setupUpper(new Response(JSON.stringify({ ok: false, error: '扩展离线' }), { status: 503, headers: { 'content-type': 'application/json' } }));
   await screen.findByText('还没有采集任务。粘贴一个视频链接试试。');
-  fireEvent.change(screen.getByPlaceholderText('B 站 UID / 空间链接，或 YouTube 频道 @handle / UC… / 频道页链接（需桌面扩展在线）'), { target: { value: '296399504' } });
+  fireEvent.change(screen.getByPlaceholderText('B 站 UID / 空间链接，YouTube 频道 @handle / UC… / 频道页链接，或抖音主页链接 / sec_uid（需桌面扩展在线）'), { target: { value: '296399504' } });
   fireEvent.click(screen.getByRole('button', { name: '拉取' }));
   expect(await screen.findByText(/扩展离线/)).toBeInTheDocument();
 
@@ -285,7 +286,7 @@ test('按 UP 批量：拉取失败 → 错误文案；列表渲染（摘要/过�
   vi.unstubAllGlobals();
   const calls = setupUpper();
   await screen.findByText('还没有采集任务。粘贴一个视频链接试试。');
-  fireEvent.change(screen.getByPlaceholderText('B 站 UID / 空间链接，或 YouTube 频道 @handle / UC… / 频道页链接（需桌面扩展在线）'), { target: { value: '296399504' } });
+  fireEvent.change(screen.getByPlaceholderText('B 站 UID / 空间链接，YouTube 频道 @handle / UC… / 频道页链接，或抖音主页链接 / sec_uid（需桌面扩展在线）'), { target: { value: '296399504' } });
   fireEvent.click(screen.getByRole('button', { name: '拉取' }));
   expect(await screen.findByText('已采视频')).toBeInTheDocument();
   // 摘要行数据经 pill 名断言（共 4 条文本跨嵌套 span，不适合 getByText）
@@ -300,7 +301,7 @@ test('按 UP 批量：拉取失败 → 错误文案；列表渲染（摘要/过�
 test('按 UP 批量：过滤 pill 组合（状态/时间/播放）与缺数据计数', async () => {
   const calls = setupUpper();
   await screen.findByText('还没有采集任务。粘贴一个视频链接试试。');
-  fireEvent.change(screen.getByPlaceholderText('B 站 UID / 空间链接，或 YouTube 频道 @handle / UC… / 频道页链接（需桌面扩展在线）'), { target: { value: '296399504' } });
+  fireEvent.change(screen.getByPlaceholderText('B 站 UID / 空间链接，YouTube 频道 @handle / UC… / 频道页链接，或抖音主页链接 / sec_uid（需桌面扩展在线）'), { target: { value: '296399504' } });
   fireEvent.click(screen.getByRole('button', { name: '拉取' }));
   expect(await screen.findByText('已采视频')).toBeInTheDocument();
 
@@ -339,7 +340,7 @@ test('按 UP 批量：过滤 pill 组合（状态/时间/播放）与缺数据�
 test('按 UP 批量：勾选 + 全选未采 + 批量提交（POST vids/source/creator_uid + toast）', async () => {
   const calls = setupUpper();
   await screen.findByText('还没有采集任务。粘贴一个视频链接试试。');
-  fireEvent.change(screen.getByPlaceholderText('B 站 UID / 空间链接，或 YouTube 频道 @handle / UC… / 频道页链接（需桌面扩展在线）'), { target: { value: '296399504' } });
+  fireEvent.change(screen.getByPlaceholderText('B 站 UID / 空间链接，YouTube 频道 @handle / UC… / 频道页链接，或抖音主页链接 / sec_uid（需桌面扩展在线）'), { target: { value: '296399504' } });
   fireEvent.click(screen.getByRole('button', { name: '拉取' }));
   expect(await screen.findByText('已采视频')).toBeInTheDocument();
 
@@ -362,7 +363,7 @@ test('按 UP 批量：批量提交失败 → 错误 toast；>50 confirm 取消/�
   }));
   const calls = setupUpper({ total: 51, items: many });
   await screen.findByText('还没有采集任务。粘贴一个视频链接试试。');
-  fireEvent.change(screen.getByPlaceholderText('B 站 UID / 空间链接，或 YouTube 频道 @handle / UC… / 频道页链接（需桌面扩展在线）'), { target: { value: '296399504' } });
+  fireEvent.change(screen.getByPlaceholderText('B 站 UID / 空间链接，YouTube 频道 @handle / UC… / 频道页链接，或抖音主页链接 / sec_uid（需桌面扩展在线）'), { target: { value: '296399504' } });
   fireEvent.click(screen.getByRole('button', { name: '拉取' }));
   expect(await screen.findByText('视频0')).toBeInTheDocument();
   fireEvent.click(screen.getByRole('button', { name: '全选未采' }));
@@ -471,6 +472,50 @@ test('YouTube 频道批量：@handle 展开 + 频道名摘要 + 批量提交 sou
     source: 'youtube',
     creator_uid: 'UCtest_channel_id_000001',
   });
+});
+
+// ── 抖音博主批量（2026-08-29）：裸 sec_uid / /user/<sec_uid> 链接解析 → expand {source:douyin,channel} →
+// 批量提交 source=douyin / creator_uid=sec_uid（输入已知即兜底，不依赖展开回执 channel）──
+test('抖音博主批量：裸 sec_uid 与主页链接解析 + 批量提交 source=douyin/creator_uid=sec_uid', async () => {
+  const calls = setupUpper({ total: 1, items: [
+    // douyin 展开回执暂不带 channel（server 端拉取未实现时 503 由错误分支覆盖，这里只测 happy path 形态）
+    { bvid: '7300000000000000001', title: '抖音视频一', created: 1700000000, play: 10, length: '1:00', pic: null, collected: false },
+  ] });
+  await screen.findByText('还没有采集任务。粘贴一个视频链接试试。');
+
+  // 裸 sec_uid（MS4wLjAB 前缀 base64url 形态）→ douyin
+  const secUid = 'MS4wLjABAAAA2y53DZw7-0cG6yOfaZCJesMdyIdXhqLPu2abnCFjkUs';
+  fireEvent.change(screen.getByPlaceholderText(/抖音主页链接/), { target: { value: secUid } });
+  fireEvent.click(screen.getByRole('button', { name: '拉取' }));
+  expect(await screen.findByText('抖音视频一')).toBeInTheDocument();
+  // 展开请求体：douyin 复用 channel 键传 sec_uid（对齐 youtube 形态）
+  expect(JSON.parse(String(calls.find((c) => c.url.includes('expand'))!.init?.body))).toEqual({ source: 'douyin', channel: secUid });
+
+  // 主页链接 /user/<sec_uid> → 同样路由 douyin（截出 sec_uid，不带域名）
+  fireEvent.change(screen.getByPlaceholderText(/抖音主页链接/), { target: { value: `https://www.douyin.com/user/${secUid}` } });
+  fireEvent.click(screen.getByRole('button', { name: '拉取' }));
+  expect(await screen.findByText('抖音视频一')).toBeInTheDocument();
+  expect(JSON.parse(String(calls.filter((c) => c.url.includes('expand')).at(-1)!.init?.body))).toEqual({ source: 'douyin', channel: secUid });
+
+  // 勾选 → 批量提交：source=douyin、creator_uid=sec_uid（输入已知，不依赖展开回执）
+  fireEvent.click(screen.getAllByRole('checkbox')[0]!);
+  fireEvent.click(screen.getByRole('button', { name: /批量采集/ }));
+  expect((await screen.findAllByText(/已创建 2 个任务/)).length).toBeGreaterThanOrEqual(1);
+  const batchCall = calls.find((c) => c.url.includes('/api/collect-tasks/batch'))!;
+  expect(JSON.parse(String(batchCall.init?.body))).toEqual({
+    vids: ['7300000000000000001'],
+    source: 'douyin',
+    creator_uid: secUid,
+  });
+});
+
+test('抖音博主批量：server 拉取未实现（503）→ 错误文案透出不吞', async () => {
+  setupUpper(new Response(JSON.stringify({ ok: false, error: 'douyin 拉取未实现' }), { status: 503, headers: { 'content-type': 'application/json' } }));
+  await screen.findByText('还没有采集任务。粘贴一个视频链接试试。');
+  fireEvent.change(screen.getByPlaceholderText(/抖音主页链接/), { target: { value: 'MS4wLjABAAAAtest_sec_uid_padding_0001' } });
+  fireEvent.click(screen.getByRole('button', { name: '拉取' }));
+  // ensureOk 带 server 错误文案，正常展示不吞
+  expect(await screen.findByText(/HTTP 503：douyin 拉取未实现/)).toBeInTheDocument();
 });
 
 // ── 已采跳过与强制重采（2026-08-25）：server 侧默认跳过有轨入库，勾选「强制重采」带 force ──

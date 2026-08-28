@@ -12,6 +12,7 @@ import { creatorUrl } from '../lib/externalLinks';
 import { ExtLink } from '@/components/ExtLink';
 import { PlatformIcon, platformIconClass } from '@/components/PlatformIcon';
 import { PlatformSelect } from '@/components/PlatformSelect';
+import { parseSourceFilter } from '@/lib/platformSource';
 import { cn } from '@/lib/utils';
 
 const PAGE_SIZE = 20;
@@ -35,7 +36,7 @@ function parseRouteFilters(query: URLSearchParams) {
     q: query.get('q') ?? '',
     catFilter: query.get('cat') ?? '',
     scope: SLOT_TABS.find((t) => t.value === scopeRaw)?.value ?? null,
-    source: sourceRaw === 'bilibili' || sourceRaw === 'youtube' ? sourceRaw : null,
+    source: parseSourceFilter(sourceRaw),
     sort: (SORTS as readonly string[]).includes(sortRaw ?? '') ? (sortRaw as CreatorSort) : 'first_seen',
     page: Number.isInteger(pageRaw) && pageRaw > 1 ? pageRaw : 1,
   };

@@ -18,8 +18,10 @@ apps/collector-server/*.db
 apps/collector-server/*.db-wal
 apps/collector-server/*.db-shm
 
-# docker compose 挂载的数据库目录（./data:/data，含真实采集数据，勿入库）
-data/
+# docker compose 挂载的数据库目录（./data:/data，含真实采集数据，勿入库）。
+# 锚定仓库根（2026-08-29 修复）：裸 `data/` 会吞任意深度的同名目录——曾静默忽略
+# android 的 data/ 包（ApiClient/Models/Settings/ModelsTest 4 文件），致 main 构建断裂。
+/data/
 
 # collector-cli server 运维产物（pid 文件 + 后台日志，本地运行时生成）
 apps/collector-server/.collector-server.pid

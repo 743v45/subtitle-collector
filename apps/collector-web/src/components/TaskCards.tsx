@@ -27,7 +27,7 @@ export const STATUS_META: Record<CollectTask['status'], { label: string; classNa
   limited: { label: '受限', className: 'bg-amber-500/15 text-amber-400' },
 };
 
-export const PLATFORM_LABEL: Record<string, string> = { bilibili: 'B站', youtube: 'YouTube' };
+export const PLATFORM_LABEL: Record<string, string> = { bilibili: 'B站', youtube: 'YouTube', douyin: '抖音' };
 
 // 可重试判据:终态且产出不全（failed / limited——字幕受限 0 轨）。succeeded 的 no_subtitle 是真无字幕,不可重试。
 export function retryable(t: CollectTask): boolean {

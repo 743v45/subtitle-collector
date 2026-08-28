@@ -4,6 +4,7 @@
 // | 轮次 | 范围 | 结果 | 备注 |
 // |---|---|---|---|
 // | R1 | 行渲染 + 截断 + 分页 + Select 切换 + 空态/错误 | 通过 | radix Select pointerDown 打开 |
+// | R2 | douyin 平台白名单（2026-08-29 接入）：URL source=douyin 透传 + 下拉第四项 | 通过 | |
 import { test, expect, vi, beforeEach, afterEach, beforeAll } from 'vitest';
 import { render, screen, fireEvent, cleanup, waitFor } from '@testing-library/react';
 import { ChangesLog } from './ChangesLog';
@@ -149,4 +150,14 @@ test('Select 切换平台：写 URL source 且请求带参', async () => {
   fireEvent.click(await screen.findByRole('option', { name: '哔哩哔哩' }));
   await waitFor(() => expect(window.location.hash).toBe('#/changes?source=bilibili'));
   await waitFor(() => expect(String(fetchMock.mock.calls.at(-1)![0])).toContain('source=bilibili'));
+});
+
+// douyin URL 白名单（2026-08-29）：source=douyin 直入 → 请求透传；下拉第四项在列
+test('douyin：URL source=douyin 直入 → 请求带 source=douyin；抖音选项在列', async () => {
+  window.history.replaceState(null, '', '#/changes?source=douyin');
+  render(<ChangesLog />);
+  await screen.findByText('共 0 条');
+  await waitFor(() => expect(String(fetchMock.mock.calls.at(-1)![0])).toContain('source=douyin'));
+  fireEvent.pointerDown(screen.getByRole('combobox', { name: '平台筛选' }), { button: 0, ctrlKey: false, pointerType: 'mouse' });
+  expect(await screen.findByRole('option', { name: '抖音' })).toBeInTheDocument();
 });

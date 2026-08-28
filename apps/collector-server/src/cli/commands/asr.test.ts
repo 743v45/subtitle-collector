@@ -1,28 +1,34 @@
-// asr backfill 编排测试（依赖注入 mock：圈定 client / B 站 nav/playurl/音轨 / 转写服务全 mock）。
+// asr backfill 编排测试（依赖注入 mock：圈定 client / 平台音视频获取 / 转写服务全 mock）。
 // 圈定走 server HTTP（生产库 virtiofs 风险，读写一律经 server）——SQL 层 system 档回归在
 // [advanced.test.ts](../../db/advanced.test.ts)，本文件只测编排行为。
-// 覆盖：成功全链路（圈定→view→playurl→下载→转写→submit 收到 cues）
-// + 失败分类（need_login / no_audio / asr_error）+ dry-run 只圈定不触网不写回。
+// 覆盖：bilibili 成功全链路（圈定→view→playurl→下载→转写→submit 收到 cues）
+// + 失败分类（need_login / no_audio / asr_error 等）+ dry-run 只圈定不触网不写回
+// + douyin 平台分支（2026-08-29 平台化：--source 透传 / 详情取 play_uri / 直构直链下载 / truncated 防线）；
+// 抖音直链解析与下载原语的细粒度测试在 [asr-douyin.test.ts](../asr-douyin.test.ts)。
 //
 // 测试轮次记录表（对齐全局规则）：
 // | 轮次 | 范围 | 结果 | 备注 |
 // |---|---|---|---|
 // | R1 | 成功链路 + dry-run + 失败分类×3 | 通过 | sleep 全注入为立即返回（风控退避不真等） |
 // | R2 | 圈定改走 client.listVideos（HTTP 化） | 通过 | 原 db 直读版本重写 |
+// | R3 | douyin 平台分支×7 + parseAsrSource | 通过 | mock client 补 getVideo；mp4 走真实 mkdtemp 临时目录 |
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { runBackfill, defaultSleep, type BackfillClient, type BackfillDeps } from './asr.js';
+import { readdirSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { runBackfill, parseAsrSource, defaultSleep, type BackfillClient, type BackfillDeps } from './asr.js';
 
 const BILI = 'http://bili.mock';
 const ASR = 'http://asr.mock';
 const WBI_IMG = '7cd084941338484aae1ad9425b84077c';
 const WBI_SUB = '4932caff0ff746eab6f01bf08b70ac45';
 
-// 圈定 mock：返回固定一条 BV1（模拟 server /api/videos no-subtitle 圈定结果）
+// 圈定 mock：返回固定一条 BV1（模拟 server /api/videos no-subtitle 圈定结果）；getVideo 是 douyin 分支专用，B 站 mock 恒 null
 function mockClient(submitted: Array<{ vid: string; cues: unknown }>): BackfillClient {
   return {
     listVideos: async () => ({ total: 1, items: [{ source_vid: 'BV1', title: '标题BV1', duration: 60 }] }),
+    getVideo: async () => null,
     asrSubmit: async (_s, vid, _e, cues) => { submitted.push({ vid, cues }); return { ok: true, inserted: 1 }; },
   };
 }
@@ -223,6 +229,7 @@ test('asr backfill：写回抛错 → submit_error 不中断；多 P 视频仍�
   const submitted: Array<{ vid: string; cues: unknown }> = [];
   const clientFail: BackfillClient = {
     listVideos: async () => ({ total: 1, items: [{ source_vid: 'BV1', title: 't', duration: 60 }] }),
+    getVideo: async () => null,
     asrSubmit: async () => { throw new Error('server 500'); },
   };
   let r = await runBackfill(deps(clientFail, mockFetch(), submitted), { size: 1, page: 1 });
@@ -240,6 +247,7 @@ test('asr backfill：写回抛错 → submit_error 不中断；多 P 视频仍�
   const seenParams: Array<Record<string, string | number | boolean>> = [];
   const clientSpy: BackfillClient = {
     listVideos: async (p) => { seenParams.push(p); return { total: 0, items: [] }; },
+    getVideo: async () => null,
     asrSubmit: async () => ({}),
   };
   r = await runBackfill(deps(clientSpy, mockFetch(), submitted), { size: 7, page: 3, maxDuration: 900 });
@@ -334,6 +342,7 @@ test('asr backfill：依赖缺省走全局实现（不注入 log/biliApi/fetchIm
   }) as typeof fetch;
   const clientNoTitle: BackfillClient = {
     listVideos: async () => ({ total: 1, items: [{}] }),
+    getVideo: async () => null,
     asrSubmit: async (_s, vid, _e, cues) => { submitted.push({ vid, cues }); return { ok: true }; },
   };
   let r = await runBackfill(
@@ -374,6 +383,7 @@ test('asr backfill dry-run：圈定项缺 duration 显示 ? 兜底', async () =>
   const submitted: Array<{ vid: string; cues: unknown }> = [];
   const clientNoDur: BackfillClient = {
     listVideos: async () => ({ total: 1, items: [{ source_vid: 'BV1', title: 't' }] }),
+    getVideo: async () => null,
     asrSubmit: async () => ({}),
   };
   const logs: string[] = [];
@@ -395,6 +405,7 @@ test('asr backfill：轮询瞬时网络异常被吞、下轮恢复 → 成功；
       { source_vid: 'BV1', title: 't1', duration: 60 },
       { source_vid: 'BV9', title: 't9', duration: 60 },
     ] }),
+    getVideo: async () => null,
     asrSubmit: async (_s, vid, _e, cues) => { submitted.push({ vid, cues }); return { ok: true }; },
   };
   let pollHits = 0;
@@ -415,4 +426,156 @@ test('asr backfill：轮询瞬时网络异常被吞、下轮恢复 → 成功；
   assert.equal(r.done, 2, '轮询异常恢复后两视频都成功');
   assert.equal(submitted.length, 2);
   assert.equal(navHits, 1, 'nav→wbi keys 只取一次（跨视频缓存）');
+});
+
+// ── douyin 平台分支（2026-08-29 平台化）──
+// 直链形态由 asr-douyin 保证；这里 mock snssdk 域名命中即返回 mp4，聚焦编排行为。
+
+const DY_URI = 'v0300fg10000da8i3knog65s9j5g544g';
+const DY_VID = '7900123456789012345';
+const DY_PLAY_URL = `https://aweme.snssdk.com/aweme/v1/play/?video_id=${DY_URI}&ratio=1080p&line=0`;
+const DY_MP4 = new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8]);
+
+// douyin mock fetch：snssdk 直链 → mp4；转写走 /v1/tasks 异步端点（task_id=d1 与 B 站 mock 的 t1 区分）
+function douyinFetch(opts: { mp4Status?: number; taskResult?: unknown } = {}): typeof fetch {
+  return (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input);
+    const method = init?.method ?? 'GET';
+    const json = (data: unknown, status = 200) => new Response(JSON.stringify(data), { status, headers: { 'Content-Type': 'application/json' } });
+    if (url.startsWith('https://aweme.snssdk.com/aweme/v1/play/')) {
+      return opts.mp4Status !== undefined
+        ? new Response('nope', { status: opts.mp4Status })
+        : new Response(DY_MP4, { status: 200, headers: { 'Content-Type': 'video/mp4' } });
+    }
+    if (url === `${ASR}/v1/tasks` && method === 'POST') return json({ task_id: 'd1', status: 'queued' });
+    if (url === `${ASR}/v1/tasks/d1` && method === 'GET') {
+      return json(opts.taskResult ?? { status: 'done', segments: [{ id: 1, start: 0, end: 2.5, text: '句一' }, { id: 2, start: 2.6, end: 5, text: '句二' }] });
+    }
+    if (url === `${ASR}/v1/tasks/d1` && method === 'DELETE') return json({});
+    return json({ error: `douyin mock 未覆盖: ${method} ${url}` }, 500);
+  }) as typeof fetch;
+}
+
+// douyin 圈定 mock：列表 1 条 + 详情回 extra（默认带 play_uri）；submitted 记 source 验证写回平台参数
+function douyinClient(
+  submitted: Array<{ source: string; vid: string; cues: unknown }>,
+  opts: { extra?: unknown; item?: Record<string, unknown>; throwDetail?: boolean; params?: Array<Record<string, string | number | boolean>> } = {},
+): BackfillClient {
+  return {
+    listVideos: async (p) => { opts.params?.push(p); return { total: 1, items: [opts.item ?? { source_vid: DY_VID, title: '抖音标题', duration: 8 }] }; },
+    getVideo: async () => {
+      if (opts.throwDetail) throw new Error('server 500');
+      // 默认对齐 server 详情端点形态：extra 是 TEXT 列回出来的 JSON 字符串
+      return { extra: typeof opts.extra === 'string' ? opts.extra : JSON.stringify(opts.extra ?? { play_uri: DY_URI }) };
+    },
+    asrSubmit: async (source, vid, _e, cues) => { submitted.push({ source, vid, cues }); return { ok: true, inserted: 1 }; },
+  };
+}
+
+function dyDeps(client: BackfillClient, fetchImpl: typeof fetch): BackfillDeps {
+  return { client, asrApi: ASR, engine: 'fireredasr-aed-l', fetchImpl, sleep: async () => {}, log: () => {} };
+}
+
+test('asr backfill douyin：成功全链路（圈定 source 透传 → 详情 play_uri → 直链下载 → 转写 → submit source=douyin）+ 临时目录清理', async () => {
+  const submitted: Array<{ source: string; vid: string; cues: unknown }> = [];
+  const seenParams: Array<Record<string, string | number | boolean>> = [];
+  const tmpBefore = readdirSync(tmpdir()).filter((n) => n.startsWith('collector-asr-douyin-')).length;
+  const r = await runBackfill(dyDeps(douyinClient(submitted, { params: seenParams }), douyinFetch()), { size: 10, page: 1, source: 'douyin' });
+  assert.equal(r.source, 'douyin');
+  assert.equal(r.circled, 1);
+  assert.equal(r.done, 1);
+  assert.equal(seenParams[0].source, 'douyin', '圈定参数透传 source=douyin');
+  assert.equal(seenParams[0].tags, 'no-subtitle');
+  assert.equal(submitted.length, 1);
+  assert.equal(submitted[0].source, 'douyin', '写回平台参数是 douyin');
+  assert.equal(submitted[0].vid, DY_VID);
+  assert.deepEqual(submitted[0].cues, [
+    { from: 0, to: 2.5, content: '句一' },
+    { from: 2.6, to: 5, content: '句二' },
+  ], 'verbose_json segments → cues 映射（平台无关复用）');
+  // 时长 8s、覆盖 5s ≥ 4s → 不触发 truncated
+  const tmpAfter = readdirSync(tmpdir()).filter((n) => n.startsWith('collector-asr-douyin-')).length;
+  assert.equal(tmpAfter, tmpBefore, 'mp4 临时目录用后即清（不残留占磁盘）');
+});
+
+test('asr backfill douyin：extra 无 play_uri → missing_play_uri（零下载零转写零写回）', async () => {
+  const submitted: Array<{ source: string; vid: string; cues: unknown }> = [];
+  let playHits = 0;
+  const fetchImpl = (async (input: RequestInfo | URL) => {
+    if (String(input).startsWith('https://aweme.snssdk.com/')) playHits++;
+    return new Response('{}');
+  }) as typeof fetch;
+  const r = await runBackfill(dyDeps(douyinClient(submitted, { extra: { stat: { view: 0 } } }), fetchImpl), { size: 1, page: 1, source: 'douyin' });
+  assert.equal(r.done, 0);
+  assert.equal(r.failed.missing_play_uri, 1);
+  assert.ok(r.samples.missing_play_uri[0] === DY_VID, '失败样例带 vid');
+  assert.equal(playHits, 0, '无 play_uri 不触直链');
+  assert.equal(submitted.length, 0);
+});
+
+test('asr backfill douyin：详情拉取抛错 → detail_fetch_error；下载 404 → download_http_404', async () => {
+  // 1. getVideo 抛（server 5xx/网络）
+  const submitted: Array<{ source: string; vid: string; cues: unknown }> = [];
+  let r = await runBackfill(dyDeps(douyinClient(submitted, { throwDetail: true }), douyinFetch()), { size: 1, page: 1, source: 'douyin' });
+  assert.equal(r.failed.detail_fetch_error, 1);
+  // 2. 直链 404（uri 失效）
+  r = await runBackfill(dyDeps(douyinClient(submitted), douyinFetch({ mp4Status: 404 })), { size: 1, page: 1, source: 'douyin' });
+  assert.equal(r.failed.download_http_404, 1);
+  assert.equal(submitted.length, 0, '两失败链路零写回');
+});
+
+test('asr backfill douyin：dry-run 只圈定不触网（详情/直链/转写全不调）', async () => {
+  const submitted: Array<{ source: string; vid: string; cues: unknown }> = [];
+  let detailHits = 0;
+  let fetchHits = 0;
+  const client: BackfillClient = {
+    listVideos: async () => ({ total: 1, items: [{ source_vid: DY_VID, title: '抖音标题', duration: 8 }] }),
+    getVideo: async () => { detailHits++; return { extra: '{}' }; },
+    asrSubmit: async () => { throw new Error('不应写回'); },
+  };
+  const fetchImpl = (async () => { fetchHits++; return new Response('{}'); }) as typeof fetch;
+  const r = await runBackfill(dyDeps(client, fetchImpl), { size: 10, page: 1, source: 'douyin', dryRun: true });
+  assert.equal(r.dry_run, true);
+  assert.equal(r.circled, 1);
+  assert.equal(r.done, 0);
+  assert.equal(detailHits, 0, 'dry-run 不拉详情');
+  assert.equal(fetchHits, 0, 'dry-run 不发任何网络请求');
+  assert.equal(submitted.length, 0);
+});
+
+test('asr backfill douyin：转写覆盖远小于时长 → truncated 拒入库（对齐 B 站试看片段防线）；duration 缺失则跳过校验', async () => {
+  const submitted: Array<{ source: string; vid: string; cues: unknown }> = [];
+  // 1. 时长 604s、转写仅到 5s → truncated（5 < 302）
+  let r = await runBackfill(
+    dyDeps(douyinClient(submitted, { item: { source_vid: DY_VID, title: 't', duration: 604 } }), douyinFetch()),
+    { size: 1, page: 1, source: 'douyin' },
+  );
+  assert.equal(r.done, 0);
+  assert.equal(r.failed.truncated, 1);
+  assert.equal(submitted.length, 0, 'truncated 零写回');
+  // 2. duration 缺失（0）→ 无从校验，放行成功
+  r = await runBackfill(
+    dyDeps(douyinClient(submitted, { item: { source_vid: DY_VID, title: 't' } }), douyinFetch()),
+    { size: 1, page: 1, source: 'douyin' },
+  );
+  assert.equal(r.done, 1, 'duration 缺失跳过覆盖率校验');
+  assert.equal(submitted.length, 1);
+});
+
+test('parseAsrSource：bilibili/douyin 通过；youtube 及非法值拒绝（youtube 无 ASR backfill 链路）', () => {
+  assert.equal(parseAsrSource('bilibili'), 'bilibili');
+  assert.equal(parseAsrSource('douyin'), 'douyin');
+  assert.equal(parseAsrSource('youtube'), null);
+  assert.equal(parseAsrSource('baidu'), null);
+});
+
+test('asr backfill douyin：写回抛错 → submit_error 不中断（对齐 B 站行为）', async () => {
+  const client: BackfillClient = {
+    listVideos: async () => ({ total: 1, items: [{ source_vid: DY_VID, title: 't', duration: 8 }] }),
+    getVideo: async () => ({ extra: JSON.stringify({ play_uri: DY_URI }) }),
+    asrSubmit: async () => { throw new Error('server 500'); },
+  };
+  const r = await runBackfill(dyDeps(client, douyinFetch()), { size: 1, page: 1, source: 'douyin' });
+  assert.equal(r.done, 0);
+  assert.equal(r.failed.submit_error, 1);
 });

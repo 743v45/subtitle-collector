@@ -85,7 +85,7 @@ export async function getVersion(versionId: number): Promise<{ version: { id: nu
 // ── change_log（最近采集/变更流水）──
 export async function getChanges(params: {
   entity?: string;       // 'video' | 'creator'
-  source?: string;       // 平台过滤（bilibili|youtube，经实体行判定；items 带派生 source 列）
+  source?: string;       // 平台过滤（bilibili|youtube|douyin，经实体行判定；items 带派生 source 列）
   page?: number;
   size?: number;
 }): Promise<{ total: number; items: ChangeRow[] }> {
@@ -141,7 +141,7 @@ export async function listCollectTasks(limit = 20): Promise<{ total: number; ite
 // status/source/since/until/batchId 覆盖全部任务。批次补全语义同列表端点（种子页涉及的批次成员完整返回）。
 export interface TaskHistoryFilter {
   status?: readonly CollectTaskStatus[] | null;
-  source?: 'bilibili' | 'youtube';
+  source?: 'bilibili' | 'youtube' | 'douyin';
   batchId?: string;
   batchScope?: 'batch' | 'single';
   creator?: string;
@@ -181,16 +181,15 @@ export async function deleteCollectTask(id: number): Promise<void> {
   await ensureOk(r, () => undefined);
 }
 
-// ── 按 UP/频道批量采集（2026-08-19；2026-08-24 双平台）──
-// UP/频道全部视频列表：server 经扩展 WS 代理拉取（B 站 arc/search 逐页 / YouTube 频道一次全量）+ 查库标注已采。
-// YouTube 返回附带 channel（id=channelId、name=频道名——批量提交作 creatorUid 归属）。
+// ── 按 UP/频道/博主批量采集（2026-08-19；2026-08-24 双平台；2026-08-29 +douyin）──
+// server 经扩展 WS 代理拉全量（B 站 arc/search 逐页 / YouTube 一次全量 / 抖音 max_cursor 翻页聚合）
+// + 查库标注已采；youtube/douyin 共用 channel 键（douyin 传 sec_uid），YouTube 回执附频道归属。
 // 扩展离线 / 拉取失败 → 抛错（ensureOk 带 server error 文案）。
 export async function expandUpperVideos(
-  opts: { source: 'bilibili'; mid: string } | { source: 'youtube'; channel: string },
+  opts: { source: 'bilibili'; mid: string } | { source: 'youtube' | 'douyin'; channel: string },
 ): Promise<{ total: number; items: UpperVideoItem[]; channel?: { id: string | null; name: string | null } }> {
-  const body = opts.source === 'youtube'
-    ? { source: 'youtube', channel: opts.channel }
-    : { source: 'bilibili', mid: opts.mid };
+  // youtube/douyin 的请求体同构 {source, channel}，分支只剩 B 站 mid 一档
+  const body = opts.source === 'bilibili' ? { source: 'bilibili', mid: opts.mid } : { source: opts.source, channel: opts.channel };
   const r = await fetch(`${BASE}/api/upper-videos/expand`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -207,7 +206,7 @@ export async function expandUpperVideos(
 // true = 强制重采（字幕刷新场景）。
 export async function createCollectTasksBatch(
   vids: string[],
-  source: 'bilibili' | 'youtube',
+  source: 'bilibili' | 'youtube' | 'douyin',
   creatorUid?: string,
   force?: boolean,
 ): Promise<{ created: number; skipped: number; skippedCollected: number }> {
@@ -235,18 +234,18 @@ export async function retryCollectTasks(ids: number[]): Promise<{ retried: numbe
 // ── 采集超时配置（2026-08-22，按平台分档）──
 // youtube=扩展无进展窗口（持续无新进展判超时,慢视频调大）;bilibili=server 等回执预算。
 // 毫秒存储,UI 用秒展示;范围 [15s, 600s]（server 校验,非法 400）。
-export async function getCollectTimeout(): Promise<{ bilibili: number; youtube: number }> {
+export async function getCollectTimeout(): Promise<{ bilibili: number; youtube: number; douyin: number }> {
   const r = await fetch(`${BASE}/api/settings/collect-timeout`);
-  return ensureOk(r, (j) => ({ bilibili: j.bilibili, youtube: j.youtube }));
+  return ensureOk(r, (j) => ({ bilibili: j.bilibili, youtube: j.youtube, douyin: j.douyin }));
 }
 
-export async function setCollectTimeout(v: { bilibili: number; youtube: number }): Promise<{ bilibili: number; youtube: number }> {
+export async function setCollectTimeout(v: { bilibili: number; youtube: number; douyin: number }): Promise<{ bilibili: number; youtube: number; douyin: number }> {
   const r = await fetch(`${BASE}/api/settings/collect-timeout`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(v),
   });
-  return ensureOk(r, (j) => ({ bilibili: j.bilibili, youtube: j.youtube }));
+  return ensureOk(r, (j) => ({ bilibili: j.bilibili, youtube: j.youtube, douyin: j.douyin }));
 }
 
 export async function setReporting(clientId: string, enabled: boolean): Promise<boolean> {
@@ -397,7 +396,7 @@ export async function listCreators(params: {
   q?: string;
   category?: string;
   scope?: 'agent' | 'human';
-  source?: string;   // 平台过滤（bilibili|youtube）
+  source?: string;   // 平台过滤（bilibili|youtube|douyin）
   sort?: 'first_seen' | 'fans' | 'video_count';
   page?: number;
   size?: number;

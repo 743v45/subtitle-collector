@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { listVideos, getStatsAggregate } from '../api';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
@@ -11,10 +11,11 @@ import { useAsync } from '@/lib/useAsync';
 import { TAG_SOURCE_CLASS, type TagSource } from '@/lib/tagSources';
 import { creatorUrl, videoUrl } from '../lib/externalLinks';
 import { ExtLink } from '@/components/ExtLink';
-import { PlatformIcon } from '@/components/PlatformIcon';
+import { PlatformIcon, platformIconClass } from '@/components/PlatformIcon';
+import { TagMultiSelect } from '@/components/TagMultiSelect';
 import { navigate, useQueryUpdater, useRoute } from '../router';
 import { videoListFromQuery } from '../videoFilterUrl';
-import { ArrowDown, ArrowUp, Check, ChevronDown, Film, RotateCcw, X } from 'lucide-react';
+import { ArrowDown, ArrowUp, ChevronDown, Film, RotateCcw, X } from 'lucide-react';
 import type { VideoFilter, VideoListItem } from '../types';
 
 const PAGE_SIZE = 20;
@@ -172,6 +173,7 @@ export function VideoList() {
             <SelectItem value="__all">全部平台</SelectItem>
             <SelectItem value="bilibili">哔哩哔哩</SelectItem>
             <SelectItem value="youtube">YouTube</SelectItem>
+            <SelectItem value="douyin">抖音</SelectItem>
           </SelectContent>
         </Select>
         <Input
@@ -273,7 +275,8 @@ export function VideoList() {
               <SelectItem value="manual">手动</SelectItem>
               <SelectItem value="batch">批量</SelectItem>
               <SelectItem value="ai">AI</SelectItem>
-              <SelectItem value="bili">B站</SelectItem>
+              {/* bili 档=视频自带标签：B 站 tags 与抖音话题标签同入此档（2026-08-29 douyin 接入改文案） */}
+              <SelectItem value="bili">平台自带</SelectItem>
               <SelectItem value="season">合集</SelectItem>
             </SelectContent>
           </Select>
@@ -456,89 +459,14 @@ export function VideoList() {
   );
 }
 
-// ── 多标签下拉多选（手写受控面板：button + absolute 定位 div，不新增依赖）──
-// 视觉对齐 select.tsx（border rounded-md bg-popover shadow-md）；面板外点击关闭；
-// 勾选即回调 onChange（父组件写 URL query），选项带计数。
-function TagMultiSelect({ options, selected, onChange }: {
-  options: { key: string; count: number }[];
-  selected: string[];
-  onChange: (next: string[]) => void;
-}) {
-  const [open, setOpen] = useState(false);
-  const rootRef = useRef<HTMLDivElement>(null);
-
-  // 面板外 mousedown → 关闭（mousedown 而非 click，避免面板内点击冒泡时序问题）
-  useEffect(() => {
-    if (!open) return;
-    const onDown = (e: MouseEvent) => {
-      if (rootRef.current && !rootRef.current.contains(e.target as Node)) setOpen(false);
-    };
-    document.addEventListener('mousedown', onDown);
-    return () => document.removeEventListener('mousedown', onDown);
-  }, [open]);
-
-  const toggle = (name: string) => {
-    onChange(selected.includes(name) ? selected.filter((s) => s !== name) : [...selected, name]);
-  };
-
-  return (
-    <div ref={rootRef} className="relative">
-      <button
-        type="button"
-        aria-expanded={open}
-        onClick={() => setOpen((o) => !o)}
-        className={cn(
-          'flex h-9 min-w-[140px] cursor-pointer items-center justify-between gap-2 rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-sm transition-colors duration-150 focus:outline-none focus:ring-1 focus:ring-ring',
-          open && 'ring-1 ring-ring',
-        )}
-      >
-        <span className={cn('truncate', selected.length === 0 && 'text-muted-foreground')}>
-          {selected.length > 0 ? `标签（${selected.length}）` : '标签'}
-        </span>
-        <ChevronDown className={cn('h-4 w-4 shrink-0 opacity-50 transition-transform', open && 'rotate-180')} />
-      </button>
-      {open && (
-        <div className="absolute left-0 z-50 mt-1 max-h-72 w-72 overflow-y-auto rounded-md border bg-popover p-1 text-popover-foreground shadow-md">
-          {options.length === 0 && (
-            <div className="px-2 py-1.5 text-sm text-muted-foreground">暂无标签</div>
-          )}
-          {options.map((t) => {
-            const checked = selected.includes(t.key);
-            return (
-              <button
-                key={t.key}
-                type="button"
-                role="option"
-                aria-selected={checked}
-                onClick={() => toggle(t.key)}
-                className="flex w-full cursor-pointer items-center gap-2 rounded-sm px-2 py-1.5 text-left text-sm outline-none transition-colors duration-150 hover:bg-accent focus:bg-accent"
-              >
-                <span
-                  className={cn(
-                    'flex h-4 w-4 shrink-0 items-center justify-center rounded-[4px] border',
-                    checked ? 'border-primary bg-primary text-primary-foreground' : 'border-input',
-                  )}
-                >
-                  {checked && <Check className="h-3 w-3" />}
-                </span>
-                <span className="min-w-0 flex-1 truncate" title={t.key}>{t.key}</span>
-                <span className="shrink-0 text-xs tabular-nums text-muted-foreground">{t.count}</span>
-              </button>
-            );
-          })}
-        </div>
-      )}
-    </div>
-  );
-}
-
 function VideoRow({ v, onOpen }: { v: VideoListItem; onOpen: (source: string, sourceVid: string) => void }) {
   // tag_details（四档带色）优先；旧接口只回 tags 时退化为无色 outline Badge
   const tagDetails: { name: string; source?: TagSource }[] =
     v.tag_details ?? (v.tags ?? []).map((name) => ({ name }));
   const shownTags = tagDetails.slice(0, 3);
   const extraTags = Math.max(0, tagDetails.length - shownTags.length);
-  const iconColor = v.source === 'youtube' ? 'text-red-500' : 'text-[#FB7299]';
+  // 行内图标色与共享 platformIconClass 同源（2026-08-29 收敛重复三元，douyin 黑系自动同步）
+  const iconColor = platformIconClass(v.source);
 
   return (
     // 整行点击进详情（onOpen 已附加当前列表 query → 返回原样还原）

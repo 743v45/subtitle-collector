@@ -4,6 +4,7 @@
 // | 轮次 | 范围 | 结果 | 备注 |
 // |---|---|---|---|
 // | R1 | 回填 + 三种校验失败 + 成功 PUT + 失败 toast | 通过 | 输入 type=number 用 fireEvent.change |
+// | R2 | 抖音档三键化（2026-08-29,server PUT 缺键 400 的集成缺口修复） | 通过 | mock/inputs/PUT body 全三键 |
 import { test, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, cleanup, waitFor } from '@testing-library/react';
 import { ToastProvider } from '@/components/ui/toast';
@@ -17,7 +18,7 @@ const fetchMock = vi.fn();
 
 beforeEach(() => {
   fetchMock.mockReset();
-  fetchMock.mockImplementation(() => Promise.resolve(ok({ bilibili: 90000, youtube: 45000 })));
+  fetchMock.mockImplementation(() => Promise.resolve(ok({ bilibili: 90000, youtube: 45000, douyin: 45000 })));
   vi.stubGlobal('fetch', fetchMock);
 });
 afterEach(() => {
@@ -29,6 +30,7 @@ function inputs(): HTMLInputElement[] {
   return [
     screen.getByLabelText(/YouTube/),
     screen.getByLabelText(/B站/),
+    screen.getByLabelText(/抖音/),
   ] as HTMLInputElement[];
 }
 
@@ -37,9 +39,10 @@ test('回填：毫秒转秒显示（45000→45 / 90000→90）；加载中骨架
   // 初始 pending → 骨架
   expect(document.querySelector('.animate-pulse')).not.toBeNull();
   await screen.findByText('采集超时');
-  const [yt, bili] = inputs();
+  const [yt, bili, dy] = inputs();
   expect(yt.value).toBe('45');
   expect(bili.value).toBe('90');
+  expect(dy.value).toBe('45'); // 抖音档三键回填（缺键 PUT 会 400）——注：vitest toBe 不收 message 参（Jest 习惯），说明写注释
   expect(fetchMock.mock.calls[0][0]).toBe('/api/settings/collect-timeout');
 });
 
@@ -70,17 +73,19 @@ test('保存成功：PUT 秒→毫秒 + toast', async () => {
   await screen.findByText('采集超时');
   fireEvent.change(screen.getByLabelText(/YouTube/), { target: { value: '60' } });
   fireEvent.change(screen.getByLabelText(/B站/), { target: { value: '120' } });
+  fireEvent.change(screen.getByLabelText(/抖音/), { target: { value: '90' } });
   fireEvent.click(screen.getByRole('button', { name: /保存/ }));
   expect(await screen.findByText('已保存采集超时（对之后派发的任务生效）')).toBeInTheDocument();
   const put = fetchMock.mock.calls.find((c) => (c[1] as RequestInit | undefined)?.method === 'PUT')!;
   expect(put[0]).toBe('/api/settings/collect-timeout');
-  expect(JSON.parse(String(put[1].body))).toEqual({ bilibili: 120000, youtube: 60000 });
+  // 三键齐发——server 缺 douyin 键会 400（2026-08-29 三平台校验）
+  expect(JSON.parse(String(put[1].body))).toEqual({ bilibili: 120000, youtube: 60000, douyin: 90000 });
 });
 
 test('保存失败：toast 带错误文案', async () => {
   fetchMock.mockImplementation((url: string, init?: RequestInit) => {
     if (init?.method === 'PUT') return Promise.resolve(new Response('no', { status: 400 }));
-    return Promise.resolve(ok({ bilibili: 90000, youtube: 45000 }));
+    return Promise.resolve(ok({ bilibili: 90000, youtube: 45000, douyin: 45000 }));
   });
   render(<ToastProvider><SettingsPage /></ToastProvider>);
   await screen.findByText('采集超时');

@@ -1,9 +1,10 @@
-// externalLinks 纯函数测试：videoUrl / creatorUrl 的平台分流（bilibili 默认 / youtube 分支）。
+// externalLinks 纯函数测试：videoUrl / creatorUrl 的平台分流（bilibili 默认 / youtube、douyin 分支）。
 //
 // 测试轮次记录表（对齐全局 8.2）：
 // | 轮次 | 范围 | 结果 | 备注 |
 // |---|---|---|---|
 // | R1 | videoUrl + creatorUrl 双平台分支 | 通过 | |
+// | R2 | douyin 分支（2026-08-29 接入：/video/<awemeId> 与 /user/<sec_uid>） | 通过 | |
 import { test } from 'vitest';
 import assert from 'node:assert/strict';
 import { videoUrl, creatorUrl } from './externalLinks.ts';
@@ -16,10 +17,18 @@ test('videoUrl：youtube → /watch?v=<id>', () => {
   assert.equal(videoUrl('youtube', 'dQw4w9WgXcQ'), 'https://www.youtube.com/watch?v=dQw4w9WgXcQ');
 });
 
+test('videoUrl：douyin → /video/<awemeId>', () => {
+  assert.equal(videoUrl('douyin', '7300000000000000001'), 'https://www.douyin.com/video/7300000000000000001');
+});
+
 test('creatorUrl：bilibili → space/<mid>', () => {
   assert.equal(creatorUrl('bilibili', '12345'), 'https://space.bilibili.com/12345');
 });
 
 test('creatorUrl：youtube → /channel/<UC…>', () => {
   assert.equal(creatorUrl('youtube', 'UCxxxx'), 'https://www.youtube.com/channel/UCxxxx');
+});
+
+test('creatorUrl：douyin → /user/<sec_uid>', () => {
+  assert.equal(creatorUrl('douyin', 'MS4wLjABAAAAxxxx'), 'https://www.douyin.com/user/MS4wLjABAAAAxxxx');
 });

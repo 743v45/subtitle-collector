@@ -25,7 +25,10 @@ pnpm cli collect discover <mid1> <mid2> <mid3>
 ## 界面批量(推荐日常用)
 
 - **popup「UP 全部视频」卡**:在 UP 主空间页弹出卡,勾选批量采集上报
-- **web 采集页「按 UP / 频道批量」**:贴 mid 或 UP 链接展开勾选批量提交(B 站与 YouTube 双平台)
+- **web 采集页「按 UP / 频道 / 博主批量」**:贴 mid 或 UP 链接展开勾选批量提交(B 站与 YouTube;抖音博主见下条)
+- **web 采集页(抖音博主)**:贴博主主页链接(`https://www.douyin.com/user/<sec_uid>`)或裸 sec_uid 展开勾选批量提交(2026-08-29 起,三平台同入口;需桌面扩展在线——扩展在博主页内滚动翻页聚合成一次回传;浏览器未登录抖音时报「需登录」,先登录再展开)
+
+抖音博主批量暂无 CLI 命令(B 站 `upper-videos` / YouTube `yt-videos` 之外第三平台走 web 入口;程序化调用可用 `POST /api/upper-videos/expand {"source":"douyin","sec_uid":"..."}`)。
 
 ## 顺手采 UP 主资料
 

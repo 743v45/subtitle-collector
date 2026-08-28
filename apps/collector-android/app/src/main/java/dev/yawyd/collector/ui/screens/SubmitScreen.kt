@@ -112,7 +112,7 @@ fun SubmitScreen(container: AppContainer, onOpenSettings: () -> Unit) {
                 }
             } else if (text.isNotBlank()) {
                 Text(
-                    "未识别到 B 站 / YouTube 视频链接",
+                    "未识别到 B 站 / YouTube / 抖音视频链接",
                     fontSize = 12.sp,
                     color = MaterialTheme.colorScheme.error,
                     modifier = Modifier.padding(top = 12.dp),

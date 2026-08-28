@@ -22,7 +22,7 @@
             </intent-filter>
         </activity>
 
-        <!-- 系统分享接收入口：B 站 / YouTube App 的分享菜单里选「采集字幕」，转发文本给主界面进确认页。
+        <!-- 系统分享接收入口：B 站 / YouTube / 抖音 App 的分享菜单里选「采集字幕」，转发文本给主界面进确认页。
              无 UI 透明跳板（server 才是链接解析权威，本 activity 只搬运 EXTRA_TEXT）。 -->
         <activity
             android:name=".ShareReceiveActivity"

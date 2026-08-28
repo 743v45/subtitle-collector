@@ -6,6 +6,7 @@
 // | 轮次 | 范围 | 结果 | 备注 |
 // |---|---|---|---|
 // | R1 | tag-priority/collect-timeout 全方法 + 未知路径 | 通过 | 非 GET/PUT → 兜底 404 |
+// | R2 | collect-timeout 三键化（缺 douyin 400 / 合法三键 200 往返 / GET 默认 45s） | 通过 | 2026-08-29 S2 抖音平台化 |
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
@@ -71,18 +72,24 @@ test('settings handler：PUT tag-priority 非法排列 → 400（错误文案含
   } finally { cleanup(); }
 });
 
-test('settings handler：PUT collect-timeout 缺键/越界 → 400 + message 透传；GET 正常', async () => {
+test('settings handler：PUT collect-timeout 缺键/越界 → 400 + message 透传；GET 正常（三键）', async () => {
   const { port, cleanup } = await setup();
   try {
+    // 缺键：两平台时代旧调用（无 douyin）也可见失败（2026-08-29 douyin 档加入后三键齐全才收）
     const r = await call(port, 'PUT', '/api/settings/collect-timeout', { bilibili: 120_000 });
     assert.equal(r.status, 400);
-    assert.match(r.json.error, /bilibili, youtube/);
-    const r2 = await call(port, 'PUT', '/api/settings/collect-timeout', { bilibili: 5_000, youtube: 90_000 });
+    assert.match(r.json.error, /bilibili, youtube, douyin/);
+    const r2 = await call(port, 'PUT', '/api/settings/collect-timeout', { bilibili: 5_000, youtube: 90_000, douyin: 45_000 });
     assert.equal(r2.status, 400);
-    // GET 默认值不受失败写影响
+    // GET 默认值不受失败写影响（douyin 默认 45s 对齐 youtube 窗口档）
     const g = await call(port, 'GET', '/api/settings/collect-timeout');
     assert.equal(g.status, 200);
     assert.equal(g.json.bilibili, 90_000);
     assert.equal(g.json.youtube, 45_000);
+    assert.equal(g.json.douyin, 45_000);
+    // 三键齐全合法 PUT → 200 往返
+    const ok = await call(port, 'PUT', '/api/settings/collect-timeout', { bilibili: 120_000, youtube: 90_000, douyin: 60_000 });
+    assert.equal(ok.status, 200);
+    assert.deepEqual([ok.json.bilibili, ok.json.youtube, ok.json.douyin], [120_000, 90_000, 60_000]);
   } finally { cleanup(); }
 });

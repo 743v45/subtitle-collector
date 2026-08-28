@@ -6,6 +6,7 @@
 // | 轮次 | 范围 | 结果 | 备注 |
 // |---|---|---|---|
 // | R1 | tagsList 计数/source 过滤/q/topN + DB 缺失抛错 + apply/remove 委托 | 通过 | |
+// | R2 | tagsApply --source douyin 委托（platform 透传） | 通过 | 2026-08-29 S2 抖音平台化 |
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -98,6 +99,9 @@ test('tagsApply：委托 client.applyTags(vids, names, scope, platform) 并透�
   // 显式 YouTube：vid 按 11 位 ID 透传，platform 跟随
   await tagsApply(client, ['ytvid00001'], ['ai'], 'ai', 'youtube');
   assert.deepEqual(calls.apply[1], [['ytvid00001'], ['ai'], 'ai', 'youtube']);
+  // 显式 douyin（2026-08-29 S2）：vid 按 19 位 aweme_id 透传，platform 跟随
+  await tagsApply(client, ['7123456789012345678'], ['no-subtitle'], 'system', 'douyin');
+  assert.deepEqual(calls.apply[2], [['7123456789012345678'], ['no-subtitle'], 'system', 'douyin']);
 });
 
 test('tagsRemove：scope 可选透传（省略 = 删全档），platform 默认 bilibili', async () => {

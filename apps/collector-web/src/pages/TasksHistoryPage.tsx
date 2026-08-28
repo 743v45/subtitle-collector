@@ -21,7 +21,8 @@ import { useRoute, useQueryUpdater, navigate } from '../router';
 import { BatchTaskCard, TaskRow, retryable, resubmitTasks, retrySummary } from '@/components/TaskCards';
 import { useToast } from '@/components/ui/toast';
 import { isActiveStatus, sendTaskDoneNotification, terminalTransitions } from '@/lib/taskNotify';
-import { taskHistoryFromQuery, isMidLike } from '../taskHistoryFilterUrl';
+import { parseSourceFilter } from '@/lib/platformSource';
+import { taskHistoryFromQuery, isMidLike, todayStart, DAY_MS } from '../taskHistoryFilterUrl';
 import type { CollectTask, CollectTaskStatus } from '../types';
 
 const PAGE_SIZE = 50;
@@ -35,14 +36,6 @@ const FILTERS: ReadonlyArray<{ key: string; label: string; statuses: readonly Co
   { key: 'limited', label: '受限', statuses: ['limited'] },
   { key: 'failed', label: '失败', statuses: ['failed'] },
 ];
-
-// 今日本地 00:00（时间快捷档按「现在」重算:分享 URL 次日打开=新的一天,正是期望语义）
-function todayStart(): number {
-  const d = new Date();
-  d.setHours(0, 0, 0, 0);
-  return d.getTime();
-}
-const DAY_MS = 86_400_000;
 
 export function TasksHistoryPage() {
   const route = useRoute();
@@ -81,7 +74,7 @@ export function TasksHistoryPage() {
   const filter = FILTERS.find((x) => x.key === f.status) ?? FILTERS[0];
   const reqFilter: TaskHistoryFilter = {
     status: filter.statuses,
-    source: f.source === 'bilibili' || f.source === 'youtube' ? f.source : undefined,
+    source: parseSourceFilter(f.source) ?? undefined,
     batchId: f.batchId || undefined,
     batchScope: f.batch || undefined,
     creator: f.creator && !isMidLike(f.creator) ? f.creator : undefined,
@@ -249,6 +242,7 @@ export function TasksHistoryPage() {
             <SelectItem value="__all">全部平台</SelectItem>
             <SelectItem value="bilibili">哔哩哔哩</SelectItem>
             <SelectItem value="youtube">YouTube</SelectItem>
+            <SelectItem value="douyin">抖音</SelectItem>
           </SelectContent>
         </Select>
         <Select

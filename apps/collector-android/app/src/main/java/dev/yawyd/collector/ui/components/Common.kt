@@ -57,6 +57,7 @@ fun StatusBadge(status: String) = Badge(statusLabel(status), statusColor(status)
 fun PlatformBadge(source: String) = when (source) {
     "bilibili" -> Badge("B站", Color(0xFF00A1D6))
     "youtube" -> Badge("YT", Color(0xFFE62117))
+    "douyin" -> Badge("抖音", Color(0xFFFE2C55)) // 抖音品牌红
     else -> Badge(source, Color(0xFF9E9E9E))
 }
 

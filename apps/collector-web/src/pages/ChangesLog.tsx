@@ -8,6 +8,7 @@ import { useQueryUpdater, useRoute } from '../router';
 import { getChanges } from '@/api';
 import { PlatformIcon, platformIconClass } from '@/components/PlatformIcon';
 import { PlatformSelect } from '@/components/PlatformSelect';
+import { parseSourceFilter } from '@/lib/platformSource';
 import { cn } from '@/lib/utils';
 import type { ChangeRow } from '@/types';
 
@@ -34,7 +35,7 @@ export function ChangesLog() {
   const updateQuery = useQueryUpdater();
   const entity = route.query.get('entity') ?? '';
   const sourceRaw = route.query.get('source');
-  const source = sourceRaw === 'bilibili' || sourceRaw === 'youtube' ? sourceRaw : null;
+  const source = parseSourceFilter(sourceRaw);
   const pageRaw = Number(route.query.get('page'));
   const page = Number.isInteger(pageRaw) && pageRaw > 1 ? pageRaw : 1;
   const { data, loading, error, reload } = useAsync(

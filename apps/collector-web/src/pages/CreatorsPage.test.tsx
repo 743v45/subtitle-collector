@@ -6,6 +6,7 @@
 // | R1 | 渲染 + 防抖 + URL 筛选流 + Select 分类变更 + 空错态 | 通过 | 防抖 fake timers；输入期间防抖未触发 |
 // | R2 | 值域合一（2026-08-25）：三态槽位筛选；分类下拉一套；cat 筛选请求不带 scope | 通过 | 缺省从 human 改「全部」 |
 // | R3 | 「全部分类」清除 cat（2026-08-29 修复选后无清除入口） | 通过 | cat Select 增加 __all 项 |
+// | R4 | douyin 平台白名单（2026-08-29 接入）：URL source=douyin 透传 + 下拉第四项 | 通过 | |
 import { test, expect, vi, beforeEach, afterEach, beforeAll } from 'vitest';
 import { render, screen, fireEvent, cleanup, waitFor, act } from '@testing-library/react';
 import { ToastProvider } from '@/components/ui/toast';
@@ -193,6 +194,18 @@ test('平台筛选 Select：切换写 URL source 且按平台重拉', async () =
   fireEvent.click(await screen.findByRole('option', { name: '哔哩哔哩' }));
   await waitFor(() => expect(window.location.hash).toBe('#/creators?source=bilibili'));
   await waitFor(() => expect(String(fetchMock.mock.calls.at(-1)![0])).toContain('source=bilibili'));
+});
+
+// douyin URL 白名单（2026-08-29）：source=douyin 直入 → 请求透传；非法值仍收敛 null
+test('平台筛选：URL source=douyin 直入 → 请求带 source=douyin；抖音选项在列', async () => {
+  window.history.replaceState(null, '', '#/creators?source=douyin');
+  render(<ToastProvider><CreatorsPage onOpen={() => {}} /></ToastProvider>);
+  await screen.findByText('UP1');
+  // 只看 /api/creators 调用（categories 请求并发，at(-1) 不稳定）
+  await waitFor(() => expect(String(fetchMock.mock.calls.filter((c) => String(c[0]).startsWith('/api/creators?')).at(-1)![0])).toContain('source=douyin'));
+  // 下拉第四项存在且受控回显「抖音」
+  fireEvent.pointerDown(screen.getByRole('combobox', { name: '平台筛选' }), { button: 0, ctrlKey: false, pointerType: 'mouse' });
+  expect(await screen.findByRole('option', { name: '抖音' })).toBeInTheDocument();
 });
 
 test('cat 筛选 Select：「全部分类」清除 cat 参数并重拉（2026-08-29 修复——此前选后无清除入口）', async () => {

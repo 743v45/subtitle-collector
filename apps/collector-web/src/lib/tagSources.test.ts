@@ -5,6 +5,7 @@
 // |---|---|---|---|
 // | R1 | 三张表五档键齐全 + 样式类非空 | 通过 | |
 // | R2 | 六档化（+system 系统状态档，2026-08-23 no-subtitle） | 通过 | |
+// | R3 | bili 档文案改「平台自带」（2026-08-29 douyin 接入：抖音话题标签同入 bili 档，不能再叫「B站」） | 通过 | |
 import { test } from 'vitest';
 import assert from 'node:assert/strict';
 import { TAG_SOURCE_CLASS, TAG_SOURCE_LABEL, TAG_SOURCE_DOT, type TagSource } from './tagSources.ts';
@@ -22,6 +23,6 @@ test('三张表均覆盖六档且值非空', () => {
   assert.equal(Object.keys(TAG_SOURCE_DOT).length, 6);
 });
 
-test('档位中文标签取值（消费方 UI 文案锚点）', () => {
-  assert.deepEqual(TAG_SOURCE_LABEL, { manual: '手动', batch: '批量', bili: 'B站', season: '合集', ai: 'AI', system: '系统' });
+test('档位中文标签取值（消费方 UI 文案锚点；bili=平台自带）', () => {
+  assert.deepEqual(TAG_SOURCE_LABEL, { manual: '手动', batch: '批量', bili: '平台自带', season: '合集', ai: 'AI', system: '系统' });
 });

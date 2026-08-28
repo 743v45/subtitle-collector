@@ -7,6 +7,7 @@
 // |---|---|---|---|
 // | R1 | list（默认/--source ai/--q）+ apply/remove 成功（断言请求体）+ ARGS ×2 + SERVER_UNREACHABLE + 5xx RUNTIME | 通过 | |
 // | R2 | 排序：list --sort name 升降 + 非法 --sort ARGS 退 2 | 通过 | 2026-08-25 全端点排序；pnpm qa 全绿 |
+// | R3 | --source douyin 合法化（原「非法平台」样本换 bogus；文案加 douyin） | 通过 | 2026-08-29 S2 抖音平台化 |
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -126,15 +127,18 @@ test('tags list --scope 非法 → ARGS 退 2', async () => {
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
-test('tags list --source 非法平台 → ARGS 退 2；合法平台透传退 0', async () => {
+test('tags list --source 非法平台 → ARGS 退 2；合法平台（含 douyin）透传退 0', async () => {
   const { dir, dbPath } = setup();
   try {
-    const bad = await cli(args(dbPath, DEAD, ['tags', 'list', '--source', 'douyin']));
+    const bad = await cli(args(dbPath, DEAD, ['tags', 'list', '--source', 'bogus']));
     assert.equal(bad.code, 2);
     assert.equal(JSON.parse(bad.out).code, 'ARGS');
-    assert.match(bad.err, /--source 必须是 bilibili\/youtube/);
+    assert.match(bad.err, /--source 必须是 bilibili\/youtube\/douyin/);
+    // douyin 是合法平台（2026-08-29 S2 平台化）：透传退 0，0 使用标签按平台收窄计数后仍列出
+    const dy = await cli(args(dbPath, DEAD, ['tags', 'list', '--source', 'douyin']));
+    assert.equal(dy.code, 0);
     const okRun = await cli(args(dbPath, DEAD, ['tags', 'list', '--source', 'youtube']));
-    assert.equal(okRun.code, 0); // 无 YouTube 关系 → 0 使用标签按平台收窄计数后仍列出（计数 0）
+    assert.equal(okRun.code, 0);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
@@ -192,7 +196,8 @@ test('tags apply：--source 平台非法 → ARGS 退 2', async () => {
   const { dir, dbPath } = setup();
   const srv = await startMockServer(() => ({ status: 200, json: { ok: true } }));
   try {
-    const r = await cli(args(dbPath, srv.url, ['tags', 'apply', 'BV1', '--names', 'a', '--source', 'douyin']));
+    // douyin 已是合法平台（2026-08-29 S2），非法值换 bogus
+    const r = await cli(args(dbPath, srv.url, ['tags', 'apply', 'BV1', '--names', 'a', '--source', 'bogus']));
     assert.equal(r.code, 2);
     assert.equal(JSON.parse(r.out).code, 'ARGS');
     assert.equal(srv.reqs.length, 0);

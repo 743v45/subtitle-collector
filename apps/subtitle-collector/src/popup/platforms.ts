@@ -1,8 +1,8 @@
-import { extractBiliVid, extractYoutubeVid } from '../../vid-extract.mjs';
+import { extractBiliVid, extractDouyinVid, extractYoutubeVid } from '../../vid-extract.mjs';
 
 // popup 平台显示 adapter：logo / 名称 / 统计字段 / URL 识别，数据驱动渲染。
-// 已接入 bilibili + YouTube；抖音 / 小红书的官方 logo（simple-icons path）已预取在 LOGOS，
-// 待 content/inject/hooks 支持后注册到 PLATFORMS 即可，popup 结构零改动。
+// 已接入 bilibili + YouTube + 抖音（2026-08-29 S3）；小红书的官方 logo（simple-icons path）
+// 已预取在 LOGOS，待 content/inject/hooks 支持后注册到 PLATFORMS 即可，popup 结构零改动。
 
 export type StatIconName = 'play' | 'like' | 'coin' | 'star' | 'share' | 'danmaku';
 
@@ -73,8 +73,28 @@ export const youtube: Platform = {
   ],
 };
 
-// 当前接入的平台（抖音/小红书待 content/inject/hooks 支持后 push）。
-export const PLATFORMS: Platform[] = [bili, youtube];
+export const douyin: Platform = {
+  id: 'douyin',
+  name: '抖音',
+  // 抖音国内品牌（与 TikTok 同 logo）；黑底白 logo（BrandHeader 抖音 badge 同色）
+  logo: LOGOS.tiktok,
+  brandBgClass: 'bg-black',
+  // 覆盖 douyin.com（www/v 短链跳转后）与 iesdouyin.com 分享域（hostPattern 对完整 URL 子串匹配）
+  hostPattern: /douyin\.com/,
+  // 两形态（S1 spike）：/video/<id> 路径优先，?modal_id=（/jingxuan 分享落地）次之。见 vid-extract.mjs。
+  extractVid: extractDouyinVid,
+  // stat 键对齐 B 站 extra.stat（R5 定案）；reply（评论）无对应 StatIcon 图标，popup 不展示
+  // （数据照入库，web 端展示）。view 恒 0（douyin web 端不回播放数，S1 实测），展示为 0。
+  statFields: [
+    { key: 'view', label: '播放', icon: 'play' },
+    { key: 'like', label: '点赞', icon: 'like' },
+    { key: 'favorite', label: '收藏', icon: 'star' },
+    { key: 'share', label: '转发', icon: 'share' },
+  ],
+};
+
+// 当前接入的平台（小红书待 content/inject/hooks 支持后 push）。
+export const PLATFORMS: Platform[] = [bili, youtube, douyin];
 
 // 按域名判断平台（任意页面：首页/搜索/视频页都识别为该平台）。无关站返回 null。
 export function detectPlatform(url: string | undefined): Platform | null {

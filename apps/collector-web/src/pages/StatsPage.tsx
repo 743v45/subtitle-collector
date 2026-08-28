@@ -5,6 +5,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { PlatformSelect } from '@/components/PlatformSelect';
+import { parseSourceFilter } from '@/lib/platformSource';
 import { cn } from '@/lib/utils';
 import { PlatformIcon, platformIconClass } from '@/components/PlatformIcon';
 import type { StatsGroupBy, KeyValue, StatsOverview } from '../types';
@@ -18,7 +19,7 @@ const GROUP_LABEL: Record<StatsGroupBy, string> = {
   source: '平台',
 };
 const TRACK_TYPE_LABEL: Record<string, string> = { '1': 'AI 字幕', '2': 'CC 字幕' };
-const SOURCE_LABEL: Record<string, string> = { bilibili: '哔哩哔哩', youtube: 'YouTube' };
+const SOURCE_LABEL: Record<string, string> = { bilibili: '哔哩哔哩', youtube: 'YouTube', douyin: '抖音' };
 
 // 条形宽度用静态字面量数组（Tailwind JIT 扫描源码字面量识别 w-[X%] 任意值类），
 // 避免运行时拼接类名导致 JIT 漏生成；也符合「禁 style={{}} 内联」政策。
@@ -50,7 +51,7 @@ export function StatsPage() {
   const route = useRoute();
   const updateQuery = useQueryUpdater();
   const sourceRaw = route.query.get('source');
-  const source = sourceRaw === 'bilibili' || sourceRaw === 'youtube' ? sourceRaw : null;
+  const source = parseSourceFilter(sourceRaw);
   const groupByRaw = route.query.get('groupBy');
   const groupBy: StatsGroupBy = (Object.keys(GROUP_LABEL) as StatsGroupBy[]).includes(groupByRaw as StatsGroupBy)
     ? (groupByRaw as StatsGroupBy)
