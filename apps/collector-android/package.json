@@ -1,0 +1,10 @@
+{
+  "name": "@bilibili-ext/collector-android",
+  "private": true,
+  "version": "0.1.0",
+  "scripts": {
+    "assemble": "./gradlew :app:assembleDebug",
+    "unit-test": "./gradlew :app:testDebugUnitTest",
+    "lint": "./gradlew :app:detekt"
+  }
+}

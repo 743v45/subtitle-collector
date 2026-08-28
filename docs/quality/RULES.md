@@ -152,3 +152,4 @@ turbo run build --force && turbo run test --force   # --force 防 turbo 缓存�
 | apps/subtitle-extractor | 测试 / ESLint / depcruise / Stryker 全套 | 依赖缺失测试冻结（[pnpm-workspace.yaml](../../pnpm-workspace.yaml) 排除；2026-08-19 用户决定保留该 app） | 2026-08-23 |
 | `*.test.*` 与扩展 `test/**` | complexity / max-lines 两条静态规则 | 静态门只约束源码；测试文件质量由覆盖率指标管 | 2026-08-23 |
 | 根 `scripts/*.mjs`（非 verify/quality 类） | 覆盖率 | 覆盖范围只纳入 `quality-baseline.test.mjs` 类可测脚本；一次性脚本以 §CLAUDE.md 第 9 节可观察性纪律约束 | 2026-08-23 |
+| apps/collector-android | ESLint / 覆盖率锁定 / depcruise / Stryker 四件（§9 全套） | 原生 Kotlin 工程，四件均为 JS/TS 工具链无从接入（2026-08-26 grilling 共识）。原生等价物：**detekt** 当 lint、**JUnit** 写核心逻辑单测（分享文本解析、API 层），gradle 构建挂 turbo 但**不进 `pnpm qa`**（qa 是 node 链）；bug 修复「失败→通过」回归纪律同样适用 | 2026-08-26 |

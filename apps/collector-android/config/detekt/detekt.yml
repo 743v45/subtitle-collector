@@ -1,0 +1,41 @@
+# detekt 配置：四件套豁免后 ESLint 的原生等价物（RULES §10，2026-08-26 登记）。
+# 基准 = 默认规则 + 下方覆盖。覆盖原则：只放宽与 Compose/中文注释天然冲突的项，
+# 复杂度类保持收紧（对齐仓库圈复杂度 ≤15 的精神，detekt 的 CyclomaticComplexMethod 上限 15）。
+build:
+  maxIssues: 0
+
+complexity:
+  CyclomaticComplexMethod:
+    active: true
+    threshold: 15
+  LongMethod:
+    threshold: 120          # Compose screen 单函数聚合 UI 树，120 行内放行
+  LongParameterList:
+    functionThreshold: 8
+    constructorThreshold: 8
+  TooManyFunctions:
+    active: false           # Compose 文件常含大量小 @Composable
+  LargeClass:
+    threshold: 600
+
+style:
+  MagicNumber:
+    active: false           # UI 尺寸/padding 字面量常见，静音
+  ReturnCount:
+    active: false
+  MaxLineLength:
+    maxLineLength: 140      # 中文注释宽行
+  UnusedPrivateMember:
+    ignoreAnnotated: [ 'Preview' ]
+
+naming:
+  FunctionNaming:
+    active: false           # @Composable 约定大写开头（PascalCase），与默认命名规则冲突
+  FunctionParameterNaming:
+    active: false           # Compose 参数沿用上游命名（如 from/to）时小驼峰误报
+  ConstructorParameterNaming:
+    active: false           # API 契约模型刻意用 snake_case 参数名对齐 server JSON 字段（Models.kt）
+
+exceptions:
+  TooGenericExceptionCaught:
+    active: false           # API 边界统一兜 Exception 转 UI 文案

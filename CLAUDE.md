@@ -16,6 +16,7 @@ B 站**字幕（subtitle）**相关浏览器扩展的 monorepo（pnpm + turbo，
 | 无构建链纯原生扩展 | （暂无） | 无 | **豁免**手写 CSS 禁令，沿用原生手写 CSS |
 | 有构建链前端 | `apps/collector-web`、`apps/subtitle-collector`（popup） | 有 | **无豁免**，强制 Tailwind 工具类 + shadcn/ui；禁 `style={{}}` 内联、禁手写 `.css`、禁 CSS-in-JS；subtitle-collector 的 inject/content 虽为裸 JS 但无独立样式，不豁免 popup |
 | 纯后端 | `apps/collector-server` | — | 无 UI，不涉及 |
+| Android 原生 app | `apps/collector-android` | 有（Compose/Gradle） | 原生 Jetpack Compose + Material 3，不适用 web 样式政策（该政策只约束 web 前端形态） |
 
 通用约束：**content script 向宿主页注入可视 UI 时，必须用 Shadow DOM 隔离样式，禁止注入裸 `<style>` 污染宿主页。**
 
@@ -49,6 +50,7 @@ B 站**字幕（subtitle）**相关浏览器扩展的 monorepo（pnpm + turbo，
 | collector-server | `c8 node --test --import tsx "src/**/*.test.ts"` | c8 出覆盖率（node:test+tsx 直报覆盖率对个别文件行级丢失，见 [stats.test.ts](apps/collector-server/src/cli/commands/stats.test.ts) 头部排查记录）＋ `--check-coverage` 锁定阈值 |
 | collector-web | `vitest run --coverage`（vitest 3 + jsdom + @testing-library/react，2026-08-22 经用户确认引入） | vitest thresholds 锁定；`vite build` 归 build task |
 | subtitle-collector | `c8 node --test "test/*.test.mjs"`（import 源码不依赖 dist） | c8 包裹（`--experimental-test-coverage` 退役）＋锁定；扩展链路改动另跑 `pnpm test:ext` puppeteer 冒烟（不进 qa，涉 YouTube 加 `test:youtube`） |
+| collector-android | `./gradlew :app:testDebugUnitTest :app:detekt`（JUnit + detekt） | 原生 Kotlin 工程**豁免四件套**（RULES §10 登记，2026-08-26）：detekt 当 lint、JUnit 单测核心逻辑，不进 `pnpm qa`（node 链）；bug 修复「失败→通过」回归纪律同样适用；涉 app 改动 bump `versionCode` |
 
 - subtitle-extractor：依赖缺失测试冻结，豁免全套质量规则（RULES §10 豁免登记表；workspace 排除见 [pnpm-workspace.yaml](pnpm-workspace.yaml)）。
 - `*.test.*` 测试文件对 complexity/max-lines 两条静态规则豁免（静态门只约束源码，测试质量由覆盖率管）。

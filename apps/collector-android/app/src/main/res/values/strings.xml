@@ -1,0 +1,21 @@
+<resources>
+    <string name="app_name">字幕采集</string>
+    <string name="share_receiver_label">采集字幕</string>
+    <string name="settings_title">设置</string>
+    <string name="server_url_label">Server 地址</string>
+    <string name="server_url_hint">http://192.168.x.x:21527</string>
+    <string name="token_label">Token（COLLECTOR_TOKEN，未设可留空）</string>
+    <string name="save">保存</string>
+    <string name="test_connection">测试连接</string>
+    <string name="submit_tab">提交</string>
+    <string name="tasks_tab">任务</string>
+    <string name="videos_tab">视频</string>
+    <string name="submit_collect">提交采集</string>
+    <string name="share_text_hint">粘贴 B 站 / YouTube 分享文本或视频链接</string>
+    <string name="collect_now">采集</string>
+    <string name="cancel">取消</string>
+    <string name="retry">重试</string>
+    <string name="delete">删除</string>
+    <string name="search_videos">搜索视频…</string>
+    <string name="load_more">加载更多</string>
+</resources>

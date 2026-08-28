@@ -46,6 +46,13 @@ B 站**字幕（subtitle）**相关浏览器扩展与配套服务的 monorepo（
 - 📋 内置 AI pipeline（CLI 一条命令自动分析，需 API 集成）：远期，待手动流程跑顺后再评估
 - 📋 评论采集：远期（当前分析数据源 = 视频/字幕内容，不含评论区）
 
+### 移动端（🚧 Android 原生 app，2026-08-26 立项）
+
+- 🚧 **Android 采集客户端**（Kotlin + Jetpack Compose，[apps/collector-android](apps/collector-android)）：真用优先的手机入口——系统分享菜单接收 B 站/YouTube 链接（app 内粘贴同）→ 确认页展示解析出的视频 → `POST /api/collect-tasks` 建任务由扩展客户端执行；MVP 四件：提交采集 / 任务列表+重试删除 / 视频库搜索 / 视频详情+字幕正文。server URL + token 首启配置（Bearer 认证，server 侧零改动）；每次涉 app 改动 bump `versionCode`
+- 📋 第二批：统计看板、客户端在线状态页（手动刷新，不轮询）
+- 📋 远期：创作者/分类/标签管理、iOS 端（做时再定分发方式）、任务完成推送、离线缓存
+- **不做**：导出（复制代替）、CLI 功能进移动端；公网/组网通路单独立项（真用后评估 Tailscale）
+
 ## 架构
 
 | App | 类型 | 作用 |
@@ -54,6 +61,7 @@ B 站**字幕（subtitle）**相关浏览器扩展与配套服务的 monorepo（
 | [apps/collector-server](apps/collector-server) | 后端（Node + TS） | 本地回环服务：收扩展上报（WS `/ext`）+ HTTP API（`/api/*`）+ 静态托管 web 产物 |
 | [apps/collector-web](apps/collector-web) | 前端（React + Vite） | 字幕库浏览/详情 UI；`vite build` 产物直接写入 `apps/collector-server/public/`，由 server 托管 |
 | [apps/subtitle-extractor](apps/subtitle-extractor) | 浏览器扩展（MV3，Vite + transformers.js） | B站音轨提取 → 浏览器本地 Whisper 转写 → SRT/VTT 导出（无字幕视频兜底，零后端、数据不出本机） |
+| [apps/collector-android](apps/collector-android) | Android 原生 app（Kotlin + Jetpack Compose + Material 3） | 手机端采集入口与查询：分享/粘贴提交任务、任务列表/重试、视频库/字幕查看；经 HTTP API 连 collector-server（Bearer token） |
 
 数据流（默认部署为本地闭环，`127.0.0.1`；暴露部署见「环境变量」）：
 
@@ -68,6 +76,7 @@ B 站**字幕（subtitle）**相关浏览器扩展与配套服务的 monorepo（
 
 - **Node 22**（见 [.nvmrc](.nvmrc)；`@types/node@^22`、`better-sqlite3`、`puppeteer` 在 22 上稳定）
 - **pnpm 9.15.4**（`package.json` 声明了 `packageManager`，启用 Corepack 会自动锁版：`corepack enable`）
+- Android app 构建另需 **JDK 21 + Android SDK**（commandlinetools，`ANDROID_HOME` 指向 SDK 根；仅构建 `apps/collector-android` 时需要，其余链路不受影响）
 
 ## 快速开始
 
@@ -123,7 +132,7 @@ pnpm verify:deployed -- --token <t> [--server <url>] [--db <库路径>]
                  #（坏页损坏 HTTP 探活测不出，须带 --db；2026-08-24 生产库 SQLITE_CORRUPT 事故产物）
 ```
 
-- **单测**（`pnpm test`）：[apps/collector-server](apps/collector-server)（c8 + node:test）、[apps/collector-web](apps/collector-web)（vitest + jsdom + Testing Library）、[apps/subtitle-collector](apps/subtitle-collector)（c8 包裹 node --test，import 源码）；三端覆盖率按锁定线只升不降。
+- **单测**（`pnpm test`）：[apps/collector-server](apps/collector-server)（c8 + node:test）、[apps/collector-web](apps/collector-web)（vitest + jsdom + Testing Library）、[apps/subtitle-collector](apps/subtitle-collector)（c8 包裹 node --test，import 源码）；三端覆盖率按锁定线只升不降。Android app 单测另跑 `./gradlew :app:testDebugUnitTest :app:detekt`（原生链，不进 `pnpm qa`/CI node 流水线，见 RULES §10 豁免登记）。
 - **质量门**（`pnpm qa`）：涉代码提交前手动跑——build + test + 圈复杂度/模块大小台账 + 依赖结构检查；政策见 [CLAUDE.md](CLAUDE.md) 第 3 节与 [docs/quality/RULES.md](docs/quality/RULES.md)。
 - **扩展 e2e**（`pnpm test:ext`）：puppeteer 起 mock server + `--load-extension` 端到端回归。**仅在本地运行**（脚本当前按 macOS 的 Chrome 路径定位，且 MV3 扩展需要 headed 浏览器）。
 - **构建冒烟**：`pnpm --filter @bilibili-ext/collector-web build` 与 `pnpm --filter @bilibili-ext/subtitle-collector build`（见 CI）。

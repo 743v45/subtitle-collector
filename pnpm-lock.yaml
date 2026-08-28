@@ -36,6 +36,8 @@ importers:
         specifier: ^8.18.0
         version: 8.21.0
 
+  apps/collector-android: {}
+
   apps/collector-server:
     dependencies:
       better-sqlite3:
