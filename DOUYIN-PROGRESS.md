@@ -1,9 +1,9 @@
 # 抖音平台全量集成 — 进度与决策记录
 
 > 本文件是 `/loop`(cron `*/20 * * * *`,job `20c97e90`)循环任务的**续作锚点**。
-> 每轮 loop fire 时先读本文件,从「下一步」继续;完成后更新本文件再收尾。
-> worktree:`.claude/worktrees/douyin`(branch `douyin-platform`,基于 main@cbdee54)。
-> 合并回 main 前须:pnpm qa 全绿 + server tsc --noEmit + 扩展 version bump(若动扩展)。
+> **状态:全量已合并进 main(2736d6e + f77e4a1,2026-08-29),当前阶段=审查修复→grilling 迭代**。
+> 开发期 worktree(.claude/worktrees/douyin)已完成使命删除;后续迭代直接在 main 做。
+> 原始过程记录(调研三份+spike-findings)在 [docs/plans/douyin/](docs/plans/douyin/)。
 
 ## 已定决策(2026-08-29 用户授权「全按 Claude 推荐」)
 
@@ -122,17 +122,18 @@
 - ✅ S1 spike 完成(2026-08-29,匿名态 7 页次实测,无封禁):`_ROUTER_DATA` 已不存在 → `/video/<id>` 走 detail XHR(snake_case aweme_detail 148 键,匿名可用)、`/jingxuan?modal_id=` 走 SSR `SSR_RENDER_DATA.app.videoDetail`(camelCase),**S3 双路都要**;直构链 `aweme.snssdk.com/aweme/v1/play/?video_id=<uri>&ratio=1080p&line=0` **裸 curl 即 206 mp4**(S4 主链成立,playwm→play 不需要);字幕判据 `is_subtitled`+`cla_info`(匿名全 0/null,ASR 主路径坐实);post 列表匿名 200 空体(扩展登录态无碍);**play_count web 端恒 0**(stat.view 存 0,S5 展示 —)
 - ⏳ S2(server 平台化)+ S5(web)并行运行中
 
-## 下一步
+## 下一步(当前阶段:审查修复 → grilling 迭代)
 
-1. ~~收 S2 报告 → 审查(server tsc/测试全绿,台账不恶化)→ 派 S5(web)~~ ✅ 全部完成
-2. ~~收 S1 报告 → 按 spike-findings 定 inject-dy 取数路径 → 派 S3(扩展)+ S4(ASR)~~ ✅ S1 已完成:[spike-findings.md](docs/plans/douyin/spike-findings.md) §6 有 S3/S4/S5 分任务建议,可直接派 S3/S4
-3. ~~全部回来 → S6 收口(同步文档+qa)~~ ✅ S6a/S6b 完成
-4. **主线**:S6b 完成 → **合并回 main(commit)**——`git add -A` 全量带上(含 android data/ 4 文件与 baseline.json;commit message 引用 qa 结果)→ **真机验证**(主 checkout `pnpm test:ext` + 扩展载入 Chrome 实跑 douyin:单视频采集/博主批量/asr backfill dry-run)→ 审查修复 → grilling 迭代
+1. ~~合并回 main~~ ✅ 2736d6e(抖音全量)+ f77e4a1(CLAUDE.md 链接修正),fast-forward;worktree/分支已清理
+2. ~~CLAUDE.md §6 解冻注记~~ ✅ 主线已补(一次性解冻,不改变冻结政策本身)
+3. **审查修复(进行中)**:review-douyin agent 双轴审查 cbdee54..f77e4a1(Spec:定案符合性/GPL 红线/协议一致性/迁移保数据;Standards:边界/竞态/安全/可观察性)——报告回来按严重度修复
+4. **真机验证**(审查后):`pnpm test:ext` + 本地 server 起后 API 冒烟(v18 迁移在真库跑一次)+ fireredasr 健康检查 + 扩展载 Chrome 实跑 douyin(需用户环境配合的留说明)
+5. **继续 grilling**:真机暴露的问题 + 下方遗留清单 → 下一轮迭代
 
-## S6b 后遗留(主线/审查阶段处理)
+## 遗留清单(grilling 迭代输入)
 
 - **真机验证未做**(接线清单 #4):Chrome 实跑 douyin 三入口 + `pnpm test:ext`(主 checkout)
-- **popup「上报」按钮在抖音页是哑按钮**:MANUAL_CAPTURE 的 tab URL 过滤只含 bilibili/youtube([background.js](apps/subtitle-collector/background.js) MANUAL_CAPTURE 分支),抖音页点击 8s 后显示「失败」。抖音语义是任务式主动采集,按钮本不该出现——属 UI 粗糙边,可改为抖音页隐藏该按钮或接入任务提交,留给审查阶段定
-- **CLAUDE.md §6 冻结政策注记未动**:README 已注记「2026-08-29 用户现场指令解冻」,CLAUDE.md §6 的冻结表述是否同步补一句解冻注记,留主线定夺(政策文件,未擅改)
-- **douyin 博主批量无 CLI 命令**(web/HTTP 入口可用):若 grilling 后仍需,按 `yt-videos` 形态补,同步登记 skill
-- **hooks-upper.ts 的 douyin 博主页识别已就位但 popup 未消费**(useUpperEntry 识别 /user/<sec_uid>,Popup.tsx 无 douyin 卡):给 popup 补抖音博主卡的现成地基,需要时接上
+- **popup「上报」按钮在抖音页是哑按钮**:MANUAL_CAPTURE 的 tab URL 过滤只含 bilibili/youtube([background.js](apps/subtitle-collector/background.js) MANUAL_CAPTURE 分支),抖音页点击 8s 后显示「失败」。抖音语义是任务式主动采集,按钮本不该出现——可改为抖音页隐藏该按钮或接入任务提交
+- **douyin 博主批量无 CLI 命令**(web/HTTP 入口可用):若需要,按 `yt-videos` 形态补,同步登记 skill
+- **hooks-upper.ts 的 douyin 博主页识别已就位但 popup 未消费**(useUpperEntry 识别 /user/<sec_uid>,Popup.tsx 无 douyin 卡):给 popup 补抖音博主卡的现成地基
+- S3 未实测点清单(inject/字幕真实样本/博主页滚动翻页真机形态)在 spike-findings §6 与 S3 汇报——真机验证时逐项核
