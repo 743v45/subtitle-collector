@@ -50,7 +50,7 @@ export const ANALYZE_MD = `# 分析指引（bundle 自述）
 | 单 UP 理念提炼 | \`analysis/<主题>/理念整理.md\` |
 
 **硬性要求**：
-1. 每条观点/题目/金句必须附出处：\`> 来源: <视频标题> [分:秒]\`，时间戳取自 \`videos/<BV号>.txt\` 行首，可回溯。
+1. 每条观点/题目/金句必须附出处：\`> 来源: <视频标题> [分:秒]\`，时间戳取自 \`videos/\` 下该视频文件（默认命名 \`<ID>-<标题>.txt\`，\`--name-order\` 可调组件与顺序）行首，可回溯。
 2. \`manifest.json\` 中 \`subtitle: null\` 的视频无正文（采集盲区），分两类在「覆盖盲区」如实列出，勿假装看过：
    - 真无字幕（\`pot_limited: false\`）：视频本身无字幕轨，不可挽回；
    - 受限待重采（\`pot_limited: true\`）：采集时字幕受限（如 YouTube pot 门槛），重试重采可能补回，不算永久盲区。
@@ -163,6 +163,58 @@ export interface BuildBundleOpts {
   track?: string;           // 统一覆盖默认轨
   limit: number;            // >0
   now: number;              // generated_at（毫秒，注入保持纯函数）
+  nameOrder?: FilenamePart[];  // videos/ 文件名组件与顺序（默认 ['id','name']，即 <id>-<name>）
+}
+
+// ── 视频文件名（videos/<部件>.txt；--name-order 定组件与顺序，默认 id,name）──
+
+export const FILENAME_PARTS = ['id', 'name', 'time', 'author'] as const;
+export type FilenamePart = (typeof FILENAME_PARTS)[number];
+
+/** 文件名部件清洗：非法字符（路径分隔/控制符/Win 保留）→ `_`，连续空白压单空格。 */
+function sanitizeNamePart(s: string): string {
+  return s
+    .replace(/[\u0000-\u001f\u007f/\\:*?"<>|]+/g, '_')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/** name/author 字符数上限（中文一字 3 字节，防 255 字节文件名上限的组件级截断）。 */
+const PART_CHAR_MAX = { name: 60, author: 30 } as const;
+
+/** 按 code point 截到 ≤maxBytes UTF-8 字节（组件级截断后的整体兜底，防极端叠加超长）。 */
+function truncateUtf8(s: string, maxBytes: number): string {
+  let out = '';
+  for (const ch of s) {
+    if (Buffer.byteLength(out + ch, 'utf8') > maxBytes) break;
+    out += ch;
+  }
+  return out;
+}
+
+/**
+ * 视频条目 → videos/ 下文件名（不含 .txt）：按 order 依次取组件 `-` 连接。
+ * - id=平台视频ID（BV号/YT ID）；name=标题；time=发布日期 YYYY-MM-DD（缺 published_at 用
+ *   first_seen_at 兜底）；author=UP 名。name/author 清洗+截断，缺值则整段连同分隔符跳过。
+ * - 全部组件为空时兜底 source_vid（保证文件名非空且按视频唯一）。
+ */
+export function videoFileName(
+  v: Pick<BundleVideoEntry, 'source_vid' | 'title' | 'creator_name' | 'published_at' | 'first_seen_at'>,
+  order: readonly FilenamePart[],
+): string {
+  const parts: string[] = [];
+  for (const part of order) {
+    if (part === 'id') parts.push(v.source_vid);
+    else if (part === 'name') parts.push(sanitizeNamePart(v.title).slice(0, PART_CHAR_MAX.name));
+    else if (part === 'time') {
+      const ts = v.published_at ?? v.first_seen_at;
+      if (ts != null) parts.push(new Date(ts).toISOString().slice(0, 10));
+    } else {
+      const a = v.creator_name ? sanitizeNamePart(v.creator_name).slice(0, PART_CHAR_MAX.author) : '';
+      if (a) parts.push(a);
+    }
+  }
+  return truncateUtf8(parts.filter(Boolean).join('-'), 240) || v.source_vid;
 }
 
 // ── 视频正文头部（标题 + 元信息一行 + 轨一行 + 空行 + 正文）──
@@ -185,6 +237,7 @@ function videoHeader(v: BundleVideoEntry, sub: BundleSubtitleMeta): string {
 // ── 组装（纯函数：只读 db，不落盘；时间由 opts.now 注入）──
 
 export function buildBundle(db: Database.Database, opts: BuildBundleOpts): BundleResult {
+  const nameOrder = opts.nameOrder ?? ['id', 'name'];
   const page = videosList(db, { ...opts.filters, page: 1, size: opts.limit });
   // 受限标记：一次批量取本页视频的最近任务状态（latestTaskStatusByVideoIds，见 advanced.ts 注释）
   const latestStatus = latestTaskStatusByVideoIds(db, page.items.map((v) => v.id));
@@ -205,7 +258,7 @@ export function buildBundle(db: Database.Database, opts: BuildBundleOpts): Bundl
       try {
         const body = stampedTxt(r.payload);
         const sub: BundleSubtitleMeta = {
-          file: `videos/${v.source_vid}.txt`,
+          file: `videos/${videoFileName(v, nameOrder)}.txt`,
           lan: r.trackLan ?? null, lan_doc: r.trackLanDoc ?? null,
           track_type: r.trackType ?? null, version_id: r.versionId, origin: r.versionOrigin ?? '?',
         };

@@ -18,7 +18,7 @@ import type { VideoListItemAdvanced, PageResult } from '../../db/advanced.js';
 import { VIDEO_SORT_KEYS } from '../../db/advanced.js';
 // resolveSubtitle 已下沉 subtitleFormat.ts（2026-08-23 断环：bundle.ts 也用它，原在本文件会构成 bundle ↔ export 循环）
 import { convertSubtitle, resolveSubtitle, type SubtitleFormat } from '../subtitleFormat.js';
-import { buildBundle } from '../bundle.js';
+import { buildBundle, FILENAME_PARTS, type FilenamePart } from '../bundle.js';
 // videos.ts 暴露 videosList（camelCase opts → snake_case filter）+ normalizeTimestamp + parseSort/parseDesc
 // （排序键清单单一事实源 db/advanced.ts VIDEO_SORT_KEYS），export videos/bundle 直接复用查询与解析逻辑。
 import { videosList, normalizeTimestamp, parseSort, parseDesc, type VideosListOpts } from './videos.js';
@@ -92,6 +92,7 @@ interface BundleRawOpts extends Omit<VideosRawOpts, 'page' | 'size' | 'output'> 
   track?: string;
   limit?: string;
   force?: boolean;
+  nameOrder?: string;      // --name-order：videos/ 文件名组件与顺序（逗号分隔）
 }
 
 function parseNum(raw: string | undefined, name: string): number | undefined {
@@ -113,6 +114,22 @@ function parseSubtitleFormat(raw: string | undefined): SubtitleFormat {
     return emitError(`非法 --sub-format: ${raw}（可选: ${SUBTITLE_FORMATS.join('|')}）`, 'ARGS');
   }
   return raw as SubtitleFormat;
+}
+
+// --name-order 解析：逗号分隔组件（id|name|time|author 的无子集排列），undefined 走 buildBundle 默认 id,name
+function parseNameOrder(raw: string | undefined): FilenamePart[] | undefined {
+  if (raw === undefined) return undefined;
+  const parts = raw.split(',').map((s) => s.trim()).filter(Boolean);
+  if (parts.length === 0) return emitError(`--name-order 为空（可选组件: ${FILENAME_PARTS.join('|')}）`, 'ARGS');
+  const seen = new Set<string>();
+  for (const p of parts) {
+    if (!(FILENAME_PARTS as readonly string[]).includes(p)) {
+      return emitError(`非法 --name-order 组件: ${p}（可选: ${FILENAME_PARTS.join('|')}）`, 'ARGS');
+    }
+    if (seen.has(p)) return emitError(`--name-order 组件重复: ${p}`, 'ARGS');
+    seen.add(p);
+  }
+  return parts as FilenamePart[];
 }
 
 function openDbOrEmit(dbPath: string): Database.Database {
@@ -233,6 +250,7 @@ export function buildExportCommand(): Command {
     .option('--track <lan>', '统一覆盖字幕轨（默认各视频默认轨：CC中文>AI中文>en）')
     .option('--limit <n>', '最多导出视频数（默认 500）')
     .option('--force', '允许写入已存在且非空的 --out 目录')
+    .option('--name-order <parts>', `videos/ 文件名组件及顺序，逗号分隔：${FILENAME_PARTS.join('|')}（默认 id,name 即 <id>-<标题>；time=发布日期，author=UP 名）`)
     // —— 过滤器（同 export videos，去分页去 -o）——
     .option('--q <text>', '标题 / UP 名模糊匹配')
     .option('--creator <name>', 'UP 名模糊匹配')
@@ -271,7 +289,10 @@ export function buildExportCommand(): Command {
         minView: parseNum(raw.minView, '--min-view'), maxView: parseNum(raw.maxView, '--max-view'),
         sort: parseSort(raw.sort), desc: parseDesc(raw.desc),
       };
-      const built = buildBundle(db, { filters, track: raw.track, limit: parseNum(raw.limit, '--limit') ?? 500, now: Date.now() });
+      const built = buildBundle(db, {
+        filters, track: raw.track, limit: parseNum(raw.limit, '--limit') ?? 500,
+        now: Date.now(), nameOrder: parseNameOrder(raw.nameOrder),
+      });
       mkdirSync(join(raw.out, 'videos'), { recursive: true });
       for (const f of built.files) writeFileSync(join(raw.out, f.path), f.content);
       emitResult({

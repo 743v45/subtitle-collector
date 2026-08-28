@@ -53,7 +53,7 @@ docker exec collector-server node -e 'const db=require("better-sqlite3")("/data/
 | `changes list` | DB 只读 | change_log 变更历史:`--entity --since --until --source <平台> --sort --desc`(sort 仅 `changed_at`;items 带派生 source 平台列) |
 | `export subtitle <source> <bvid>` | DB 只读 | 字幕导出:`--sub-format srt\|vtt\|txt\|json --track <lan> --version <id> -o <file>`;不指定轨取默认轨默认版本,纯文本直写 stdout |
 | `export videos` | DB 只读 | 视频列表 json/csv/ndjson(格式随全局 `--format`;过滤同 videos list) |
-| `export bundle` | DB 只读 | 分析原料包:`--out <dir> --track <lan> --limit <n>` + videos list 全套过滤 → manifest.json + videos/*.txt + ANALYZE.md |
+| `export bundle` | DB 只读 | 分析原料包:`--out <dir> --track <lan> --limit <n> --name-order <parts>` + videos list 全套过滤 → manifest.json + videos/*.txt + ANALYZE.md;`--name-order` 定 videos/ 文件名组件与顺序(逗号分隔 `id\|name\|time\|author`,默认 `id,name` 即 `<id>-<标题>`,time=发布日期,author=UP 名,`--name-order id` 回纯 ID 形态) |
 | `stats overview` / `stats count --by <kind> --top <n>` | DB 只读 | 总览(全库 total + 分平台 by_source) / 分组计数(`--by` 含 `source` 按平台分组;`--source` 过滤收窄;`--sort count\|key --desc` 排序,2026-08-25) |
 | `sub search <关键词>` | DB 只读 | 字幕正文检索:`--ctx --regex --max-videos --full`;AI 打标的数据源 |
 | `translate pending/source/fill` | pending/source 读 DB;fill 走 server | 补翻工作流(无中文轨视频):`pending --source <平台>` 查缺口(带各源语言行数)→ `source <vid> --from <lan> --source <平台>` 取逐行待翻文本 → 会话内翻译 → `fill <vid> --from <lan> --file <译文> --source <平台>` 写回 zh-manual 轨 |

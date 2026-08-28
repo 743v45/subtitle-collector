@@ -7,6 +7,7 @@
 // | 轮次 | 范围 | 结果 | 备注 |
 // |---|---|---|---|
 // | R1 | subtitle 4 格式 + 轨/版本选择 + NOT_FOUND ×4 + -o；videos stdout/-o/table 拒绝；bundle 成功/非空目录 ARGS | 通过 | |
+// | R2 | bundle --name-order：默认 <id>-<标题>、自定义序、纯 id 回旧形态、非法/重复组件 ARGS | 通过 | 默认文件名随需求变更为 id,name |
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -264,9 +265,41 @@ test('export bundle --out <dir>：写 manifest/videos/ANALYZE.md + 回执，退 
     assert.ok(existsSync(join(outDir, 'ANALYZE.md')));
     const files = readFileSync(join(outDir, 'manifest.json'), 'utf-8');
     assert.match(files, /标题A/);
-    const txt = readFileSync(join(outDir, 'videos', 'BV1.txt'), 'utf-8'); // bundle 文件名 = videos/<source_vid>.txt
+    // 默认文件名 = videos/<id>-<标题>.txt（--name-order 默认 id,name）
+    const txt = readFileSync(join(outDir, 'videos', 'BV1-标题A.txt'), 'utf-8');
     assert.match(txt, /中文正文一/);
   } finally { db.close(); rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('export bundle --name-order：自定义组件顺序生效；纯 id 回旧形态', async () => {
+  const { db, dir, dbPath } = setup();
+  const outDir = join(dir, 'b-order');
+  try {
+    // fixture published_at=1 → 1970-01-01；time,id 顺序
+    const r = await cli(args(dbPath, ['export', 'bundle', '--out', outDir, '--has-subtitle', '--name-order', 'time,id']));
+    assert.equal(r.code, 0);
+    assert.ok(existsSync(join(outDir, 'videos', '1970-01-01-BV1.txt')), r.out);
+    // 只留 id → 回到旧纯 ID 命名
+    const outDir2 = join(dir, 'b-id-only');
+    const r2 = await cli(args(dbPath, ['export', 'bundle', '--out', outDir2, '--has-subtitle', '--name-order', 'id']));
+    assert.equal(r2.code, 0);
+    assert.ok(existsSync(join(outDir2, 'videos', 'BV1.txt')), r2.out);
+  } finally { db.close(); rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('export bundle --name-order：非法组件 / 重复组件 / 空值 → ARGS 退 2', async () => {
+  const { dir, dbPath } = setup();
+  try {
+    const bad = await cli(args(dbPath, ['export', 'bundle', '--out', join(dir, 'b1'), '--name-order', 'id,bogus']));
+    assert.equal(bad.code, 2);
+    assert.match(bad.err, /非法 --name-order 组件: bogus/);
+    const dup = await cli(args(dbPath, ['export', 'bundle', '--out', join(dir, 'b2'), '--name-order', 'id,id']));
+    assert.equal(dup.code, 2);
+    assert.match(dup.err, /重复/);
+    const empty = await cli(args(dbPath, ['export', 'bundle', '--out', join(dir, 'b3'), '--name-order', ',']));
+    assert.equal(empty.code, 2);
+    assert.match(empty.err, /为空/);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
 test('export bundle：--out 已存在非空且无 --force → ARGS 退 2', async () => {
