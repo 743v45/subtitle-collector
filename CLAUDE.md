@@ -73,7 +73,7 @@ B 站**字幕（subtitle）**相关浏览器扩展的 monorepo（pnpm + turbo，
 [README.md](README.md) 的「目标与功能（Feature 列表）」是项目需求的唯一锚点，按「批量采集 → 查询导出 → 批量提取分析」链路组织，状态标记 ✅ 已实现 / 🚧 待建 / 📋 远期。
 
 - **同步更新**：新增/完成功能必须同步更新该列表；过期列表比没有更糟。
-- **优先级判断**：当前最大缺口是消费端（🚧 批量提取分析）。消费端手动流程跑顺前，采集侧新能力默认冻结。2026-08-22 经项目拷问确认：冻结政策维持——消费端闭环（bundle 导出 → Claude Code 会话分析 → `analysis/<主题>/` 落盘）跑通前不新增采集侧能力；落盘规范以 [README.md](README.md)「分析产物规范」条目（`analysis/<主题>/`）为准。**2026-08-26 有条件解冻（一项）**：消费端闭环首例已落盘（shilanwei），且无字幕视频正是消费端分析的盲区——仅放行「no-subtitle 兜底 ASR 转写入库」（`asr backfill` → `asr-zh` 轨，产物直接进 bundle/export），其余采集侧维持冻结。**2026-08-29 用户现场指令解冻（抖音全量）**：新增 douyin 平台全量集成（采集三入口/博主批量/ASR backfill/web 展示，见 [docs/plans/douyin/](docs/plans/douyin/) 与 [DOUYIN-PROGRESS.md](.claude/worktrees/douyin/DOUYIN-PROGRESS.md)）——属用户明确指令的一次性解冻，不改变冻结政策本身，其余采集侧能力维持冻结。
+- **优先级判断**：当前最大缺口是消费端（🚧 批量提取分析）。消费端手动流程跑顺前，采集侧新能力默认冻结。2026-08-22 经项目拷问确认：冻结政策维持——消费端闭环（bundle 导出 → Claude Code 会话分析 → `analysis/<主题>/` 落盘）跑通前不新增采集侧能力；落盘规范以 [README.md](README.md)「分析产物规范」条目（`analysis/<主题>/`）为准。**2026-08-26 有条件解冻（一项）**：消费端闭环首例已落盘（shilanwei），且无字幕视频正是消费端分析的盲区——仅放行「no-subtitle 兜底 ASR 转写入库」（`asr backfill` → `asr-zh` 轨，产物直接进 bundle/export），其余采集侧维持冻结。**2026-08-29 用户现场指令解冻（抖音全量）**：新增 douyin 平台全量集成（采集三入口/博主批量/ASR backfill/web 展示，见 [docs/plans/douyin/](docs/plans/douyin/) 与 [DOUYIN-PROGRESS.md](DOUYIN-PROGRESS.md)）——属用户明确指令的一次性解冻，不改变冻结政策本身，其余采集侧能力维持冻结。
 - **分析执行方**：分析在 Claude Code 会话中完成，系统只负责原料包导出（`export bundle`）与产物落盘规范；内置 AI pipeline 为远期项。
 
 ## 7. 扩展版本号纪律
