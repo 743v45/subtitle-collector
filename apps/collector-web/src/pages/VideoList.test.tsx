@@ -258,7 +258,8 @@ test('排序：默认禁用；选播放量后可切升降序（desc=0 ↔ 删除
   expect(screen.getByTitle('当前降序，点击切换升序')).toBeEnabled();
   fireEvent.click(screen.getByTitle('当前降序，点击切换升序'));
   await waitFor(() => expect(window.location.hash).toContain('desc=0'));
-  await waitFor(() => expect(qp(calls).has('desc')).toBe(false));
+  // 升序必须显式发送 desc=false（2026-08-29 修复）：省略会被 server 缺省降序吃掉
+  await waitFor(() => expect(qp(calls).get('desc')).toBe('false'));
 
   fireEvent.click(screen.getByTitle('当前升序，点击切换降序'));
   await waitFor(() => expect(window.location.hash).not.toContain('desc=0'));
@@ -378,7 +379,7 @@ test('URL 复合筛选 → listVideos 参数映射（分钟→秒、万→绝对
   expect(p.get('min_view')).toBe('20000');
   expect(p.get('max_view')).toBe('30000');
   expect(p.get('sort')).toBe('duration');
-  expect(p.has('desc')).toBe(false); // desc=0 → false → api 不写 desc
+  expect(p.get('desc')).toBe('false'); // desc=0 → 升序显式发送（省略会被 server 缺省降序吃掉）
   expect(p.get('page')).toBe('3');
   expect(p.get('size')).toBe('20');
 });

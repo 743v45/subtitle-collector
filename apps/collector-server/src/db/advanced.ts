@@ -2,6 +2,7 @@ import type Database from 'better-sqlite3';
 import type { VideoDetail, VideoListItem, VersionRow } from './queries.js';
 import { buildOrderBy, aggOrderBy, AGG_SORT_KEYS, CHANGE_SORT_KEYS, type AggregateSortKey, type ChangeSortKey } from './sort.js';
 import { aggregateStatsByTag } from './aggregate-tag.js';
+import { buildTagConds } from './tag-match.js';
 
 // CLI 专用扩展查询（不碰 queries.ts 以保 HTTP 兼容）。设计文档 §3.1/§3.2/§5。
 // extra 是 TEXT/JSON，分区/标签/stat 过滤一律走 SQLite json_extract；first_seen/changed 比对为毫秒时间戳。
@@ -100,42 +101,8 @@ export interface Overview {
   blocked_creators: number; // 已屏蔽 UP 数
 }
 
-// 标签匹配 EXISTS 片段：一个标签名（精确 = 或模糊 LIKE）× 档位（tag_source 过滤）。
-// bili 档查 extra json_each $.tags；season 档查 extra json_extract $.ugc_season.title（同为只读实时读）；
-// manual/batch/ai/system 档查 video_tags 关系表（2026-08-26 纳入 system：no-subtitle 系统标经
-// --tag no-subtitle 圈定是 ASR 兜底链路的入口，此前五档不含 system 导致系统标恒不可查）。OR 连接。
-// tag_source 省略/含全部六档 → 各路都拼；只含 bili → 只 extra tags 路；只含 season → 只 season 路；只含关系档 → 只关系路。
-function tagMatchCond(name: string, mode: 'exact' | 'like', tagSource?: string[]): { cond: string; params: unknown[] } {
-  const allSources = ['manual', 'batch', 'ai', 'system', 'bili', 'season'];
-  const sources = tagSource?.length ? tagSource.filter((s) => allSources.includes(s)) : allSources;
-  if (sources.length === 0) sources.push(...allSources);
-  const op = mode === 'exact' ? '=' : 'LIKE';
-  const val = mode === 'exact' ? name : `%${name}%`;
-  const branches: string[] = [];
-  const params: unknown[] = [];
-  const relSources = sources.filter((s) => s !== 'bili' && s !== 'season');
-  if (relSources.length > 0) {
-    const placeholders = relSources.map(() => '?').join(',');
-    branches.push(
-      `EXISTS (SELECT 1 FROM video_tags vt JOIN tags t ON t.id = vt.tag_id WHERE vt.video_id = v.id AND t.name ${op} ? AND vt.source IN (${placeholders}))`,
-    );
-    params.push(val, ...relSources);
-  }
-  if (sources.includes('bili')) {
-    branches.push(
-      `EXISTS (SELECT 1 FROM json_each(v.extra, '$.tags') WHERE json_extract(json_each.value, '$.tag_name') ${op} ?)`,
-    );
-    params.push(val);
-  }
-  if (sources.includes('season')) {
-    branches.push(
-      `json_extract(v.extra, '$.ugc_season.title') ${op} ?`,
-    );
-    params.push(val);
-  }
-  if (branches.length === 0) return { cond: '0', params: [] }; // 无合法档 → 恒 false
-  return { cond: `(${branches.join(' OR ')})`, params };
-}
+// 标签匹配/存在性条件（tagMatchCond/buildTagConds）自本文件抽出至 tag-match.ts（2026-08-29，
+// tag_source 独立筛选并入后 buildVideoWhere 恶化静态台账，沿 aggregate-tag.ts 先例收敛）。
 
 // 构建 video 级 WHERE（含 extra/tracks 上的 EXISTS 子查询）。调用方需 LEFT JOIN creators c。
 function buildVideoWhere(f: VideoFilter): { where: string; params: unknown[] } {
@@ -173,20 +140,10 @@ function buildVideoWhere(f: VideoFilter): { where: string; params: unknown[] } {
     conds.push("json_extract(v.extra, '$.tname') LIKE ?");
     params.push(`%${f.tname}%`);
   }
-  if (f.tag) {
-    // 标签模糊：四档并查（原只查 bili extra，扩展为超集兼容）
-    const { cond, params: p } = tagMatchCond(f.tag, 'like', f.tag_source);
-    conds.push(cond);
-    params.push(...p);
-  }
-  if (f.tags && f.tags.length > 0) {
-    // 标签精确 AND：每个名字一个条件组
-    for (const name of f.tags) {
-      const { cond, params: p } = tagMatchCond(name, 'exact', f.tag_source);
-      conds.push(cond);
-      params.push(...p);
-    }
-  }
+  // 标签族条件（tag 模糊 / tags 精确 AND / tag_source 单独存在性）收敛在 tag-match.ts
+  const tagConds = buildTagConds(f);
+  conds.push(...tagConds.conds);
+  params.push(...tagConds.params);
   if (f.subtitle_q) {
     // 字幕正文：subtitle_versions.payload 是 JSON，LIKE 命中 body[].content
     conds.push('EXISTS (SELECT 1 FROM subtitle_versions sv JOIN subtitle_tracks st ON st.id = sv.track_id WHERE st.video_id = v.id AND sv.payload LIKE ?)');

@@ -349,7 +349,8 @@ test('端到端: export bundle 导出目录结构 + 回执', () => {
     assert.equal(receipt.with_subtitle, 1);
     assert.equal(receipt.without_subtitle, 0);
     assert.deepEqual(readdirSync(out).sort(), ['ANALYZE.md', 'manifest.json', 'videos']);
-    assert.ok(readdirSync(join(out, 'videos')).includes('BV1.txt'));
+    // 默认 --name-order id,name → <id>-<标题>.txt（b75b36e 起;断言随默认文件名组成同步）
+    assert.ok(readdirSync(join(out, 'videos')).includes('BV1-标题A.txt'));
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 

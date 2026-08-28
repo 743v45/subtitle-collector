@@ -1,6 +1,12 @@
 // /api/videos 列表项富化字段测试（pot_limited 受限标记：web UI 本次未消费，字段先备好）。
 // 模式对齐 tags.test.ts：handler 直挂测试 server + fetch。
 // 跑法：cd apps/collector-server && node --test --import tsx src/http/queries.test.ts
+//
+// 测试轮次记录表（对齐全局 8.2）：
+// | 轮次 | 范围 | 结果 | 备注 |
+// |---|---|---|---|
+// | R1 | pot_limited 派生 / changes 全维 / 富化降级 / 详情 / 打标 400 | 通过 | 建表时既有 |
+// | R2 | tag_source 单独筛选存在性过滤（2026-08-29 修复静默忽略） | 通过 | 各档独立 + 多档 OR + 组合不回归 |
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -71,6 +77,41 @@ test('/api/videos: 列表项含 pot_limited（最近任务 limited → true；�
     s.db.prepare("INSERT INTO collect_tasks (source, source_vid, url, status, created_at, finished_at) VALUES ('bilibili', 'BV2', 'https://b23.tv/BV2', 'succeeded', 300, 400)").run();
     byVid = await itemsByVid(s.port);
     assert.equal(byVid.BV2.pot_limited, false, '重采成功后标记消失（任务表派生，无回清维护）');
+  } finally { s.cleanup(); }
+});
+
+// ── /api/videos：tag_source 单独筛选（2026-08-29 修复）──
+// 此前 tag_source 只作 tag/tags 匹配的档位收窄，单独传被静默忽略（全量返回）——
+// web 视频页「标签档位」独立下拉筛选失效。现在语义 = 所选档位至少有一个标签的视频。
+test('/api/videos: tag_source 单独筛选——各档存在性过滤；与 tags 组合仍精确 AND', async () => {
+  const s = await setup();
+  try {
+    // 四形态：关系档 manual / bili 档 extra.tags / season 档 ugc_season / 无标签；
+    // 另备一个 bili 空数组视频（数组存在但无有效 tag_name，不算有 bili 标签）
+    const base = { source: 'bilibili', creator: { source_uid: '1', name: 'up' }, duration: 60, published_at: 1 };
+    ingestVideo(s.db, { source: 'bilibili', video: { source_vid: 'BV-rel', title: '关系档', creator: base.creator, extra: {} }, tracks: [] });
+    ingestVideo(s.db, { source: 'bilibili', video: { source_vid: 'BV-bili', title: 'B站档', creator: base.creator, extra: { tags: [{ tag_name: '官方' }] } }, tracks: [] });
+    ingestVideo(s.db, { source: 'bilibili', video: { source_vid: 'BV-empty', title: '空数组', creator: base.creator, extra: { tags: [] } }, tracks: [] });
+    ingestVideo(s.db, { source: 'bilibili', video: { source_vid: 'BV-season', title: '合集档', creator: base.creator, extra: { ugc_season: { title: '合集X' } } }, tracks: [] });
+    ingestVideo(s.db, { source: 'bilibili', video: { source_vid: 'BV-none', title: '无标签', creator: base.creator, extra: {} }, tracks: [] });
+    // BV-rel 打一个 manual 档标签（镜像 applyVideoTags 的落库形态）
+    const relVid = s.db.prepare("SELECT id FROM videos WHERE source_vid = 'BV-rel'").get() as { id: number };
+    const tagId = (s.db.prepare("INSERT INTO tags (name, created_at) VALUES ('主题A', 1) RETURNING id").get() as { id: number }).id;
+    s.db.prepare("INSERT INTO video_tags (video_id, tag_id, source, created_at) VALUES (?, ?, 'manual', 1)").run(relVid.id, tagId);
+
+    const vids = async (query: string): Promise<string[]> => {
+      const r = await call(s.port, `/api/videos?size=100&${query}`);
+      assert.equal(r.status, 200);
+      return r.json.items.map((i: any) => i.source_vid).sort();
+    };
+    // 各档单独筛：只含有该档标签的视频
+    assert.deepEqual(await vids('tag_source=manual'), ['BV-rel'], 'manual 档 → 仅关系档视频');
+    assert.deepEqual(await vids('tag_source=bili'), ['BV-bili'], 'bili 档 → 仅带有效 B 站标签的视频（空数组不算）');
+    assert.deepEqual(await vids('tag_source=season'), ['BV-season'], 'season 档 → 仅有合集标题的视频');
+    assert.deepEqual(await vids('tag_source=manual,bili'), ['BV-bili', 'BV-rel'], '多档 OR');
+    // 组合行为不回归：tag_source 与 tags 同传仍走精确 AND（档位只收窄匹配路）
+    assert.deepEqual(await vids('tags=主题A&tag_source=manual'), ['BV-rel'], '组合：精确 AND 不变');
+    assert.deepEqual(await vids('tags=官方&tag_source=manual'), [], '组合：bili 标签在 manual 档不可命中');
   } finally { s.cleanup(); }
 });
 

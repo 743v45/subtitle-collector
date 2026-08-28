@@ -126,14 +126,16 @@ export function CreatorsPage({ onOpen }: { onOpen: (id: number) => void }) {
           ))}
         </div>
         <Select
-          value={catFilter || undefined}
-          onValueChange={(v) => setFilter({ cat: v || null })}
+          value={catFilter || '__all'}
+          onValueChange={(v) => setFilter({ cat: v === '__all' ? null : v })}
         >
           <SelectTrigger className="w-48">
             {/* 有槽位时占位符注明限定（该槽位匹配列），全部=两槽位任一 */}
             <SelectValue placeholder={scope ? `按分类筛选（${scope === 'agent' ? 'Agent' : '人工'}槽位）` : '按分类筛选'} />
           </SelectTrigger>
           <SelectContent>
+            {/* 「全部」即清除入口——此前选了分类没有任何取消方式（无重置按钮，URL 还原也带着） */}
+            <SelectItem value="__all">全部分类</SelectItem>
             {(cats ?? []).map((c) => (
               <SelectItem key={c.id} value={c.name}>{c.name}</SelectItem>
             ))}

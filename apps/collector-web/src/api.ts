@@ -57,7 +57,7 @@ export async function listVideos(filter: VideoFilter = {}): Promise<{ total: num
   if (filter.max_view != null) u.set('max_view', String(filter.max_view));
   if (filter.date_field) u.set('date_field', filter.date_field);
   if (filter.sort) u.set('sort', filter.sort);
-  if (filter.desc) u.set('desc', 'true');
+  if (filter.desc != null) u.set('desc', String(filter.desc)); // false 显式发：省略会被 server 缺省降序吃掉
   u.set('page', String(filter.page ?? 1));
   u.set('size', String(filter.size ?? 20));
   const r = await fetch(`${BASE}/api/videos?${u}`);

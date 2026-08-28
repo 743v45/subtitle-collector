@@ -5,6 +5,7 @@
 // |---|---|---|---|
 // | R1 | 渲染 + 防抖 + URL 筛选流 + Select 分类变更 + 空错态 | 通过 | 防抖 fake timers；输入期间防抖未触发 |
 // | R2 | 值域合一（2026-08-25）：三态槽位筛选；分类下拉一套；cat 筛选请求不带 scope | 通过 | 缺省从 human 改「全部」 |
+// | R3 | 「全部分类」清除 cat（2026-08-29 修复选后无清除入口） | 通过 | cat Select 增加 __all 项 |
 import { test, expect, vi, beforeEach, afterEach, beforeAll } from 'vitest';
 import { render, screen, fireEvent, cleanup, waitFor, act } from '@testing-library/react';
 import { ToastProvider } from '@/components/ui/toast';
@@ -192,6 +193,17 @@ test('平台筛选 Select：切换写 URL source 且按平台重拉', async () =
   fireEvent.click(await screen.findByRole('option', { name: '哔哩哔哩' }));
   await waitFor(() => expect(window.location.hash).toBe('#/creators?source=bilibili'));
   await waitFor(() => expect(String(fetchMock.mock.calls.at(-1)![0])).toContain('source=bilibili'));
+});
+
+test('cat 筛选 Select：「全部分类」清除 cat 参数并重拉（2026-08-29 修复——此前选后无清除入口）', async () => {
+  window.history.replaceState(null, '', '#/creators?cat=' + encodeURIComponent('科技'));
+  render(<ToastProvider><CreatorsPage onOpen={() => {}} /></ToastProvider>);
+  await screen.findByText('UP1');
+  // [0]=分类筛选下拉；切回「全部分类」→ cat 从 URL 清除、请求不再带 category
+  fireEvent.pointerDown(screen.getAllByRole('combobox')[0], { button: 0, ctrlKey: false, pointerType: 'mouse' });
+  fireEvent.click(await screen.findByRole('option', { name: '全部分类' }));
+  await waitFor(() => expect(window.location.hash).toBe('#/creators'));
+  await waitFor(() => expect(String(fetchMock.mock.calls.at(-1)![0])).not.toContain('category='));
 });
 
 test('行内分类变更：Select 选择 → POST + toast + reload；失败 toast', async () => {  const post = vi.fn(() => Promise.resolve(ok({})));

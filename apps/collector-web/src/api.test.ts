@@ -6,6 +6,7 @@
 // |---|---|---|---|
 // | R1 | ensureOk 四分支 + 全端点 URL 组装/解包 | 通过 | 204 须 null body（jsdom Response 限制），删除类端点回 {} |
 // | R2 | setTaskDispatch（2026-08-23 仅上报状态） | 通过 | 与 setReporting 同构 |
+// | R3 | listVideos desc=false 显式发送（2026-08-29 排序升序修复） | 通过 | 缺省发送会被 server 降序缺省吃掉 |
 import { test, expect, vi, afterEach } from 'vitest';
 import * as api from './api';
 import type { VideoDetail } from './types';
@@ -109,6 +110,16 @@ test('listVideos：全量 filter → 逐参数写入 query', async () => {
   expect(q.get('desc')).toBe('true');
   expect(q.get('page')).toBe('3');
   expect(q.get('size')).toBe('50');
+});
+
+// desc=false 必须显式进 query（2026-08-29 修复）：server 缺省 true（降序），
+// 省略参数会把升序请求静默变回降序——视频页排序方向按钮此前点了无效
+test('listVideos：desc=false 显式发送（升序不能靠缺省）', async () => {
+  fetchMock.mockResolvedValueOnce(ok({ total: 0, items: [] }));
+  await api.listVideos({ sort: 'view', desc: false });
+  const q = new URL(lastCall().url, 'http://x/').searchParams;
+  expect(q.get('sort')).toBe('view');
+  expect(q.get('desc')).toBe('false');
 });
 
 test('getVideo：extra JSON 字符串 → 解析成对象；sourceVid 编码', async () => {
