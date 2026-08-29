@@ -1,8 +1,9 @@
 # 抖音平台全量集成 — 进度与决策记录
 
-> 本文件是 `/loop`(cron `*/20 * * * *`,job `20c97e90`)循环任务的**续作锚点**。
-> **状态:全量已合并进 main(2736d6e + f77e4a1,2026-08-29),当前阶段=审查修复→grilling 迭代**。
-> 开发期 worktree(.claude/worktrees/douyin)已完成使命删除;后续迭代直接在 main 做。
+> **状态:✅ 全量完成并闭环(2026-08-29)。** 代码合并 main(c976995/8f8a1f0),生产已部署(verify 全过)。
+> **闭环实证**:抖音视频采集→无字幕→ASR 圈定→220MB mp4 直构直链下载→fireredasr 转写→`asr-zh` 轨 **572 行字幕/99.6% 覆盖**入库,`no-subtitle` 自动摘除。
+> fireredasr-ui 上游四个提交(cd32bdd 看门狗/3bedb89 内存护栏+stderr 捕获/64aa6e7 check_idle root cause/c038372 护栏和解)。
+> 剩余:遗留清单 grilling 待办(Minor 7 条+博主批量真机补测+扩展 0.1.26 刷新)。
 > 原始过程记录(调研三份+spike-findings)在 [docs/plans/douyin/](docs/plans/douyin/)。
 
 ## 已定决策(2026-08-29 用户授权「全按 Claude 推荐」)
