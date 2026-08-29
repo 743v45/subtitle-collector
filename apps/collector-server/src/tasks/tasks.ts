@@ -6,6 +6,7 @@ import { inFlight } from './inflight.js';
 import { buildOrderBy, cmpBySortKey, TASK_SORT_KEYS, type TaskSortKey } from '../db/sort.js';
 import { DOUYIN_AWEME_ID_RE, DOUYIN_PAGE_HOSTS, DOUYIN_SHORT_HOSTS, douyinWatchUrl, parseDouyinUrl } from './douyin-url.js';
 import { markNoSubtitleForReceipt, migrateTaskVidFromReceipt } from './amend.js';
+import { EXT_NEEDS_UPDATE_ERROR, extNeedsUpdate } from './ext-version.js';
 import type { Source } from './source.js';
 
 // 平台枚举与 UP/频道展开族（2026-08-29 抽出到 ./source.ts 与 ./upper-expand.ts，防本文件台账
@@ -425,18 +426,8 @@ export function pickClientForTask(
   return free ? { clientId: free.client_id } : null;
 }
 
-// 「扩展版本过旧」分类（2026-08-21）：server 升级新增 action 后，旧扩展不认识 → 回执失败。
-// 判据按回执内容（两种形态）：旧扩展回 "unknown action: <action>" 字符串；新扩展对未知 action
-// 显式带 needs_update:true（回执顶层或 data 内）。不做 hello 能力协商表——单一错误路径不值得
-// 引入版本协商状态，hello 的 ext_version 保持仅日志展示；错误内容分类已足够定位。
-// 提示语区分于普通采集失败（need_login 等）：此错指向更新扩展而非重试。
-const EXT_NEEDS_UPDATE_ERROR = '扩展版本过旧，请更新扩展后重试';
-function extNeedsUpdate(result: { error?: unknown; data?: unknown; needs_update?: unknown } | undefined): boolean {
-  if (result?.needs_update === true) return true;
-  if (typeof result?.error === 'string' && result.error.includes('unknown action')) return true;
-  const data = result?.data;
-  return typeof data === 'object' && data !== null && (data as { needs_update?: unknown }).needs_update === true;
-}
+// 「扩展版本过旧」分类与文案在 ./ext-version.ts（2026-08-30 抽出共享：upper-expand 展开侧同样
+// 需要，本文件 re-export upper-expand，反向 import 会成环）；此处引用共享实现，语义不变。
 
 // 任务 → 派发载荷映射（纯函数供测试）：action / params 按平台分叉，参数名对齐扩展侧
 // handler——bilibili 收 bvid；youtube 收 videoId + timeout_ms；douyin 收 awemeId + timeout_ms

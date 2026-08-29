@@ -1,12 +1,15 @@
 // UP/频道/博主全部视频列表展开（web 端「按 UP 批量」用，server 经扩展 WS 代理拉取）。
 // 2026-08-24 两平台；2026-08-29 从 tasks/tasks.ts 整体抽出独立模块（沿 db/tag-match.ts 抽出
 // 先例）+ douyin 第三平台接入（S8 接线：扩展 action expand-douyin-upper）。
+// 2026-08-30 版本感知：douyin 分支按 hello 上报的 ext_version 设派发门槛（多机版本参差事故，
+// 详见 DOUYIN_EXPAND_MIN_VERSION 注释），回执 unknown action 统一分类为「扩展版本过旧」。
 // server 不直连平台（无浏览器 cookie/wbi 环境且数据中心 IP 易风控），复用扩展 action：
 // bilibili 逐页 list-upper-videos（页间节流对齐 popup 的 500ms）；
 // youtube 一次 list-yt-channel-videos（扩展内全量分页 + 1h 缓存，refresh 绕过）；
 // douyin 一次 expand-douyin-upper（扩展内 max_cursor 游标翻页聚合成一次回传，server 不感知游标）。
 import type Database from 'better-sqlite3';
 import { getWsBridge } from './wsBridge.js';
+import { EXT_NEEDS_UPDATE_ERROR, compareExtVersion, extNeedsUpdate } from './ext-version.js';
 import type { Source } from './source.js';
 
 export interface UpperVideoItem {
@@ -53,8 +56,9 @@ function normalizePic(p: unknown): string | null {
 }
 
 // 依赖注入（测试 mock 用）；生产默认经 wsBridge 取真 WS 实现（ws/server.ts 加载时注册）。
+// ext_version：hello 上报的扩展版本（版本门槛判定输入；测试夹具缺省视为 0.0.0）。
 export interface UpperExpandDeps {
-  listClients?: () => Array<{ client_id: string; task_dispatch_enabled?: boolean }>;
+  listClients?: () => Array<{ client_id: string; ext_version?: string | null; task_dispatch_enabled?: boolean }>;
   requestCommand?: (
     clientId: string,
     action: string,
@@ -71,6 +75,24 @@ const YT_CHANNEL_TIMEOUT_MS = 180_000; // YouTube 全量分页在扩展内完成
 // UPPER_MAX_ITEMS=2000（content-dy.js），每页 ~18 条 + 滚动间隔 1200ms，2000 条 ≈ 6 分钟——
 // 180s 只够 ~1400 条，超限前 server 先超时；7 分钟与上限节奏匹配（对齐扩展滚动翻页节奏）。
 const DY_UPPER_TIMEOUT_MS = 420_000;
+
+// 抖音博主展开的扩展版本门槛（2026-08-30 多机版本参差事故）：expand-douyin-upper 是 0.1.25
+// 新增 action（2736d6e 抖音平台化首发），旧扩展（事故中的 0.1.18）不认识 → 回执
+// 「unknown action: expand-douyin-upper」原样透出 503，而够新的机器明明能干。派发前按 hello
+// 上报的 ext_version 硬过滤（见 expandUpperVideos 客户端选择）。
+// 注：0.1.24 从未发布（0.1.23 直升 0.1.25），门槛取实际承载该 action 的最低已发布版本。
+const DOUYIN_EXPAND_MIN_VERSION = '0.1.25';
+
+// 回执失败分类（对齐任务派发侧同款机制，共享实现见 ext-version.ts）：unknown action /
+// needs_update → 「扩展版本过旧」+ 回执原文——版本门槛是事前过滤，这里是兜底（门槛漏网如
+// hello 谎报版本时，错误也能指向更新而非误重试）；其余失败（need_login/风控）原文透出。
+function receiptError(result: { error?: unknown; data?: unknown; needs_update?: unknown }, fallback: string): Error {
+  if (extNeedsUpdate(result)) {
+    const raw = typeof result.error === 'string' ? result.error : 'unknown action';
+    return new Error(`${EXT_NEEDS_UPDATE_ERROR}（回执：${raw}）`);
+  }
+  return new Error(String(result.error ?? fallback));
+}
 
 // collected 标注：videos 表按平台 source_vid IN 分批查（SQLite 绑定变量上限兜底 chunk 500）
 function markCollected(db: Database.Database, items: UpperVideoItem[], source: Source): void {
@@ -128,7 +150,7 @@ async function expandYtChannelVideos(
   const r = await reqCmd(clientId, 'list-yt-channel-videos', { ident, refresh: true }, YT_CHANNEL_TIMEOUT_MS);
   if (!r.ok) throw new Error(r.code === 'offline' ? '扩展离线（拉取中断）' : '扩展执行超时');
   const result = r.result ?? {};
-  if (result.ok === false) throw new Error(String(result.error ?? 'list-yt-channel-videos 失败'));
+  if (result.ok === false) throw receiptError(result, 'list-yt-channel-videos 失败');
   const data = result.data ?? {};
   const raw: Array<{ vid?: unknown; title?: unknown; created?: unknown; play?: unknown; length?: unknown; pic?: unknown }> =
     Array.isArray(data.items) ? data.items : [];
@@ -158,7 +180,7 @@ async function expandDouyinUpperVideos(
   const r = await reqCmd(clientId, 'expand-douyin-upper', { secUid }, DY_UPPER_TIMEOUT_MS);
   if (!r.ok) throw new Error(r.code === 'offline' ? '扩展离线（拉取中断）' : '扩展执行超时');
   const result = r.result ?? {};
-  if (result.ok === false) throw new Error(String(result.error ?? 'expand-douyin-upper 失败'));
+  if (result.ok === false) throw receiptError(result, 'expand-douyin-upper 失败');
   const data = result.data ?? {};
   const raw: Array<{ bvid?: unknown; title?: unknown; created?: unknown; play?: unknown; length?: unknown; pic?: unknown }> =
     Array.isArray(data.items) ? data.items : [];
@@ -210,7 +232,7 @@ async function expandBilibiliUpperVideos(
     const r = await reqCmd(clientId, 'list-upper-videos', { mid, page, page_size: 30 }, UPPER_PAGE_TIMEOUT_MS);
     if (!r.ok) throw new Error(r.code === 'offline' ? '扩展离线（拉取中断）' : '扩展执行超时');
     const result = r.result ?? {};
-    if (result.ok === false) throw new Error(String(result.error ?? 'list-upper-videos 失败'));
+    if (result.ok === false) throw receiptError(result, 'list-upper-videos 失败');
     const data = result.data ?? {};
     const pageItems: Array<{ bvid?: unknown; title?: unknown; created?: unknown; play?: unknown; length?: unknown; pic?: unknown }> = Array.isArray(data.items) ? data.items : [];
     total = typeof data.total === 'number' ? data.total : items.length + pageItems.length;
@@ -240,7 +262,23 @@ export async function expandUpperVideos(
   // 专职采集机上（B 站 API 配额/风控压力同源）。池空（全仅上报）回退任意在线：
   // list-upper-videos / list-yt-channel-videos 是纯 API 代理查询，无标签页/UI 干扰，不必拒绝。
   const pool = clients.filter((c) => c.task_dispatch_enabled !== false);
-  const clientId = (pool[0] ?? clients[0]).client_id;
+
+  // 抖音版本门槛（2026-08-30 多机版本参差事故——0.1.26 新机与 0.1.18 旧机同时在线，无版本感知
+  // 选到旧机 → 回执 unknown action 透出 503）：expand-douyin-upper 仅 ≥0.1.25 扩展认识，先按
+  // ext_version 硬过滤，池偏好（专职采集机优先）只在合格者内生效——版本是「能不能干」，池是
+  // 「该谁干」。无合格端 → 报错带各端版本清单（http 层 503 可见，指明差在哪台）。bilibili/
+  // youtube 不设门槛（list-upper-videos / list-yt-channel-videos 旧扩展已认识，防回归）。
+  let clientId: string;
+  if (query.source === 'douyin') {
+    const qualified = clients.filter((c) => compareExtVersion(c.ext_version, DOUYIN_EXPAND_MIN_VERSION) >= 0);
+    if (qualified.length === 0) {
+      const roster = clients.map((c) => `${c.client_id}@${c.ext_version ?? '未知版本'}`).join('、');
+      throw new Error(`在线扩展版本均过低（抖音博主展开需 ≥${DOUYIN_EXPAND_MIN_VERSION}）：${roster}`);
+    }
+    clientId = (qualified.find((c) => c.task_dispatch_enabled !== false) ?? qualified[0]).client_id;
+  } else {
+    clientId = (pool[0] ?? clients[0]).client_id;
+  }
 
   // 平台分派：YouTube / 抖音一次全量回执（扩展内分页/游标聚合）；B 站走下方逐页循环。
   if (query.source === 'youtube') return expandYtChannelVideos(db, query.ident, reqCmd, clientId);

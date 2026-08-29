@@ -8,6 +8,7 @@
 // | R2 | douyin（单条链接派发 fetch-douyin-subtitle / batch source 归一 / source 筛选 / expand 骨架 400·503） | 通过 | 2026-08-29 S2 抖音平台化 |
 // | R3 | douyin expand 全链路（合法 sec_uid → expand-douyin-upper 回执 200 映射，替换 503 骨架断言） | 通过 | 2026-08-29 S8 收口接线 #1 |
 // | R4 | douyin expand 契约对齐（channel 键承载 sec_uid 为主 + sec_uid 旧键兼容档） | 通过 | 2026-08-29 C1 修复：web 形态钉死，双端不再各 mock 各的 |
+// | R5 | douyin expand 版本门槛全链路（够新客户端 hello → 200；仅旧版客户端 → 503 带版本清单） | 通过 | 2026-08-30 多机版本参差事故（先红后绿实证：无门槛代码下 503 断言失败） |
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -914,9 +915,10 @@ test('POST /api/upper-videos/expand：douyin——缺/非法参数 400；channel
   let ws: WebSocket | null = null;
   try {
     // 模拟扩展：对 expand-douyin-upper 回一次全量回执（回显 secUid，形态对齐 background.js expandDouyinUpper）
+    // ext_version ≥0.1.25：R5 版本门槛后，低于该版本的客户端不参与 douyin expand 派发
     ws = new WebSocket(`ws://127.0.0.1:${ctx.port}/ext`);
     await new Promise((r) => { ws!.once('open', r); });
-    ws!.send(JSON.stringify({ type: 'hello', ext_version: '0.1.0', token: 'test-token', client_id: 'ext-DY2', reporting_enabled: true }));
+    ws!.send(JSON.stringify({ type: 'hello', ext_version: '0.1.26', token: 'test-token', client_id: 'ext-DY2', reporting_enabled: true }));
     ws!.on('message', (d) => {
       const m = JSON.parse(d.toString());
       if (m.action === 'expand-douyin-upper') {
@@ -957,5 +959,35 @@ test('POST /api/upper-videos/expand：douyin——缺/非法参数 400；channel
     const r3 = await httpReq(ctx.port, 'POST', '/api/upper-videos/expand', { source: 'douyin', sec_uid: 'MS4wLjABAAAAabcdef123456' });
     assert.equal(r3.status, 200);
     assert.equal(r3.json.channel.id, 'MS4wLjABAAAAabcdef123456');
+  } finally { ws?.close(); ctx.cleanup(); }
+});
+
+// ── /api/upper-videos/expand douyin 版本门槛（2026-08-30 多机版本参差事故全链路回放）──
+// 事故：0.1.26 新机与 0.1.18 旧机同时在线，server 无版本感知派发到旧机 → 回执
+// 「unknown action: expand-douyin-upper」原样透出 503。修复后：派发前按 ext_version 硬过滤，
+// 无合格端 → 503 带各端版本清单（可定位哪台该更新），不再出现「派给不认识 action 的机器」。
+test('POST /api/upper-videos/expand：douyin——唯一在线端 0.1.18 低于门槛 → 503 带版本清单，不派发', async () => {
+  const ctx = await setup();
+  let ws: WebSocket | null = null;
+  try {
+    // 模拟事故里的旧机：hello 上报 0.1.18。即使它对 expand-douyin-upper 回 unknown action
+    // （旧扩展对未知 action 的实际回执形态），修复后也根本不会派给它——mock 保留回执能力
+    // 只为证明「无门槛实现会走到这里透出原文」（先红后绿的失败态）。
+    ws = new WebSocket(`ws://127.0.0.1:${ctx.port}/ext`);
+    await new Promise((r) => { ws!.once('open', r); });
+    ws!.send(JSON.stringify({ type: 'hello', ext_version: '0.1.18', token: 'test-token', client_id: 'ext-old-dy', reporting_enabled: true }));
+    ws!.on('message', (d) => {
+      const m = JSON.parse(d.toString());
+      if (m.action === 'expand-douyin-upper') {
+        ws!.send(JSON.stringify({ type: 'result', id: m.id, ok: false, error: 'unknown action: expand-douyin-upper', needs_update: true }));
+      }
+    });
+    await wait(100);
+
+    const r = await httpReq(ctx.port, 'POST', '/api/upper-videos/expand', { source: 'douyin', channel: 'MS4wLjABAAAAabcdef123456' });
+    assert.equal(r.status, 503);
+    // 门槛语义（0.1.25 是 expand-douyin-upper 实际最低承载版本）+ 该端版本清单（定位到台）
+    assert.match(r.json.error, /在线扩展版本均过低（抖音博主展开需 ≥0\.1\.25）/);
+    assert.match(r.json.error, /ext-old-dy@0\.1\.18/);
   } finally { ws?.close(); ctx.cleanup(); }
 });

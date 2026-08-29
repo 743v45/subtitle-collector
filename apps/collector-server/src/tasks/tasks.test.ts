@@ -10,6 +10,7 @@
 // | R3 | douyin not_video（图集）回执 → failed 映射 | 通过 | 2026-08-29 S4 收口接线 #2 |
 // | R4 | douyin expand 接线（expand-douyin-upper 回执映射/契约/失败路径，替换骨架 503 测试） | 通过 | 2026-08-29 S8 收口接线 #1 |
 // | R5 | 审查 M1（expand 超时 180s→420s 契约同步）+ M7（回执 source_vid 迁移：title JOIN/重试去重/非 douyin no-op） | 通过 | 2026-08-30 审查 Minor 批量修复 |
+// | R6 | douyin expand 版本门槛（0.1.26/0.1.18 双在线选新机；全旧 503 带版本清单；unknown action → 版本过旧文案；bilibili/youtube 不设门槛） | 通过 | 2026-08-30 多机版本参差事故（先红后绿实证：无门槛代码下 R6 前三组失败） |
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -607,7 +608,8 @@ test('expandUpperVideos douyin：全量回执映射（bvid=aweme_id）+ collecte
 
     const calls: Array<{ clientId: string; action: string; params: Record<string, unknown>; timeoutMs?: number }> = [];
     const deps: UpperExpandDeps = {
-      listClients: () => [{ client_id: 'ext-A' }],
+      // ext_version ≥0.1.25（expand-douyin-upper 最低承载版本，R6 版本门槛要求）
+      listClients: () => [{ client_id: 'ext-A', ext_version: '0.1.26' }],
       requestCommand: async (clientId, action, params, timeoutMs) => {
         calls.push({ clientId, action, params, timeoutMs });
         return {
@@ -657,12 +659,137 @@ test('expandUpperVideos douyin：扩展离线抛错；回执失败抛错（http 
     );
     await assert.rejects(
       expandUpperVideos(db, { source: 'douyin', secUid: 'MS4wLjABAAAAtest123' }, {
-        listClients: () => [{ client_id: 'ext-A' }],
+        listClients: () => [{ client_id: 'ext-A', ext_version: '0.1.26' }],
         requestCommand: async () => ({ ok: true, result: { ok: false, error: 'post 列表 200 空体：该浏览器未登录抖音' } }),
         sleep: async () => {},
       }),
       /未登录抖音/,
     );
+  } finally { cleanup(); }
+});
+
+// ── expandUpperVideos douyin 版本门槛（2026-08-30 多机版本参差事故）──
+// 事故复盘：v0.1.26 新机与 v0.1.18 旧机同时在线，expand 派发无版本感知选到旧机 → 回执
+// 「unknown action: expand-douyin-upper」原样透出 503，新机明明能干。修复：douyin 分支只从
+// ext_version ≥0.1.25（expand-douyin-upper 实际最低承载版本，0.1.24 从未发布——0.1.23 直升
+// 0.1.25）且在线的客户端选；bilibili/youtube 不设门槛（旧扩展已认识，防回归）。
+
+test('expandUpperVideos douyin：两台在线（0.1.18 旧机排首位）→ 版本门槛越过列表序选 0.1.26 新机（事故回放）', async () => {
+  const { db, cleanup } = setupDb();
+  try {
+    const used: string[] = [];
+    const deps: UpperExpandDeps = {
+      // 旧机排首位：事故里 server 正是按列表序选中了它（pool[0]）——门槛必须独立于顺序生效
+      listClients: () => [
+        { client_id: 'ext-old-0.1.18', ext_version: '0.1.18' },
+        { client_id: 'ext-new-0.1.26', ext_version: '0.1.26' },
+      ],
+      requestCommand: async (cid) => {
+        used.push(cid);
+        return { ok: true as const, result: { ok: true, data: { total: 1, items: [{ bvid: '7123456789012345678', title: 't' }] } } };
+      },
+      sleep: async () => {},
+    };
+    const r = await expandUpperVideos(db, { source: 'douyin', secUid: 'MS4wLjABAAAAtest123' }, deps);
+    assert.equal(r.total, 1);
+    assert.deepEqual(used, ['ext-new-0.1.26'], '必须选 ≥0.1.25 的 ext-new，而非首位的 0.1.18 旧机');
+  } finally { cleanup(); }
+});
+
+test('expandUpperVideos douyin：全部在线端 <0.1.25 → 抛错带各端版本清单（http 层 503 可见，指明差在哪台）', async () => {
+  const { db, cleanup } = setupDb();
+  try {
+    await assert.rejects(
+      expandUpperVideos(db, { source: 'douyin', secUid: 'MS4wLjABAAAAtest123' }, {
+        listClients: () => [
+          { client_id: 'ext-A', ext_version: '0.1.18' },
+          { client_id: 'ext-B', ext_version: null }, // 旧扩展 hello 不带 ext_version → 视为 0.0.0
+        ],
+        requestCommand: async () => ({ ok: true, result: { ok: true, data: { total: 0, items: [] } } }),
+        sleep: async () => {},
+      }),
+      (e: Error) => {
+        // 门槛语义 + 可定位性：需求写明 ≥0.1.24，但该 action 实际随 0.1.25 发布（0.1.24 不存在）
+        assert.match(e.message, /在线扩展版本均过低（抖音博主展开需 ≥0\.1\.25）/);
+        // 各端版本清单逐台列出（null 版本标「未知版本」，运维据此知道去哪台更新）
+        assert.match(e.message, /ext-A@0\.1\.18/);
+        assert.match(e.message, /ext-B@未知版本/);
+        return true;
+      },
+    );
+  } finally { cleanup(); }
+});
+
+test('expandUpperVideos douyin：可派池全旧但仅上报机够新 → 版本硬门槛优先于池偏好（够新的仅上报机也照用）', async () => {
+  const { db, cleanup } = setupDb();
+  try {
+    const used: string[] = [];
+    const deps: UpperExpandDeps = {
+      // 池内只有 0.1.18 旧机；0.1.26 新机 task_dispatch_enabled:false（不入池）。
+      // 版本是「能不能干」（硬约束），池是「该谁干」（软偏好）——池偏好只在合格者内生效
+      listClients: () => [
+        { client_id: 'ext-old', ext_version: '0.1.18' },
+        { client_id: 'ext-new-report-only', ext_version: '0.1.26', task_dispatch_enabled: false },
+      ],
+      requestCommand: async (cid) => {
+        used.push(cid);
+        return { ok: true as const, result: { ok: true, data: { total: 1, items: [{ bvid: '7123456789012345678', title: 't' }] } } };
+      },
+      sleep: async () => {},
+    };
+    const r = await expandUpperVideos(db, { source: 'douyin', secUid: 'MS4wLjABAAAAtest123' }, deps);
+    assert.equal(r.total, 1);
+    assert.deepEqual(used, ['ext-new-report-only'], '唯一够新的客户端虽仅上报，也不该报错——旧机会直接 unknown action');
+  } finally { cleanup(); }
+});
+
+test('expandUpperVideos：unknown action / needs_update 回执 → 「扩展版本过旧」文案附回执原文（门槛漏网兜底）', async () => {
+  const { db, cleanup } = setupDb();
+  try {
+    // 形态一：旧扩展回 "unknown action" 字符串（事故实际回执）
+    await assert.rejects(
+      expandUpperVideos(db, { source: 'douyin', secUid: 'MS4wLjABAAAAtest123' }, {
+        listClients: () => [{ client_id: 'ext-A', ext_version: '0.1.26' }], // hello 谎报版本越过门槛 → 兜底分类兜住
+        requestCommand: async () => ({ ok: true, result: { ok: false, error: 'unknown action: expand-douyin-upper' } }),
+        sleep: async () => {},
+      }),
+      /扩展版本过旧，请更新扩展后重试（回执：unknown action: expand-douyin-upper）/,
+    );
+    // 形态二：新扩展对未知 action 显式 needs_update:true
+    await assert.rejects(
+      expandUpperVideos(db, { source: 'douyin', secUid: 'MS4wLjABAAAAtest123' }, {
+        listClients: () => [{ client_id: 'ext-A', ext_version: '0.1.26' }],
+        requestCommand: async () => ({ ok: true, result: { ok: false, error: 'no such action', needs_update: true } }),
+        sleep: async () => {},
+      }),
+      /扩展版本过旧，请更新扩展后重试（回执：no such action）/,
+    );
+  } finally { cleanup(); }
+});
+
+test('expandUpperVideos：bilibili/youtube 分支不受版本门槛影响（无版本号按 0.0.0 也照派，防回归）', async () => {
+  const { db, cleanup } = setupDb();
+  try {
+    const used: string[] = [];
+    const deps: UpperExpandDeps = {
+      // ext_version 缺省 = 0.0.0：两平台的 action（list-upper-videos / list-yt-channel-videos）
+      // 旧扩展早已认识，门槛只给 douyin 设（expand-douyin-upper 是 0.1.25 新增）
+      listClients: () => [{ client_id: 'ext-old' }],
+      requestCommand: async (cid, action) => {
+        used.push(`${cid}:${action}`);
+        if (action === 'list-upper-videos') {
+          return { ok: true as const, result: { ok: true, data: { total: 1, items: [{ bvid: 'BV1xx411c7mD', title: 't' }] } } };
+        }
+        return { ok: true as const, result: { ok: true, data: { channel_id: 'UCx', total: 1, items: [{ vid: 'ytvid00001', title: 't' }] } } };
+      },
+      sleep: async () => {},
+      pageGapMs: 0,
+    };
+    const r1 = await expandUpperVideos(db, { source: 'bilibili', mid: '296399504' }, deps);
+    assert.equal(r1.total, 1);
+    const r2 = await expandUpperVideos(db, { source: 'youtube', ident: { channelId: 'UCx' } }, deps);
+    assert.equal(r2.total, 1);
+    assert.deepEqual(used, ['ext-old:list-upper-videos', 'ext-old:list-yt-channel-videos'], '两平台照常派发，不被 douyin 门槛拦截');
   } finally { cleanup(); }
 });
 
