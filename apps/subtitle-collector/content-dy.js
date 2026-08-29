@@ -139,9 +139,41 @@ function onUpperMsg(type, data) {
   upper.profile = data.user ?? null; // PROFILE_OTHER
 }
 
+// ── 页面级诊断（2026-08-30 真实浏览器 profile 零到达排障）──
+// inject-dy 各类消息到达计数：不按 secUid 过滤、不随 DY_UPPER_START 重置——「页面活着在发请求」
+// 的证据与聚合状态无关（含 START 前先到的消息；START 时缓冲重放走 onUpperMsg 不经此处，不重复计数）。
+// xhr 键名与消息类型的映射（diag.xhr 形状：{profile, profileErr, post, postEmpty, detail, ssr}）
+const xhrSeen = { profile: 0, profileErr: 0, post: 0, postEmpty: 0, detail: 0, ssr: 0 };
+const XHR_SEEN_KEY = {
+  PROFILE_OTHER: "profile",
+  PROFILE_OTHER_ERROR: "profileErr",
+  POST_LIST: "post",
+  POST_LIST_EMPTY: "postEmpty",
+  AWEME_DETAIL: "detail",
+  SSR_VIDEO_DETAIL: "ssr",
+};
+
+// 诊断快照：title/readyState/url 反映页面是否被风控/验证中间页挡（title 突变、url 跳转）或
+// 后台 tab SPA 未启动（readyState 停 loading）；xhr 计数区分「inject-dy 未拦到任何消息」与
+// 「拦到但被 gating（postEmpty>0）」。document/location 访问 try 守卫：vm 沙箱测试无 DOM，
+// 字段留 null 不抛。
+function upperDiag() {
+  let title = null;
+  let readyState = null;
+  let url = null;
+  try {
+    title = String(document.title).slice(0, 40);
+    readyState = String(document.readyState);
+    url = String(location.href).slice(0, 80);
+  } catch { /* 无 DOM 环境（测试沙箱）：字段留 null */ }
+  return { title, readyState, url, xhr: { ...xhrSeen }, ts: Date.now() };
+}
+
 // inject-dy 消息分发；2026-08-29 S8 台账性重构：从 message 监听器拆出（复杂度台账达标），
-// 逻辑逐字原样搬移。
+// 逻辑逐字原样搬移（2026-08-30 增：各类消息到达计数，纯观察无分支逻辑）。
 function onInjectMessage(type, data) {
+  const seenKey = XHR_SEEN_KEY[type];
+  if (seenKey) xhrSeen[seenKey] += 1;
   if (type === "AWEME_DETAIL") {
     storeDetail(data?.awemeId, data?.detail, 'xhr');
     console.log(`[content-dy] AWEME_DETAIL aweme=${data?.awemeId}（累计 ${details.size} 个）`);
@@ -229,7 +261,8 @@ function onUpperStart(msg, sendResponse) {
   }
 }
 
-// GET_UPPER_STATE：background 轮询聚合进度
+// GET_UPPER_STATE：background 轮询聚合进度；diag 附页面级诊断快照（纯附加字段，
+// 2026-08-30 真实浏览器 profile 零到达排障——title/readyState/url/xhr 计数，不改取数逻辑）
 function onUpperState(sendResponse) {
   sendResponse({
     ok: true,
@@ -238,6 +271,7 @@ function onUpperState(sendResponse) {
     profile: upper?.profile ?? null,
     items: upper?.items ?? [],
     error: upper?.error ?? null,
+    diag: upperDiag(),
   });
 }
 

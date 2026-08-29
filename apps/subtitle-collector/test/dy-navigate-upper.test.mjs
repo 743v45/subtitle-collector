@@ -19,6 +19,7 @@ import { TASK_DISPATCH_DISABLED_ERROR } from '../task-dispatch.mjs';
 // | T1   | 2026-08-30 | 审查 M2：expand 零数据 error + 三条对照路径                  | PASS | `pnpm --dir apps/subtitle-collector test` 全绿（覆盖率锁定达标） |
 // | T2   | 2026-08-30 | fetch-douyin-subtitle 主链全分支（首测加载本模块后的覆盖补齐）| PASS | 同上 |
 // | T3   | 2026-08-30 | spike ②：M2 判据换 douyinCreatorFromProfile（user:{} 不再穿透）+ 博主不存在秒级回执 | PASS | `pnpm qa` 全绿 |
+// | T4   | 2026-08-30 | diag 可观察性：周期快照行（残缺/完整）+ 窗口到点 warn 行携带快照 | PASS | 同上（纯观察不加逻辑分支） |
 
 const SEC = 'MS4wLjABAAAA2y53DZw7-0cG6yOfaZCJesMdyIdXhqLPu2abnCFjkUs';
 // content-dy PROFILE_OTHER 抓的是 profile/other 响应的 user（snake_case，douyinCreatorFromProfile 口径）
@@ -422,6 +423,48 @@ test('spike①→②：GET_UPPER_STATE error「博主不存在（UserId不合法
   assert.equal(receipts[0].ok, false);
   assert.match(receipts[0].error, /博主不存在（UserId不合法）/, '错误文案原文透传');
   assert.ok(polls <= 2, `错误态首轮轮询即收尾（实测 ${polls} 轮，无进展窗口 20s 不参与）`);
+});
+
+// ── diag 可观察性（2026-08-30 真实浏览器 profile 零到达排障：只加观察不加逻辑分支）──
+
+test('diag：无进展期间周期 diag 快照行（残缺/完整两形态）+ 窗口到点 warn 行携带最后快照', async () => {
+  let polls = 0;
+  // 前 5 轮残缺快照（旧版 content-dy 无 diag/字段漂移容错），其后完整快照（0.1.28 形态）
+  const FULL_DIAG = {
+    title: '抖音-验证中间页', readyState: 'complete', url: 'https://www.douyin.com/user/MS4wLj',
+    xhr: { profile: 0, profileErr: 0, post: 0, postEmpty: 0, detail: 0, ssr: 0 }, ts: 1787896381000,
+  };
+  const { removed } = installChrome({
+    onMessage: (msg) => {
+      if (msg?.type !== 'GET_UPPER_STATE') return { ok: true };
+      polls += 1;
+      const diag = polls <= 5 ? { ts: 1 } : FULL_DIAG;
+      return { ok: true, state: 'running', secUid: SEC, profile: null, items: [], error: null, diag };
+    },
+  });
+  const logs = [];
+  const bag = makeEnv();
+  const cmds = createDouyinCommands({ ...bag.env, extLog: (m, l) => logs.push(`${l ?? 'info'}|${m}`) });
+  const receipts = [];
+  mock.timers.enable({ apis: ['setTimeout', 'Date'] });
+  try {
+    const p = cmds.handleCommand({ action: 'expand-douyin-upper', secUid: SEC, id: 'e9' }, (r) => receipts.push(r));
+    await drive(() => receipts.length > 0);
+    await Promise.race([p, new Promise((r) => setImmediate(r))]);
+  } finally {
+    mock.timers.reset();
+    delete globalThis.chrome;
+  }
+  assert.equal(receipts.length, 1);
+  assert.equal(receipts[0].ok, false, '零数据防线照常生效（诊断只观察不改行为）');
+
+  const diagLines = logs.filter((m) => m.includes('[dy-upper] diag'));
+  assert.ok(diagLines.length >= 2, `周期 diag 行出现（实测 ${diagLines.length} 行，800ms×5≈4s 一行）`);
+  assert.match(diagLines[0], /polls=5 diag\[title=\? ready=\? url=\? xhr=\{profile:0,profileErr:0,post:0,postEmpty:0,detail:0,ssr:0\}\]/, '残缺快照字段兜底 ?/0');
+  assert.match(diagLines[1], /title=抖音-验证中间页 ready=complete url=https:\/\/www\.douyin\.com\/user\/MS4wLj/, '完整快照原样透出');
+  const warn = logs.find((m) => m.startsWith('warn|') && m.includes('无进展窗口到点'));
+  assert.ok(warn, '窗口到点 warn 行出现');
+  assert.match(warn, /items=0 diag\[title=抖音-验证中间页/, 'warn 行携带最后一份诊断快照（title/xhr 组合指向根因）');
 });
 
 // ── 依赖模块单元补齐（经 dy-navigate 首次加载进覆盖率口径，连带分支一并锁住）──

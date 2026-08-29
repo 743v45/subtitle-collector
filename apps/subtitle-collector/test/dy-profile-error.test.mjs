@@ -18,6 +18,7 @@ import { buildDouyinPayload } from '../douyin-payload.js';
 // | 轮次 | 日期       | 范围                                                        | 结果 | 备注 |
 // |------|------------|-------------------------------------------------------------|------|------|
 // | T1   | 2026-08-30 | spike ①③：inject-dy PROFILE_OTHER_ERROR + content-dy 错误态 | PASS | `pnpm qa` 全绿；扩展 pnpm test 覆盖率锁定达标 |
+// | T2   | 2026-08-30 | GET_UPPER_STATE 附 diag 诊断快照（xhr 计数累加/无 DOM 沙箱不抛）| PASS | 真实浏览器 profile 零到达排障——纯附加字段 |
 
 const SEC = 'MS4wLjABAAAA2y53DZw7-0cG6yOfaZCJesMdyIdXhqLPu2abnCFjkUs';
 // spike §8 原始证据逐字形态（死 sec_uid profile/other 响应体，129 B）
@@ -210,4 +211,38 @@ test('content：健康 profile → 聚合照常（profile 入状态机无错误�
   assert.equal(st.profile.nickname, '测试博主');
   assert.equal(st.items.length, 1, '作品正常聚合');
   assert.equal(st.error, null);
+});
+
+// ── diag 诊断快照（2026-08-30 真实浏览器 profile 零到达排障——纯附加字段）──
+
+test('diag：GET_UPPER_STATE 附页面级快照——xhr 计数按消息类型累加（不重置不双计），vm 沙箱无 DOM 字段留 null 不抛', async () => {
+  // vm 跨 realm 对象 prototype 不同，deepEqual 整对象必炸——entries 数组化后比对（原始值无 realm 之分）
+  const xhrEntries = (diag) => Object.entries(diag.xhr).sort(([a], [b]) => (a < b ? -1 : 1));
+  const h = loadContentDy();
+  await h.runtime({ type: 'DY_UPPER_START', secUid: SEC });
+  const st0 = await h.runtime({ type: 'GET_UPPER_STATE' });
+  assert.deepEqual(xhrEntries(st0.diag), [
+    ['detail', 0], ['post', 0], ['postEmpty', 0], ['profile', 0], ['profileErr', 0], ['ssr', 0],
+  ], '零起步计数（六类消息计数器齐全）');
+  assert.equal(st0.diag.title, null, 'vm 沙箱无 document——try 守卫留 null 不抛');
+  assert.equal(st0.diag.readyState, null);
+  assert.equal(st0.diag.url, null);
+  assert.equal(typeof st0.diag.ts, 'number');
+
+  // 六类消息各到一条 → 计数各 +1（计数在 onInjectMessage 入口，不按 secUid/聚合态过滤）
+  h.dispatch('PROFILE_OTHER', { secUid: SEC, user: { sec_uid: SEC, nickname: 'x' } });
+  h.dispatch('PROFILE_OTHER_ERROR', { secUid: SEC, kind: 'status', statusCode: 2, statusMsg: 'UserId不合法' });
+  h.dispatch('POST_LIST', { secUid: SEC, hasMore: true, awemeList: [] });
+  h.dispatch('POST_LIST_EMPTY', { secUid: SEC });
+  h.dispatch('AWEME_DETAIL', { awemeId: '7123456789012345678', detail: { aweme_id: '7123456789012345678' } });
+  h.dispatch('SSR_VIDEO_DETAIL', { videoDetail: { awemeId: '7223456789012345678' } });
+  const st1 = await h.runtime({ type: 'GET_UPPER_STATE' });
+  assert.deepEqual(xhrEntries(st1.diag), [
+    ['detail', 1], ['post', 1], ['postEmpty', 1], ['profile', 1], ['profileErr', 1], ['ssr', 1],
+  ], '各类型各计一次');
+
+  // 首错优先不覆盖 + 计数照常累加（第二次 PROFILE_OTHER_ERROR → profileErr=2）
+  h.dispatch('PROFILE_OTHER_ERROR', { secUid: SEC, kind: 'status', statusCode: 9, statusMsg: '后来者' });
+  const st2 = await h.runtime({ type: 'GET_UPPER_STATE' });
+  assert.equal(st2.diag.xhr.profileErr, 2, '计数只观察不参与错误定性');
 });

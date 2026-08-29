@@ -186,12 +186,26 @@ function notifyUpperStart(tabId, secUid) {
   });
 }
 
+// 诊断快照 → 日志体（2026-08-30 真实浏览器 profile 零到达排障，§9 可观察性）。读法：
+// title 突变（验证/登录中间页）= 被风控挡；ready 停 loading = 后台 tab SPA 未启动（定时器节流）；
+// xhr 全 0 = inject-dy 未拦到任何消息（未注入/页面根本没发请求）；postEmpty>0 = 被 gating；
+// 计数有但 items=0 = 响应形态漂移。残缺快照（旧版 content-dy/字段漂移）?/0 兜底不抛。
+function upperDiagBody(diag) {
+  if (!diag) return 'diag=无响应（content-dy 未注入或旧版无诊断字段）';
+  const x = diag.xhr ?? {};
+  const counts = ['profile', 'profileErr', 'post', 'postEmpty', 'detail', 'ssr']
+    .map((k) => `${k}:${x[k] ?? 0}`).join(',');
+  return `diag[title=${diag.title ?? '?'} ready=${diag.readyState ?? '?'} url=${diag.url ?? '?'} xhr={${counts}}]`;
+}
+
 // 轮询 GET_UPPER_STATE 至 done / error / 无进展窗口到点（滚动翻页停滞：保已拉部分收尾，
-// 错误标注供上层展示）
+// 错误标注供上层展示）；每 5 轮 poll（800ms 间隔 ≈4s）extLog 一行诊断快照——零数据卡点
+// 不再只能等窗口到点才知道页面长什么样
 async function waitUpperDone(tabId, extLog, tag) {
   let state = null;
   let lastProgressKey = "";
   let lastProgressAt = Date.now();
+  let polls = 0;
   for (;;) {
     state = await new Promise((resolve) => {
       chrome.tabs.sendMessage(tabId, { type: "GET_UPPER_STATE" }, (resp) => {
@@ -199,17 +213,23 @@ async function waitUpperDone(tabId, extLog, tag) {
         else resolve(resp);
       });
     });
+    polls += 1;
+    if (polls % 5 === 0) extLog(`[dy-upper] diag ${tag}polls=${polls} ${upperDiagBody(state?.diag)}`);
     const key = upperProgressOf(state);
     if (key !== lastProgressKey) {
       lastProgressKey = key;
       lastProgressAt = Date.now();
     } else if (Date.now() - lastProgressAt > DY_UPPER_PROGRESS_MS) {
       // 滚动翻页停滞（SPA 未响应滚动/页面结构变化）：保已拉部分收尾，错误标注供上层展示
-      extLog(`[dy-upper] 无进展窗口到点 ${tag}items=${state?.items?.length ?? 0}（滚动翻页停滞，保部分结果）`, "warn");
+      //（warn 行携带最后一份诊断快照：title/xhr 组合直接指向根因）
+      extLog(`[dy-upper] 无进展窗口到点 ${tag}items=${state?.items?.length ?? 0} ${upperDiagBody(state?.diag)}（滚动翻页停滞，保部分结果）`, "warn");
       break;
     }
     if (!state?.ok) { await new Promise((r) => setTimeout(r, 800)); continue; } // content-dy 未就绪
-    if (state.state === 'error') throw new Error(String(state.error ?? '博主列表拉取失败'));
+    if (state.state === 'error') {
+      extLog(`[dy-upper] diag ${tag}${upperDiagBody(state.diag)}（error 态收尾）`);
+      throw new Error(String(state.error ?? '博主列表拉取失败'));
+    }
     if (state.state === 'done') break;
     await new Promise((r) => setTimeout(r, 800));
   }
