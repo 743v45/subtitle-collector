@@ -130,6 +130,14 @@
 4. **真机验证**(审查后):`pnpm test:ext` + 本地 server 起后 API 冒烟(v18 迁移在真库跑一次)+ fireredasr 健康检查 + 扩展载 Chrome 实跑 douyin(需用户环境配合的留说明)
 5. **继续 grilling**:真机暴露的问题 + 下方遗留清单 → 下一轮迭代
 
+## 进度日志(补充:2026-08-29 上午真机闭环阶段)
+
+- ✅ **首采成功**(任务 3836 → 旧 ID 302 迁移到 7663873788873821476):视频元数据入库(stat 真实值 like 31589/share 9842/favorite 15106;play_uri;sec_uid 创作者)
+- ✅ **字段增强+ID 迁移修复提交**(c976995,qa 全绿):web 详情页收藏/转发/回复三平台展示;extra 补 region/is_top/is_ads/video_quality/chapters/share_url;creator fans/verify→official_title(ingest 抽 upsertCreator,台账 52→40);ID 迁移两端修(扩展回执实际 ID+server markNoSubtitleForReceipt,**扩展需刷新到 0.1.26**)
+- ✅ **fireredasr-ui 上游看门狗补码**(cd32bdd,35/35 测试绿):真实故障(220MB 任务 worker 挂死卡 processing>31min)触发用户预授权路径——worker 死亡通知 in-flight 失败/启动恢复重置残留 processing/看门狗超时强杀(task_timeout×1.5)/max_retries 注释为预留;服务已重启且三机制当场验证生效(重置 1 条→临时文件丢失明确报错,不再永久卡)
+- ⏳ **ASR 转写重跑中**(bd4qcgsy6):220MB 重新上传+转写,预计 10-15 分钟——完成即验证 asr-zh 轨入库,抖音全链路闭环
+- 生产部署:f77e4a1 时已部署;**c976995(server 侧 ID 修复)未部署**——下次部署带上
+
 ## 遗留清单(grilling 迭代输入)
 
 - **API 限额耗尽(2026-08-29 05:35 本地)**:review-douyin 审查 agent 被 429 打掉,**10:00:56 重置**——重置后 SendMessage 唤醒 review-douyin 续作(上下文保留)。重置前不派新 agent。
