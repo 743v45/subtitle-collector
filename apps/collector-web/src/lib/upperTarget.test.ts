@@ -6,6 +6,7 @@
 // | 轮次 | 范围 | 结果 | 备注 |
 // |---|---|---|---|
 // | R1 | 抽出共享件（2026-08-29 douyin 接入）三平台全形态 + 归属矩阵 | 通过 | 行为与 CollectPage 内联版一致（页面测试另有集成断言） |
+// | R2 | 审查 M3：sec_uid 前缀统一 ^MS4wLjAB（三处镜像）补拒 7 字符前缀用例 | 通过 | npx vitest run src/lib/upperTarget.test.ts |
 import { test } from 'vitest';
 import assert from 'node:assert/strict';
 import { parseUpperTarget, upperCreatorUid } from './upperTarget.ts';
@@ -38,6 +39,12 @@ test('parseUpperTarget：douyin 非 /user/<sec_uid> 路径 → 不识别（视�
   assert.equal(parseUpperTarget('https://www.douyin.com/video/7300000000000000001'), null);
   // /user/ 但段不是 sec_uid 形态
   assert.equal(parseUpperTarget('https://www.douyin.com/user/someone'), null);
+});
+
+test('parseUpperTarget：sec_uid 前缀 8 字符（MS4wLjAB）为界，第 8 位非 B 拒（审查 M3 三处统一）', () => {
+  // 与 server DOUYIN_SEC_UID_RE / 扩展 extractDouyinUpperKey 的 SEC_UID_RE 镜像
+  assert.equal(parseUpperTarget('MS4wLjACAAAAabcdef123456'), null, '裸串第 8 位非 B');
+  assert.equal(parseUpperTarget('https://www.douyin.com/user/MS4wLjA7AAAAabcdef123456'), null, '/user/ 路径同判');
 });
 
 test('parseUpperTarget：空 / 纯空白 / 乱串 → null', () => {

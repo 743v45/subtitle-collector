@@ -35,13 +35,22 @@ export function parseDouyinUrl(u: URL): { source_vid: string; url: string } | nu
 }
 
 /**
+ * sec_uid 形态判据（2026-08-30 审查 M3 三处统一）：`^MS4wLjAB` 前缀（实际形态恒 MS4wLjABAAAA，
+ * base64 解码为 {"level":0…} 的定长头）+ base64url 后段。三处口径互为镜像，改动须同步：
+ *   - server 本处（parseDouyinSecUid）
+ *   - 扩展 apps/subtitle-collector/douyin-format.mjs extractDouyinUpperKey 的 SEC_UID_RE
+ *   - web apps/collector-web/src/lib/upperTarget.ts 的 SEC_UID_RE
+ */
+export const DOUYIN_SEC_UID_RE = /^MS4wLjAB[A-Za-z0-9_-]+$/;
+
+/**
  * 博主标识解析（/api/upper-videos/expand 的 douyin 分支，对齐 youtube parseYtChannelArg 模式）：
- * sec_uid 直传（MS4wLjA… base64 形态）或用户主页 URL（…/user/<sec_uid>…）→ sec_uid；
+ * sec_uid 直传（MS4wLjAB… base64 形态）或用户主页 URL（…/user/<sec_uid>…）→ sec_uid；
  * 无法识别抛错（http 层转 400）。S5 web 端可直接透传用户粘贴的主页链接。
  */
 export function parseDouyinSecUid(arg: string): string {
   const a = arg.trim();
-  if (/^MS4wLjA[\w-]+$/.test(a)) return a;
+  if (DOUYIN_SEC_UID_RE.test(a)) return a;
   try {
     const u = new URL(a);
     const m = u.pathname.match(/\/user\/([^/?]+)/);

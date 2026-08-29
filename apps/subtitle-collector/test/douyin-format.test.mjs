@@ -18,6 +18,7 @@ import {
 // |------|------------|------------------------------|------|---------------------------------------|
 // | T1   | 2026-08-29 | S3 抖音形态归一（纯函数）    | PASS | `pnpm --dir apps/subtitle-collector test` 全绿（覆盖率锁定达标） |
 // | T2   | 2026-08-29 | S8 台账性重构（ssr 映射拆子函数，表达式原样搬移）+ extractDouyinUpperKey 新增 | PASS | 同上命令全绿；重构不改行为，T1 断言全数保持 |
+// | T3   | 2026-08-30 | 审查 M3：sec_uid 前缀统一 ^MS4wLjAB（三处镜像），补第 8 位非 B 拒收用例 | PASS | 同上命令全绿 |
 
 // 共享 fixture：SSR videoDetail（camelCase，字段取自 spike-findings §1.3 实测摘录）
 const ssrVideoDetail = {
@@ -86,6 +87,17 @@ test('ssrVideoDetailToAwemeDetail：mixInfo → mix_info（mixId→mix_id，desc
 test('ssrVideoDetailToAwemeDetail：mixInfo 只有 mixName 时 mix_desc 回落 mixName', () => {
   const d = ssrVideoDetailToAwemeDetail({ ...ssrVideoDetail, mixInfo: { mixId: '1', mixName: '合集名' } });
   assert.equal(d.mix_info.mix_desc, '合集名');
+});
+
+test('ssrVideoDetailToAwemeDetail：authorInfo 带 avatarThumb/uid 数字 → avatar_thumb 透传 + uid 字符串化（2026-08-30 补分支）', () => {
+  // avatarThumb 形态未实测（spike 登记），透传由 pickDouyinAvatarUrl 容错；此处锁 spread 分支行为
+  const d = ssrVideoDetailToAwemeDetail({
+    ...ssrVideoDetail,
+    authorInfo: { uid: 1234567890, secUid: 'MS4wLjABAAAAsrconly', nickname: '头像博主', avatarThumb: { url_list: ['https://p3.douyinpic.com/thumb.jpg'] } },
+  });
+  assert.equal(d.author.uid, '1234567890', '数字 uid → String');
+  assert.deepEqual(d.author.avatar_thumb, { url_list: ['https://p3.douyinpic.com/thumb.jpg'] });
+  assert.equal(d.author.avatar_uri, undefined, '无 avatarUri 不带键');
 });
 
 test('ssrVideoDetailToAwemeDetail：music.id 数字超精度 → 优先字符串形态（idStr）；无 idStr 回落 String(id)', () => {
@@ -286,6 +298,8 @@ test('extractDouyinUpperKey：非博主页/其它域/形态不符 → null（视
   assert.equal(extractDouyinUpperKey('https://v.douyin.com/AbCdEf/'), null, '短链域不做博主页识别（透传展开归 server）');
   assert.equal(extractDouyinUpperKey('https://space.bilibili.com/296399504'), null, '其它平台域');
   assert.equal(extractDouyinUpperKey('https://www.douyin.com/user/not-a-uid'), null, '非 MS4wLjA 形态 ID');
+  // 前缀 8 字符为界（2026-08-30 审查 M3 三处统一，对齐 server DOUYIN_SEC_UID_RE）：第 8 位非 B 拒
+  assert.equal(extractDouyinUpperKey('https://www.douyin.com/user/MS4wLjACAAAAabcdef123456'), null, 'MS4wLjA 后第 8 位非 B 不收');
   assert.equal(extractDouyinUpperKey('https://www.douyin.com/user/%zz'), null, '坏 % 序列 decode 失败不抛');
   assert.equal(extractDouyinUpperKey('https://www.douyin.com/user/'), null, '缺 ID 段');
 });

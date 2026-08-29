@@ -6,7 +6,10 @@
 
 export type UpperTarget = { source: 'bilibili'; mid: string } | { source: 'youtube'; channel: string } | { source: 'douyin'; channel: string };
 
-// 抖音 sec_uid 固定 MS4wLjAB 前缀（base64url），后段字母数字-_；与 B 站纯数字 mid / UC 前缀 channelId 均不冲突
+// 抖音 sec_uid 固定 MS4wLjAB 前缀（实际形态恒 MS4wLjABAAAA），后段 base64url（字母数字-_）；
+// 与 B 站纯数字 mid / UC 前缀 channelId 均不冲突。三处口径互为镜像（2026-08-30 审查 M3 统一），改动须同步：
+// server apps/collector-server/src/tasks/douyin-url.ts 的 DOUYIN_SEC_UID_RE /
+// 扩展 apps/subtitle-collector/douyin-format.mjs extractDouyinUpperKey 的 SEC_UID_RE。
 const SEC_UID_RE = /^MS4wLjAB[A-Za-z0-9_-]+$/;
 
 // URL 形态分流（parseUpperTarget 捕获 URL 后委托此处；非链接返回 null）。

@@ -59,6 +59,16 @@ class ShareTextParserTest {
     }
 
     @Test
+    fun `抖音裸域链接识别并归一`() {
+        // 裸域 douyin.com（无 www，2026-08-30 审查 M4 补 apex，对齐 server DOUYIN_PAGE_HOSTS）：
+        // 同样本地提 ID 归一标准页；非视频页（裸域用户主页）仍 null 不误识别
+        val p = ShareTextParser.extract("https://douyin.com/video/7345678901234567890")
+        assertEquals("douyin", p?.platform)
+        assertEquals("https://www.douyin.com/video/7345678901234567890", p?.url)
+        assertNull(ShareTextParser.extract("https://douyin.com/user/MS4wLjABAAAAaGVudGp6dGdTdw"))
+    }
+
+    @Test
     fun `抖音modal_id旧形态归一为标准视频页`() {
         // 旧分享形态 ?modal_id=<id>：归一到 /video/<id>（modal_id 即 aweme_id 的查询参数形态）
         val p = ShareTextParser.extract("https://www.douyin.com/?modal_id=7345678901234567890")

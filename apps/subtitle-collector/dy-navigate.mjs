@@ -263,6 +263,14 @@ async function expandDouyinUpper(secUid, taskId = null, env) {
     env.extLog(`[dy-upper] start ${tag}tab=new#${tabId} timeout=${Math.round(DY_UPPER_PROGRESS_MS / 1000)}s（无进展窗口）`);
     await notifyUpperStart(tabId, secUid);
     const state = await waitUpperDone(tabId, env.extLog, tag);
+    // 零数据防线（2026-08-30 审查 M2）：content-dy 完全未注入（GET_UPPER_STATE 无响应 → state=null）
+    // 或注入但页面零消息（改版/滚动全失灵）时，无进展窗口收尾后连 profile 都没拿到——此时回
+    // 「ok+total:0」是伪装成功（上层当 0 作品建空批次）；必须回 error。区分：拿到 profile 才证明
+    // 页面活着（items 0 → content-dy POST_LIST_EMPTY 的「需登录」错误路径 / 真 0 作品 done 空列表
+    // 成功）；保部分结果语义不变——items>0 时即便 profile 缺失仍回执成功（丢数据比缺博主名更糟）。
+    if (!state?.profile && !(state?.items?.length > 0)) {
+      throw new Error(`博主页数据未就绪（可能页面改版或未注入）items=${state?.items?.length ?? 0}`);
+    }
     return douyinUpperReceipt(state, secUid, env.extLog, tag, elapsedS, env);
   } catch (e) {
     env.extLog(`[dy-upper] error ${tag}elapsed=${elapsedS()} err=${String(e?.message ?? e)}`, "warn");
@@ -280,7 +288,8 @@ async function expandDouyinUpper(secUid, taskId = null, env) {
 // 开关而非重试）+ awemeId 数字校验 + 同视频 in-flight 防重；无进展窗口随命令下发
 //（settings.collect_timeout_ms.douyin，对齐 youtube；缺省/旧 server 回落 45s）。
 // expand 分支：secUid 校验；post 匿名 200 空体（S1 实测 gating）→ 回执 error「需登录」，
-// 不误判「0 作品」。
+// 不误判「0 作品」；content-dy 未注入/页面零消息 → 回执 error「博主页数据未就绪」（2026-08-30
+// 审查 M2，不再以 ok+total:0 伪装成功）。
 async function handleCommand(msg, send, env) {
   if (msg.action === "fetch-douyin-subtitle") {
     if (!env.canDispatch()) {

@@ -1,4 +1,6 @@
 import type Database from 'better-sqlite3';
+import { markNoSubtitle } from '../db/tags.js';
+import type { Source } from './source.js';
 
 // 迟到回执改判：命令超时已落 failed 的任务，扩展实际执行完成（result 迟到、INGEST 可能已落库）
 // → 改判 succeeded。独立模块（不 import ws/server）：ws/server 迟到 result 处理调用本函数，
@@ -9,6 +11,9 @@ import type Database from 'better-sqlite3';
 // 是扩展 error 原文，可能恰含「超时」二字，子串匹配会把别人的失败行误改判成功）；只有 ok 的
 // 迟到回执才改判（迟到失败不改变已落的 failed）。
 // 改判成功后的 task-update 推送由调用方（ws/server）做——本模块保持无 ws 依赖。
+// 2026-08-30 起兼放「回执侧任务行修正」两个小助手（markNoSubtitleForReceipt /
+// migrateTaskVidFromReceipt，dispatchTask 成功回执处调用）：同属回执语义且 tasks.ts 台账已顶格
+// （538/538），沿 db/tag-match.ts 抽出先例防台账恶化。
 
 export interface LateResultParams {
   bvid?: unknown;
@@ -79,4 +84,30 @@ export function amendLateIngest(db: Database.Database, ingest: LateIngestInfo): 
     "UPDATE collect_tasks SET status = 'succeeded', result = ?, error = NULL, finished_at = ? WHERE id = ? AND status = 'failed'",
   ).run(JSON.stringify(result), Date.now(), row.id);
   return row.id;
+}
+
+// ── 回执侧任务行修正（dispatchTask 成功回执处调用，2026-08-30 从 tasks.ts 闭包迁出/新增）──
+
+// no_subtitle 打标：vid 取回执 awemeId 优先（douyin 旧 ID 302 迁移，拿任务行旧 ID 打标落空，
+// 2026-08-29 首采实测）；失败静默可回填（markNoSubtitle 自身语义）。
+export function markNoSubtitleForReceipt(
+  db: Database.Database,
+  t: { source: Source; source_vid: string },
+  data?: { awemeId?: string },
+): void {
+  try { markNoSubtitle(db, { source: t.source, source_vid: data?.awemeId ?? t.source_vid }); } catch {}
+}
+
+// 任务行 source_vid 以回执迁移（2026-08-30 审查 M7）：抖音旧 ID 被 302 迁到新 ID，payload 按
+// 实际 ID 入库（videos 行持新 ID）、任务行还持提交时的旧 ID → title JOIN / creator_uid 回填 /
+// 重试去重都按 (source, source_vid) 对齐，永远 JOIN 不上。回执 awemeId 存在且 ≠ 提交 ID 时迁移
+// 任务行；url 保留原提交形态（用户输入的原始链接可追溯）。非 douyin 回执无 awemeId，恒 no-op。
+export function migrateTaskVidFromReceipt(
+  db: Database.Database,
+  taskId: number,
+  taskVid: string,
+  data: { awemeId?: unknown },
+): void {
+  if (typeof data?.awemeId !== 'string' || data.awemeId === taskVid) return;
+  db.prepare('UPDATE collect_tasks SET source_vid = ? WHERE id = ?').run(data.awemeId, taskId);
 }

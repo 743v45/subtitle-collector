@@ -120,7 +120,7 @@
 - ✅ main 干净基线:筛选修复已提交(cbdee54)
 - ✅ worktree `.claude/worktrees/douyin`(branch douyin-platform)+ pnpm install
 - ✅ T0 三调研完成并落盘;T1 grilling 6 轮定案
-- ✅ S1 spike 完成(2026-08-29,匿名态 7 页次实测,无封禁):`_ROUTER_DATA` 已不存在 → `/video/<id>` 走 detail XHR(snake_case aweme_detail 148 键,匿名可用)、`/jingxuan?modal_id=` 走 SSR `SSR_RENDER_DATA.app.videoDetail`(camelCase),**S3 双路都要**;直构链 `aweme.snssdk.com/aweme/v1/play/?video_id=<uri>&ratio=1080p&line=0` **裸 curl 即 206 mp4**(S4 主链成立,playwm→play 不需要);字幕判据 `is_subtitled`+`cla_info`(匿名全 0/null,ASR 主路径坐实);post 列表匿名 200 空体(扩展登录态无碍);**play_count web 端恒 0**(stat.view 存 0,S5 展示 —)
+- ✅ S1 spike 完成(2026-08-29,匿名态 7 页次实测,无封禁):`_ROUTER_DATA` 已不存在 → `/video/<id>` 走 detail XHR(snake_case aweme_detail 148 键,匿名可用)、`/jingxuan?modal_id=` 走 SSR `SSR_RENDER_DATA.app.videoDetail`(camelCase),**S3 双路都要**;直构链 `aweme.snssdk.com/aweme/v1/play/?video_id=<uri>&ratio=1080p&line=0` **裸 curl 即 206 mp4**(S4 主链成立,playwm→play 不需要);字幕判据 `is_subtitled`+`cla_info`(匿名全 0/null,ASR 主路径坐实);post 列表匿名 200 空体(扩展登录态无碍);**play_count web 端恒 0**(stat.view 存 0,S5 显示 0——数据事实:fmtNum(0)='0' 是全平台通用行为,不为单平台特判,2026-08-30 审查 M6 文档对齐实现)
 - ⏳ S2(server 平台化)+ S5(web)并行运行中
 
 ## 下一步(当前阶段:审查修复 → grilling 迭代)
@@ -148,8 +148,11 @@
 Spec 轴全过:GPL 红线未碰(全 diff 无签名代码)/ASR 解耦成立/迁移与 extra 逐键对上/协议除 C1 外一致。Standards 轴:安全(500MB 双防线/参数化)、竞态、错误路径、可观察性全过;短板即 C1 的跨端契约测试。
 
 **Minor(grilling 待办)**:①expand 180s 档 vs 扩展 2000 items 上限不匹配(>1400 作品博主会超时);②content-dy 未注入时空结果成功回执(应回 error);③sec_uid 正则三处前缀不一致(7/8 字符,影响≈0,统一口径);④android DY_HOSTS 缺 apex 域;⑤manifest 缺 apex/m. 域(边缘);⑥web view 恒 0 显示「0」非「—」(文档或实现二选一改);⑦任务行旧 ID 残留面(title JOIN/creator_uid 回填/重试去重)——展示效率层面,grilling 定是否「任务行 source_vid 以回执迁移」。
+**→ 2026-08-30 grilling 批量修复收口**:①②③④⑥⑦已修(M1 expand 超时 180s→420s 对齐 UPPER_MAX_ITEMS=2000 滚动节奏 / M2 expandDouyinUpper 零数据防线——未注入或零消息回 error「博主页数据未就绪」,items>0 保部分结果,扩展 0.1.27 / M3 sec_uid 三处统一 ^MS4wLjAB 并互注镜像 / M4 android DY_HOSTS 补 douyin.com 裸域,versionCode 2→3 / M6 本文件 play_count 表述对齐实现 / M7 dispatchTask 回执 awemeId 迁移任务行 source_vid,助手迁 amend.ts 防 tasks.ts 台账恶化),⑤评估过不修(见遗留清单)。
 
 ## 遗留清单(grilling 迭代输入)
+
+- **manifest 缺 apex/m. 域——评估过,不修**(2026-08-30 审查 Minor⑤):host_permissions 已含 www.douyin.com,采集导航恒落 www 标准页;用户手输裸域/m. 域视频链接的入口极边缘(分享口令经 v.douyin.com 短链展开后亦落 www),为边缘形态再扩 manifest 域不值得,真遇到再补。
 
 - **API 限额耗尽(2026-08-29 05:35 本地)**:review-douyin 审查 agent 被 429 打掉,**10:00:56 重置**——重置后 SendMessage 唤醒 review-douyin 续作(上下文保留)。重置前不派新 agent。
 - **真机验证部分完成(R6)**:`pnpm test:ext` 跑过——**「subtitle_url 四情况」在基线 cbdee54 同败**(临时 worktree 复跑,输出逐字一致)→ main 存量问题(该冒烟不进 qa,悄悄坏了),非抖音引入,记入 B 站被动链路旧账;其余用例(hook 三时机/navigate/ingest 首样本)均过。fireredasr :5079 健康(200)。

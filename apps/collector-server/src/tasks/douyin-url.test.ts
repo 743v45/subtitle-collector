@@ -6,16 +6,24 @@
 // | 轮次 | 范围 | 结果 | 备注 |
 // |---|---|---|---|
 // | R1 | parseDouyinSecUid 三分支 + DOUYIN_AWEME_ID_RE 形态 | 通过 | 2026-08-29 S2 douyin 平台化 |
+// | R2 | sec_uid 前缀统一 ^MS4wLjAB（审查 M3，三处镜像）+ 拒 7 字符前缀用例 | 通过 | 2026-08-30 审查 Minor 批量修复 |
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { parseDouyinSecUid, DOUYIN_AWEME_ID_RE, douyinWatchUrl } from './douyin-url.js';
+import { parseDouyinSecUid, DOUYIN_AWEME_ID_RE, DOUYIN_SEC_UID_RE, douyinWatchUrl } from './douyin-url.js';
 
-test('parseDouyinSecUid：sec_uid 直传（MS4wLjA… base64 形态）原样返回', () => {
+test('parseDouyinSecUid：sec_uid 直传（MS4wLjAB… base64 形态）原样返回', () => {
   const uid = 'MS4wLjABAAAAabcdef123456-_';
   assert.equal(parseDouyinSecUid(uid), uid);
   // 首尾空白宽容（复制粘贴常见）
   assert.equal(parseDouyinSecUid(`  ${uid}  `), uid);
+});
+
+test('DOUYIN_SEC_UID_RE：前缀 8 字符（MS4wLjAB）为界，第 8 位非 B 拒（2026-08-30 审查 M3 三处统一）', () => {
+  assert.equal(DOUYIN_SEC_UID_RE.test('MS4wLjABAAAAabcdef123456'), true);
+  // 7 字符前缀（MS4wLjA + 非 B 后继）不收——统一前实际形态恒 MS4wLjABAAAA，宽松 7 字符无收益
+  assert.equal(DOUYIN_SEC_UID_RE.test('MS4wLjACAAAAabcdef123456'), false, '第 8 位非 B');
+  assert.equal(DOUYIN_SEC_UID_RE.test('MS4wLjA7AAAAabcdef123456'), false);
 });
 
 test('parseDouyinSecUid：用户主页 URL → 提取 /user/<sec_uid> 段（S5 web 端可直接透传粘贴链接）', () => {

@@ -9,6 +9,7 @@
 // | R2 | douyin 平台化（URL 三件套/19 位边界/批量 VID_RE/dispatchPayload/派发集成/expand 骨架） | 通过 | 2026-08-29 S2 |
 // | R3 | douyin not_video（图集）回执 → failed 映射 | 通过 | 2026-08-29 S4 收口接线 #2 |
 // | R4 | douyin expand 接线（expand-douyin-upper 回执映射/契约/失败路径，替换骨架 503 测试） | 通过 | 2026-08-29 S8 收口接线 #1 |
+// | R5 | 审查 M1（expand 超时 180s→420s 契约同步）+ M7（回执 source_vid 迁移：title JOIN/重试去重/非 douyin no-op） | 通过 | 2026-08-30 审查 Minor 批量修复 |
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -596,7 +597,7 @@ test('expandUpperVideos YouTube：creator 不存在 → 落最小行（批量任
 // 回执形态（扩展 background.js expandDouyinUpper）：{channel_id, channel_name, total,
 // items:[{bvid(=aweme_id),title,created,play,length,pic}]}；图集扩展侧已过滤；creators 由扩展
 // 顺带 ingest-upper 落库（server 不重复落——区别于 YouTube 分支的 server 侧最小行）。
-test('expandUpperVideos douyin：全量回执映射（bvid=aweme_id）+ collected 标注 + channel 回传 + 契约（action/secUid/180s）', async () => {
+test('expandUpperVideos douyin：全量回执映射（bvid=aweme_id）+ collected 标注 + channel 回传 + 契约（action/secUid/420s）', async () => {
   const { db, cleanup } = setupDb();
   try {
     // 库里已有该博主 1 条已采视频（douyin 命中标注）
@@ -631,12 +632,13 @@ test('expandUpperVideos douyin：全量回执映射（bvid=aweme_id）+ collecte
     assert.deepEqual(r.items.map((x) => x.length), ['0:47', null]);
     // channel_id/channel_name → channel.id/name 映射（web 展示复用两平台字段）
     assert.deepEqual(r.channel, { id: 'MS4wLjABAAAAtest123', name: '抖音博主' });
-    // 契约：action=expand-douyin-upper + params {secUid} + 超时 180s（对齐 YouTube 全量档）
+    // 契约：action=expand-douyin-upper + params {secUid} + 超时 420s（2026-08-30 审查 M1：与扩展
+    // UPPER_MAX_ITEMS=2000 的滚动翻页节奏匹配，180s 只够 ~1400 条会先超时）
     assert.equal(calls.length, 1);
     assert.equal(calls[0].clientId, 'ext-A');
     assert.equal(calls[0].action, 'expand-douyin-upper');
     assert.deepEqual(calls[0].params, { secUid: 'MS4wLjABAAAAtest123' });
-    assert.equal(calls[0].timeoutMs, 180_000);
+    assert.equal(calls[0].timeoutMs, 420_000);
     // creators 不由 server 侧落（扩展顺带 ingest-upper 已落；此处验证不覆盖已有行名字之外的副作用）
     assert.equal((db.prepare("SELECT COUNT(*) AS n FROM creators WHERE source = 'douyin'").get() as { n: number }).n, 1);
   } finally { cleanup(); }
@@ -1257,6 +1259,74 @@ test('dispatchTask：douyin not_video 回执（图集）→ failed（error=图�
     const t = getTask(db, id)!;
     assert.equal(t.status, 'failed', 'not_video 终态是 failed 而非 succeeded');
     assert.equal(t.error, '图文/图集,无视频轨');
+  } finally { cleanup(); }
+});
+
+// ── dispatchTask 回执 source_vid 迁移（2026-08-30 审查 M7）──
+// 抖音旧 ID 302 迁移链路：任务行持提交时旧 ID，扩展回执 awemeId 是页面实际 ID，payload 按实际 ID
+// 入库——不迁移则任务行 (source, source_vid) 永远 JOIN 不上 videos（title 取不到、批量重采去重落空）。
+test('dispatchTask：douyin 回执 awemeId ≠ 提交 ID → 任务行 source_vid 迁移（title JOIN/重试去重恢复），url 保留原提交形态', async () => {
+  const OLD = '7123456789012345678';
+  const NEW = '7663873788873821476'; // 首采实测的 302 迁移形态（旧 ID → 新 ID）
+  const { db, cleanup } = setupDb();
+  registerWsBridge({
+    listClients: () => [{ client_id: 'ext-dy-mig', ext_version: null, reporting_enabled: true, task_dispatch_enabled: true, connected: true }],
+    // 回执 awemeId 按扩展侧实际行为优先页面实际 ID（dy-navigate finishDouyinCollect）
+    requestCommand: async (_cid, _action, params) => ({
+      ok: true as const,
+      result: { ok: true, data: { awemeId: NEW, captured: 1, tracks: 1, submittedAwemeId: (params as { awemeId?: string }).awemeId } },
+    }),
+    broadcastEvent: () => {},
+  } satisfies WsBridge);
+  try {
+    createTask(db, { source: 'douyin', source_vid: OLD, url: `https://www.douyin.com/video/${OLD}` }, 'ext-dy-mig');
+    attachTaskScheduler(db);
+    kickTaskScheduler();
+    const id = (db.prepare('SELECT id FROM collect_tasks').get() as { id: number }).id;
+    for (let i = 0; i < 40; i++) {
+      if (getTask(db, id)?.status === 'succeeded') break;
+      await new Promise((r) => setTimeout(r, 50));
+    }
+    let t = getTask(db, id)!;
+    assert.equal(t.status, 'succeeded');
+    assert.equal(t.source_vid, NEW, '任务行 source_vid 以回执实际 ID 迁移');
+    assert.equal(t.url, `https://www.douyin.com/video/${OLD}`, 'url 保留原提交形态（可追溯）');
+
+    // title JOIN 恢复：视频按实际 ID（NEW）入库（扩展 ingest 持实际 ID）→ 迁移后任务行能带出标题
+    ingestVideo(db, {
+      source: 'douyin',
+      video: { source_vid: NEW, title: '迁移后可 JOIN 的标题', creator: { source_uid: 'MS4wLjABAAAAmigtest', name: '博主' }, extra: {}, duration: 1, published_at: 1 },
+      tracks: [{ lan: 'zh-Hans', lan_doc: '中文', track_type: 2, versions: [{ origin: 'external', payload: { body: [] } }] }],
+    });
+    t = getTask(db, id)!;
+    assert.equal(t.title, '迁移后可 JOIN 的标题', '迁移后 LEFT JOIN videos 命中实际 ID 行');
+
+    // 重试去重恢复：批量重采提交实际 ID（新版页面/展开回执都只会出实际 ID）→ 命中已采跳过，不再重复建任务
+    const rb = createTasksBatch(db, [NEW], 'douyin');
+    assert.deepEqual(rb.skippedCollected, [NEW], '有轨入库按实际 ID 命中跳过');
+    assert.equal(rb.created.length, 0);
+  } finally { cleanup(); }
+});
+
+test('dispatchTask：非 douyin 回执（无 awemeId 键）→ 迁移恒 no-op，source_vid 不动', async () => {
+  const { db, cleanup } = setupDb();
+  registerWsBridge({
+    listClients: () => [{ client_id: 'ext-yt-mig', ext_version: null, reporting_enabled: true, task_dispatch_enabled: true, connected: true }],
+    requestCommand: async () => ({ ok: true as const, result: { ok: true, data: { videoId: 'ytmigtest01', captured: 1, tracks: 1 } } }),
+    broadcastEvent: () => {},
+  } satisfies WsBridge);
+  try {
+    createTask(db, { source: 'youtube', source_vid: 'ytmigtest01', url: 'https://www.youtube.com/watch?v=ytmigtest01' }, 'ext-yt-mig');
+    attachTaskScheduler(db);
+    kickTaskScheduler();
+    const id = (db.prepare('SELECT id FROM collect_tasks').get() as { id: number }).id;
+    for (let i = 0; i < 40; i++) {
+      if (getTask(db, id)?.status === 'succeeded') break;
+      await new Promise((r) => setTimeout(r, 50));
+    }
+    const t = getTask(db, id)!;
+    assert.equal(t.status, 'succeeded');
+    assert.equal(t.source_vid, 'ytmigtest01', 'youtube 回执无 awemeId，source_vid 不迁移');
   } finally { cleanup(); }
 });
 

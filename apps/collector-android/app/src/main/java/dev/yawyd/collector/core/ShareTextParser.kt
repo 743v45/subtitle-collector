@@ -23,8 +23,9 @@ object ShareTextParser {
     )
     // 抖音短链域（分享口令文案里的 v.douyin.com/xxx，等同 b23.tv：本地不展开不提 ID）
     private val DY_SHORT_HOSTS = setOf("v.douyin.com")
-    // 抖音完整域（web 标准页 www.douyin.com / 分享跳转域 iesdouyin.com，可本地提 aweme_id）
-    private val DY_HOSTS = setOf("www.douyin.com", "iesdouyin.com", "www.iesdouyin.com")
+    // 抖音完整域（web 标准页 www.douyin.com / 裸域 douyin.com（2026-08-30 审查 M4 补，对齐 server
+    // DOUYIN_PAGE_HOSTS 的 apex 形态）/ 分享跳转域 iesdouyin.com，可本地提 aweme_id）
+    private val DY_HOSTS = setOf("www.douyin.com", "douyin.com", "iesdouyin.com", "www.iesdouyin.com")
     // aweme_id 现为 19 位数字，兼容历史更短位数（对齐参考项目 video/(\d+) 口径）
     private val DY_VIDEO_RE = Regex("""video/(\d+)""")
 

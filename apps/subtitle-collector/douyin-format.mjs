@@ -106,9 +106,16 @@ function ssrMusicPart(music) {
   };
 }
 
+// sec_uid 形态判据（2026-08-30 审查 M3 三处统一）：`^MS4wLjAB` 前缀（实际形态恒 MS4wLjABAAAA）
+// + base64url 后段。三处口径互为镜像，改动须同步：
+//   - 扩展本处（extractDouyinUpperKey）
+//   - server apps/collector-server/src/tasks/douyin-url.ts 的 DOUYIN_SEC_UID_RE
+//   - web apps/collector-web/src/lib/upperTarget.ts 的 SEC_UID_RE
+const SEC_UID_RE = /^MS4wLjAB[A-Za-z0-9_-]+$/;
+
 /**
  * 抖音博主页 URL → sec_uid（popup useUpperEntry 识别入口用；判据与 server 端
- * parseDouyinSecUid 对齐：/user/<sec_uid>，MS4wLjA… base64 形态）。
+ * parseDouyinSecUid 对齐：/user/<sec_uid>，MS4wLjAB… base64 形态）。
  * @param {string|null|undefined} url 当前标签页 URL
  * @returns {string|null} sec_uid；非博主页/形态不符 → null
  */
@@ -122,7 +129,7 @@ export function extractDouyinUpperKey(url) {
   try {
     // /user/ 子页（如 /user/<id>/…）只取首段后的 ID 段；decode 失败（坏 % 序列）视同不识别
     const secUid = decodeURIComponent(seg[1]);
-    return /^MS4wLjA[\w-]+$/.test(secUid) ? secUid : null;
+    return SEC_UID_RE.test(secUid) ? secUid : null;
   } catch { return null; }
 }
 

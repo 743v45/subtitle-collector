@@ -2,10 +2,10 @@ import type Database from 'better-sqlite3';
 import { randomUUID } from 'node:crypto';
 import { getWsBridge } from './wsBridge.js';
 import { DEFAULT_COLLECT_TIMEOUT_MS, getCollectTimeout, type CollectTimeoutMs } from '../db/settings.js';
-import { markNoSubtitle } from '../db/tags.js';
 import { inFlight } from './inflight.js';
 import { buildOrderBy, cmpBySortKey, TASK_SORT_KEYS, type TaskSortKey } from '../db/sort.js';
 import { DOUYIN_AWEME_ID_RE, DOUYIN_PAGE_HOSTS, DOUYIN_SHORT_HOSTS, douyinWatchUrl, parseDouyinUrl } from './douyin-url.js';
+import { markNoSubtitleForReceipt, migrateTaskVidFromReceipt } from './amend.js';
 import type { Source } from './source.js';
 
 // 平台枚举与 UP/频道展开族（2026-08-29 抽出到 ./source.ts 与 ./upper-expand.ts，防本文件台账
@@ -471,11 +471,8 @@ export function attachTaskScheduler(db: Database.Database): void {
     }
   };
 
-  // no_subtitle 打标:vid 取回执 awemeId 优先（douyin 旧 ID 302 迁移，拿任务行旧 ID 打标落空，2026-08-29 首采实测）；失败静默可回填。
-  const markNoSubtitleForReceipt = (db2: Database.Database, t: Pick<CollectTask, 'source' | 'source_vid'>, data?: { awemeId?: string }) => {
-    try { markNoSubtitle(db2, { source: t.source, source_vid: data?.awemeId ?? t.source_vid }); } catch {}
-  };
-
+  // no_subtitle 打标（markNoSubtitleForReceipt）与 douyin 旧 ID 迁移（migrateTaskVidFromReceipt）
+  // 两个回执侧修正助手已迁 amend.ts（同属回执语义 + 本文件台账顶格防恶化）。
   const dispatchTask = async (db2: Database.Database, taskId: number, clientId: string) => {
     const task = getTask(db2, taskId);
     if (!task || task.status !== 'pending') return;
@@ -487,6 +484,9 @@ export function attachTaskScheduler(db: Database.Database): void {
     const r = await getWsBridge().requestCommand(clientId, action, params, commandTimeoutMs(task.source, timeouts));
     if (r.ok && r.result?.ok) {
       const data = r.result.data ?? {};
+      // 抖音旧 ID 302 迁移（2026-08-30 审查 M7）：任务行 source_vid 以回执实际 ID迁移（url 保留
+      // 原提交形态），title JOIN/creator_uid 回填/重试去重由此恢复——实现与说明在 amend.ts
+      migrateTaskVidFromReceipt(db2, taskId, task.source_vid, data);
       // 图集（douyin aweme_type≠0）→ failed：「成功但什么都没采」不诚实；与 pot_limited→limited 映射同构
       if (data?.reason === 'not_video') {
         db2.prepare("UPDATE collect_tasks SET status = 'failed', error = ?, finished_at = ? WHERE id = ?")

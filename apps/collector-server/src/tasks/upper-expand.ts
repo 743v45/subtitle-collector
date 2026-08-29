@@ -67,7 +67,10 @@ export interface UpperExpandDeps {
 
 const UPPER_PAGE_TIMEOUT_MS = 30_000; // 单页（30 条）30s 上限，全量循环整体不设超时
 const YT_CHANNEL_TIMEOUT_MS = 180_000; // YouTube 全量分页在扩展内完成（大频道十几秒），对齐 CLI 默认采集超时
-const DY_UPPER_TIMEOUT_MS = 180_000; // 抖音滚动翻页聚合在扩展内完成（大博主分钟级），对齐 YouTube 档
+// 抖音滚动翻页聚合在扩展内完成（2026-08-30 审查 M1 由 180s 调 420s=7 分钟）：扩展侧防失控上限
+// UPPER_MAX_ITEMS=2000（content-dy.js），每页 ~18 条 + 滚动间隔 1200ms，2000 条 ≈ 6 分钟——
+// 180s 只够 ~1400 条，超限前 server 先超时；7 分钟与上限节奏匹配（对齐扩展滚动翻页节奏）。
+const DY_UPPER_TIMEOUT_MS = 420_000;
 
 // collected 标注：videos 表按平台 source_vid IN 分批查（SQLite 绑定变量上限兜底 chunk 500）
 function markCollected(db: Database.Database, items: UpperVideoItem[], source: Source): void {
