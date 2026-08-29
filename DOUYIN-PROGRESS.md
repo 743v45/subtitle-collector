@@ -3,7 +3,7 @@
 > **状态:✅ 全量完成并闭环(2026-08-29)。** 代码合并 main(c976995/8f8a1f0),生产已部署(verify 全过)。
 > **闭环实证**:抖音视频采集→无字幕→ASR 圈定→220MB mp4 直构直链下载→fireredasr 转写→`asr-zh` 轨 **572 行字幕/99.6% 覆盖**入库,`no-subtitle` 自动摘除。
 > fireredasr-ui 上游四个提交(cd32bdd 看门狗/3bedb89 内存护栏+stderr 捕获/64aa6e7 check_idle root cause/c038372 护栏和解)。
-> 剩余:遗留清单 grilling 待办(Minor 7 条+博主批量真机补测+扩展 0.1.26 刷新)。
+> 剩余:**唯一挂起项 = 博主批量真浏览器验证**(2026-08-30 排障链:C1 契约✓→版本感知派发✓(5fb5b95)→报障 sec_uid 已注销确认(65acb23)→「博主不存在」秒级识别(4701e3e)→页面级诊断(6698762);健康 sec_uid 在 spike 匿名 Chrome 1.5s 通、真实浏览器后台 tab 零到达,候选根因=风控/节流/零请求/gating/聚合)。**等扩展刷新 0.1.28 后重测,读 [dy-upper] diag 日志(title/readyState/xhr 计数)按五类组合判定表定位**——诊断字段说明与判定表见 6698762 提交与 upper-observability 汇报。
 > 原始过程记录(调研三份+spike-findings)在 [docs/plans/douyin/](docs/plans/douyin/)。
 
 ## 已定决策(2026-08-29 用户授权「全按 Claude 推荐」)
