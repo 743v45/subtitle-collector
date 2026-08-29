@@ -132,7 +132,10 @@
 
 ## 遗留清单(grilling 迭代输入)
 
-- **真机验证未做**(接线清单 #4):Chrome 实跑 douyin 三入口 + `pnpm test:ext`(主 checkout)
+- **API 限额耗尽(2026-08-29 05:35 本地)**:review-douyin 审查 agent 被 429 打掉,**10:00:56 重置**——重置后 SendMessage 唤醒 review-douyin 续作(上下文保留)。重置前不派新 agent。
+- **真机验证部分完成(R6)**:`pnpm test:ext` 跑过——**「subtitle_url 四情况」在基线 cbdee54 同败**(临时 worktree 复跑,输出逐字一致)→ main 存量问题(该冒烟不进 qa,悄悄坏了),非抖音引入,记入 B 站被动链路旧账;其余用例(hook 三时机/navigate/ingest 首样本)均过。fireredasr :5079 健康(200)。
+- **真机验证未做项**:①**部署**(docker rebuild 生产,含 v18 真库迁移——runMigrations 自动跑,有测试保障但属生产变更,留用户知情/指示;部署后跑 verify-deployed 与 `asr backfill --source douyin --dry-run` 真圈定);②扩展载 Chrome 实跑 douyin 三入口(需用户侧 chrome://extensions 刷新 0.1.25)。
+- **CLI 链路真机验证 ✓(R7)**:`pnpm cli asr backfill --source douyin --dry-run` 命令解析/HTTP 请求形状正确(tags=no-subtitle&source=douyin&sort=first_seen);生产 server(旧码)401 鉴权层拦截→带 token 后 200 total:0(未部署无 douyin 数据,符合预期)。
 - **popup「上报」按钮在抖音页是哑按钮**:MANUAL_CAPTURE 的 tab URL 过滤只含 bilibili/youtube([background.js](apps/subtitle-collector/background.js) MANUAL_CAPTURE 分支),抖音页点击 8s 后显示「失败」。抖音语义是任务式主动采集,按钮本不该出现——可改为抖音页隐藏该按钮或接入任务提交
 - **douyin 博主批量无 CLI 命令**(web/HTTP 入口可用):若需要,按 `yt-videos` 形态补,同步登记 skill
 - **hooks-upper.ts 的 douyin 博主页识别已就位但 popup 未消费**(useUpperEntry 识别 /user/<sec_uid>,Popup.tsx 无 douyin 卡):给 popup 补抖音博主卡的现成地基

@@ -98,11 +98,17 @@ function tickProgressWindow(key, last, timeoutMs, lastObserved) {
 async function finishDouyinCollect(resp, awemeId, reused, env, tag, elapsedS) {
   const detail = resp.detail;
   env.extLog(`[dy-navigate] content-ready ${tag}origin=${resp.origin ?? "?"} aweme_type=${detail.aweme_type} is_subtitled=${detail.is_subtitled} cla_info=${detail.cla_info ? 'yes' : 'null'} elapsed=${elapsedS()}`);
+  // 回执 awemeId 用页面实际 ID 优先：旧 ID 会被抖音 302 迁移到新 ID（任务行持旧 ID、
+  // payload 按实际 ID 入库），回执拿旧 ID 会让 server 侧 no-subtitle 打标/关联落空（2026-08-29 首采实测）
+  const actualId = detail.aweme_id ?? awemeId;
+  if (String(actualId) !== String(awemeId)) {
+    env.extLog(`[dy-navigate] id-migrated ${tag}task=${awemeId} actual=${actualId}（302 迁移,回执/打标按实际 ID）`);
+  }
   // 图集（aweme_type≠0，R3 定案范围外）：不入库，回执 reason=not_video（server 侧映射 failed；
   // 批量链路在列表阶段已过滤）
   if (!isDouyinVideo(detail)) {
     env.extLog(`[dy-navigate] done ${tag}state=not_video（aweme_type=${detail.aweme_type} 图集不入库）`);
-    return { awemeId, captured: 0, tracks: 0, ingested: false, reason: "not_video", navigated: true, reused };
+    return { awemeId: actualId, captured: 0, tracks: 0, ingested: false, reason: "not_video", navigated: true, reused };
   }
   const captionTracks = extractDouyinCaptionTracks(detail);
   const bodies = await fetchCaptionBodies(captionTracks, env.extLog, tag);
@@ -117,7 +123,7 @@ async function finishDouyinCollect(resp, awemeId, reused, env, tag, elapsedS) {
   env.sendIngest(payload);
   env.extLog(`[dy-navigate] done ${tag}state=${validTracks.length > 0 ? "has-subtitle" : "no_subtitle"} tracks=${validTracks.length}/${captionTracks.length} elapsed=${elapsedS()} reused=${reused}`);
   return {
-    awemeId, captured: validTracks.length, tracks: validTracks.length, ingested: true, navigated: true, reused,
+    awemeId: actualId, captured: validTracks.length, tracks: validTracks.length, ingested: true, navigated: true, reused,
     ...(validTracks.length === 0 ? { reason: "no_subtitle" } : {}),
   };
 }

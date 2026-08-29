@@ -92,6 +92,43 @@ function dimensionPartOf(video) {
   };
 }
 
+/** 内部：video 清晰度 → {video_quality} spread 片段（2026-08-29 用户要求补充的挖掘字段；
+ * ratio 如 "720p"/"default"、format 如 "mp4"/"dash"、is_h265/is_source_HDR 0|1） */
+function videoQualityPartOf(video) {
+  if (!video || (video.ratio == null && video.format == null)) return {};
+  return {
+    video_quality: {
+      ratio: video.ratio ?? null,
+      format: video.format ?? null,
+      is_h265: video.is_h265 ?? null,
+      is_source_HDR: video.is_source_HDR ?? null,
+    },
+  };
+}
+
+/** 内部：chapter_list → {chapters} spread 片段（长视频章节；实测样例均为 null，子键名按
+ * 常见形态 title/start_time 兜底 startTime/start，结构未实测标注于此——首例带值数据落库时核） */
+function chaptersPartOf(d) {
+  if (!Array.isArray(d?.chapter_list) || d.chapter_list.length === 0) return {};
+  return {
+    chapters: d.chapter_list.map((c) => ({
+      title: c?.title ?? null,
+      start: toNum(c?.start_time ?? c?.startTime ?? c?.start),
+    })),
+  };
+}
+
+/** 内部：aweme_detail 顶层散字段 → spread 片段（2026-08-29 补充：region 地域 / is_top 置顶 /
+ * is_ads 广告标记（过滤价值）/ share_url 分享链（原始留存，带设备参数不进 web 展示）） */
+function miscFlagsPartOf(d) {
+  return {
+    ...(d?.region ? { region: d.region } : {}),
+    ...(d?.is_top != null ? { is_top: d.is_top } : {}),
+    ...(d?.is_ads != null ? { is_ads: d.is_ads } : {}),
+    ...(typeof d?.share_url === 'string' && d.share_url ? { share_url: d.share_url } : {}),
+  };
+}
+
 /** 内部：aweme_detail → extra（R5 定案键集；B 站对齐键名优先）。2026-08-29 S8 台账性重构：
  * 五个可选子结构拆独立片段函数（复杂度台账达标），键序与表达式逐字原样搬移。 */
 function buildDouyinExtra(d) {
@@ -111,6 +148,9 @@ function buildDouyinExtra(d) {
     ...coverPartOf(video),
     ...musicPartOf(d),
     ...dimensionPartOf(video),
+    ...videoQualityPartOf(video),
+    ...chaptersPartOf(d),
+    ...miscFlagsPartOf(d),
   };
 }
 
@@ -129,20 +169,29 @@ function douyinTracksPayload(captionTracks, captionBodies) {
   }));
 }
 
-/** 内部：aweme_detail.video 部分（creator 标识缺失不带 source_uid 字段——server 契约，对齐
- * bilibili/youtube 2026-08-22 修复；抖音无独立标题字段，desc 即标题（caption 同文兜底）） */
+/** 内部：author → ingest creator（标识缺失不带 source_uid——server 契约；可选增强键
+ * fans←follower_count / verify←custom_verify||enterprise_verify_reason，非空才带，2026-08-29） */
+function douyinCreatorOf(author) {
+  const secUid = author?.sec_uid;
+  const fans = toNum(author?.follower_count);
+  const verify = author?.custom_verify || author?.enterprise_verify_reason || null;
+  return {
+    ...(typeof secUid === 'string' && secUid ? { source_uid: secUid } : {}),
+    name: author?.nickname ?? null,
+    avatar: pickDouyinAvatarUrl(author),
+    ...(fans != null ? { fans } : {}),
+    ...(verify ? { verify } : {}),
+  };
+}
+
+/** 内部：aweme_detail.video 部分（抖音无独立标题字段，desc 即标题（caption 同文兜底）） */
 function douyinVideoPart(d) {
   const durationMs = d.video?.duration ?? d.duration;
-  const secUid = d.author?.sec_uid;
   const durationSec = typeof durationMs === 'number' && Number.isFinite(durationMs) ? durationMs / 1000 : null;
   const publishedAt = typeof d.create_time === 'number' && Number.isFinite(d.create_time) ? d.create_time * 1000 : null;
   return {
     source_vid: d.aweme_id != null ? String(d.aweme_id) : null,
-    creator: {
-      ...(typeof secUid === 'string' && secUid ? { source_uid: secUid } : {}),
-      name: d.author?.nickname ?? null,
-      avatar: pickDouyinAvatarUrl(d.author),
-    },
+    creator: douyinCreatorOf(d.author),
     title: d.desc ?? d.caption ?? null,
     extra: buildDouyinExtra(d),
     duration: durationSec,

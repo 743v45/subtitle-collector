@@ -1138,6 +1138,39 @@ test('dispatchTask：bilibili no_subtitle 回执 → succeeded + no-subtitle 系
   } finally { cleanup(); }
 });
 
+// ── dispatchTask 打标 ID 漂移（2026-08-29 douyin 首采实测）：旧 ID 302 迁移 → 扩展 payload/回执
+// 按页面实际 ID，任务行持旧 ID——打标须用回执 awemeId（旧代码拿任务行旧 ID 打标落空，失败→通过回归）──
+test('dispatchTask：douyin no_subtitle 回执带迁移后 awemeId → 打标命中实际 ID（非任务行旧 ID）', async () => {
+  const { db, cleanup } = setupDb();
+  registerWsBridge({
+    listClients: () => [{ client_id: 'ext-ns', ext_version: null, reporting_enabled: true, task_dispatch_enabled: true, connected: true }],
+    requestCommand: async () => ({ ok: true, result: { ok: true, data: { reason: 'no_subtitle', tracks: 0, ingested: true, awemeId: '7663873788873821476' } } }),
+    broadcastEvent: () => {},
+  } satisfies WsBridge);
+  try {
+    // 视频按页面实际 ID 入库（扩展 payload 用实际 ID——抖音把旧 ID 302 到新 ID）
+    ingestVideo(db, {
+      source: 'douyin',
+      video: { source_vid: '7663873788873821476', title: '迁移后视频', extra: {}, duration: 5, published_at: 1700000000000 },
+      tracks: [],
+    });
+    // 任务行持提交时的旧 ID
+    createTask(db, { source: 'douyin', source_vid: '7340499451280633147', url: 'https://www.douyin.com/video/7340499451280633147' }, 'ext-ns');
+    attachTaskScheduler(db);
+    kickTaskScheduler();
+    for (let i = 0; i < 40; i++) {
+      const t = getTask(db, (db.prepare('SELECT id FROM collect_tasks').get() as { id: number }).id);
+      if (t?.status === 'succeeded') break;
+      await new Promise((r) => setTimeout(r, 50));
+    }
+    const tagged = db.prepare(
+      `SELECT 1 FROM video_tags vt JOIN tags t ON t.id = vt.tag_id JOIN videos v ON v.id = vt.video_id
+       WHERE v.source_vid = '7663873788873821476' AND t.name = 'no-subtitle' AND vt.source = 'system'`,
+    ).get();
+    assert.equal(tagged != null, true, '打标命中回执实际 ID（7663...，迁移后）而非任务行旧 ID');
+  } finally { cleanup(); }
+});
+
 // ── dispatchTask 打标平台对齐（2026-08-24）：youtube no_subtitle 回执同样打标 ──
 // 背景：0.1.19 起扩展两平台都上报 0 轨回执（reason=no_subtitle），server 侧条件残留 bilibili 限定属半截子工程。
 // 前提/操作/断言同上用例，source 换 youtube。

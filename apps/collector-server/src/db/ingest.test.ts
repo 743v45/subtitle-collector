@@ -46,6 +46,42 @@ test('首次 ingest：video + creator + track + version 都插入', () => {
   }
 });
 
+// creator 可选增强键（2026-08-29 douyin 起传）：fans→creators.fans、verify→official_title；
+// UPDATE COALESCE（null 不清旧值）。新建与重采两路径各断言。
+test('creator 增强键：douyin 带 fans/verify → 落库；重采不带 → COALESCE 保留旧值', () => {
+  const { db, dir } = freshDb();
+  try {
+    ingestVideo(db, {
+      source: 'douyin',
+      video: {
+        source_vid: '7663873788873821476',
+        creator: { source_uid: 'MS4sec', name: '抖音主', fans: 13226, verify: '音乐人' },
+        title: '抖音视频', extra: {}, duration: 60, published_at: 1700000000000,
+      },
+      tracks: [],
+    });
+    let c = db.prepare("SELECT * FROM creators WHERE source_uid = 'MS4sec'").get() as any;
+    assert.equal(c.fans, 13226, 'fans 落库');
+    assert.equal(c.official_title, '音乐人', 'verify 落 official_title');
+
+    // 重采：creator 只带 name（name 变化触发 UPDATE 路径），不带 fans/verify → 旧值保留
+    ingestVideo(db, {
+      source: 'douyin',
+      video: {
+        source_vid: '7663873788873821476',
+        creator: { source_uid: 'MS4sec', name: '抖音主改' },
+        title: '抖音视频', extra: {}, duration: 60, published_at: 1700000000000,
+      },
+      tracks: [],
+    });
+    c = db.prepare("SELECT * FROM creators WHERE source_uid = 'MS4sec'").get() as any;
+    assert.equal(c.fans, 13226, '缺失 fans 不清旧值（COALESCE）');
+    assert.equal(c.official_title, '音乐人', '缺失 verify 不清旧值（COALESCE）');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test('同 video 再 ingest：元信息不变则不动，version 已存在则跳过', () => {
   const { db, dir } = freshDb();
   try {

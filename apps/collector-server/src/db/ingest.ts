@@ -13,7 +13,7 @@ import { unmarkNoSubtitle } from './tags.js';
 export interface IngestVideo {
   source_vid: string;
   title: string;
-  creator?: { source_uid?: string | null; name?: string; avatar?: string } | null;
+  creator?: { source_uid?: string | null; name?: string; avatar?: string; fans?: number | null; verify?: string | null } | null;
   extra?: Record<string, unknown>;
   duration?: number;
   published_at?: number;
@@ -90,6 +90,36 @@ const ZONES: Record<number, { name: string }> = (() => {
   } catch { return {}; }
 })();
 
+// creator upsert（ingestVideo 第 1 步抽出，2026-08-29 creator 增强键并入后主函数台账恶化）：
+// 新建 INSERT（含 fans/official_title）；已存在时仅 name 变化才 UPDATE（name/avatar + COALESCE 增强键）。
+// 返回 creator_id；creator 缺失契约（不发/空串/'unknown'）→ null。
+function upsertCreator(
+  db: Database.Database,
+  source: string,
+  creator: IngestVideo['creator'],
+  now: number,
+  changeIns: Database.Statement,
+): number | null {
+  const creatorUid = creator?.source_uid;
+  const hasCreator = typeof creatorUid === 'string' && creatorUid !== '' && creatorUid !== 'unknown';
+  if (!creator || !hasCreator) return null;
+  const existing = db.prepare('SELECT id, name FROM creators WHERE source = ? AND source_uid = ?')
+    .get(source, creatorUid) as { id: number; name: string | null } | undefined;
+  if (!existing) {
+    const info = db.prepare('INSERT INTO creators (source, source_uid, name, avatar, fans, official_title, first_seen_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+      .run(source, creatorUid, creator.name ?? null, creator.avatar ?? null, creator.fans ?? null, creator.verify ?? null, now, now);
+    const id = Number(info.lastInsertRowid);
+    changeIns.run('creator', id, 'created', null, creator.name ?? null, now);
+    return id;
+  }
+  if (creator.name != null && creator.name !== existing.name) {
+    changeIns.run('creator', existing.id, 'name', existing.name, creator.name, now);
+    db.prepare('UPDATE creators SET name = ?, avatar = ?, fans = COALESCE(?, fans), official_title = COALESCE(?, official_title), updated_at = ? WHERE id = ?')
+      .run(creator.name, creator.avatar ?? null, creator.fans ?? null, creator.verify ?? null, now, existing.id);
+  }
+  return existing.id;
+}
+
 export function ingestVideo(db: Database.Database, req: IngestRequest): IngestResult {
   const now = Date.now();
   const tx = db.transaction((r: IngestRequest) => {
@@ -106,30 +136,11 @@ export function ingestVideo(db: Database.Database, req: IngestRequest): IngestRe
     const paidRaw = r.video.extra?.paid;
     const paidNew = paidRaw == null ? null : (Number(paidRaw) ? 1 : 0);
 
-    // 1. creator upsert + change_log（缺失契约见 IngestVideo 注释：不发/空串/'unknown' 一律视同缺失）
-    const creator = r.video.creator;
-    const creatorUid = creator?.source_uid;
-    const hasCreator = typeof creatorUid === 'string' && creatorUid !== '' && creatorUid !== 'unknown';
-    const creatorSel = db.prepare('SELECT id, name FROM creators WHERE source = ? AND source_uid = ?');
-    const creatorIns = db.prepare('INSERT INTO creators (source, source_uid, name, avatar, first_seen_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)');
-    const creatorUpd = db.prepare('UPDATE creators SET name = ?, avatar = ?, updated_at = ? WHERE id = ?');
+    // 1. creator upsert（缺失契约见 IngestVideo 注释：不发/空串/'unknown' 一律视同缺失）；
+    //    可选增强键 fans←follower_count、verify→official_title（2026-08-29 douyin 起传，
+    //    B/Y 平台不传不受影响；UPDATE 用 COALESCE——null 不清旧值，缺失契约同 name/avatar）
     const changeIns = db.prepare('INSERT INTO change_log (entity, entity_id, field, old_value, new_value, changed_at) VALUES (?, ?, ?, ?, ?, ?)');
-
-    let creatorId: number | null = null;
-    if (creator && hasCreator) {
-      const existingCreator = creatorSel.get(r.source, creatorUid) as { id: number; name: string | null } | undefined;
-      if (!existingCreator) {
-        const info = creatorIns.run(r.source, creatorUid, creator.name ?? null, creator.avatar ?? null, now, now);
-        creatorId = Number(info.lastInsertRowid);
-        changeIns.run('creator', creatorId, 'created', null, creator.name ?? null, now);
-      } else {
-        creatorId = existingCreator.id;
-        if (creator.name != null && creator.name !== existingCreator.name) {
-          changeIns.run('creator', creatorId, 'name', existingCreator.name, creator.name, now);
-          creatorUpd.run(creator.name, creator.avatar ?? null, now, creatorId);
-        }
-      }
-    }
+    const creatorId = upsertCreator(db, r.source, r.video.creator, now, changeIns);
 
     // 2. video upsert + change_log（按字段）
     const videoSel = db.prepare('SELECT * FROM videos WHERE source = ? AND source_vid = ?');

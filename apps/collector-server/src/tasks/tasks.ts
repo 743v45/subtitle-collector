@@ -471,6 +471,11 @@ export function attachTaskScheduler(db: Database.Database): void {
     }
   };
 
+  // no_subtitle 打标:vid 取回执 awemeId 优先（douyin 旧 ID 302 迁移，拿任务行旧 ID 打标落空，2026-08-29 首采实测）；失败静默可回填。
+  const markNoSubtitleForReceipt = (db2: Database.Database, t: Pick<CollectTask, 'source' | 'source_vid'>, data?: { awemeId?: string }) => {
+    try { markNoSubtitle(db2, { source: t.source, source_vid: data?.awemeId ?? t.source_vid }); } catch {}
+  };
+
   const dispatchTask = async (db2: Database.Database, taskId: number, clientId: string) => {
     const task = getTask(db2, taskId);
     if (!task || task.status !== 'pending') return;
@@ -482,24 +487,19 @@ export function attachTaskScheduler(db: Database.Database): void {
     const r = await getWsBridge().requestCommand(clientId, action, params, commandTimeoutMs(task.source, timeouts));
     if (r.ok && r.result?.ok) {
       const data = r.result.data ?? {};
-      // 图集（douyin aweme_type≠0：S3 扩展按 ok:true + reason='not_video' 回执，R4 定案）→ failed——
-      // 「成功但什么都没采」不诚实，图集无视频轨对字幕系统无意义；与下方 pot_limited→limited 映射同构。
+      // 图集（douyin aweme_type≠0）→ failed：「成功但什么都没采」不诚实；与 pot_limited→limited 映射同构
       if (data?.reason === 'not_video') {
         db2.prepare("UPDATE collect_tasks SET status = 'failed', error = ?, finished_at = ? WHERE id = ?")
           .run('图文/图集,无视频轨', Date.now(), taskId);
         pushTask(db2, taskId);
       } else {
-        // 字幕受限（pot_limited：扩展全轨 body 为空，0 轨入库，元信息已入库）→ limited 终态：
-        // 执行本身成功但产出受限，区别于 succeeded（展示「受限」而非「已完成」，允许重试重采）。
+        // pot_limited：执行成功但产出受限（0 轨），区别于 succeeded（可重试）→ limited 终态
         const status = data?.reason === 'pot_limited' ? 'limited' : 'succeeded';
         db2.prepare("UPDATE collect_tasks SET status = ?, result = ?, finished_at = ? WHERE id = ?")
           .run(status, JSON.stringify(data), Date.now(), taskId);
         pushTask(db2, taskId);
-        // 确认无字幕（两平台回执均回 reason=no_subtitle）→ 打 no-subtitle 系统标（远期 ASR 定位锚点；
-        // 视频元信息行已由扩展 ingest 先行落库，打标必命中）。失败静默——状态行已更新，标可回填。
-        if (data?.reason === 'no_subtitle') {
-          try { markNoSubtitle(db2, { source: task.source, source_vid: task.source_vid }); } catch { /* 回填补 */ }
-        }
+        // 确认无字幕 → no-subtitle 系统标（ASR 兜底锚点；失败静默可回填）
+        if (data?.reason === 'no_subtitle') markNoSubtitleForReceipt(db2, task, data);
       }
     } else {
       // 失败分类：未收到回执（offline/timeout）→ 连接层文案；收到失败回执 →

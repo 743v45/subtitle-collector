@@ -34,14 +34,24 @@ const awemeDetail = {
     sec_uid: 'MS4wLjABAAAAZmAOLwOo_Lp1EwVS_LjPNAeBEU9niZs64gYeEmE3sqvJ_5vzXNoJXMbgf9wcZkh0',
     nickname: '英语规划提分姬老师',
     avatar_thumb: { url_list: ['https://p3-pc-sign.douyinpic.com/avatar.jpg'] },
+    follower_count: 13226,
+    custom_verify: '',
   },
   statistics: { play_count: 0, digg_count: 28, comment_count: 4, share_count: 8, collect_count: 16 },
+  region: 'CN',
+  is_top: 0,
+  is_ads: false,
+  share_url: 'https://www.iesdouyin.com/share/video/7678956479035512448/',
   video: {
     duration: 47948,
     play_addr: { uri: 'v0300fg10000da8i3knog65s9j5g544g', url_list: ['https://v26-web.douyinvod.com/x.mp4'] },
     cover: { url_list: ['https://p3-pc-sign.douyinpic.com/cover.jpg'] },
     origin_cover: { url_list: ['https://p3-pc-sign.douyinpic.com/origin.jpg'] },
     dynamic_cover: { url_list: ['https://p3-pc-sign.douyinpic.com/dynamic.webp'] },
+    ratio: '720p',
+    format: 'mp4',
+    is_h265: 0,
+    is_source_HDR: 0,
   },
   text_extra: [
     { hashtag_id: '1587111396494349', hashtag_name: '英语学习', start: 19, end: 24, type: 1 },
@@ -53,8 +63,7 @@ const awemeDetail = {
   music: { id: 7678956457940781865, id_str: '7678956457940781865', title: '@英语规划提分姬老师创作的原声' },
 };
 
-test('buildDouyinPayload：基本字段映射（source_vid/title/creator/duration 毫秒→秒/published_at 秒→ms）', () => {
-  const p = buildDouyinPayload(awemeDetail, [], {});
+test('buildDouyinPayload：基本字段映射（source_vid/title/creator/duration 毫秒→秒/published_at 秒→ms）', () => {  const p = buildDouyinPayload(awemeDetail, [], {});
   assert.equal(p.source, 'douyin');
   assert.equal(p.video.source_vid, '7678956479035512448');
   // 抖音无独立标题字段，desc 即标题（caption 同文兜底）
@@ -73,6 +82,59 @@ test('buildDouyinPayload：extra.stat 键对齐 B 站（view←play_count 照存
   const p = buildDouyinPayload(awemeDetail, [], {});
   // play_count web 端恒 0（S1 实测）：照存 0（结构对齐优先），web 展示 — 由 S5 处理
   assert.deepEqual(p.video.extra.stat, { view: 0, like: 28, reply: 4, share: 8, favorite: 16 });
+});
+
+test('buildDouyinPayload：2026-08-29 字段增强——region/is_top/is_ads/share_url/video_quality/creator.fans；缺失不带键', () => {
+  const p = buildDouyinPayload(awemeDetail, [], {});
+  const e = p.video.extra;
+  assert.equal(e.region, 'CN', 'region 落库');
+  assert.equal(e.is_top, 0, 'is_top 落库');
+  assert.equal(e.is_ads, false, 'is_ads 落库');
+  assert.equal(e.share_url, 'https://www.iesdouyin.com/share/video/7678956479035512448/', 'share_url 原样留存');
+  assert.deepEqual(e.video_quality, { ratio: '720p', format: 'mp4', is_h265: 0, is_source_HDR: 0 }, 'video_quality 四键');
+  assert.equal(p.video.creator.fans, 13226, 'creator.fans←follower_count');
+  assert.equal(p.video.creator.verify, undefined, 'custom_verify 空串不带 verify 键');
+  assert.equal(e.chapters, undefined, 'chapter_list 缺失不带 chapters 键');
+
+  // verify 双来源短路:custom_verify 非空直取;空串回落 enterprise_verify_reason
+  const verified = buildDouyinPayload({ ...awemeDetail, author: { ...awemeDetail.author, custom_verify: '音乐人' } }, [], {});
+  assert.equal(verified.video.creator.verify, '音乐人', 'custom_verify 非空 → verify');
+  const entVerified = buildDouyinPayload({ ...awemeDetail, author: { ...awemeDetail.author, custom_verify: '', enterprise_verify_reason: '企业号' } }, [], {});
+  assert.equal(entVerified.video.creator.verify, '企业号', 'custom_verify 空串 → enterprise_verify_reason 兜底');
+
+  // 缺失形态：全删新字段 → 不带键不炸
+  const bare = buildDouyinPayload({
+    aweme_id: '1', desc: 'd', aweme_type: 0, create_time: 1, duration: 1000,
+    author: { sec_uid: 's', nickname: 'n' }, statistics: {}, video: { duration: 1000 },
+  }, [], {});
+  assert.equal(bare.video.extra.region, undefined);
+  assert.equal(bare.video.extra.video_quality, undefined);
+  assert.equal(bare.video.creator.fans, undefined);
+
+  // chapters 有值形态（结构未实测,按 title/start_time 映射）
+  const withChapters = buildDouyinPayload({
+    ...awemeDetail, chapter_list: [{ title: '第一章', start_time: 0 }, { title: '第二章', start_time: 60000 }],
+  }, [], {});
+  assert.deepEqual(withChapters.video.extra.chapters, [{ title: '第一章', start: 0 }, { title: '第二章', start: 60000 }]);
+});
+
+test('buildDouyinPayload：字段缺失形态兜底——hashtag_id null/mix 无 desc/music 无 id_str/半 video_quality/chapters 多键名', () => {
+  const p = buildDouyinPayload({
+    ...awemeDetail,
+    text_extra: [{ hashtag_name: '无id话题', type: 1 }],        // hashtag_id 缺 → null
+    mix_info: { mix_id: 'mix1' },                               // 无 mix_desc → title null
+    music: { id: 123, title: null },                            // 无 id_str → String(id) 兜底
+    video: { duration: 47948, ratio: '1080p' },                 // 有 ratio 无 format → 后续键 null
+    chapter_list: [{ title: 'c1' }, { startTime: 5 }, { start: 9 }], // 三种时间键名兜底链
+  }, null, {});                                                 // captionTracks null → ?? [] 兜底
+  assert.deepEqual(p.video.extra.tags, [{ tag_id: null, tag_name: '无id话题' }]);
+  assert.deepEqual(p.video.extra.ugc_season, { id: 'mix1', title: null });
+  assert.deepEqual(p.video.extra.music, { id: '123', title: null });
+  assert.deepEqual(p.video.extra.video_quality, { ratio: '1080p', format: null, is_h265: null, is_source_HDR: null });
+  assert.deepEqual(p.video.extra.chapters, [
+    { title: 'c1', start: null }, { title: null, start: 5 }, { title: null, start: 9 },
+  ]);
+  assert.equal(p.tracks.length, 0, 'captionTracks null → 空数组');
 });
 
 test('buildDouyinPayload：text_extra → tags[{tag_id,tag_name}]（type=1 且有 hashtag_name 才收）', () => {

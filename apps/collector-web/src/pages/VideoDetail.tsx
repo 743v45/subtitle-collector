@@ -261,10 +261,12 @@ export function VideoDetail({ source, sourceVid, onBack }: { source: string; sou
             <Stat label="播放" value={fmtNum(stat.view)} />
             <Stat label="点赞" value={fmtNum(stat.like)} />
             {source === 'bilibili' && <Stat label="投币" value={fmtNum(stat.coin)} />}
-            {source === 'bilibili' && <Stat label="收藏" value={fmtNum(stat.favorite)} />}
-            {source === 'bilibili' && <Stat label="转发" value={fmtNum(stat.share)} />}
+            {/* 收藏/转发/回复:B 站与抖音 stat 同键(R5 键名对齐),douyin 的 favorite/share/reply 有真实值
+                (2026-08-29 起展示);youtube extra.stat 无此三键显示 - */}
+            <Stat label="收藏" value={fmtNum(stat.favorite)} />
+            <Stat label="转发" value={fmtNum(stat.share)} />
             {source === 'bilibili' && <Stat label="弹幕" value={fmtNum(stat.danmaku)} />}
-            {source === 'bilibili' && <Stat label="回复" value={fmtNum(stat.reply)} />}
+            <Stat label="回复" value={fmtNum(stat.reply)} />
           </CardContent>
         </Card>
       )}
