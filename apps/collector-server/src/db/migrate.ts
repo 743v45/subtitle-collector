@@ -270,6 +270,36 @@ export const MIGRATIONS: readonly MigrationStep[] = [
        COMMIT;`,
     ],
   },
+  {
+    // ASR 轨按引擎命名（2026-08-29 多引擎版本比对）：写入侧已改为 lan=asr-zh-<engine>（http/asr.ts
+    // 单一事实源），存量 lan='asr-zh' 轨按其 asr 版本的 asr_engine 改名对齐——取该轨最新一条
+    // （MAX(id)）有非空 engine 的 asr 版本；无任何 engine 信息回落 'asr-zh-unknown'。
+    // subtitle_tracks 无 CHECK，纯 UPDATE 无需表重建；单事务包裹整体原子，WHERE lan='asr-zh'
+    // 保证重放幂等（改名后不再命中）。多引擎混写同一存量轨的旧数据：版本行自带 asr_engine 不丢出处，
+    // 其余引擎日后重转会按新命名落各自新轨。
+    version: 19,
+    note: 'ASR 轨按引擎改名：lan=asr-zh → asr-zh-<asr_engine>（JOIN subtitle_versions origin=asr 取最新非空 engine；无 engine 回落 unknown），lan_doc 同步中文（ASR·<engine>）。单事务 UPDATE，重放幂等',
+    statements: [
+      `BEGIN IMMEDIATE;
+       UPDATE subtitle_tracks AS t
+       SET lan = 'asr-zh-' || e.engine,
+           lan_doc = '中文（ASR·' || e.engine || '）'
+       FROM (
+         SELECT sv.track_id, sv.asr_engine AS engine
+         FROM subtitle_versions sv
+         WHERE sv.id IN (
+           SELECT MAX(id) FROM subtitle_versions
+           WHERE origin = 'asr' AND asr_engine IS NOT NULL AND asr_engine != ''
+           GROUP BY track_id
+         )
+       ) AS e
+       WHERE t.lan = 'asr-zh' AND e.track_id = t.id;
+       UPDATE subtitle_tracks
+       SET lan = 'asr-zh-unknown', lan_doc = '中文（ASR·unknown）'
+       WHERE lan = 'asr-zh';
+       COMMIT;`,
+    ],
+  },
 ];
 
 export function runMigrations(db: Database.Database): void {

@@ -1,9 +1,11 @@
 // HTTP handler：ASR 转写写回（asr submit）。
 // 路由：POST /api/asr/submit——段级 cues → server 端校验 + 合成 B 站字幕 payload + 入库。
 // 消费方是 CLI `asr backfill`（no-subtitle 兜底转写链路的写回步骤，fireredasr-ui 段级出参直接映射）。
-// 轨标识 lan='asr-zh'（track_type=1 自动轨语义，对齐 schema 注释「1=AI/ASR」）；version
-// origin='asr' + asr_engine（ingest 按 (track_id, origin, asr_engine, body_hash) 幂等去重，
-// 重跑同结果零新增）；新 version 落库即摘 no-subtitle 系统标（圈出的恒为真无轨，同 ingestVideo 语义）。
+// 轨标识 lan 按引擎派生 'asr-zh-<engine>'（track_type=1 自动轨语义，对齐 schema 注释「1=AI/ASR」）；
+// 不同引擎 → 不同轨（UNIQUE(video_id, lan, track_type) 天然分轨，详情页轨选择器直接切换比对多引擎版本）；
+// version origin='asr' + asr_engine（ingest 按 (track_id, origin, asr_engine, body_hash) 幂等去重，
+// 同引擎重跑同结果零新增；不同引擎落各自轨并存）；新 version 落库即摘 no-subtitle 系统标
+// （圈出的恒为真无轨，同 ingestVideo 语义）。存量 'asr-zh' 轨由迁移 v19 按版本 engine 改名对齐。
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type Database from 'better-sqlite3';
 import { getVideo } from '../db/queries.js';
@@ -11,9 +13,13 @@ import { insertTracksVersions } from '../db/ingest.js';
 import { unmarkNoSubtitle } from '../db/tags.js';
 import { json, readJsonBody } from './http-util.js';
 
-// ASR 轨标识（与 db/queries.ts 轨排序、CLI asr backfill 共同约定；区别于平台 AI 轨 ai-zh / 补翻轨 zh-manual）
-export const ASR_ZH_LAN = 'asr-zh';
-export const ASR_ZH_LAN_DOC = '中文（ASR 转写）';
+// ASR 轨标识（单一事实源：写入侧在此从请求 engine 派生；与 db/queries.ts 轨排序、CLI asr backfill、
+// 迁移 v19 共同约定。前缀 asr-zh 区别于平台 AI 轨 ai-zh / 补翻轨 zh-manual）
+export const ASR_LAN_PREFIX = 'asr-zh';
+/** lan 按引擎派生：asr-zh-<engine>（如 asr-zh-fireredasr-aed-l）。 */
+export const asrLan = (engine: string): string => `${ASR_LAN_PREFIX}-${engine}`;
+/** lan_doc 按引擎派生：中文（ASR·<engine>）。 */
+export const asrLanDoc = (engine: string): string => `中文（ASR·${engine}）`;
 
 export interface AsrCue { from: number; to: number; content: string }
 
@@ -56,8 +62,8 @@ function writeAsrVersion(db: Database.Database, videoId: number, parsed: { sourc
   let unmarked = false;
   const tx = db.transaction(() => {
     ({ inserted, skipped } = insertTracksVersions(db, videoId, [{
-      lan: ASR_ZH_LAN,
-      lan_doc: ASR_ZH_LAN_DOC,
+      lan: asrLan(parsed.engine),
+      lan_doc: asrLanDoc(parsed.engine),
       track_type: 1,
       versions: [{ origin: 'asr', payload, asr_engine: parsed.engine, source_url: `asr://${parsed.engine}` }],
     }], Date.now()));
@@ -86,7 +92,7 @@ export async function handleAsrHttp(req: IncomingMessage, res: ServerResponse, d
       ok: true,
       source: parsed.source,
       vid: parsed.vid,
-      lan: ASR_ZH_LAN,
+      lan: asrLan(parsed.engine),
       engine: parsed.engine,
       cues: parsed.cues.length,
       inserted,

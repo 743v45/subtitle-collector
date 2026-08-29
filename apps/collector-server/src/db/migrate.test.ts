@@ -6,6 +6,7 @@
 // |---|---|---|---|
 // | R1 | 版本账本/幂等/v5-v16 各步骤 | 通过 | |
 // | R2 | v18 collect_tasks.source CHECK 放行 douyin（旧库重建/新库重放） | 通过 | 2026-08-29 S2 抖音平台化 |
+// | R3 | v19 ASR 轨按引擎改名（有 engine 改名/无 engine 回落 unknown/幂等重放/新库重放） | 通过 | 2026-08-29 多引擎版本比对 |
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -460,5 +461,62 @@ test('v18 迁移：新库（schema.sql 已带 douyin CHECK）全量重放安全�
     assert.equal(db.inTransaction, false, '不应残留打开的事务');
     // 新库 CHECK 本就含 douyin，重放后仍可写
     assert.equal(db.prepare("INSERT INTO collect_tasks (source, source_vid, url, status, created_at) VALUES ('douyin', '7123456789012345678', 'https://dy', 'pending', 1)").run().changes, 1);
+  } finally { db.close(); }
+});
+
+// ── v19（2026-08-29 多引擎版本比对）：存量 asr-zh 轨按引擎改名（纯 UPDATE 单事务）──
+// 场景矩阵：有 engine 改名 / 多版本取最新 / engine 为 NULL 回落 unknown / 无版本回落 unknown / 非 asr-zh 轨不动
+test('v19 迁移：lan=asr-zh 存量按 asr 版本 engine 改名，无 engine 回落 unknown；重放幂等', () => {
+  const db = new Database(':memory:');
+  try {
+    // 模拟 v18 形态旧库：全量 schema + 账本拨回 18
+    migrate(db);
+    db.pragma('user_version = 18');
+
+    // 存量视频 + 各形态 asr-zh 轨（track_type=1，与 http/asr.ts 写入口径一致；UNIQUE(video_id,lan,track_type)
+    // 决定每视频至多一条 asr-zh 轨——各形态分散在不同视频上）
+    db.prepare("INSERT INTO videos (source, source_vid, title, extra, first_seen_at, updated_at) VALUES ('bilibili', 'BV1', 't', '{}', 1, 1)").run();
+    db.prepare("INSERT INTO videos (source, source_vid, title, extra, first_seen_at, updated_at) VALUES ('bilibili', 'BV2', 't', '{}', 1, 1)").run();
+    db.prepare("INSERT INTO videos (source, source_vid, title, extra, first_seen_at, updated_at) VALUES ('bilibili', 'BV3', 't', '{}', 1, 1)").run();
+    const insTrack = db.prepare('INSERT INTO subtitle_tracks (video_id, lan, lan_doc, track_type) VALUES (?, ?, ?, ?)');
+    const insVer = db.prepare('INSERT INTO subtitle_versions (track_id, origin, payload, body_hash, source_url, asr_engine, captured_at) VALUES (?, ?, ?, ?, ?, ?, ?)');
+
+    // BV1：两条 asr 版本（旧引擎 e-old 在前、新引擎 fireredasr-aed-l 在后）→ 取最新改名
+    const t1 = Number(insTrack.run(1, 'asr-zh', '中文（ASR 转写）', 1).lastInsertRowid);
+    insVer.run(t1, 'asr', '{"body":[]}', 'h1', 'asr://e-old', 'e-old', 1);
+    insVer.run(t1, 'asr', '{"body":[]}', 'h2', 'asr://fireredasr-aed-l', 'fireredasr-aed-l', 2);
+    // BV2：asr 版本但 asr_engine 为 NULL（早期写入）→ 回落 unknown
+    const t2 = Number(insTrack.run(2, 'asr-zh', '中文（ASR 转写）', 1).lastInsertRowid);
+    insVer.run(t2, 'asr', '{"body":[]}', 'h3', 'asr://x', null, 3);
+    // BV3：lan=asr-zh 但零版本（孤立轨）→ 回落 unknown；同视频普通 zh CC 轨（非 asr-zh）→ 不动
+    const t3 = Number(insTrack.run(3, 'asr-zh', '中文（ASR 转写）', 1).lastInsertRowid);
+    const t4 = Number(insTrack.run(3, 'zh', '中文', 2).lastInsertRowid);
+
+    runMigrations(db);
+    assert.equal(db.pragma('user_version', { simple: true }), MIGRATIONS[MIGRATIONS.length - 1].version, '账本应写到最新');
+    const rows = db.prepare('SELECT id, lan, lan_doc FROM subtitle_tracks ORDER BY id').all() as Array<{ id: number; lan: string; lan_doc: string }>;
+    assert.deepEqual(rows, [
+      { id: t1, lan: 'asr-zh-fireredasr-aed-l', lan_doc: '中文（ASR·fireredasr-aed-l）' }, // 多版本取最新 engine
+      { id: t2, lan: 'asr-zh-unknown', lan_doc: '中文（ASR·unknown）' },                    // engine NULL 回落
+      { id: t3, lan: 'asr-zh-unknown', lan_doc: '中文（ASR·unknown）' },                    // 零版本回落
+      { id: t4, lan: 'zh', lan_doc: '中文' },                                               // 非 asr-zh 不动
+    ], '改名结果逐行比对');
+    // 版本行原样保留（改名只动 subtitle_tracks，版本出处 asr_engine 不丢）
+    assert.equal((db.prepare('SELECT COUNT(*) AS n FROM subtitle_versions').get() as { n: number }).n, 3, '版本行不增不减');
+
+    // 重放幂等（版本短路，且 UPDATE WHERE lan=asr-zh 已无命中行）
+    runMigrations(db);
+    const rows2 = db.prepare('SELECT id, lan, lan_doc FROM subtitle_tracks ORDER BY id').all() as Array<{ id: number; lan: string; lan_doc: string }>;
+    assert.deepEqual(rows2, rows, '重放不增不减不改');
+  } finally { db.close(); }
+});
+
+test('v19 迁移：新库（无 asr-zh 存量）全量重放安全，不留脏事务', () => {
+  const db = new Database(':memory:');
+  try {
+    migrate(db);
+    assert.doesNotThrow(() => runMigrations(db), '新库重放 v19 纯 UPDATE 应完整执行不报错');
+    assert.equal(db.inTransaction, false, '不应残留打开的事务');
+    assert.equal(db.pragma('user_version', { simple: true }), 19, '账本写到 19');
   } finally { db.close(); }
 });

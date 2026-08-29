@@ -1,11 +1,13 @@
 // http/asr.ts 端点测试：POST /api/asr/submit 全链路。
-// 覆盖：成功写回（asr-zh 轨 / origin=asr / asr_engine / track_type=1 / payload 结构 / no-subtitle 摘标）
+// 覆盖：成功写回（asr-zh-<engine> 轨 / origin=asr / asr_engine / track_type=1 / payload 结构 / no-subtitle 摘标）
+// + 多引擎分轨并存（不同 engine → 不同轨，版本各自成轨；2026-08-29 引擎命名改造）
 // + 幂等重跑（origin=asr 按 body_hash 去重 skipped）+ 失败路径（404 视频 / 400 参数族）。
 //
 // 测试轮次记录表（对齐全局规则）：
 // | 轮次 | 范围 | 结果 | 备注 |
 // |---|---|---|---|
 // | R1 | 成功×1（含摘标断言）+ 幂等重跑 + 404×1 + 400×4 | 通过 | |
+// | R2 | lan 改按引擎派生（asr-zh-fireredasr-aed-l / lan_doc 中文（ASR·引擎））+ 引擎 B 再写 → 第二轨并存 | 通过 | 新命名断言在旧代码（lan 恒 asr-zh）上红，失败→通过锚点 |
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -63,24 +65,24 @@ function cues() {
   ];
 }
 
-test('asr submit：成功写回（asr-zh 轨 + origin/asr_engine 落位 + no-subtitle 摘标）', async () => {
+test('asr submit：成功写回（asr-zh-<engine> 轨 + origin/asr_engine 落位 + no-subtitle 摘标）', async () => {
   const { port, db, cleanup } = await setup();
   try {
-    // 1. 首次 submit 成功
+    // 1. 首次 submit 成功（lan 从请求 engine 派生）
     const r = await call(port, { source: 'bilibili', vid: 'BV1', engine: 'fireredasr-aed-l', cues: cues() });
     assert.equal(r.status, 200);
     assert.equal(r.json.ok, true);
-    assert.equal(r.json.lan, 'asr-zh');
+    assert.equal(r.json.lan, 'asr-zh-fireredasr-aed-l');
     assert.equal(r.json.cues, 2);
     assert.equal(r.json.inserted, 1);
     assert.equal(r.json.skipped, 0);
     assert.equal(r.json.no_subtitle_unmarked, true, '新轨落库应摘 no-subtitle 标');
 
-    // 2. 库内断言：asr-zh 轨一条（track_type=1）+ asr 版本一条（origin/asr_engine/source_url 落位）
+    // 2. 库内断言：asr-zh-fireredasr-aed-l 轨一条（track_type=1）+ asr 版本一条（origin/asr_engine/source_url 落位）
     const detail = getVideo(db, 'bilibili', 'BV1')!;
-    const track = detail.tracks.find((t) => t.lan === 'asr-zh');
-    assert.ok(track, 'asr-zh 轨已写入');
-    assert.equal(track.lan_doc, '中文（ASR 转写）');
+    const track = detail.tracks.find((t) => t.lan === 'asr-zh-fireredasr-aed-l');
+    assert.ok(track, 'asr-zh-fireredasr-aed-l 轨已写入');
+    assert.equal(track.lan_doc, '中文（ASR·fireredasr-aed-l）');
     assert.equal(track.versions.length, 1);
     const trackRow = db.prepare('SELECT track_type FROM subtitle_tracks WHERE id = ?').get(track.id) as { track_type: number };
     assert.equal(trackRow.track_type, 1, 'track_type=1（AI/ASR 自动轨语义）');
@@ -105,7 +107,50 @@ test('asr submit：成功写回（asr-zh 轨 + origin/asr_engine 落位 + no-sub
     assert.equal(r2.json.inserted, 0);
     assert.equal(r2.json.skipped, 1);
     assert.equal(r2.json.no_subtitle_unmarked, false, '标已摘，重复 submit 不再报摘标');
-    assert.equal(getVideo(db, 'bilibili', 'BV1')!.tracks.find((t) => t.lan === 'asr-zh')!.versions.length, 1, '版本不堆积');
+    assert.equal(getVideo(db, 'bilibili', 'BV1')!.tracks.find((t) => t.lan === 'asr-zh-fireredasr-aed-l')!.versions.length, 1, '版本不堆积');
+  } finally {
+    cleanup();
+  }
+});
+
+test('asr submit 多引擎：引擎 B 再写 → 第二轨并存（asr-zh-<B>），两轨各自 versions/engine 标记', async () => {
+  const { port, db, cleanup } = await setup();
+  try {
+    // 1. 引擎 A 写入 → 轨 asr-zh-<A>
+    const rA = await call(port, { source: 'bilibili', vid: 'BV1', engine: 'engine-a', cues: cues() });
+    assert.equal(rA.status, 200);
+    assert.equal(rA.json.lan, 'asr-zh-engine-a');
+    assert.equal(rA.json.inserted, 1);
+
+    // 2. 引擎 B 写入 → 新轨 asr-zh-<B> 并存（UNIQUE(video_id,lan,track_type) 天然分轨，不互相顶替）
+    const rB = await call(port, { source: 'bilibili', vid: 'BV1', engine: 'engine-b', cues: cues() });
+    assert.equal(rB.status, 200);
+    assert.equal(rB.json.lan, 'asr-zh-engine-b');
+    assert.equal(rB.json.inserted, 1);
+
+    // 3. 库内断言：两轨并存，各挂一条自己的 asr 版本（engine/source_url 落位），lan_doc 各带引擎名
+    const detail = getVideo(db, 'bilibili', 'BV1')!;
+    const trackA = detail.tracks.find((t) => t.lan === 'asr-zh-engine-a');
+    const trackB = detail.tracks.find((t) => t.lan === 'asr-zh-engine-b');
+    assert.ok(trackA, '引擎 A 轨存在');
+    assert.ok(trackB, '引擎 B 轨存在');
+    assert.notEqual(trackA.id, trackB.id, '两轨是各自独立的行');
+    assert.equal(trackA.lan_doc, '中文（ASR·engine-a）');
+    assert.equal(trackB.lan_doc, '中文（ASR·engine-b）');
+    const verA = db.prepare('SELECT origin, asr_engine, source_url FROM subtitle_versions WHERE track_id = ?').get(trackA.id) as { origin: string; asr_engine: string; source_url: string };
+    const verB = db.prepare('SELECT origin, asr_engine, source_url FROM subtitle_versions WHERE track_id = ?').get(trackB.id) as { origin: string; asr_engine: string; source_url: string };
+    assert.equal(verA.asr_engine, 'engine-a');
+    assert.equal(verB.asr_engine, 'engine-b');
+    assert.equal(verA.source_url, 'asr://engine-a');
+    assert.equal(verB.source_url, 'asr://engine-b');
+
+    // 4. 同引擎重跑（A 再写同内容）→ 命中 body_hash 幂等去重，A 轨版本不堆积，B 轨不受影响
+    const rA2 = await call(port, { source: 'bilibili', vid: 'BV1', engine: 'engine-a', cues: cues() });
+    assert.equal(rA2.json.inserted, 0);
+    assert.equal(rA2.json.skipped, 1);
+    const after = getVideo(db, 'bilibili', 'BV1')!;
+    assert.equal(after.tracks.find((t) => t.lan === 'asr-zh-engine-a')!.versions.length, 1, '同引擎重跑版本不堆积');
+    assert.equal(after.tracks.find((t) => t.lan === 'asr-zh-engine-b')!.versions.length, 1, 'B 轨不受 A 重跑影响');
   } finally {
     cleanup();
   }

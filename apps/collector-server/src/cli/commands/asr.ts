@@ -1,4 +1,4 @@
-// asr backfill：no-subtitle 兜底转写编排（圈定 → 平台音/视频获取 → fireredasr 转写 → server 写回 asr-zh 轨）。
+// asr backfill：no-subtitle 兜底转写编排（圈定 → 平台音/视频获取 → fireredasr 转写 → server 写回 asr-zh-<engine> 轨）。
 // --source 定平台（默认 bilibili 兼容既有用法）：bilibili 走 wbi/view/playurl 在线解析音轨；
 // douyin 走入库 extra.play_uri 直构 snssdk 直链下载 mp4（R2 定案，2026-08-29 douyin 平台化）。
 // 架构（对齐 translate fill）：全程走 server HTTP（圈定 GET /api/videos + 详情 GET /api/videos/:source/:vid
@@ -220,7 +220,7 @@ export async function runBackfill(
 // ── commander 装配 ──
 export function buildAsrCommand(): Command {
   const cmd = new Command('asr')
-    .description('无字幕视频兜底转写（no-subtitle 圈定 → 平台音/视频获取 → fireredasr 本地转写 → 写回 asr-zh 轨）');
+    .description('无字幕视频兜底转写（no-subtitle 圈定 → 平台音/视频获取 → fireredasr 本地转写 → 写回 asr-zh-<engine> 轨）');
 
   cmd.command('backfill')
     .description('批量转写入库：no-subtitle 圈定的视频（--source 定平台；转写成功即摘标，重跑自动跳过已完成）')
@@ -231,7 +231,7 @@ export function buildAsrCommand(): Command {
     .option('--dry-run', '只圈定并打印清单，不下载不转写（预检圈定口径）')
     .option('--cookie-file <path>', 'B 站 Cookie 文件（文本原样作 Cookie 头；默认 $COLLECTOR_BILI_COOKIE_FILE；仅 --source bilibili）')
     .option('--asr-url <url>', `fireredasr 服务地址（默认 ${DEFAULT_ASR_API}）`, DEFAULT_ASR_API)
-    .option('--engine <name>', `asr_engine 标记值（默认 ${DEFAULT_ENGINE}）`, DEFAULT_ENGINE)
+    .option('--engine <name>', `asr_engine 标记值，兼定轨名 asr-zh-<name>（默认 ${DEFAULT_ENGINE}）`, DEFAULT_ENGINE)
     .action(async (opts: { size?: string; page?: string; maxDuration?: string; dryRun?: boolean; source?: string; cookieFile?: string; asrUrl?: string; engine?: string }) => {
       const ctx = getCliContext();
       const source = parseAsrSource(opts.source ?? 'bilibili');
