@@ -138,6 +138,16 @@
 - ⏳ **ASR 转写重跑中**(bd4qcgsy6):220MB 重新上传+转写,预计 10-15 分钟——完成即验证 asr-zh 轨入库,抖音全链路闭环
 - 生产部署:f77e4a1 时已部署;**c976995(server 侧 ID 修复)未部署**——下次部署带上
 
+## 审查报告结论(2026-08-29 review-douyin,diff cbdee54..c976995)
+
+**不可原样保持:1 Critical + 1 Major,均为一行级修**——已派 fix-review-findings 修复中:
+- **C1**:web↔server 博主批量契约断裂(web 发 channel/server 只读 sec_uid → 必 400;成因:双端各自 mock 无跨端一致断言)→ server 侧 `sec_uid ?? channel` 兼容 + 两侧测试固定同一请求体形状。修完需真机补 web 博主批量实测(本次盲区)。
+- **M1**:CLI collect 的 no-subtitle 打标用旧 ID(c976995 同类只修了任务路径)→ 回执 awemeId 优先 + 镜像测试。
+
+Spec 轴全过:GPL 红线未碰(全 diff 无签名代码)/ASR 解耦成立/迁移与 extra 逐键对上/协议除 C1 外一致。Standards 轴:安全(500MB 双防线/参数化)、竞态、错误路径、可观察性全过;短板即 C1 的跨端契约测试。
+
+**Minor(grilling 待办)**:①expand 180s 档 vs 扩展 2000 items 上限不匹配(>1400 作品博主会超时);②content-dy 未注入时空结果成功回执(应回 error);③sec_uid 正则三处前缀不一致(7/8 字符,影响≈0,统一口径);④android DY_HOSTS 缺 apex 域;⑤manifest 缺 apex/m. 域(边缘);⑥web view 恒 0 显示「0」非「—」(文档或实现二选一改);⑦任务行旧 ID 残留面(title JOIN/creator_uid 回填/重试去重)——展示效率层面,grilling 定是否「任务行 source_vid 以回执迁移」。
+
 ## 遗留清单(grilling 迭代输入)
 
 - **API 限额耗尽(2026-08-29 05:35 本地)**:review-douyin 审查 agent 被 429 打掉,**10:00:56 重置**——重置后 SendMessage 唤醒 review-douyin 续作(上下文保留)。重置前不派新 agent。

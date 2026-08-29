@@ -22,8 +22,9 @@ import { toInt } from './filter.js';
 //                                  sort=created_at|finished_at|status + desc(bool,缺省 true;2026-08-25),非法 sort → 400
 // GET    /api/collect-tasks/:id    单任务状态（手机每 2s 轮询直到终态）
 // DELETE /api/collect-tasks/:id    删除任务（采集页删除按钮,任意状态可删）
-// POST   /api/upper-videos/expand  { mid } | { source:'youtube', channel } → 经扩展 WS 代理拉
-//                                  UP/频道全部视频 + 标注已采（web「按 UP 批量」用，2026-08-24 双平台）
+// POST   /api/upper-videos/expand  { mid } | { source:'youtube', channel } | { source:'douyin',
+//                                  channel（承载 sec_uid，web 形态）/ sec_uid（旧键兼容）} → 经扩展
+//                                  WS 代理拉 UP/频道/博主全部视频 + 标注已采（web「按 UP 批量」用）
 // GET /api/collect-tasks 任务列表（分页双形态 + 多维筛选 + 排序）。
 // 抽出降 handleTasksHttp 圈复杂度（2026-08-25 排序分支并入后主函数超标恶化）。
 function handleListTasksHttp(res: ServerResponse, url: URL, db: Database.Database): void {
@@ -69,8 +70,9 @@ function handleListTasksHttp(res: ServerResponse, url: URL, db: Database.Databas
 }
 
 // POST /api/upper-videos/expand：{ source: 'bilibili', mid } | { source: 'youtube', channel } |
-//   { source: 'douyin', sec_uid } → 经扩展 WS 代理拉全量列表（2026-08-24 双平台；2026-08-29
-//   douyin 骨架）。抽出降 handleTasksHttp 圈复杂度（对齐 handleListTasksHttp 先例）。
+//   { source: 'douyin', channel: <sec_uid|主页URL>（web 形态）/ sec_uid（旧键兼容）} → 经扩展 WS 代理拉
+//   全量列表（2026-08-24 双平台；2026-08-29 douyin）。抽出降 handleTasksHttp 圈复杂度（对齐
+//   handleListTasksHttp 先例）。
 // 拉取失败（扩展离线/超时/风控）抛错 → 调用方 503（可重试临时态）；参数问题直接 400。
 async function handleUpperExpandHttp(res: ServerResponse, body: Record<string, unknown> | null, db: Database.Database): Promise<void> {
   const source = body?.source === 'douyin' ? 'douyin' : body?.source === 'youtube' ? 'youtube' : 'bilibili';
@@ -85,10 +87,13 @@ async function handleUpperExpandHttp(res: ServerResponse, body: Record<string, u
     return;
   }
   if (source === 'douyin') {
-    // 抖音博主（2026-08-29 S8 接线）：sec_uid 直传或用户主页链接，server 单点归一（对齐 youtube
-    // channel 模式）；拉取走扩展 expand-douyin-upper（扩展内 max_cursor 游标翻页聚合成一次回传）。
-    const secUidRaw = typeof body?.sec_uid === 'string' ? body.sec_uid.trim() : '';
-    if (!secUidRaw) { json(res, 400, { ok: false, error: 'sec_uid（抖音博主 sec_uid / 用户主页链接）required' }); return; }
+    // 抖音博主（2026-08-29 S8 接线）：channel 键承载 sec_uid 直传或用户主页链接，server 单点归一（对齐
+    // youtube channel 模式，web expandUpperVideos 发 {source:'douyin', channel:<sec_uid>}）；sec_uid 旧键
+    // 兼容（C1 修复 2026-08-29：双端各自 mock 无一致断言，server 只认 sec_uid 导致「按博主批量」必 400）。
+    // 拉取走扩展 expand-douyin-upper（扩展内 max_cursor 游标翻页聚合成一次回传）。
+    const raw = body?.sec_uid ?? body?.channel;
+    const secUidRaw = typeof raw === 'string' ? raw.trim() : '';
+    if (!secUidRaw) { json(res, 400, { ok: false, error: 'channel / sec_uid（抖音博主 sec_uid / 用户主页链接）required' }); return; }
     let secUid: string;
     try { secUid = parseDouyinSecUid(secUidRaw); } catch (e) { json(res, 400, { ok: false, error: String((e as Error).message) }); return; }
     const r = await expandUpperVideos(db, { source: 'douyin', secUid });
@@ -184,7 +189,8 @@ export async function handleTasksHttp(req: IncomingMessage, res: ServerResponse,
 
   // UP/频道/博主全部视频列表（经扩展代理拉取；main.ts 把 /api/upper-videos 前缀路由到本 handler）
   // 2026-08-24 双平台：body { source: 'bilibili', mid } | { source: 'youtube', channel: <@handle|UCxxx|URL> }；
-  // 2026-08-29 douyin：{ source: 'douyin', sec_uid }（S8 接线扩展 expand-douyin-upper）。source 缺省 bilibili
+  // 2026-08-29 douyin：{ source: 'douyin', channel: <sec_uid|主页URL> }（web 形态，S8 接线扩展
+  // expand-douyin-upper；sec_uid 旧键兼容——C1 修复 2026-08-29）。source 缺省 bilibili
   //（兼容旧 web 只传 mid 的调用）。分派细节在 handleUpperExpandHttp。
   if (pathname === '/api/upper-videos/expand') {
     if (req.method !== 'POST') { json(res, 405, { ok: false, error: 'method not allowed' }); return; }

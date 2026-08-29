@@ -7,6 +7,7 @@
 // | R1 | ensureOk 四分支 + 全端点 URL 组装/解包 | 通过 | 204 须 null body（jsdom Response 限制），删除类端点回 {} |
 // | R2 | setTaskDispatch（2026-08-23 仅上报状态） | 通过 | 与 setReporting 同构 |
 // | R3 | listVideos desc=false 显式发送（2026-08-29 排序升序修复） | 通过 | 缺省发送会被 server 降序缺省吃掉 |
+// | R4 | expandUpperVideos douyin 档（channel 键承载 sec_uid） | 通过 | 2026-08-29 C1 修复：三平台请求体形状钉死，对齐 server tasks.test |
 import { test, expect, vi, afterEach } from 'vitest';
 import * as api from './api';
 import type { VideoDetail } from './types';
@@ -246,7 +247,7 @@ test('deleteCollectTask：DELETE 且失败上抛（await 不吞）', async () =>
   await expect(api.deleteCollectTask(4)).rejects.toThrow('HTTP 404：不存在');
 });
 
-test('expandUpperVideos：双平台 body 形状（bilibili {source,mid} / youtube {source,channel}）+ channel 回传', async () => {
+test('expandUpperVideos：三平台 body 形状（bilibili {source,mid} / youtube·douyin {source,channel}）+ channel 回传', async () => {
   fetchMock.mockResolvedValueOnce(ok({ items: [{ bvid: 'BV1' }] }));
   await expect(api.expandUpperVideos({ source: 'bilibili', mid: '123' })).resolves.toEqual({ total: 0, items: [{ bvid: 'BV1' }], channel: undefined });
   const { url, init } = lastCall();
@@ -256,6 +257,12 @@ test('expandUpperVideos：双平台 body 形状（bilibili {source,mid} / youtub
   fetchMock.mockResolvedValueOnce(ok({ total: 2, items: [{ bvid: 'ytvid00001' }], channel: { id: 'UCx', name: '频道' } }));
   await expect(api.expandUpperVideos({ source: 'youtube', channel: '@ch' })).resolves.toEqual({ total: 2, items: [{ bvid: 'ytvid00001' }], channel: { id: 'UCx', name: '频道' } });
   expect(JSON.parse(String(lastCall().init?.body))).toEqual({ source: 'youtube', channel: '@ch' });
+
+  // douyin 复用 channel 键承载 sec_uid（C1 修复 2026-08-29 钉死契约：与 server http/tasks.ts
+  // douyin 分支、CollectPage.test 的断言是同一份请求体形状，双端不再各 mock 各的）
+  fetchMock.mockResolvedValueOnce(ok({ total: 1, items: [{ bvid: '7300000000000000001' }] }));
+  await expect(api.expandUpperVideos({ source: 'douyin', channel: 'MS4wLjABAAAA2y53DZw7' })).resolves.toEqual({ total: 1, items: [{ bvid: '7300000000000000001' }], channel: undefined });
+  expect(JSON.parse(String(lastCall().init?.body))).toEqual({ source: 'douyin', channel: 'MS4wLjABAAAA2y53DZw7' });
 });
 
 test('createCollectTasksBatch：带 creatorUid 进 body', async () => {

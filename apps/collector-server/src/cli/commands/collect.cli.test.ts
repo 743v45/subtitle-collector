@@ -8,6 +8,7 @@
 // |---|---|---|---|
 // | R1 | search/subtitle/dedupe/season/upper-info/upper-videos/yt-videos/new-videos/discover/find 全 action | 通过 | 长流程逐分支喂 mock 响应 |
 // | R4 | collect subtitle --source douyin（fetch-douyin-subtitle + awemeId + 打标 items source=douyin） | 通过 | 2026-08-29 S2 抖音平台化 |
+// | R5 | no-subtitle 打标 vid 取回执 awemeId 优先（M1：旧 ID 302 迁移后打标不落空） | 通过 | 2026-08-29 M1 审查修复，对齐 server markNoSubtitleForReceipt（c976995） |
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -873,6 +874,30 @@ test('collect subtitle --source douyin：派发 fetch-douyin-subtitle(awemeId) +
     const applyReq = srv.reqs.find((q) => q.path === '/api/tags/apply');
     assert.ok(applyReq, '抖音无字幕同样打标（no-subtitle 三平台对齐）');
     assert.deepEqual(applyReq!.body!.items, [{ source: 'douyin', source_vid: '7123456789012345678' }]);
+  } finally { await srv.close(); }
+});
+
+// ── M1 修复回归（2026-08-29）：no-subtitle 打标 vid 取回执 awemeId，不取 CLI 参数旧 ID ──
+// 前提：CLI 参数传旧 ID（302 迁移前的分享短链 aweme_id），扩展回执 result.awemeId 回实际新 ID 且
+// reason=no_subtitle（库内 ingest 的是回执新 ID）；断言：打标 items 的 source_vid 必须命中回执 awemeId
+//（新 ID）——旧实现拿参数 vid 打标，对 302 迁移后的视频落空（标打在库内不存在的行上）。
+test('collect subtitle --source douyin：回执 awemeId ≠ 参数 vid → 打标 vid 用回执 awemeId（旧 ID 迁移后不落空）', async () => {
+  const srv = await startMockServer((req) => {
+    if (req.body?.action === 'fetch-douyin-subtitle') {
+      // 回执回显迁移后的实际新 ID（对齐真实扩展回执键：awemeId 与 reason 同层）
+      return { status: 200, json: { ok: true, client_id: 'ext-1', action: 'fetch-douyin-subtitle', result: { reason: 'no_subtitle', tracks: 0, ingested: true, awemeId: '7999888877776666000' } } };
+    }
+    if (req.path === '/api/tags/apply') return { status: 200, json: { ok: true, inserted: 1 } };
+    return { status: 404 };
+  });
+  try {
+    // 参数传旧 ID（7123456789012345678），回执新 ID 是 7999888877776666000
+    const r = await cli(args(NO_DB, srv.url, ['collect', 'subtitle', '7123456789012345678', '--source', 'douyin', '--client', 'ext-1']));
+    assert.equal(r.code, 0);
+    const applyReq = srv.reqs.find((q) => q.path === '/api/tags/apply');
+    assert.ok(applyReq, '发出了 /api/tags/apply');
+    // 打标命中回执新 ID；若打在参数旧 ID 上即为本 bug（失败→通过的镜像断言）
+    assert.deepEqual(applyReq!.body!.items, [{ source: 'douyin', source_vid: '7999888877776666000' }]);
   } finally { await srv.close(); }
 });
 

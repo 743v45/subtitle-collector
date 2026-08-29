@@ -702,10 +702,10 @@ export function buildCollectCommand(): Command {
       try {
         const clientId = await resolveClientId(client as CollectClient, opts.client);
         const data = await collectSubtitle(client as CollectClient, clientId, vid, opts.timeout, opts.source);
-        // 确认无字幕（两平台扩展回执均回 reason=no_subtitle）→ 打 no-subtitle 系统标（远期 ASR 音频转字幕的定位锚点）。
-        // 打标失败不阻断结果输出（视频行已入库；标可由下次重采或回填脚本补）。
+        // 确认无字幕（三平台扩展回执均回 reason=no_subtitle）→ 打 no-subtitle 系统标（远期 ASR 音频转字幕的定位锚点）。
+        // 打标 vid 取回执 awemeId 优先（douyin 旧 ID 302 迁移后库内是回执新 ID，参数旧 ID 打标落空；对齐 server markNoSubtitleForReceipt 的 c976995 修法，2026-08-29 M1）；失败不阻断（可回填）。
         if ((data as { result?: { reason?: string } })?.result?.reason === 'no_subtitle') {
-          try { await client.applyTags([vid], [NO_SUBTITLE_TAG], 'system', opts.source); } catch { /* 下次补 */ }
+          try { await client.applyTags([(data as { result?: { awemeId?: string } }).result?.awemeId ?? vid], [NO_SUBTITLE_TAG], 'system', opts.source); } catch { /* 下次补 */ }
         }
         emitResult(data, ctx.format);
       } catch (err) {

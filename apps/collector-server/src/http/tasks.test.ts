@@ -7,6 +7,7 @@
 // | R1 | bilibili/youtube 全链路（创建/派发/去重/重试/推送/筛选/排序） | 通过 | |
 // | R2 | douyin（单条链接派发 fetch-douyin-subtitle / batch source 归一 / source 筛选 / expand 骨架 400·503） | 通过 | 2026-08-29 S2 抖音平台化 |
 // | R3 | douyin expand 全链路（合法 sec_uid → expand-douyin-upper 回执 200 映射，替换 503 骨架断言） | 通过 | 2026-08-29 S8 收口接线 #1 |
+// | R4 | douyin expand 契约对齐（channel 键承载 sec_uid 为主 + sec_uid 旧键兼容档） | 通过 | 2026-08-29 C1 修复：web 形态钉死，双端不再各 mock 各的 |
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -904,8 +905,11 @@ test('GET /api/collect-tasks?source=douyin：平台筛选白名单含 douyin', a
   } finally { ctx.cleanup(); }
 });
 
-// ── /api/upper-videos/expand douyin（S8 接线后全链路）：sec_uid 校验 400；合法 → 扩展回执 200 ──
-test('POST /api/upper-videos/expand：douyin——缺/非法 sec_uid 400；合法 sec_uid（直传/主页链接）→ expand-douyin-upper 回执映射', async () => {
+// ── /api/upper-videos/expand douyin（S8 接线后全链路）：channel/sec_uid 校验 400；合法 → 扩展回执 200 ──
+// C1 修复回归（2026-08-29）：web 一直发 {source:'douyin', channel:<sec_uid>}（api.ts expandUpperVideos），
+// server 曾只认 sec_uid → 「按博主批量」必 400。本用例把 web 形态（channel 键）钉成主断言，
+// sec_uid 旧键保留兼容档——两侧契约以 channel 为准（与 CollectPage.test / api.test 同一份请求体形状）。
+test('POST /api/upper-videos/expand：douyin——缺/非法参数 400；channel 键（web 形态）与 sec_uid 旧键兼容 → expand-douyin-upper 回执映射', async () => {
   const ctx = await setup();
   let ws: WebSocket | null = null;
   try {
@@ -932,22 +936,26 @@ test('POST /api/upper-videos/expand：douyin——缺/非法 sec_uid 400；合�
     const bad1 = await httpReq(ctx.port, 'POST', '/api/upper-videos/expand', { source: 'douyin' });
     assert.equal(bad1.status, 400);
     assert.match(bad1.json.error, /sec_uid/);
-    const bad2 = await httpReq(ctx.port, 'POST', '/api/upper-videos/expand', { source: 'douyin', sec_uid: 'not-a-uid' });
+    const bad2 = await httpReq(ctx.port, 'POST', '/api/upper-videos/expand', { source: 'douyin', channel: 'not-a-uid' });
     assert.equal(bad2.status, 400);
     assert.match(bad2.json.error, /无法识别的抖音博主参数/);
 
-    // 合法 sec_uid 直传 → 200 + 回执映射（bvid=aweme_id、channel.id/name）
-    const r1 = await httpReq(ctx.port, 'POST', '/api/upper-videos/expand', { source: 'douyin', sec_uid: 'MS4wLjABAAAAabcdef123456' });
+    // 合法 channel 键（web 请求体形状）直传 → 200 + 回执映射（bvid=aweme_id、channel.id/name）
+    const r1 = await httpReq(ctx.port, 'POST', '/api/upper-videos/expand', { source: 'douyin', channel: 'MS4wLjABAAAAabcdef123456' });
     assert.equal(r1.status, 200);
     assert.equal(r1.json.channel.id, 'MS4wLjABAAAAabcdef123456');
     assert.equal(r1.json.channel.name, '抖音测试博主');
     assert.equal(r1.json.total, 1);
     assert.equal(r1.json.items[0].bvid, '7123456789012345678');
-    // 主页链接形态同样可达（server parseDouyinSecUid 归一）
+    // 主页链接形态同样可达（server parseDouyinSecUid 归一；channel 键承载）
     const r2 = await httpReq(ctx.port, 'POST', '/api/upper-videos/expand', {
-      source: 'douyin', sec_uid: 'https://www.douyin.com/user/MS4wLjABAAAAabcdef123456?from=web',
+      source: 'douyin', channel: 'https://www.douyin.com/user/MS4wLjABAAAAabcdef123456?from=web',
     });
     assert.equal(r2.status, 200);
     assert.equal(r2.json.channel.id, 'MS4wLjABAAAAabcdef123456');
+    // sec_uid 旧键兼容（C1 修复前的请求形态）：直传同样 200，不因键名回退 400
+    const r3 = await httpReq(ctx.port, 'POST', '/api/upper-videos/expand', { source: 'douyin', sec_uid: 'MS4wLjABAAAAabcdef123456' });
+    assert.equal(r3.status, 200);
+    assert.equal(r3.json.channel.id, 'MS4wLjABAAAAabcdef123456');
   } finally { ws?.close(); ctx.cleanup(); }
 });
