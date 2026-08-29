@@ -18,6 +18,7 @@ import { TASK_DISPATCH_DISABLED_ERROR } from '../task-dispatch.mjs';
 // |------|------------|-------------------------------------------------------------|------|------|
 // | T1   | 2026-08-30 | 审查 M2：expand 零数据 error + 三条对照路径                  | PASS | `pnpm --dir apps/subtitle-collector test` 全绿（覆盖率锁定达标） |
 // | T2   | 2026-08-30 | fetch-douyin-subtitle 主链全分支（首测加载本模块后的覆盖补齐）| PASS | 同上 |
+// | T3   | 2026-08-30 | spike ②：M2 判据换 douyinCreatorFromProfile（user:{} 不再穿透）+ 博主不存在秒级回执 | PASS | `pnpm qa` 全绿 |
 
 const SEC = 'MS4wLjABAAAA2y53DZw7-0cG6yOfaZCJesMdyIdXhqLPu2abnCFjkUs';
 // content-dy PROFILE_OTHER 抓的是 profile/other 响应的 user（snake_case，douyinCreatorFromProfile 口径）
@@ -391,6 +392,36 @@ test('expand：secUid 缺失/空串 → 回执 error（校验分支，无 taskId
   assert.match(missId.receipts[0].error, /secUid required/);
   const empty = await runCommand({ action: 'expand-douyin-upper', secUid: '' }, {});
   assert.match(empty.receipts[0].error, /secUid required/, '空串同拒');
+});
+
+// ── spike ②「博主不存在」防线（2026-08-30：docs/plans/douyin/upper-page-spike.md）──
+
+test('spike②：profile={}（user 缺 sec_uid，旧 truthiness 判定的穿透形态）+ items=0 → error，不再 ok+total:0 伪装成功', async () => {
+  const { receipts, uppers } = await runCommand({ action: 'expand-douyin-upper', secUid: SEC, id: 'e7' }, {
+    onMessage: (msg) => (msg?.type === 'GET_UPPER_STATE' ? {
+      // 死 sec_uid 页形态：profile/other 回 user:{}（0.1.27 的 !state.profile 判不空 → 穿透成 ok+total:0）
+      ok: true, state: 'done', secUid: SEC, profile: {}, items: [], error: null,
+    } : { ok: true }),
+  });
+  assert.equal(receipts[0].ok, false, 'creator 组不出（user 缺 sec_uid）必须回 error');
+  assert.match(receipts[0].error, /博主页数据未就绪/);
+  assert.equal(uppers.length, 0, 'profile={} 不得顺带 ingest-upper');
+});
+
+test('spike①→②：GET_UPPER_STATE error「博主不存在（UserId不合法）」→ 回执原文透传，首轮轮询即收尾（秒级，不耗 20s 窗口）', async () => {
+  let polls = 0;
+  const { receipts } = await runCommand({ action: 'expand-douyin-upper', secUid: SEC, id: 'e8' }, {
+    onMessage: (msg) => {
+      if (msg?.type !== 'GET_UPPER_STATE') return { ok: true };
+      polls += 1;
+      // content-dy 收到 PROFILE_OTHER_ERROR 后的 GET_UPPER_STATE 形态：error 态 + 博主不存在文案
+      return { ok: true, state: 'error', secUid: SEC, profile: null, items: [], error: '博主不存在（UserId不合法）' };
+    },
+  });
+  assert.equal(receipts.length, 1);
+  assert.equal(receipts[0].ok, false);
+  assert.match(receipts[0].error, /博主不存在（UserId不合法）/, '错误文案原文透传');
+  assert.ok(polls <= 2, `错误态首轮轮询即收尾（实测 ${polls} 轮，无进展窗口 20s 不参与）`);
 });
 
 // ── 依赖模块单元补齐（经 dy-navigate 首次加载进覆盖率口径，连带分支一并锁住）──

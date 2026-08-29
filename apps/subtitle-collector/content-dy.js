@@ -7,7 +7,9 @@
 // inject-dy（MAIN world）消息（信封 {source:'dy-sub-ext', type, data}）：
 //   AWEME_DETAIL      detail XHR 响应（snake_case 原样）——按 aweme_id 幂等覆盖（页面会发多次）
 //   SSR_VIDEO_DETAIL  SSR videoDetail（camelCase）——归一后仅作兜底（XHR 形态更全更稳）
-//   POST_LIST/POST_LIST_EMPTY/PROFILE_OTHER  博主批量 expand 聚合用（见 upper 状态机）
+//   POST_LIST/POST_LIST_EMPTY/PROFILE_OTHER/PROFILE_OTHER_ERROR  博主批量 expand 聚合用
+//（见 upper 状态机；PROFILE_OTHER_ERROR 是 profile/other 异常终态——sec_uid 注销的博主页回
+//   status_code:2「UserId不合法」+ user:{}，2026-08-30 spike：置错误态秒级失败，不再耗窗口）
 
 import { ssrVideoDetailToAwemeDetail, extractDouyinCaptionTracks } from "./douyin-format.mjs";
 import { buildDouyinPayload } from "./douyin-payload.js";
@@ -91,13 +93,11 @@ function scheduleUpperScroll() {
 function startUpper(secUid) {
   if (upperScrollTimer) { clearTimeout(upperScrollTimer); upperScrollTimer = null; }
   upper = { secUid, profile: null, items: [], seen: new Set(), hasMore: true, done: false, error: null };
-  // 重放缓冲里同 secUid 的消息（首页/profile 可能先于 START 到达）
+  // 重放缓冲里同 secUid 的消息（首页/profile/错误可能先于 START 到达）——走同一状态机，
+  // 含 PROFILE_OTHER_ERROR 的错误置位（就绪竞态下「博主不存在」同样秒级生效）
   for (const { type, data } of upperBuffer) {
     if (data?.secUid !== secUid) continue;
-    if (type === 'POST_LIST') pushUpperPage(data);
-    else if (type === 'POST_LIST_EMPTY') {
-      upper.error = 'post 列表 200 空体：该浏览器未登录抖音（或被风控 gating），需在登录态执行博主批量';
-    } else if (type === 'PROFILE_OTHER') upper.profile = data.user ?? null;
+    onUpperMsg(type, data);
   }
   scheduleUpperScroll();
   console.log(`[content-dy] DY_UPPER_START secUid=${secUid.slice(-8)} buffer重放=${upperBuffer.length}条`);
@@ -109,14 +109,31 @@ function upperStateOf() {
   return upper.done ? 'done' : 'running';
 }
 
-// 博主批量三类消息（POST_LIST / POST_LIST_EMPTY / PROFILE_OTHER）共用归属过滤：
-// 聚合中且 secUid 匹配 → 投状态机；否则入环形缓冲（DY_UPPER_START 前先到的首页不丢）。
+// PROFILE_OTHER_ERROR → 错误文案：status 路是「博主不存在」终态（status_msg 透传，如
+// UserId不合法）；空体/坏 JSON 是响应异常——明确报错，不再让 M2 兜底文案误报「页面改版或未注入」。
+function profileErrorText(data) {
+  if (data?.kind === 'empty-body') return '博主资料异常（profile/other 200 空体）';
+  if (data?.kind === 'bad-json') return '博主资料异常（profile/other 响应不可解析）';
+  if (typeof data?.statusMsg === 'string' && data.statusMsg) return `博主不存在（${data.statusMsg}）`;
+  return `博主不存在（profile/other 异常 status_code=${data?.statusCode ?? '?'}）`;
+}
+
+// 博主批量四类消息（POST_LIST / POST_LIST_EMPTY / PROFILE_OTHER / PROFILE_OTHER_ERROR）共用
+// 归属过滤：聚合中且 secUid 匹配 → 投状态机；否则入环形缓冲（DY_UPPER_START 前先到的首页不丢）。
+// 错误定性首错优先（不覆盖）：「需登录」与「博主不存在」理论上互斥（健康博主+匿名 → profile 正常；
+// 死 sec_uid → post 永不发），万一交叠时以先到的定性为准，避免文案漂移。
 function onUpperMsg(type, data) {
   if (!(upper && data?.secUid === upper.secUid)) { bufferUpperMsg(type, data); return; }
   if (type === "POST_LIST") { pushUpperPage(data); return; }
   if (type === "POST_LIST_EMPTY") {
-    upper.error = 'post 列表 200 空体：该浏览器未登录抖音（或被风控 gating），需在登录态执行博主批量';
+    if (!upper.error) upper.error = 'post 列表 200 空体：该浏览器未登录抖音（或被风控 gating），需在登录态执行博主批量';
     console.warn(`[content-dy] POST_LIST_EMPTY secUid=${data?.secUid.slice(-8)}（未登录 gating）`);
+    return;
+  }
+  if (type === "PROFILE_OTHER_ERROR") {
+    // 博主不存在终态（2026-08-30 spike ①）：秒级置错误态，background 下轮轮询即收尾（不耗 20s 窗口）
+    if (!upper.error) upper.error = profileErrorText(data);
+    console.warn(`[content-dy] PROFILE_OTHER_ERROR secUid=${data?.secUid.slice(-8)} ${upper.error}`);
     return;
   }
   upper.profile = data.user ?? null; // PROFILE_OTHER
@@ -133,7 +150,7 @@ function onInjectMessage(type, data) {
     const converted = ssrVideoDetailToAwemeDetail(data?.videoDetail);
     storeDetail(converted.aweme_id, converted, 'ssr');
     console.log(`[content-dy] SSR_VIDEO_DETAIL aweme=${converted.aweme_id}（SSR 兜底路）`);
-  } else if (type === "POST_LIST" || type === "POST_LIST_EMPTY" || type === "PROFILE_OTHER") {
+  } else if (type === "POST_LIST" || type === "POST_LIST_EMPTY" || type === "PROFILE_OTHER" || type === "PROFILE_OTHER_ERROR") {
     onUpperMsg(type, data);
   }
 }
