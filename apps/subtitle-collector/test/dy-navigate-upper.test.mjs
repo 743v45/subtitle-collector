@@ -20,6 +20,7 @@ import { TASK_DISPATCH_DISABLED_ERROR } from '../task-dispatch.mjs';
 // | T2   | 2026-08-30 | fetch-douyin-subtitle 主链全分支（首测加载本模块后的覆盖补齐）| PASS | 同上 |
 // | T3   | 2026-08-30 | spike ②：M2 判据换 douyinCreatorFromProfile（user:{} 不再穿透）+ 博主不存在秒级回执 | PASS | `pnpm qa` 全绿 |
 // | T4   | 2026-08-30 | diag 可观察性：周期快照行（残缺/完整）+ 窗口到点 warn 行携带快照 | PASS | 同上（纯观察不加逻辑分支） |
+// | T5   | 2026-08-30 | 0.1.28 实锤修法：收尾错误分类优先级（①~④先红后绿，⑤兜底回归锁）| PASS | `pnpm qa` 全绿（红态：①~④对旧代码 4 red；修后 25/25 绿） |
 
 const SEC = 'MS4wLjABAAAA2y53DZw7-0cG6yOfaZCJesMdyIdXhqLPu2abnCFjkUs';
 // content-dy PROFILE_OTHER 抓的是 profile/other 响应的 user（snake_case，douyinCreatorFromProfile 口径）
@@ -423,6 +424,85 @@ test('spike①→②：GET_UPPER_STATE error「博主不存在（UserId不合法
   assert.equal(receipts[0].ok, false);
   assert.match(receipts[0].error, /博主不存在（UserId不合法）/, '错误文案原文透传');
   assert.ok(polls <= 2, `错误态首轮轮询即收尾（实测 ${polls} 轮，无进展窗口 20s 不参与）`);
+});
+
+// ── 错误分类优先级（2026-08-30 0.1.28 实锤修法：博主不存在 > 需登录 > 未就绪兜底）──
+// 先红后绿：①~④ 对修改前代码红（旧代码把定性错误一律盖成 M2「未就绪」），修后全绿；⑤ 是兜底回归锁。
+// 实锤形态：真实浏览器未登录抖音，diag 计数 profile:1（健康）+ postEmpty:1（匿名 gating），但定性
+// 未达聚合（GET_UPPER_STATE error null）→ 旧收尾落 M2 文案，把更准确的「需登录」盖掉。
+const LOGIN_ERR_TEXT = 'post 列表 200 空体：该浏览器未登录抖音（或被风控 gating），需在登录态执行博主批量';
+
+// 0.1.28 形态的页面级诊断快照（计数可按需覆写；xhr 键与 content-dy xhrSeen 对齐）
+function realBrowserDiag({ profile = 1, profileErr = 0, post = 0, postEmpty = 1 } = {}) {
+  return {
+    title: '洛克影视的抖音 - 抖音', readyState: 'complete', url: 'https://www.douyin.com/user/MS4wLj',
+    xhr: { profile, profileErr, post, postEmpty, detail: 0, ssr: 0 }, ts: 1787896381000,
+  };
+}
+
+test('优先级①(0.1.28 实锤)：diag 计数 profile:1+postEmpty:1 但定性未达聚合（error null/state idle）→ 回「需登录」而非 M2「未就绪」', async () => {
+  const { receipts } = await runCommand({ action: 'expand-douyin-upper', secUid: SEC, id: 'p1' }, {
+    onMessage: (msg) => (msg?.type === 'GET_UPPER_STATE' ? {
+      // 聚合竞态形态：拦截计数在（inject-dy 不按 secUid 过滤、不随 START 重置），upper 未收到 → state 停 idle
+      ok: true, state: 'idle', secUid: null, profile: null, items: [], error: null,
+      diag: realBrowserDiag(),
+    } : { ok: true }),
+  });
+  assert.equal(receipts.length, 1);
+  assert.equal(receipts[0].ok, false, '匿名 gating 是定性错误，不是 0 作品也不是「未就绪」');
+  assert.match(receipts[0].error, /未登录抖音|登录态/, '按拦截计数定性「需登录」');
+  assert.doesNotMatch(receipts[0].error, /未就绪/, 'M2 兜底不再盖掉更准确的「需登录」');
+});
+
+test('优先级②：state.error 文案在场（字段漂移：error 在而 state 停 running）→ 原文透传', async () => {
+  const { receipts } = await runCommand({ action: 'expand-douyin-upper', secUid: SEC, id: 'p2' }, {
+    onMessage: (msg) => (msg?.type === 'GET_UPPER_STATE' ? {
+      // 漂移容错形态：error 字段在场即透传，不依赖 state 字段翻成 error（计数全 0——隔离①层的判据）
+      ok: true, state: 'running', secUid: SEC, profile: null, items: [], error: LOGIN_ERR_TEXT,
+      diag: realBrowserDiag({ profile: 0, postEmpty: 0 }),
+    } : { ok: true }),
+  });
+  assert.equal(receipts.length, 1);
+  assert.equal(receipts[0].ok, false);
+  assert.equal(receipts[0].error, LOGIN_ERR_TEXT, 'error 定性文案原文透传');
+});
+
+test('优先级③：博主不存在(profileErr) 优先于 需登录(postEmpty)——diag 双计数俱在时按前者定性', async () => {
+  const { receipts } = await runCommand({ action: 'expand-douyin-upper', secUid: SEC, id: 'p3' }, {
+    onMessage: (msg) => (msg?.type === 'GET_UPPER_STATE' ? {
+      ok: true, state: 'idle', secUid: null, profile: null, items: [], error: null,
+      diag: realBrowserDiag({ profile: 0, profileErr: 1, postEmpty: 1 }),
+    } : { ok: true }),
+  });
+  assert.equal(receipts.length, 1);
+  assert.equal(receipts[0].ok, false);
+  assert.match(receipts[0].error, /博主不存在（profile\/other 异常终态 profileErr=1/, 'profileErr 计数优先定性（博主不存在 > 需登录）——M2 兜底文案也含「博主不存在」四字，须按计数定性形态断言');
+  assert.doesNotMatch(receipts[0].error, /未就绪/, '不是 M2 兜底');
+  assert.doesNotMatch(receipts[0].error, /未登录抖音/, 'profileErr 在场时不落「需登录」定性');
+});
+
+test('优先级④：博主不存在文案漂移形态（error 在、state 停 running）→ 原文透传（含 status_msg）', async () => {
+  const { receipts } = await runCommand({ action: 'expand-douyin-upper', secUid: SEC, id: 'p4' }, {
+    onMessage: (msg) => (msg?.type === 'GET_UPPER_STATE' ? {
+      ok: true, state: 'running', secUid: SEC, profile: null, items: [], error: '博主不存在（UserId不合法）',
+      diag: realBrowserDiag({ profile: 0, profileErr: 1, postEmpty: 0 }),
+    } : { ok: true }),
+  });
+  assert.equal(receipts.length, 1);
+  assert.equal(receipts[0].ok, false);
+  assert.match(receipts[0].error, /博主不存在（UserId不合法）/, '定性文案原文透传');
+});
+
+test('兜底：无 error 且拦截计数全 0 且零数据 → M2「未就绪」仍在（真未注入/改版不被误定性）', async () => {
+  const { receipts } = await runCommand({ action: 'expand-douyin-upper', secUid: SEC, id: 'p5' }, {
+    onMessage: (msg) => (msg?.type === 'GET_UPPER_STATE' ? {
+      ok: true, state: 'running', secUid: SEC, profile: null, items: [], error: null,
+      diag: realBrowserDiag({ profile: 0, postEmpty: 0 }),
+    } : { ok: true }),
+  });
+  assert.equal(receipts.length, 1);
+  assert.equal(receipts[0].ok, false);
+  assert.match(receipts[0].error, /博主页数据未就绪/, '三层判据全不中时 M2 兜底语义不变');
 });
 
 // ── diag 可观察性（2026-08-30 真实浏览器 profile 零到达排障：只加观察不加逻辑分支）──

@@ -270,6 +270,30 @@ function douyinUpperReceipt(state, secUid, extLog, tag, elapsedS, env) {
   };
 }
 
+// 收尾错误分类（2026-08-30 0.1.28 实锤修法）：博主不存在(profileErr) > 需登录(postEmpty) >
+// 未就绪(M2 兜底)，三层判据依次收窄——修法动机：真实浏览器未登录时 profile 健康到达 + post
+// 200 空体，但收尾最终错误落 M2「未就绪」文案，把更准确的「需登录」盖掉。
+// ① state.error 定性文案（content-dy 聚合置位：POST_LIST_EMPTY → 「需登录」/PROFILE_OTHER_ERROR
+//   → 「博主不存在」）→ 原文透传。聚合正常时 error 态已在 waitUpperDone 秒级抛出；此处兜
+//   「error 字段在场而 state 未翻 error」的漂移/竞态形态。
+// ② 拦截计数定性：diag.xhr 不按 secUid 过滤、不随 DY_UPPER_START 重置（content-dy 诊断口径），
+//   聚合竞态下定性未达 state 时计数仍在——profileErr>0 → 博主不存在；postEmpty>0 → 需登录
+//   （文案与 content-dy 置位版逐字一致，排错文档/server 侧口径不漂移）。
+// ③ M2 兜底：无 error、零拦截证据且零数据（content-dy 未注入/页面零消息/改版）才回「未就绪」
+//   （2026-08-30 审查 M2 + spike ②，不再以 ok+total:0 伪装成功）。判据与回执组装同口径
+//   （douyinCreatorFromProfile）：profile={}（sec_uid 注销页 user:{} 形态，spike 实测）组不出
+//   creator，不以 truthiness 穿透；保部分结果语义不变——items>0 时即便 profile 缺失仍回执成功
+//  （丢数据比缺博主名更糟）。
+function upperFinalError(state) {
+  if (state?.error) return new Error(String(state.error));
+  const items = state?.items?.length ?? 0;
+  if (douyinCreatorFromProfile(state?.profile) != null || items > 0) return null;
+  const x = state?.diag?.xhr ?? {};
+  if (x.profileErr > 0) return new Error(`博主不存在（profile/other 异常终态 profileErr=${x.profileErr}，定性文案未达聚合）`);
+  if (x.postEmpty > 0) return new Error('post 列表 200 空体：该浏览器未登录抖音（或被风控 gating），需在登录态执行博主批量');
+  return new Error(`博主页数据未就绪（博主不存在/页面改版/未注入）items=${items}`);
+}
+
 // 抖音博主作品列表展开（expand-douyin-upper action 的执行体）
 async function expandDouyinUpper(secUid, taskId = null, env) {
   await navGate.acquire(); // 等锁（与 navigate 采集互斥，防风控叠加）
@@ -283,17 +307,8 @@ async function expandDouyinUpper(secUid, taskId = null, env) {
     env.extLog(`[dy-upper] start ${tag}tab=new#${tabId} timeout=${Math.round(DY_UPPER_PROGRESS_MS / 1000)}s（无进展窗口）`);
     await notifyUpperStart(tabId, secUid);
     const state = await waitUpperDone(tabId, env.extLog, tag);
-    // 零数据防线（2026-08-30 审查 M2 + spike ②）：content-dy 完全未注入（GET_UPPER_STATE 无响应
-    // → state=null）或注入但页面零消息（改版/滚动全失灵）时，无进展窗口收尾后连有效 profile 都没
-    // 拿到——此时回「ok+total:0」是伪装成功（上层当 0 作品建空批次）；必须回 error。判据与回执
-    // 组装同口径（douyinCreatorFromProfile）：profile={}（sec_uid 注销页 user:{} 形态，2026-08-30
-    // spike 实测）组不出 creator，不再以 truthiness 穿透。区分：组得出 creator 才证明页面活着
-    //（items 0 → content-dy POST_LIST_EMPTY 的「需登录」错误路径 / PROFILE_OTHER_ERROR 的
-    //「博主不存在」错误路径 / 真 0 作品 done 空列表成功）；保部分结果语义不变——items>0 时即便
-    // profile 缺失仍回执成功（丢数据比缺博主名更糟）。
-    if (douyinCreatorFromProfile(state?.profile) == null && !(state?.items?.length > 0)) {
-      throw new Error(`博主页数据未就绪（博主不存在/页面改版/未注入）items=${state?.items?.length ?? 0}`);
-    }
+    const finalErr = upperFinalError(state); // 分类优先级与三层判据见函数头注
+    if (finalErr) throw finalErr;
     return douyinUpperReceipt(state, secUid, env.extLog, tag, elapsedS, env);
   } catch (e) {
     env.extLog(`[dy-upper] error ${tag}elapsed=${elapsedS()} err=${String(e?.message ?? e)}`, "warn");
@@ -313,7 +328,9 @@ async function expandDouyinUpper(secUid, taskId = null, env) {
 // expand 分支：secUid 校验；post 匿名 200 空体（S1 实测 gating）→ 回执 error「需登录」，
 // 不误判「0 作品」；content-dy 未注入/页面零消息/profile 无效 → 回执 error「博主页数据未就绪」
 //（2026-08-30 审查 M2 + spike ②，不再以 ok+total:0 伪装成功；sec_uid 注销的「博主不存在」由
-// content-dy PROFILE_OTHER_ERROR 错误态秒级透传，不走此兜底）。
+// content-dy PROFILE_OTHER_ERROR 错误态秒级透传，不走此兜底）。收尾错误分类优先级（0.1.28
+// 实锤修法）：state.error 定性文案 > diag 拦截计数（profileErr → 博主不存在 / postEmpty →
+// 需登录）> M2 未就绪兜底——聚合竞态/字段漂移不再把定性错误盖成「未就绪」。
 async function handleCommand(msg, send, env) {
   if (msg.action === "fetch-douyin-subtitle") {
     if (!env.canDispatch()) {
