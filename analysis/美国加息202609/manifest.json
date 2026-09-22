@@ -1,0 +1,560 @@
+{
+  "generated_at": 1790046784245,
+  "filters": {
+    "tag": "美国加息",
+    "hasSubtitle": true,
+    "sort": "published_at",
+    "desc": false
+  },
+  "total_matched": 26,
+  "exported": 26,
+  "limit": 500,
+  "videos": [
+    {
+      "id": 7244,
+      "source": "bilibili",
+      "source_vid": "BV1kEe863EDJ",
+      "title": "美联储加息，全球渡劫，人民币却逆势升值！",
+      "creator_name": "全球大变局",
+      "creator_source_uid": "1902868373",
+      "duration": 677,
+      "published_at": 1789833671000,
+      "first_seen_at": 1790046265827,
+      "track_count": 6,
+      "subtitle": {
+        "file": "videos/2026-09-19-全球大变局.txt",
+        "lan": "ai-zh",
+        "lan_doc": "中文",
+        "track_type": 1,
+        "version_id": 19649,
+        "origin": "external"
+      },
+      "pot_limited": false
+    },
+    {
+      "id": 7243,
+      "source": "bilibili",
+      "source_vid": "BV1Yee86cE1P",
+      "title": "美联储再加息：谁受益，谁承压？20分钟看懂中美关系与全球影响",
+      "creator_name": "金融崔斯特",
+      "creator_source_uid": "264901419",
+      "duration": 1200,
+      "published_at": 1789835871000,
+      "first_seen_at": 1790046263425,
+      "track_count": 1,
+      "subtitle": {
+        "file": "videos/2026-09-19-金融崔斯特.txt",
+        "lan": "ai-zh",
+        "lan_doc": "中文",
+        "track_type": 1,
+        "version_id": 19648,
+        "origin": "external"
+      },
+      "pot_limited": false
+    },
+    {
+      "id": 7241,
+      "source": "bilibili",
+      "source_vid": "BV1Xkea6YE2k",
+      "title": "花旗闭门会：美国经济周报：鹰派美联储将拖累非 AI 板块经济 260919全网最快（推荐程度：3星选看）",
+      "creator_name": "小白投资笔记",
+      "creator_source_uid": "1221628467",
+      "duration": 1132,
+      "published_at": 1789866000000,
+      "first_seen_at": 1790046259274,
+      "track_count": 6,
+      "subtitle": {
+        "file": "videos/2026-09-20-小白投资笔记.txt",
+        "lan": "ai-zh",
+        "lan_doc": "中文",
+        "track_type": 1,
+        "version_id": 19636,
+        "origin": "external"
+      },
+      "pot_limited": false
+    },
+    {
+      "id": 7242,
+      "source": "bilibili",
+      "source_vid": "BV1Qde46EE4o",
+      "title": "美联储加息只是表面！真正威胁美股的风险正在AI内部爆发！这类股.票必须远离！",
+      "creator_name": "美股投资网",
+      "creator_source_uid": "10396662",
+      "duration": 950,
+      "published_at": 1789866000000,
+      "first_seen_at": 1790046261628,
+      "track_count": 6,
+      "subtitle": {
+        "file": "videos/2026-09-20-美股投资网.txt",
+        "lan": "ai-zh",
+        "lan_doc": "中文",
+        "track_type": 1,
+        "version_id": 19642,
+        "origin": "external"
+      },
+      "pot_limited": false
+    },
+    {
+      "id": 7240,
+      "source": "bilibili",
+      "source_vid": "BV1zaei6dEUR",
+      "title": "沃什鹰派讲话砸盘，如何拆解美联储视角下的美国经济本色？",
+      "creator_name": "蒙面财经Maskfinance",
+      "creator_source_uid": "535000906",
+      "duration": 327,
+      "published_at": 1789873420000,
+      "first_seen_at": 1790046256370,
+      "track_count": 6,
+      "subtitle": {
+        "file": "videos/2026-09-20-蒙面财经Maskfinance.txt",
+        "lan": "ai-zh",
+        "lan_doc": "中文",
+        "track_type": 1,
+        "version_id": 19630,
+        "origin": "external"
+      },
+      "pot_limited": false
+    },
+    {
+      "id": 7245,
+      "source": "bilibili",
+      "source_vid": "BV1Lwei67EsN",
+      "title": "美国威胁停止柴油出口，俄乌、中东主要产油区同时出事，若石油价格真暴涨，美国又会被反过来推高加息",
+      "creator_name": "真的很博通",
+      "creator_source_uid": "16511125",
+      "duration": 800,
+      "published_at": 1789874492000,
+      "first_seen_at": 1790046268223,
+      "track_count": 6,
+      "subtitle": {
+        "file": "videos/2026-09-20-真的很博通.txt",
+        "lan": "ai-zh",
+        "lan_doc": "中文",
+        "track_type": 1,
+        "version_id": 19655,
+        "origin": "external"
+      },
+      "pot_limited": false
+    },
+    {
+      "id": 7239,
+      "source": "bilibili",
+      "source_vid": "BV1Bvei69E1Y",
+      "title": "一口气了解美联储主席凯文沃什，他到底想干啥？",
+      "creator_name": "陈陈陈Clara",
+      "creator_source_uid": "3691000293755043",
+      "duration": 1119,
+      "published_at": 1789877069000,
+      "first_seen_at": 1790046254074,
+      "track_count": 6,
+      "subtitle": {
+        "file": "videos/2026-09-20-陈陈陈Clara.txt",
+        "lan": "ai-zh",
+        "lan_doc": "中文",
+        "track_type": 1,
+        "version_id": 19624,
+        "origin": "external"
+      },
+      "pot_limited": false
+    },
+    {
+      "id": 7238,
+      "source": "bilibili",
+      "source_vid": "BV1Uiev6NE7H",
+      "title": "普通人都在盯着美联储加不加息，真正重要的是美联储桌底下的动作，你看懂了吗?",
+      "creator_name": "东明的认知博客",
+      "creator_source_uid": "3707052174084492",
+      "duration": 410,
+      "published_at": 1789887600000,
+      "first_seen_at": 1790046251070,
+      "track_count": 1,
+      "subtitle": {
+        "file": "videos/2026-09-20-东明的认知博客.txt",
+        "lan": "ai-zh",
+        "lan_doc": "中文",
+        "track_type": 1,
+        "version_id": 19623,
+        "origin": "external"
+      },
+      "pot_limited": false
+    },
+    {
+      "id": 7237,
+      "source": "bilibili",
+      "source_vid": "BV1Mrez67Ei8",
+      "title": "【配音】德国宣告跨大西洋无条件友谊终结！美联储违抗特朗普加息，加拿大加入欧盟准成员国，美联储主席公然反水，格陵兰协议实为旧闻，地缘冲击引爆席卷全球的货币大震荡",
+      "creator_name": "有猫译",
+      "creator_source_uid": "4717930",
+      "duration": 913,
+      "published_at": 1789903231000,
+      "first_seen_at": 1790046249214,
+      "track_count": 6,
+      "subtitle": {
+        "file": "videos/2026-09-20-有猫译.txt",
+        "lan": "ai-zh",
+        "lan_doc": "中文",
+        "track_type": 1,
+        "version_id": 19617,
+        "origin": "external"
+      },
+      "pot_limited": false
+    },
+    {
+      "id": 7236,
+      "source": "bilibili",
+      "source_vid": "BV1Dzez6UEi6",
+      "title": "美国加息，日本加息，人民币反而涨了！",
+      "creator_name": "社会老罗",
+      "creator_source_uid": "3546819680274473",
+      "duration": 804,
+      "published_at": 1789904783000,
+      "first_seen_at": 1790046246962,
+      "track_count": 6,
+      "subtitle": {
+        "file": "videos/2026-09-20-社会老罗.txt",
+        "lan": "ai-zh",
+        "lan_doc": "中文",
+        "track_type": 1,
+        "version_id": 19611,
+        "origin": "external"
+      },
+      "pot_limited": false
+    },
+    {
+      "id": 7234,
+      "source": "bilibili",
+      "source_vid": "BV1hoeB67EEP",
+      "title": "油价、通胀、加息、中期选举：一条线串起来的死局？美联储加息的真正对手，不是通胀，是革命卫队！",
+      "creator_name": "武所不谈",
+      "creator_source_uid": "600221754",
+      "duration": 350,
+      "published_at": 1789911720000,
+      "first_seen_at": 1790046242761,
+      "track_count": 1,
+      "subtitle": {
+        "file": "videos/2026-09-20-武所不谈.txt",
+        "lan": "ai-zh",
+        "lan_doc": "中文",
+        "track_type": 1,
+        "version_id": 19610,
+        "origin": "external"
+      },
+      "pot_limited": false
+    },
+    {
+      "id": 7233,
+      "source": "bilibili",
+      "source_vid": "BV1eDeB6HESt",
+      "title": "超级干货视频！美国加息 A股会走大熊市？月线死叉是风险吗？ #A股#大盘分析#鹏哥复盘#股票#股民",
+      "creator_name": "鹏哥复盘日记y",
+      "creator_source_uid": "3744997197219999",
+      "duration": 515,
+      "published_at": 1789912681000,
+      "first_seen_at": 1790046240863,
+      "track_count": 1,
+      "subtitle": {
+        "file": "videos/2026-09-20-鹏哥复盘日记y.txt",
+        "lan": "ai-zh",
+        "lan_doc": "中文",
+        "track_type": 1,
+        "version_id": 19609,
+        "origin": "external"
+      },
+      "pot_limited": false
+    },
+    {
+      "id": 7232,
+      "source": "bilibili",
+      "source_vid": "BV1wjha66EG5",
+      "title": "【牢节】9.20：别被美国的CPI骗了！看懂美债崩盘底层逻辑，加息降息全部无效，只有印钞能救场，日元贬值，黄金短期风险要警惕，中美贸易如何搅动黄金与人民币汇率！",
+      "creator_name": "不剪辑手",
+      "creator_source_uid": "3707041197591406",
+      "duration": 1270,
+      "published_at": 1789923422000,
+      "first_seen_at": 1790046238897,
+      "track_count": 1,
+      "subtitle": {
+        "file": "videos/2026-09-20-不剪辑手.txt",
+        "lan": "ai-zh",
+        "lan_doc": "中文",
+        "track_type": 1,
+        "version_id": 19608,
+        "origin": "external"
+      },
+      "pot_limited": false
+    },
+    {
+      "id": 7229,
+      "source": "bilibili",
+      "source_vid": "BV1Ukha6QEQp",
+      "title": "日本被迫加息！美国的外挂血包要凉？还债的时候到了？日元美元套利交易面临崩盘！金融危机的信号为什么是日元升值？",
+      "creator_name": "好好好我知道拉",
+      "creator_source_uid": "3537121933527518",
+      "duration": 603,
+      "published_at": 1789950287000,
+      "first_seen_at": 1790046233666,
+      "track_count": 1,
+      "subtitle": {
+        "file": "videos/2026-09-21-好好好我知道拉.txt",
+        "lan": "ai-zh",
+        "lan_doc": "中文",
+        "track_type": 1,
+        "version_id": 19607,
+        "origin": "external"
+      },
+      "pot_limited": false
+    },
+    {
+      "id": 7228,
+      "source": "bilibili",
+      "source_vid": "BV1x6ev6aEsT",
+      "title": "美联储加息以后",
+      "creator_name": "杨华说天下",
+      "creator_source_uid": "3546599242336806",
+      "duration": 874,
+      "published_at": 1789956000000,
+      "first_seen_at": 1790046231636,
+      "track_count": 6,
+      "subtitle": {
+        "file": "videos/2026-09-21-杨华说天下.txt",
+        "lan": "ai-zh",
+        "lan_doc": "中文",
+        "track_type": 1,
+        "version_id": 19601,
+        "origin": "external"
+      },
+      "pot_limited": false
+    },
+    {
+      "id": 7227,
+      "source": "bilibili",
+      "source_vid": "BV1KQhe6sEwJ",
+      "title": "20260921  09.20 （1）【幽州节度使】美债只能靠 QE 续命  留学一场消费，不是阶层车票   日元破 160，美债风暴再来  加息救不了美国债务",
+      "creator_name": "速报信使",
+      "creator_source_uid": "1595517201",
+      "duration": 2418,
+      "published_at": 1789957401000,
+      "first_seen_at": 1790046228972,
+      "track_count": 1,
+      "subtitle": {
+        "file": "videos/2026-09-21-速报信使.txt",
+        "lan": "ai-zh",
+        "lan_doc": "中文",
+        "track_type": 1,
+        "version_id": 19600,
+        "origin": "external"
+      },
+      "pot_limited": false
+    },
+    {
+      "id": 7225,
+      "source": "bilibili",
+      "source_vid": "BV1jYhe6qEv1",
+      "title": "美国突然加息｜欧盟加息｜人民币汇率升值压力降低｜2022年后的情况再来一遍｜对外贸有何影响",
+      "creator_name": "大川倍蓝",
+      "creator_source_uid": "404468396",
+      "duration": 736,
+      "published_at": 1789960769000,
+      "first_seen_at": 1790046224444,
+      "track_count": 1,
+      "subtitle": {
+        "file": "videos/2026-09-21-大川倍蓝.txt",
+        "lan": "ai-zh",
+        "lan_doc": "中文",
+        "track_type": 1,
+        "version_id": 19598,
+        "origin": "external"
+      },
+      "pot_limited": false
+    },
+    {
+      "id": 7226,
+      "source": "bilibili",
+      "source_vid": "BV1BThv6VE1o",
+      "title": "日本跟随美联储加息：却差点扛不住汇率冲击",
+      "creator_name": "听风识局",
+      "creator_source_uid": "3706974426368624",
+      "duration": 901,
+      "published_at": 1789960769000,
+      "first_seen_at": 1790046226837,
+      "track_count": 1,
+      "subtitle": {
+        "file": "videos/2026-09-21-听风识局.txt",
+        "lan": "ai-zh",
+        "lan_doc": "中文",
+        "track_type": 1,
+        "version_id": 19599,
+        "origin": "external"
+      },
+      "pot_limited": false
+    },
+    {
+      "id": 7223,
+      "source": "bilibili",
+      "source_vid": "BV1nWhe6CE4f",
+      "title": "2026.9.21内资（中金）开门会-美国加息落地 ，对A股市场有何影响?",
+      "creator_name": "星辰财经-",
+      "creator_source_uid": "3494372945431057",
+      "duration": 3520,
+      "published_at": 1789967279000,
+      "first_seen_at": 1790046220704,
+      "track_count": 1,
+      "subtitle": {
+        "file": "videos/2026-09-21-星辰财经-.txt",
+        "lan": "ai-zh",
+        "lan_doc": "中文",
+        "track_type": 1,
+        "version_id": 19597,
+        "origin": "external"
+      },
+      "pot_limited": false
+    },
+    {
+      "id": 7222,
+      "source": "bilibili",
+      "source_vid": "BV1XChi6qEA7",
+      "title": "【第921期】美元加息，对日本的影响",
+      "creator_name": "听风的蚕作品",
+      "creator_source_uid": "3546899931990847",
+      "duration": 970,
+      "published_at": 1789975887000,
+      "first_seen_at": 1790046217292,
+      "track_count": 1,
+      "subtitle": {
+        "file": "videos/2026-09-21-听风的蚕作品.txt",
+        "lan": "ai-zh",
+        "lan_doc": "中文",
+        "track_type": 1,
+        "version_id": 19596,
+        "origin": "external"
+      },
+      "pot_limited": false
+    },
+    {
+      "id": 7221,
+      "source": "bilibili",
+      "source_vid": "BV1LRhv63E6L",
+      "title": "（屈机头条）26.9.21 美国债务破四十万亿，加息令政府、企业、家庭百上加斤！韩国全民炒股，K型经济一边升天，一边沉底！实体经济苦，全球资金大博弈！",
+      "creator_name": "观历史观两岸",
+      "creator_source_uid": "3546635153967315",
+      "duration": 2305,
+      "published_at": 1789984024000,
+      "first_seen_at": 1790046215221,
+      "track_count": 1,
+      "subtitle": {
+        "file": "videos/2026-09-21-观历史观两岸.txt",
+        "lan": "ai-zh",
+        "lan_doc": "中文",
+        "track_type": 1,
+        "version_id": 19595,
+        "origin": "external"
+      },
+      "pot_limited": false
+    },
+    {
+      "id": 7220,
+      "source": "bilibili",
+      "source_vid": "BV1Hweg6HEPT",
+      "title": "美联储九月决议：加息只是表象？美元信用危机正在重演1970年代！",
+      "creator_name": "致富的思维",
+      "creator_source_uid": "3546895001586404",
+      "duration": 1575,
+      "published_at": 1789984800000,
+      "first_seen_at": 1790046212617,
+      "track_count": 1,
+      "subtitle": {
+        "file": "videos/2026-09-21-致富的思维.txt",
+        "lan": "ai-zh",
+        "lan_doc": "中文",
+        "track_type": 1,
+        "version_id": 19594,
+        "origin": "external"
+      },
+      "pot_limited": false
+    },
+    {
+      "id": 7218,
+      "source": "bilibili",
+      "source_vid": "BV1VAhB6CEHW",
+      "title": "为什么说美联储必须加息？因为不加息才是“灾难”",
+      "creator_name": "烽火深度局",
+      "creator_source_uid": "3706994720508720",
+      "duration": 743,
+      "published_at": 1789995272000,
+      "first_seen_at": 1790046208212,
+      "track_count": 1,
+      "subtitle": {
+        "file": "videos/2026-09-21-烽火深度局.txt",
+        "lan": "ai-zh",
+        "lan_doc": "中文",
+        "track_type": 1,
+        "version_id": 19593,
+        "origin": "external"
+      },
+      "pot_limited": false
+    },
+    {
+      "id": 7217,
+      "source": "bilibili",
+      "source_vid": "BV19Uh66SEim",
+      "title": "关于美联储加息",
+      "creator_name": "谢作诗的经济学课",
+      "creator_source_uid": "605072874",
+      "duration": 130,
+      "published_at": 1790033164000,
+      "first_seen_at": 1790046206282,
+      "track_count": 1,
+      "subtitle": {
+        "file": "videos/2026-09-21-谢作诗的经济学课.txt",
+        "lan": "ai-zh",
+        "lan_doc": "中文",
+        "track_type": 1,
+        "version_id": 19592,
+        "origin": "external"
+      },
+      "pot_limited": false
+    },
+    {
+      "id": 7216,
+      "source": "bilibili",
+      "source_vid": "BV1aihC6xECB",
+      "title": "美联储加息真相：6年前，美国给自己挖了个大坑",
+      "creator_name": "梅河大侠",
+      "creator_source_uid": "3690970212207438",
+      "duration": 566,
+      "published_at": 1790035003000,
+      "first_seen_at": 1790046204556,
+      "track_count": 1,
+      "subtitle": {
+        "file": "videos/2026-09-21-梅河大侠.txt",
+        "lan": "ai-zh",
+        "lan_doc": "中文",
+        "track_type": 1,
+        "version_id": 19591,
+        "origin": "external"
+      },
+      "pot_limited": false
+    },
+    {
+      "id": 7213,
+      "source": "bilibili",
+      "source_vid": "BV1UchC6JEdS",
+      "title": "美国加息人民币反而走强是超强制造能力背书#人民币创新高 #人民币国际化 #人民币升值 #人民币汇率",
+      "creator_name": "AI和宏观笔记",
+      "creator_source_uid": "1230182817",
+      "duration": 1345,
+      "published_at": 1790045081000,
+      "first_seen_at": 1790046195380,
+      "track_count": 1,
+      "subtitle": {
+        "file": "videos/2026-09-22-AI和宏观笔记.txt",
+        "lan": "ai-zh",
+        "lan_doc": "中文",
+        "track_type": 1,
+        "version_id": 19590,
+        "origin": "external"
+      },
+      "pot_limited": false
+    }
+  ]
+}
