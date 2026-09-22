@@ -18,16 +18,19 @@ const args = process.argv.slice(2);
 const all = args.includes('--all');
 const keepIdx = args.indexOf('--keep');
 const keep = keepIdx >= 0 ? Number(args[keepIdx + 1]) : 1;
-const positional = args.filter((a, i) => !a.startsWith('--') && i !== keepIdx + 1);
+// 跳过 --keep 的值参数本身；无 --keep 时不得误伤位置参数（keepIdx=-1 时 keepIdx+1=0 曾吃掉目标目录）
+const positional = args.filter((a, i) => !a.startsWith('--') && !(keepIdx >= 0 && i === keepIdx + 1));
 const target = resolve(positional[0] ?? 'data/exports');
 
 if (!existsSync(target)) mkdirSync(target, { recursive: true });
 
-let names;
+// 「最新」按容器内 mtime 排序（ls -1t 新→旧），不用文件名字典序——手工备份名如
+// manual-now 字典序恒大于日期名（m > 2），曾导致默认导出选到旧手工备份（2026-09-22 事故）。
+let names; // 新→旧
 try {
   const out = execFileSync(
     'docker',
-    ['exec', CONTAINER, 'sh', '-c', `ls -1 ${BACKUP_DIR} 2>/dev/null | grep '^bilibili-collector-backup-' | sort`],
+    ['exec', CONTAINER, 'sh', '-c', `ls -1t ${BACKUP_DIR} 2>/dev/null | grep '^bilibili-collector-backup-'`],
     { encoding: 'utf8' },
   );
   names = out.split('\n').filter(Boolean);
@@ -41,17 +44,19 @@ if (names.length === 0) {
   process.exit(2);
 }
 
-const picked = all ? names : names.slice(-Math.max(1, keep));
+const picked = all ? names : names.slice(0, Math.max(1, keep)); // names 新→旧，取前 N
 console.log(`[backup-export] volume 内共 ${names.length} 份，导出 ${picked.length} 份 → ${target}`);
 
 for (const n of picked) {
   try {
     execFileSync('docker', ['cp', `${CONTAINER}:${BACKUP_DIR}/${n}`, `${target}/`], { stdio: 'pipe' });
-    const size = (statSync(join(target, n)).size / 1024 / 1024).toFixed(1);
-    console.log(`[backup-export] ✓ ${n} (${size}MB)`);
+    const st = statSync(join(target, n));
+    const size = (st.size / 1024 / 1024).toFixed(1);
+    const mtime = new Date(st.mtimeMs).toISOString().replace('T', ' ').slice(0, 19);
+    console.log(`[backup-export] ✓ ${n} (${size}MB, 备份产生于 ${mtime} UTC)`);
   } catch (err) {
     console.error(`[backup-export] ✗ ${n}: ${err.message}`);
     process.exit(3);
   }
 }
-console.log(`[backup-export] 完成：最新一份在 ${join(target, picked[picked.length - 1])}`);
+console.log(`[backup-export] 完成：最新一份在 ${join(target, picked[0])}`);
