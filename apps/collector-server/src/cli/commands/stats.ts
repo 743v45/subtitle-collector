@@ -9,7 +9,7 @@ import { emitResult, emitError } from '../output.js';
 import { openReadonlyDb } from '../db.js';
 import { countOverview, countOverviewWithSources, aggregateStats, type StatsGroupBy, type Overview, type KeyValue, type VideoFilter } from '../../db/advanced.js';
 import { AGG_SORT_KEYS, type AggregateSortKey } from '../../db/sort.js';
-import { normalizeTimestamp, parseDesc } from './videos.js';
+import { normalizeTimestamp, parseDesc, parseTagsCsv } from './videos.js';
 
 // ── 纯处理函数 ──
 
@@ -40,7 +40,7 @@ interface StatsCountRawOpts {
   top?: string;
   sort?: string;
   desc?: string | boolean;
-  q?: string; creator?: string; source?: string; tid?: string; tname?: string; tag?: string; lang?: string;
+  q?: string; creator?: string; source?: string; tid?: string; tname?: string; tag?: string; tags?: string; lang?: string;
   trackType?: string; hasSubtitle?: boolean; since?: string; until?: string; minDuration?: string; maxDuration?: string;
 }
 
@@ -96,6 +96,7 @@ export function buildStatsCommand(): Command {
     .option('--tid <id>', '分区 tid（精确）')
     .option('--tname <name>', '分区名模糊匹配')
     .option('--tag <tag>', '标签名模糊匹配')
+    .option('--tags <csv>', '标签名精确匹配，逗号分隔多个，AND 语义（与 --tag 模糊单值互补）')
     .option('--lang <lang>', '字幕语言模糊匹配')
     .option('--track-type <type>', '字幕轨类型（1=AI 2=CC 3=翻译轨），精确')
     .option('--has-subtitle', '仅含至少一条字幕版本的视频')
@@ -114,6 +115,7 @@ export function buildStatsCommand(): Command {
         tid: parseNum(raw.tid, '--tid'),
         tname: raw.tname,
         tag: raw.tag,
+        tags: parseTagsCsv(raw.tags),
         lang: raw.lang,
         track_type: parseNum(raw.trackType, '--track-type'),
         has_subtitle: raw.hasSubtitle,

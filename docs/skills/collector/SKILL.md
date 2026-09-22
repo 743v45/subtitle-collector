@@ -48,7 +48,7 @@ docker exec collector-server node -e 'const db=require("better-sqlite3")("/data/
 
 | 组 | 通道 | 用途 |
 |---|---|---|
-| `videos list/get/get-by-id` | DB 只读 | 过滤查视频:`--q --creator --since --until --tag --has-subtitle --sort --desc --page --size`(sort 键 `first_seen\|published_at\|title\|duration\|view\|updated_at`;`--desc` 可选值,缺省降序,升序 `--desc=false`) |
+| `videos list/get/get-by-id` | DB 只读 | 过滤查视频:`--q --creator --since --until --tag --tags --has-subtitle --sort --desc --page --size`(sort 键 `first_seen\|published_at\|title\|duration\|view\|updated_at`;`--desc` 可选值,缺省降序,升序 `--desc=false`;`--tag` 模糊单值,`--tags` 精确逗号分隔多标签 AND——空串按未传,二者可叠加;export videos/bundle 与 stats count 同款) |
 | `versions get <id>` | DB 只读 | 取字幕版本 payload(B 站 JSON 含 body) |
 | `changes list` | DB 只读 | change_log 变更历史:`--entity --since --until --source <平台> --sort --desc`(sort 仅 `changed_at`;items 带派生 source 平台列) |
 | `export subtitle <source> <bvid>` | DB 只读 | 字幕导出:`--sub-format srt\|vtt\|txt\|json --track <lan> --version <id> -o <file>`;不指定轨取默认轨默认版本,纯文本直写 stdout |

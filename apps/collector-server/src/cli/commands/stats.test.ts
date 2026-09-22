@@ -10,6 +10,7 @@
 // | 轮次 | 范围 | 结果 | 备注 |
 // |---|---|---|---|
 // | R1 | statsOverview 计数 + statsCount 维度/topN/filter | 通过 | 覆盖率低估见上 ⚠️ |
+// | R2 | statsCount filter.tags 双标签精确 AND | 通过 | --tags CLI 暴露（2026-09-22），VideoFilter.tags 直透 |
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -145,5 +146,26 @@ test('statsCount：by=source 按平台分组（含 --source 过滤收窄）', ()
     assert.deepEqual(statsCount(db, { by: 'source', filter: { source: 'youtube' } }), [
       { key: 'youtube', count: 1 },
     ]);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+// filter.tags 复数精确 AND（2026-09-22 stats count --tags 暴露；setup 种子无标签，测试内补带标签样本）
+test('statsCount：filter.tags 双标签精确 AND（含不存在标签归零）', () => {
+  const { db, dir } = setup();
+  try {
+    ingestVideo(db, {
+      source: 'bilibili',
+      video: {
+        source_vid: 'BV9', title: 'BV9', creator: { source_uid: '1', name: 'UP甲' },
+        extra: { tags: [{ tag_id: 1, tag_name: '游戏' }, { tag_id: 2, tag_name: '实况' }] }, duration: 100, published_at: T,
+      },
+      tracks: [],
+    });
+    // 双标齐备仅 BV9（UP甲 其余视频无标签被 AND 排除）
+    assert.deepEqual(statsCount(db, { by: 'creator', filter: { tags: ['游戏', '实况'] } }), [
+      { key: 'UP甲', count: 1 },
+    ]);
+    // 任一标签不存在 → AND 落空 → 空结果
+    assert.deepEqual(statsCount(db, { by: 'creator', filter: { tags: ['游戏', '不存在XYZ'] } }), []);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });

@@ -8,6 +8,7 @@
 // | R1 | resolveSubtitle + serializeVideosResult | 通过 | 字幕 payload 对齐 info/body.json 结构 |
 // | R2 | 端到端 commander 解析（--sub-format 回归） | 通过 | spawn tsx 跑 main.ts，防 commander 同名 option 冲突再现 |
 // | R3 | resolveSubtitle NOT_FOUND message 文案（无字幕轨/裸轨/NULL lan） | 通过 | Stryker 补测：subtitleFormat.ts mutation 88.48%→96.97%，19 存活杀 14（余 5 等价：secsToStamp 零边界 + getVideo 后 getVersionPayload 防御兜底不可达） |
+// | R4 | 端到端 export videos --tags 双标签 AND + 空串按未传 | 通过 | --tags 复数过滤 CLI 暴露（2026-09-22），spawn 真 CLI 验 commander 装配透传 |
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -328,6 +329,40 @@ test('端到端: export subtitle --sub-format vtt 经 commander 输出 WEBVTT（
     assert.equal(r.status, 0, `期望 exit=0，实际 exit=${r.status}，stderr=${r.stderr}`);
     assert.match(r.stdout, /WEBVTT/, `stdout 缺 WEBVTT 头（--sub-format 未生效）: ${r.stdout.slice(0, 80)}`);
     assert.doesNotMatch(r.stdout, /^1\r?\n00:00:00,360/, `仍输出 srt 格式，--sub-format vtt 未被 commander 接收`);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+// ── 端到端：export videos --tags 复数精确 AND（2026-09-22，spawn 真 CLI 验 commander 装配透传）──
+
+test('端到端: export videos --tags 双标签 AND 命中；空串按未传处理', () => {
+  const { db, dir } = setup();
+  // setup 样本 BV1 无标签，补一个带双标签的（同 UP）
+  ingestVideo(db, {
+    source: 'bilibili',
+    video: {
+      source_vid: 'BV2', title: '带双标签',
+      creator: { source_uid: '1', name: 'Alpha UP' },
+      extra: { tags: [{ tag_id: 1, tag_name: '游戏' }, { tag_id: 2, tag_name: '实况' }], stat: { view: 1 } },
+      duration: 100, published_at: 2000,
+    },
+    tracks: [],
+  });
+  db.close(); // 关写连接，让 spawn 的只读连接独占读
+  const run = (extraArgs: string[]) => spawnSync('./node_modules/.bin/tsx', [
+    'src/cli/main.ts', '--db', join(dir, 'test.db'), '--quiet',
+    'export', 'videos', ...extraArgs,
+  ], { encoding: 'utf-8' });
+  try {
+    // 双标签 AND：只命中 BV2（BV1 无标签）
+    const r1 = run(['--tags', '游戏,实况']);
+    assert.equal(r1.status, 0, `期望 exit=0，实际 exit=${r1.status}，stderr=${r1.stderr}`);
+    const parsed1 = JSON.parse(r1.stdout);
+    assert.equal(parsed1.total, 1);
+    assert.equal(parsed1.items[0].source_vid, 'BV2');
+    // 空串 --tags 解析为空数组按未传处理：不过滤，全量 2 条
+    const r2 = run(['--tags', '']);
+    assert.equal(r2.status, 0, `期望 exit=0，实际 exit=${r2.status}，stderr=${r2.stderr}`);
+    assert.equal(JSON.parse(r2.stdout).total, 2);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 

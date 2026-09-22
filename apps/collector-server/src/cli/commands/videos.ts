@@ -47,6 +47,7 @@ export interface VideosListOpts {
   tid?: number;
   tname?: string;
   tag?: string;
+  tags?: string[];          // CLI --tags（CSV 解析后；精确 AND 语义）
   lang?: string;
   trackType?: number;       // CLI --track-type（camelCase）
   hasSubtitle?: boolean;
@@ -76,6 +77,7 @@ export function videosList(
     tid: opts.tid,
     tname: opts.tname,
     tag: opts.tag,
+    tags: opts.tags,
     subtitle_q: opts.subtitleQ,
     lang: opts.lang,
     track_type: opts.trackType,
@@ -134,6 +136,15 @@ export function parseDesc(raw: string | boolean | undefined): boolean {
   return emitError(`非法 --desc: ${raw}（可选 true|false，缺省 true）`, 'ARGS');
 }
 
+// --tags CSV 解析（2026-09-22 复数精确 AND 过滤）：逗号分隔、trim、滤空项；
+// 空串/全逗号解析为空数组 → 返回 undefined 按未传处理（DB 层空数组本就不过滤，这里归一）。
+// 导出供 export.ts / stats.ts 复用（对齐 parseSort/parseDesc 先例）；split 先例 tags.ts parseNames。
+export function parseTagsCsv(raw: string | undefined): string[] | undefined {
+  if (raw === undefined) return undefined;
+  const tags = raw.split(',').map((s) => s.trim()).filter(Boolean);
+  return tags.length > 0 ? tags : undefined;
+}
+
 // commander 解析出的原始选项（字符串/布尔），action 内转成 VideosListOpts。
 interface ListRawOpts {
   q?: string;
@@ -142,6 +153,7 @@ interface ListRawOpts {
   tid?: string;
   tname?: string;
   tag?: string;
+  tags?: string;
   lang?: string;
   trackType?: string;
   hasSubtitle?: boolean;
@@ -201,6 +213,7 @@ export function buildVideosCommand(): Command {
     .option('--tid <id>', '分区 tid（精确）')
     .option('--tname <name>', '分区名模糊匹配')
     .option('--tag <tag>', '标签名模糊匹配（extra.tags[].tag_name）')
+    .option('--tags <csv>', '标签名精确匹配，逗号分隔多个，AND 语义（与 --tag 模糊单值互补）')
     .option('--subtitle-q <text>', '字幕正文关键词模糊匹配（命中 subtitle_versions.payload）')
     .option('--lang <lang>', '字幕语言模糊匹配（如 zh 命中 zh-Hans）')
     .option('--track-type <type>', '字幕轨类型（1=AI 2=CC 3=翻译轨），精确')
@@ -226,6 +239,7 @@ export function buildVideosCommand(): Command {
         tid: parseNum(raw.tid, '--tid'),
         tname: raw.tname,
         tag: raw.tag,
+        tags: parseTagsCsv(raw.tags),
         subtitleQ: raw.subtitleQ,
         lang: raw.lang,
         trackType: parseNum(raw.trackType, '--track-type'),

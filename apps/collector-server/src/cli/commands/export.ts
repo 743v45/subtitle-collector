@@ -21,7 +21,7 @@ import { convertSubtitle, resolveSubtitle, type SubtitleFormat } from '../subtit
 import { buildBundle, FILENAME_PARTS, type FilenamePart } from '../bundle.js';
 // videos.ts 暴露 videosList（camelCase opts → snake_case filter）+ normalizeTimestamp + parseSort/parseDesc
 // （排序键清单单一事实源 db/advanced.ts VIDEO_SORT_KEYS），export videos/bundle 直接复用查询与解析逻辑。
-import { videosList, normalizeTimestamp, parseSort, parseDesc, type VideosListOpts } from './videos.js';
+import { videosList, normalizeTimestamp, parseSort, parseDesc, parseTagsCsv, type VideosListOpts } from './videos.js';
 
 const SUBTITLE_FORMATS = ['srt', 'vtt', 'txt', 'json'] as const;
 const VIDEOS_FORMATS = ['json', 'csv', 'ndjson'] as const;
@@ -76,7 +76,7 @@ interface SubtitleRawOpts {
 }
 
 interface VideosRawOpts {
-  q?: string; creator?: string; source?: string; tid?: string; tname?: string; tag?: string; lang?: string;
+  q?: string; creator?: string; source?: string; tid?: string; tname?: string; tag?: string; tags?: string; lang?: string;
   trackType?: string; hasSubtitle?: boolean; since?: string; until?: string; minDuration?: string; maxDuration?: string;
   sort?: string; desc?: string | boolean; page?: string; size?: string; output?: string;
 }
@@ -189,6 +189,7 @@ export function buildExportCommand(): Command {
     .option('--tid <id>', '分区 tid（精确）')
     .option('--tname <name>', '分区名模糊匹配')
     .option('--tag <tag>', '标签名模糊匹配')
+    .option('--tags <csv>', '标签名精确匹配，逗号分隔多个，AND 语义（与 --tag 模糊单值互补）')
     .option('--lang <lang>', '字幕语言模糊匹配')
     .option('--track-type <type>', '字幕轨类型（1=AI 2=CC 3=翻译轨），精确')
     .option('--has-subtitle', '仅含至少一条字幕版本的视频')
@@ -211,6 +212,7 @@ export function buildExportCommand(): Command {
         tid: parseNum(raw.tid, '--tid'),
         tname: raw.tname,
         tag: raw.tag,
+        tags: parseTagsCsv(raw.tags),
         lang: raw.lang,
         trackType: parseNum(raw.trackType, '--track-type'),
         hasSubtitle: raw.hasSubtitle,
@@ -258,6 +260,7 @@ export function buildExportCommand(): Command {
     .option('--tid <id>', '分区 tid（精确）')
     .option('--tname <name>', '分区名模糊匹配')
     .option('--tag <tag>', '标签名模糊匹配')
+    .option('--tags <csv>', '标签名精确匹配，逗号分隔多个，AND 语义（与 --tag 模糊单值互补）')
     .option('--subtitle-q <text>', '字幕正文关键词模糊匹配')
     .option('--lang <lang>', '字幕语言模糊匹配')
     .option('--track-type <type>', '字幕轨类型（1=AI 2=CC 3=翻译轨），精确')
@@ -281,6 +284,7 @@ export function buildExportCommand(): Command {
       const filters: VideosListOpts = {
         q: raw.q, creator: raw.creator, source: raw.source,
         tid: parseNum(raw.tid, '--tid'), tname: raw.tname, tag: raw.tag,
+        tags: parseTagsCsv(raw.tags),
         subtitleQ: raw.subtitleQ, lang: raw.lang,
         trackType: parseNum(raw.trackType, '--track-type'),
         hasSubtitle: raw.hasSubtitle, paid: raw.paid,

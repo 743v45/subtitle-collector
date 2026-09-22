@@ -6,6 +6,7 @@
 // |---|---|---|---|
 // | R1 | normalizeTimestamp + videosList/get/getById 纯函数 | 通过 | 全部用临时 DB，无副作用 |
 // | R2 | videosList paid 过滤（v.paid=1） | 通过 | 4 默认非付费 + 1 付费 ingest，--paid 仅命中付费 |
+// | R3 | videosList tags 精确 AND + parseTagsCsv 空值归一 | 通过 | --tags 复数过滤 CLI 暴露（2026-09-22），样本标签 BV1=游戏+实况 |
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -15,7 +16,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { openDb, migrate } from '../../db/migrate.js';
 import { ingestVideo } from '../../db/ingest.js';
-import { videosList, videosGet, videosGetById, normalizeTimestamp, parseDesc } from './videos.js';
+import { videosList, videosGet, videosGetById, normalizeTimestamp, parseDesc, parseTagsCsv } from './videos.js';
 
 const T = 1_700_000_000_000; // 基准毫秒时间戳（2023-11-14T22:13:20.000Z）
 
@@ -127,6 +128,43 @@ test('videosList: 文本/UP/source/tid/tname/tag/lang 过滤透传', () => {
     assert.deepEqual(titles(videosList(db, { tid: 17 }).items).sort(), ['标题A', '标题C']);
     assert.deepEqual(titles(videosList(db, { tag: '游戏' }).items).sort(), ['标题A', '标题C']);
     assert.deepEqual(titles(videosList(db, { lang: 'zh' }).items).sort(), ['标题A', '标题B']);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+// ── videosList: tags 复数精确 AND 过滤（--tags CLI 暴露，DB 层 buildTagConds 既有能力）──
+// 样本标签（extra.tags）：BV1=游戏+实况 / BV2=数码 / BV3=游戏 / BV4=无
+
+test('videosList: tags 双标签精确 AND 命中，且可与 tag 模糊并存叠加', () => {
+  const { db, dir } = setup();
+  try {
+    // 双标齐备的仅 BV1（BV3 只有游戏，缺实况被 AND 排除）
+    assert.deepEqual(titles(videosList(db, { tags: ['游戏', '实况'] }).items), ['标题A']);
+    assert.deepEqual(titles(videosList(db, { tags: ['实况'] }).items), ['标题A']);
+    // --tag 模糊 + --tags 精确并存：DB 层叠加 AND（tag='游' 模糊圈 BV1/BV3，tags 精确收窄到 BV1）
+    assert.deepEqual(titles(videosList(db, { tag: '游', tags: ['实况'] }).items), ['标题A']);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('videosList: tags 含不存在的标签时结果为空（AND 无一满足）', () => {
+  const { db, dir } = setup();
+  try {
+    assert.equal(videosList(db, { tags: ['游戏', '不存在的标签XYZ'] }).total, 0);
+    assert.equal(videosList(db, { tags: ['不存在XYZ'] }).total, 0);
+    // 精确语义对照：tags=['游'] 不命中「游戏」（--tag 模糊才命中，见上组）
+    assert.equal(videosList(db, { tags: ['游'] }).total, 0);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('parseTagsCsv：undefined 透传；空串/全逗号/纯空白归一为 undefined（按未传处理）', () => {
+  assert.equal(parseTagsCsv(undefined), undefined);
+  assert.equal(parseTagsCsv(''), undefined);
+  assert.equal(parseTagsCsv(',,,,'), undefined);
+  assert.equal(parseTagsCsv(' , , '), undefined);
+  assert.deepEqual(parseTagsCsv('游戏, 实况 ,'), ['游戏', '实况']); // 逐项 trim + 滤空
+  // 空数组语义与 parseTagsCsv 归一一致：videosList 传空 tags 同未传（全量 4 条）
+  const { db, dir } = setup();
+  try {
+    assert.equal(videosList(db, { tags: [] }).total, 4);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 

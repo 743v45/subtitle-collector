@@ -56,9 +56,11 @@ node scripts/youtube-collect-subs.mjs     # stdin 读 videoId,采英文+中文�
 ```collector-cli
 collector-cli --db <repo>/data/bilibili-collector.db export bundle --creator <UP名> --has-subtitle --out <dir>
 collector-cli --db <repo>/data/bilibili-collector.db export bundle --tag <标签名> --out <dir>
+collector-cli --db <repo>/data/bilibili-collector.db export bundle --tags <标签1>,<标签2> --out <dir>
 ```
 
 - bundle 产物:manifest.json + videos/*.txt + ANALYZE.md;`--track <lan>` 选语言,`--limit <n>` 控量。`--db`/`--out` 一律绝对路径(SKILL.md cwd 陷阱)。
+- 多标签精确过滤用 `--tags`(逗号分隔,AND 语义,全部命中才导出;`--tag` 为模糊单值,二者可叠加,空串按未传)——videos list / export videos / stats count 同款。
 - 分析在 Claude Code 会话中完成(内置 AI pipeline 是远期项);产物落盘 `analysis/<主题>/`,三类模板见 README「分析产物规范」:观点汇总(多 UP 分歧共识)/ 面试题库(题目+考点+参考答案)/ 理念整理(系列视频方法论)。
 
 ## 5. tags 打标(含 AI 打标工作流)
@@ -67,8 +69,8 @@ collector-cli --db <repo>/data/bilibili-collector.db export bundle --tag <标签
 
 ```collector-cli
 collector-cli sub search <主题关键词> --ctx 8 --max-videos 20
-collector-cli tags apply <bvid1> <bvid2> --names <标签1>,<标签2> --source ai
-collector-cli tags list --source ai
+collector-cli tags apply <bvid1> <bvid2> --names <标签1>,<标签2> --scope ai --source bilibili
+collector-cli tags list --scope ai
 ```
 
 - 先 `sub search` 读字幕正文判断视频归属 → `tags apply` 打标(打标即建标,视频需已入库)→ `tags list` 核对。
