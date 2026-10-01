@@ -6,6 +6,8 @@ import { extractBody, resolveSubtitle } from './subtitleFormat.js';
 import type Database from 'better-sqlite3';
 import { videosList, type VideosListOpts } from './commands/videos.js';
 import { latestTaskStatusByVideoIds } from '../db/advanced.js';
+import { getVideoTagsByVideoIds } from '../db/tags.js';
+import { getTagPriority, type TagPrioritySource } from '../db/settings.js';
 
 // ── 时间格式化 ──
 
@@ -23,106 +25,37 @@ export function secsToClock(seconds: number): string {
 // ── 字幕正文行格式 ──
 
 /**
- * 字幕 payload → `[分:秒] 字幕内容` 行格式（bundle 正文专用）。
+ * payload → 非空字幕行数组：line = `[分:秒] 字幕内容`（bundle 正文专用行格式），from = 末行时间戳所需的原始秒。
  * 与 convertSubtitle 'txt'（纯文本无时间戳）不同：行首轻量时间戳供分析产物引用出处。
+ * stampedTxt（正文拼装）与 buildBundle（subtitle.lines/last_ts 元数据）共用，保证行口径单一。
  * payload 结构不符时抛错（extractBody），调用方 catch 后记 manifest errors[]。
  */
-export function stampedTxt(payload: unknown): string {
-  const lines = extractBody(payload)
-    .map((item) => ({ at: secsToClock(item.from), text: item.content.trim() }))
+export interface StampedLine { from: number; line: string; }
+
+export function stampedLines(payload: unknown): StampedLine[] {
+  return extractBody(payload)
+    .map((item) => ({ from: item.from, at: secsToClock(item.from), text: item.content.trim() }))
     .filter((l) => l.text.length > 0)
-    .map((l) => `[${l.at}] ${l.text}`);
-  return `${lines.join('\n')}\n`;
+    .map((l) => ({ from: l.from, line: `[${l.at}] ${l.text}` }));
 }
 
-// ── ANALYZE.md 模板（随每个 bundle 生成；产物规范单一来源，勿在他处复制）──
+/** 行数组 → 正文文本（每行一条、末尾换行；stampedTxt 与 buildBundle 共用的唯一拼装处）。 */
+function linesToTxt(lines: StampedLine[]): string {
+  return `${lines.map((l) => l.line).join('\n')}\n`;
+}
 
-export const ANALYZE_MD = `# 分析指引（bundle 自述）
+export function stampedTxt(payload: unknown): string {
+  return linesToTxt(stampedLines(payload));
+}
 
-本目录是**分析原料包**：\`manifest.json\`（视频清单与导出条件）+ \`videos/*.txt\`（每视频字幕正文，行格式 \`[分:秒] 字幕\`）。
-
-**分析产物写到 \`analysis/<主题>/\`**（相对 bundle 根；与 README「分析产物规范」一致）。bundle 目录是可再生原料，重导出会整体覆盖——产物与原料分开存放，互不混杂。按用途选模板，产物文件名固定：
-
-| 用途 | 产物文件 |
-|---|---|
-| 某话题多 UP 观点聚合 | \`analysis/<主题>/观点汇总.md\` |
-| 面试题整理 | \`analysis/<主题>/面试题库.md\` |
-| 单 UP 理念提炼 | \`analysis/<主题>/理念整理.md\` |
-
-**硬性要求**：
-1. 每条观点/题目/金句必须附出处：\`> 来源: <视频标题> [分:秒]\`，时间戳取自 \`videos/\` 下该视频文件（默认命名 \`<ID>-<标题>.txt\`，\`--name-order\` 可调组件与顺序）行首，可回溯。
-2. \`manifest.json\` 中 \`subtitle: null\` 的视频无正文（采集盲区），分两类在「覆盖盲区」如实列出，勿假装看过：
-   - 真无字幕（\`pot_limited: false\`）：视频本身无字幕轨，不可挽回；
-   - 受限待重采（\`pot_limited: true\`）：采集时字幕受限（如 YouTube pot 门槛），重试重采可能补回，不算永久盲区。
-3. 结论只用原料支持的说法，区分「视频里明说」与「分析者推断」。
-
----
-
-## 模板一：观点汇总.md（多 UP 同话题）
-
-\`\`\`markdown
-# <主题> 观点汇总
-
-> 原料：N 个视频 / M 位 UP（见 manifest.json）；生成：<日期>
-
-## 共识（多方一致）
-- <观点>
-  > 来源: 视频A [12:34]、视频B [03:21]
-
-## 分歧（说法相左）
-### <议题>
-- 立场甲：<观点>
-  > 来源: 视频A [12:34]
-- 立场乙：<观点>
-  > 来源: 视频C [45:06]
-
-## 值得追的线索
-- <待验证 / 延伸阅读>
-
-## 覆盖盲区
-### 真无字幕（不可挽回）
-- <subtitle:null 且 pot_limited=false 的视频 / 主题未覆盖的流派>
-### 受限待重采（pot_limited=true，可重试）
-- <subtitle:null 且 pot_limited=true 的视频；重采成功后下次导出自动移出此栏>
-\`\`\`
-
-## 模板二：面试题库.md（面试内容整理）
-
-\`\`\`markdown
-# <主题> 面试题库
-
-> 原料：N 个视频；生成：<日期>
-
-## <子主题>
-### Q1. <题目>
-- **考点**：
-- **参考答案**（从字幕提炼）：
-  > 来源: 视频A [12:34]
-- **常见追问**：
-\`\`\`
-
-## 模板三：理念整理.md（单 UP 系列）
-
-\`\`\`markdown
-# <UP 主名> 理念整理
-
-> 原料：N 个视频（<最早发布> ~ <最晚发布>）；生成：<日期>
-
-## 核心理念（一句话）
-
-## 方法论 / 原则
-- <原则>
-  > 来源: 视频A [12:34]
-
-## 理念演变（按发布时间）
-
-## 金句
-- 「<原话>」
-  > 来源: 视频B [05:00]
-\`\`\`
-`;
+// ── ANALYZE.md 模板 ──
+// 模板本体在 ./analyze-template.ts（模块 ≤400 行上限拆分，2026-10-02）；import 供本文件组包用，re-export 维持既有导入路径。
+import { ANALYZE_MD } from './analyze-template.js';
+export { ANALYZE_MD };
 
 // ── buildBundle 类型 ──
+
+export interface BundleTag { name: string; scope: string; }
 
 export interface BundleSubtitleMeta {
   file: string;                 // 相对 bundle 根
@@ -131,6 +64,8 @@ export interface BundleSubtitleMeta {
   track_type: number | null;    // 1=AI 2=CC 3=翻译轨
   version_id: number;
   origin: string;               // external | manual | asr
+  lines: number;                // 该轨非空行数（原始量；覆盖残缺判定留给分析会话，不算比例不设阈值）
+  last_ts?: number;             // 末行起始时间戳（秒）；末行时间解析失败时省略字段
 }
 
 export interface BundleVideoEntry {
@@ -138,6 +73,11 @@ export interface BundleVideoEntry {
   title: string; creator_name: string | null; creator_source_uid: string | null;
   duration: number | null; published_at: number | null; first_seen_at: number;
   track_count: number;
+  // 全部标签 [{name, scope}]（六档：manual/batch/ai/system 关系表 + bili/season extra 实时读，
+  // 同名按 tag_priority 去重保优先档，对齐 http/queries.ts enrichItems 口径；无标签为空数组）
+  tags: BundleTag[];
+  // 播放量（extra.stat.view）；extra 缺 stat.view 时省略字段
+  view?: number;
   subtitle: BundleSubtitleMeta | null;  // null = 无字幕/轨缺失/payload 损坏
   // 受限标记：该视频最近一次 collect_tasks 任务 status='limited'（半入库：元信息在、0 轨，
   // 如 YouTube pot 门槛）。与「真无字幕」的区分字段——重采成功后最新任务不再是 limited，
@@ -217,21 +157,107 @@ export function videoFileName(
   return truncateUtf8(parts.filter(Boolean).join('-'), 240) || v.source_vid;
 }
 
-// ── 视频正文头部（标题 + 元信息一行 + 轨一行 + 空行 + 正文）──
+// ── 视频正文头部（标题 + 元信息一行 + 轨一行 + 轨覆盖 + 空行 + 正文）──
 
 export function videoHeader(v: BundleVideoEntry, sub: BundleSubtitleMeta): string {
   const dur = v.duration != null ? secsToClock(v.duration) : '未知';
   const pub = v.published_at != null ? new Date(v.published_at).toISOString().slice(0, 10) : '未知';
   const trackTypeLabel = sub.track_type === 2 ? 'CC' : sub.track_type === 1 ? 'AI' : sub.track_type === 3 ? '翻译' : '?';
   const trackLabel = sub.lan_doc && sub.lan ? `${sub.lan_doc}(${sub.lan}, ${trackTypeLabel})` : `${sub.lan ?? '(无lan)'}`;
+  // 轨覆盖：末行时间戳（原始信息直出，不加可疑标记；last_ts 缺失不显示）
+  const cover = sub.last_ts != null ? `  轨覆盖: 至 ${secsToClock(sub.last_ts)}` : '';
   // 平台 ID 前缀按 source 条件（B 站 BV 号 / YouTube 11 位 ID / 抖音 aweme_id），不再一律写死「BV:」
   const vidLabel = v.source === 'bilibili' ? 'BV' : v.source === 'youtube' ? 'YT' : v.source === 'douyin' ? 'DY' : v.source;
   return [
     `# ${v.title}`,
     `UP: ${v.creator_name ?? '未知UP'}  时长: ${dur}  发布: ${pub}  ${vidLabel}: ${v.source_vid}`,
-    `轨: ${trackLabel}  版本来源: ${sub.origin}`,
+    `轨: ${trackLabel}  版本来源: ${sub.origin}${cover}`,
     '',
   ].join('\n');
+}
+
+// ── buildBundle 组装辅助 ──
+
+/**
+ * 批量取 extra 派生量（view 播放量 + bili/season 标签），参照 http/queries.ts enrichItems 的富化方式：
+ * 单条 IN 查询防 N+1（对齐 latestTaskStatusByVideoIds 先例）。extra 缺字段/坏 JSON → 对应量缺省。
+ */
+function videoExtrasByVideoIds(
+  db: Database.Database,
+  ids: number[],
+): Map<number, { view: number | null; biliNames: string[]; seasonNames: string[] }> {
+  const map = new Map<number, { view: number | null; biliNames: string[]; seasonNames: string[] }>();
+  if (ids.length === 0) return map;
+  const placeholders = ids.map(() => '?').join(',');
+  const rows = db.prepare(
+    `SELECT id,
+            CAST(json_extract(extra, '$.stat.view') AS INTEGER) AS view,
+            json_extract(extra, '$.tags') AS bili_tags,
+            json_extract(extra, '$.ugc_season.title') AS season_title
+       FROM videos WHERE id IN (${placeholders})`,
+  ).all(...ids) as Array<{ id: number; view: number | null; bili_tags: string | null; season_title: string | null }>;
+  for (const r of rows) {
+    // bili 档：extra.tags 是 [{tag_name}] 数组的 JSON（坏 JSON/非数组 → 空档，对齐 enrichItems 容错）
+    let biliNames: string[] = [];
+    if (r.bili_tags) {
+      try {
+        const arr = JSON.parse(r.bili_tags) as unknown;
+        if (Array.isArray(arr)) {
+          biliNames = (arr as Array<{ tag_name?: unknown }>)
+            .map((x) => (x && typeof x.tag_name === 'string' ? x.tag_name : null))
+            .filter((t): t is string => t !== null);
+        }
+      } catch { biliNames = []; }
+    }
+    map.set(r.id, { view: r.view ?? null, biliNames, seasonNames: r.season_title ? [r.season_title] : [] });
+  }
+  return map;
+}
+
+/**
+ * 视频全量标签（六档合并，对齐 http/queries.ts enrichItems 口径）：同名按 tag_priority 去重保优先档，
+ * 档位序 + 名称序稳定排序。镜像实现说明：queries.ts 的 mergeTagDetails 是私有函数不导出，且 http→cli
+ * 反向依赖会违反 depcruise 分层，故 CLI 侧复刻一份（latestTaskStatusByVideoIds 先例同款取舍）；两处需同步改。
+ */
+function mergeBundleTags(
+  db: Database.Database,
+  ids: number[],
+  extras: Map<number, { biliNames: string[]; seasonNames: string[] }>,
+): Map<number, BundleTag[]> {
+  const priority = getTagPriority(db);
+  const rank = new Map(priority.map((s, i) => [s, i]));
+  const relTags = getVideoTagsByVideoIds(db, ids);
+  const out = new Map<number, BundleTag[]>();
+  for (const id of ids) {
+    // videoExtrasByVideoIds 对本页每个 id 必有键（required=true 时必有值，同款断言风格）
+    const ex = extras.get(id)!;
+    // 关系档与 extra 无关，单独解析（无标签视频 map 缺键 → 空档）
+    const rel = (relTags.get(id) ?? []).map((t) => ({ name: t.name, scope: t.source }));
+    const all = [
+      ...ex.biliNames.map((name) => ({ name, scope: 'bili' as const })),
+      ...rel,
+      ...ex.seasonNames.map((name) => ({ name, scope: 'season' as const })),
+    ];
+    const winner = new Map<string, { name: string; scope: TagPrioritySource }>();
+    for (const t of all) {
+      const cur = winner.get(t.name);
+      // scope 恒为 TagPrioritySource 六档之一、rank 覆盖全档，取值必有（免 ?? 兜底分支）
+      if (!cur || rank.get(t.scope)! < rank.get(cur.scope)!) winner.set(t.name, t);
+    }
+    out.set(id, [...winner.values()].sort((a, b) => {
+      const pa = rank.get(a.scope)!; const pb = rank.get(b.scope)!;
+      return pa !== pb ? pa - pb : a.name.localeCompare(b.name);
+    }));
+  }
+  return out;
+}
+
+/**
+ * 末行时间戳（秒）：取行数组最后一条的 from；无末行（行数组空，如正文全空白）时 undefined——manifest 省略该字段。
+ * （payload 经 JSON.parse 还原，from 不可能出现非有限数，无需再防御。）
+ */
+function lastTsOf(lines: StampedLine[]): number | undefined {
+  return lines.length > 0 ? lines[lines.length - 1].from : undefined;
 }
 
 // ── 组装（纯函数：只读 db，不落盘；时间由 opts.now 注入）──
@@ -239,31 +265,44 @@ export function videoHeader(v: BundleVideoEntry, sub: BundleSubtitleMeta): strin
 export function buildBundle(db: Database.Database, opts: BuildBundleOpts): BundleResult {
   const nameOrder = opts.nameOrder ?? ['id', 'name'];
   const page = videosList(db, { ...opts.filters, page: 1, size: opts.limit });
-  // 受限标记：一次批量取本页视频的最近任务状态（latestTaskStatusByVideoIds，见 advanced.ts 注释）
-  const latestStatus = latestTaskStatusByVideoIds(db, page.items.map((v) => v.id));
+  // 批量富化：本页一次取齐（IN 查询防 N+1，先例 latestTaskStatusByVideoIds / enrichItems）
+  const ids = page.items.map((v) => v.id);
+  const latestStatus = latestTaskStatusByVideoIds(db, ids);
+  const extras = videoExtrasByVideoIds(db, ids);
+  const tagsById = mergeBundleTags(db, ids, extras);
   const videos: BundleVideoEntry[] = [];
   const files: BundleFile[] = [{ path: 'ANALYZE.md', content: ANALYZE_MD }];
   const errors: Array<{ source_vid: string; message: string }> = [];
 
   for (const v of page.items) {
+    const ex = extras.get(v.id)!;  // 本页每个 id 必有 extra 行（同 mergeBundleTags 断言）
     const entry: BundleVideoEntry = {
       id: v.id, source: v.source, source_vid: v.source_vid,
       title: v.title, creator_name: v.creator_name, creator_source_uid: v.creator_source_uid,
       duration: v.duration, published_at: v.published_at, first_seen_at: v.first_seen_at,
-      track_count: v.track_count, subtitle: null,
+      track_count: v.track_count,
+      // mergeBundleTags 对本页每个 id 必有键（required=true 时必有值，同款断言风格）
+      tags: tagsById.get(v.id)!,
+      // extra 缺 stat.view → 省略字段（manifest 消费方以 'view' in v 判别）
+      ...(ex.view != null ? { view: ex.view } : {}),
+      subtitle: null,
       pot_limited: latestStatus.get(v.id) === 'limited',
     };
     const r = resolveSubtitle(db, { source: v.source, sourceVid: v.source_vid, track: opts.track, format: 'json' });
     if (r.kind === 'ok') {
       try {
-        const body = stampedTxt(r.payload);
+        // 行数组一次解析三用：正文拼装 + lines 计数 + last_ts 末行秒
+        const lines = stampedLines(r.payload);
+        const lastTs = lastTsOf(lines);
         const sub: BundleSubtitleMeta = {
           file: `videos/${videoFileName(v, nameOrder)}.txt`,
           lan: r.trackLan ?? null, lan_doc: r.trackLanDoc ?? null,
           track_type: r.trackType ?? null, version_id: r.versionId, origin: r.versionOrigin ?? '?',
+          lines: lines.length,
+          ...(lastTs !== undefined ? { last_ts: lastTs } : {}),
         };
         entry.subtitle = sub;
-        files.push({ path: sub.file, content: `${videoHeader(entry, sub)}${body}` });
+        files.push({ path: sub.file, content: `${videoHeader(entry, sub)}${linesToTxt(lines)}` });
       } catch (err) {
         // payload 损坏：记 errors、subtitle 保持 null，不中断整包
         errors.push({ source_vid: v.source_vid, message: (err as Error).message });
