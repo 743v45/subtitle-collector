@@ -1,0 +1,348 @@
+{
+  "generated_at": 1789804371820,
+  "filters": {
+    "tag": "ai-agent-岗位分析",
+    "desc": true
+  },
+  "total_matched": 16,
+  "exported": 16,
+  "limit": 500,
+  "videos": [
+    {
+      "id": 7212,
+      "source": "bilibili",
+      "source_vid": "BV1FK7r6wEf2",
+      "title": "【前端工作流编辑器实战】AI Agent 开发核心内容：如何处理AI记忆问题？全局变量池的运作逻辑",
+      "creator_name": "AI全栈进阶Cris",
+      "creator_source_uid": "3546812608678734",
+      "duration": 389,
+      "published_at": 1780641643000,
+      "first_seen_at": 1789804261321,
+      "track_count": 1,
+      "subtitle": {
+        "file": "videos/BV1FK7r6wEf2-【前端工作流编辑器实战】AI Agent 开发核心内容：如何处理AI记忆问题？全局变量池的运作逻辑.txt",
+        "lan": "ai-zh",
+        "lan_doc": "中文",
+        "track_type": 1,
+        "version_id": 19589,
+        "origin": "external"
+      },
+      "pot_limited": false
+    },
+    {
+      "id": 7211,
+      "source": "bilibili",
+      "source_vid": "BV1DPun6YEKy",
+      "title": "10. agent 内容审核工作流",
+      "creator_name": "AI_Julie",
+      "creator_source_uid": "524275099",
+      "duration": 642,
+      "published_at": 1786009438000,
+      "first_seen_at": 1789804259473,
+      "track_count": 6,
+      "subtitle": {
+        "file": "videos/BV1DPun6YEKy-10. agent 内容审核工作流.txt",
+        "lan": "ai-zh",
+        "lan_doc": "中文",
+        "track_type": 1,
+        "version_id": 19583,
+        "origin": "external"
+      },
+      "pot_limited": false
+    },
+    {
+      "id": 7210,
+      "source": "bilibili",
+      "source_vid": "BV18ouL6QEkx",
+      "title": "13. AI Agent human in the loop",
+      "creator_name": "AI_Julie",
+      "creator_source_uid": "524275099",
+      "duration": 966,
+      "published_at": 1786246191000,
+      "first_seen_at": 1789804257133,
+      "track_count": 6,
+      "subtitle": {
+        "file": "videos/BV18ouL6QEkx-13. AI Agent human in the loop.txt",
+        "lan": "ai-zh",
+        "lan_doc": "中文",
+        "track_type": 1,
+        "version_id": 19577,
+        "origin": "external"
+      },
+      "pot_limited": false
+    },
+    {
+      "id": 7209,
+      "source": "bilibili",
+      "source_vid": "BV1NGgf6iEcA",
+      "title": "【原声配音】我从没见过 AI 说「这文件太大了该重构」| 三位工程师的 agentic coding 真实工作流",
+      "creator_name": "code炀",
+      "creator_source_uid": "40827934",
+      "duration": 4348,
+      "published_at": 1785147120000,
+      "first_seen_at": 1789804254653,
+      "track_count": 1,
+      "subtitle": {
+        "file": "videos/BV1NGgf6iEcA-【原声配音】我从没见过 AI 说「这文件太大了该重构」_ 三位工程师的 agentic coding 真实工作流.txt",
+        "lan": "ai-zh",
+        "lan_doc": "中文",
+        "track_type": 1,
+        "version_id": 19576,
+        "origin": "external"
+      },
+      "pot_limited": false
+    },
+    {
+      "id": 7208,
+      "source": "bilibili",
+      "source_vid": "BV1CxgH6cERA",
+      "title": "智能≠专业：为何AI Agent编码强却搞不定日常办公 | AI Engineer",
+      "creator_name": "量子菠萝_",
+      "creator_source_uid": "435076601",
+      "duration": 1183,
+      "published_at": 1786701600000,
+      "first_seen_at": 1789804252818,
+      "track_count": 1,
+      "subtitle": {
+        "file": "videos/BV1CxgH6cERA-智能≠专业：为何AI Agent编码强却搞不定日常办公 _ AI Engineer.txt",
+        "lan": "ai-zh",
+        "lan_doc": "中文",
+        "track_type": 1,
+        "version_id": 19575,
+        "origin": "external"
+      },
+      "pot_limited": false
+    },
+    {
+      "id": 7207,
+      "source": "bilibili",
+      "source_vid": "BV1a48M6QE4K",
+      "title": "Hugging Face工程师实战：用Agent自动化日常工作全过程解析 | AI Engineer",
+      "creator_name": "量子菠萝_",
+      "creator_source_uid": "435076601",
+      "duration": 1237,
+      "published_at": 1787558400000,
+      "first_seen_at": 1789804250923,
+      "track_count": 1,
+      "subtitle": {
+        "file": "videos/BV1a48M6QE4K-Hugging Face工程师实战：用Agent自动化日常工作全过程解析 _ AI Engineer.txt",
+        "lan": "ai-zh",
+        "lan_doc": "中文",
+        "track_type": 1,
+        "version_id": 19574,
+        "origin": "external"
+      },
+      "pot_limited": false
+    },
+    {
+      "id": 7206,
+      "source": "bilibili",
+      "source_vid": "BV1TAtC6MEYM",
+      "title": "大模型应用开发工程师四大核心能力：任务拆解/工具调用/评测调试/生产交付！轻松搞懂JSON结构化输出+大模型成本与安全，打造类ChatGPT对话界面及简历助手",
+      "creator_name": "转行AI大模型",
+      "creator_source_uid": "2137054169",
+      "duration": 13325,
+      "published_at": 1788575262000,
+      "first_seen_at": 1789804248976,
+      "track_count": 1,
+      "subtitle": {
+        "file": "videos/BV1TAtC6MEYM-大模型应用开发工程师四大核心能力：任务拆解_工具调用_评测调试_生产交付！轻松搞懂JSON结构化输出+大模型成本与安全，.txt",
+        "lan": "ai-zh",
+        "lan_doc": "中文",
+        "track_type": 1,
+        "version_id": 19573,
+        "origin": "external"
+      },
+      "pot_limited": false
+    },
+    {
+      "id": 7205,
+      "source": "bilibili",
+      "source_vid": "BV15Cb563EjS",
+      "title": "想面 AI 大模型岗位？这套合集讲清楚 RAG、Agent、项目复盘和面试表达【码士集团】",
+      "creator_name": "Java的搬运工",
+      "creator_source_uid": "3632308722600412",
+      "duration": 5769,
+      "published_at": 1788857694000,
+      "first_seen_at": 1789804247182,
+      "track_count": 1,
+      "subtitle": {
+        "file": "videos/BV15Cb563EjS-想面 AI 大模型岗位？这套合集讲清楚 RAG、Agent、项目复盘和面试表达【码士集团】.txt",
+        "lan": "ai-zh",
+        "lan_doc": "中文",
+        "track_type": 1,
+        "version_id": 19572,
+        "origin": "external"
+      },
+      "pot_limited": false
+    },
+    {
+      "id": 7204,
+      "source": "bilibili",
+      "source_vid": "BV1KSYx6zEZL",
+      "title": "【AI Agent 面经合集】大模型 Agent 高频面试八股｜吊打付费资料，Java 转 AI、AI应用工程师面试避坑必看！",
+      "creator_name": "楼兰教你学AI",
+      "creator_source_uid": "407786208",
+      "duration": 9837,
+      "published_at": 1788943283000,
+      "first_seen_at": 1789804245282,
+      "track_count": 1,
+      "subtitle": {
+        "file": "videos/BV1KSYx6zEZL-【AI Agent 面经合集】大模型 Agent 高频面试八股｜吊打付费资料，Java 转 AI、AI应用工程师面试避坑.txt",
+        "lan": "ai-zh",
+        "lan_doc": "中文",
+        "track_type": 1,
+        "version_id": 19571,
+        "origin": "external"
+      },
+      "pot_limited": false
+    },
+    {
+      "id": 7203,
+      "source": "bilibili",
+      "source_vid": "BV1ZwtH6bEAf",
+      "title": "FDE工程师真香警告！40分钟从零部署手机可访问的AI系统（附大厂JD实战）",
+      "creator_name": "刚狗学AI",
+      "creator_source_uid": "1889259699",
+      "duration": 4141,
+      "published_at": 1788130800000,
+      "first_seen_at": 1789804243485,
+      "track_count": 1,
+      "subtitle": {
+        "file": "videos/BV1ZwtH6bEAf-FDE工程师真香警告！40分钟从零部署手机可访问的AI系统（附大厂JD实战）.txt",
+        "lan": "ai-zh",
+        "lan_doc": "中文",
+        "track_type": 1,
+        "version_id": 19570,
+        "origin": "external"
+      },
+      "pot_limited": false
+    },
+    {
+      "id": 7202,
+      "source": "bilibili",
+      "source_vid": "BV1j27G63EMi",
+      "title": "AI智能体工程师，真实工作案例+薪资！",
+      "creator_name": "老张AI训练师-小号",
+      "creator_source_uid": "3493141948664095",
+      "duration": 164,
+      "published_at": 1782454486000,
+      "first_seen_at": 1789804241600,
+      "track_count": 1,
+      "subtitle": {
+        "file": "videos/BV1j27G63EMi-AI智能体工程师，真实工作案例+薪资！.txt",
+        "lan": "ai-zh",
+        "lan_doc": "中文",
+        "track_type": 1,
+        "version_id": 19569,
+        "origin": "external"
+      },
+      "pot_limited": false
+    },
+    {
+      "id": 7201,
+      "source": "bilibili",
+      "source_vid": "BV1MVbv6pEDL",
+      "title": "新岗位FDE，凭什么薪资高？30K、40K甚至百万年包？",
+      "creator_name": "AI产品果果姐",
+      "creator_source_uid": "1377665695",
+      "duration": 535,
+      "published_at": 1786954147000,
+      "first_seen_at": 1789804239589,
+      "track_count": 1,
+      "subtitle": {
+        "file": "videos/BV1MVbv6pEDL-新岗位FDE，凭什么薪资高？30K、40K甚至百万年包？.txt",
+        "lan": "ai-zh",
+        "lan_doc": "中文",
+        "track_type": 1,
+        "version_id": 19568,
+        "origin": "external"
+      },
+      "pot_limited": false
+    },
+    {
+      "id": 7200,
+      "source": "bilibili",
+      "source_vid": "BV1Rftt6CE12",
+      "title": "2026年现在AI方向哪些岗位值得冲呢？门槛是什么？薪资大概是多少？",
+      "creator_name": "人工智能学习指南",
+      "creator_source_uid": "3546903658629169",
+      "duration": 1335,
+      "published_at": 1788159900000,
+      "first_seen_at": 1789804237888,
+      "track_count": 6,
+      "subtitle": {
+        "file": "videos/BV1Rftt6CE12-2026年现在AI方向哪些岗位值得冲呢？门槛是什么？薪资大概是多少？.txt",
+        "lan": "ai-zh",
+        "lan_doc": "中文",
+        "track_type": 1,
+        "version_id": 19562,
+        "origin": "external"
+      },
+      "pot_limited": false
+    },
+    {
+      "id": 7199,
+      "source": "bilibili",
+      "source_vid": "BV1Pce26ZExw",
+      "title": "Agent开发怎么学？分群体路线来了",
+      "creator_name": "朱老师AI课堂",
+      "creator_source_uid": "3546686628563626",
+      "duration": 98,
+      "published_at": 1789716360000,
+      "first_seen_at": 1789804235614,
+      "track_count": 1,
+      "subtitle": {
+        "file": "videos/BV1Pce26ZExw-Agent开发怎么学？分群体路线来了.txt",
+        "lan": "ai-zh",
+        "lan_doc": "中文",
+        "track_type": 1,
+        "version_id": 19561,
+        "origin": "external"
+      },
+      "pot_limited": false
+    },
+    {
+      "id": 7198,
+      "source": "bilibili",
+      "source_vid": "BV1Vqeu6BEqM",
+      "title": "大厂Agent岗面试：面试官看重这两点！",
+      "creator_name": "朱老师AI课堂",
+      "creator_source_uid": "3546686628563626",
+      "duration": 126,
+      "published_at": 1789638345000,
+      "first_seen_at": 1789804233884,
+      "track_count": 1,
+      "subtitle": {
+        "file": "videos/BV1Vqeu6BEqM-大厂Agent岗面试：面试官看重这两点！.txt",
+        "lan": "ai-zh",
+        "lan_doc": "中文",
+        "track_type": 1,
+        "version_id": 19560,
+        "origin": "external"
+      },
+      "pot_limited": false
+    },
+    {
+      "id": 7197,
+      "source": "bilibili",
+      "source_vid": "BV1Nye26bEKb",
+      "title": "26秋招｜盘点Agent开发岗技术路线、学习内容与招聘要求",
+      "creator_name": "椰星Star",
+      "creator_source_uid": "535401191",
+      "duration": 121,
+      "published_at": 1789738457000,
+      "first_seen_at": 1789804232176,
+      "track_count": 6,
+      "subtitle": {
+        "file": "videos/BV1Nye26bEKb-26秋招｜盘点Agent开发岗技术路线、学习内容与招聘要求.txt",
+        "lan": "ai-zh",
+        "lan_doc": "中文",
+        "track_type": 1,
+        "version_id": 19554,
+        "origin": "external"
+      },
+      "pot_limited": false
+    }
+  ]
+}

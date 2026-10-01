@@ -1,0 +1,297 @@
+# 10. agent 内容审核工作流
+UP: AI_Julie  时长: 10:42  发布: 2026-08-06  BV: BV1DPun6YEKy
+轨: 中文(ai-zh, AI)  版本来源: external
+[00:00] Hello
+[00:01] 大家好
+[00:01] 本节课我们来讲一下
+[00:03] 评论情感分流的一个工作流
+[00:06] 那这个就会掉到真正的大模型啊
+[00:09] 所以嗯他也是有一个check和sentiment
+[00:12] 这样的一个check
+[00:14] 就是if else的这样的一个节点吧
+[00:17] 然后我们总体的来看一下他到底在干嘛啊
+[00:20] 就是你一开始之后呢
+[00:21] 他就会去查找final sentiment
+[00:24] 查找那个敏感词
+[00:25] 然后呢查找到了之后呢
+[00:27] 如果发现是positive呢
+[00:28] 就走positive response的这一条
+[00:30] 然后就结束了
+[00:32] 如果是negative的呢
+[00:33] 那就是负面的
+[00:35] 那就run dioless
+[00:36] Di god knows thesis
+[00:39] 就是要去分析这个负面到底是哪里有负面
+[00:41] 然后呢
+[00:42] 最终呢产生一个native的negative的一个response
+[00:46] 然后返回
+[00:46] 所以就是说你走的边
+[00:48] 你这边可以走N个节点
+[00:50] 然后这边也可以走N个
+[00:52] 这两个N可以不一样啊
+[00:53] 他就是这样的一个不对称的图
+[00:55] 可以画不对称的图嗯
+[00:58] 然后然后呢我们来看一下这个代码怎么跑
+[01:00] 首先第一步就是去import一下state graph start end
+[01:05] 然后chat OpenAI taptic t
+[01:07] 还有就是loaded door info呃
+[01:10] Dota environment
+[01:11] 还有就是这些P单PDTIC的这些东西
+[01:15] 然后接着呢就去load dot environment
+[01:18] 然后load完了之后呢
+[01:20] 我们就是去定义这样的一个LM
+[01:23] 那定义的时候呢
+[01:24] 我们首先用到的模型呢是dipstick v four pro
+[01:27] 然后DEPSICKAPIK
+[01:29] 然后就是base u i l这些都得设置
+[01:31] 然后time out设置成120
+[01:33] 为了返回快速的话
+[01:34] 我们把thinking mode mode disabled
+[01:36] 要设成一个普通的模式
+[01:38] 那接着呢我们就可以去嗯
+[01:41] 定义schema的这些函数
+[01:43] 那第一个schema就是sentiment
+[01:46] 是呃呃positive还是negative
+[01:49] 然后就是还有就是这个dg northeis schema
+[01:54] 就是哎这是什么东西
+[01:56] 我看
+[02:01] 啊就是有这些字典啊
+[02:02] 这些issue type啊
+[02:03] town啊
+[02:03] Urgency
+[02:04] 然后sentiment
+[02:05] 然后呢接着我们去绑定一个structure的structure的model
+[02:09] 然后就是主要就是让这个模型来输出
+[02:12] structured的output
+[02:14] 然后第一个呃
+[02:15] structure model one呢就能输出这个就是敏感性的
+[02:19] 这个sentiment
+[02:20] 然后呢第二个呢就是去诊断
+[02:22] 那么就输出这个DAGLASIS
+[02:24] diagnosis的一个schema
+[02:26] 就是两个是输出不同的啊
+[02:28] 我感觉他这个东西好复杂呀
+[02:30] 如果我去定义的话
+[02:31] 那我不就是一个JSON结构吗
+[02:32] 输出什么样的JSON结构
+[02:34] 然后它还要搞成这个样子好吧
+[02:37] 那反正就是说它增加了复杂度吧
+[02:39] 我觉得OK
+[02:41] 然后然后我们看一下这个快速验证
+[02:43] 这个这个problem
+[02:45] 这个诶这两个output是不是结构化的啊
+[02:48] 你看问这个问题
+[02:50] What is the sentiment of the following review
+[02:52] And the softer
+[02:54] Where is too bad
+[02:55] 就是这句话的那个森就是呃叫做什么
+[02:58] 这是sentiment嘛
+[02:59] 敏感度是什么
+[03:00] 那么他就会得出了issue type是other
+[03:03] 然后呢TM是frosted
+[03:05] 就是不耐烦的
+[03:06] 然后urgency是media
+[03:07] 就是得出这三个
+[03:09] 那这三个的话就是从这个来诊断
+[03:11] 诊断诊诊断来的嘛
+[03:13] 因为你调的是model2
+[03:14] 那么就会走到这个里边
+[03:15] 所以它的output是这个里面这种结构
+[03:18] 那输出的也是这种DIC克逊的人啊
+[03:20] 反正就是输出了一个dictionary的一个结构
+[03:24] 那应该也就是把JSON转换成了dictionary啊
+[03:27] 所以他为什么要这样做啊
+[03:29] 我真的是觉得他这个让我觉得更复杂了啊
+[03:31] 嗯不行
+[03:32] 我每次讲一个我都要吐槽一下
+[03:34] 我我也不知道为什么
+[03:36] 然然后呢
+[03:37] 这个review state呢就是一个呃就是一个review的模式
+[03:42] 那review的话
+[03:44] 那么review state
+[03:45] 然后定义一个review state的dictionary
+[03:48] 然后就是你的review string是什么
+[03:50] 然后sentiment是什么
+[03:52] diagnostic是什么
+[03:53] response最终的是什么啊
+[03:55] 这些东西都是就是你的一些嗯
+[04:00] 节点用到的数据吧
+[04:01] 然后嗯首先第一个呢就是要find the sentiment
+[04:04] 这个节点
+[04:05] 那么就是把你的这个state输进去
+[04:08] 那它就是要去把review的东西
+[04:11] 就是你的这一串字符串来去判断一下他的嗯
+[04:14] 它是negative还是positive的嘛
+[04:17] 然后呢你看他就是for the following嗯
+[04:21] review find out the sentiment是呃
+[04:23] 用这个用这个structure的model来去output output
+[04:28] 它是sentiment
+[04:29] 是negative还是呃positive
+[04:32] 那我们再回滚到这个这个上去
+[04:35] 看一下他的这个啊
+[04:36] 然后他就是literrole a positive
+[04:39] unegative sentence嗯
+[04:42] description是sentence of the review
+[04:45] 这个应该就是把这个东西的output呃
+[04:49] 选其中一种吧
+[04:50] positive或者是negative
+[04:52] 就感觉他最后就会把这个东西和那个东西
+[04:55] 拼成一个完整的system prompt发给大模型
+[04:58] 应该是这样的啊
+[04:59] 嗯然后呢就是positive的response
+[05:03] Positive response
+[05:05] 这边呢他就是用这样的一个话来讲的啊
+[05:08] Write a warm
+[05:09] Thank you message in the response to this review
+[05:12] 然后review就是你的你输入的这个问题嘛
+[05:15] 然后呢嗯also kindly ask the user to leave
+[05:18] Feedback on our website
+[05:20] 就是让user去评
+[05:22] 就是反馈一下在我们的website上
+[05:25] 然后你就可以直接调model了
+[05:27] 这个时候不需要structure的model output啊
+[05:29] 直接就model invoke prompt content
+[05:31] 然后就可以output了
+[05:33] 然后呢output一个response
+[05:34] 然后就返回就出来了
+[05:36] 然后这边如果走到negative的话
+[05:39] 那他要先run douglas nosis
+[05:41] 那这个是在干嘛
+[05:43] 就是douglas nis the negative review啊
+[05:46] Return issue type town and urgency
+[05:48] 就是说用走到这个之后呢
+[05:50] 他就会结构化的输出这三个东西
+[05:53] Issue type town
+[05:54] 还有urgency嗯
+[05:56] 然后嗯走完这个之后呢
+[05:58] 他又作为这个的输入去negative response
+[06:01] 这边来获取一个文本的输入嘛
+[06:03] 文本的输出
+[06:04] 那用的prompt就是you are support assistant
+[06:08] the only the user had a什么issue和什么什么
+[06:12] Douglais issue type
+[06:14] issue type issue嗯
+[06:17] 桑SUNDAY的是一个negative
+[06:19] 还是还是那个就是positive的问题
+[06:23] 应该是negative
+[06:24] 然后呢就是得出的结论呢就是这三种town issue type
+[06:28] 还有就是urgency是这样的
+[06:30] 然后呢and market urgency as the urgency
+[06:34] 对sorry sorry sorry
+[06:35] 我在搞什么
+[06:36] 这就是把这三条把这三个结果来输进来这里
+[06:40] 然后然后让他write as if i for size
+[06:44] It seek help a solution message
+[06:46] 就是给他回复一下
+[06:48] 让他去呃修改一下或者怎样啊
+[06:50] 给他一个建议嘛
+[06:52] 然后接着我们就可以去呃check sentiment
+[06:56] 然后呢如果是positive的话
+[06:57] 就the persitive response
+[06:59] 如果是negative的话
+[07:01] 那么就转run douglist nis
+[07:03] 所以啊这个图总体来讲也没有那么复杂
+[07:06] 首先呢去搞一个图graph呃
+[07:09] 呃建一个图
+[07:11] 建完了之后呢
+[07:11] 把这几个节点先先写一下
+[07:13] 都是先写节点啊
+[07:15] 这个final sentiment
+[07:16] 然后呢就是呃round dog list nosis
+[07:20] 那我看一下这里有positive response
+[07:22] 划到右边去了啊
+[07:23] 然后round dogalysis
+[07:25] 然后negative response就这些
+[07:27] 然后他唯一少坏的就是我们那个
+[07:30] 就是checkpoint的那个节点啊
+[07:32] 这边他好像嗯都不画的这个这个这个workflow的画
+[07:36] 不画那个图
+[07:37] 它把它融为一体了
+[07:39] 大概是把那个checkpoint跟这个融为一体了啊
+[07:43] 然后呢就去添加edge啦
+[07:44] 然后呢首先呢就是start的这边的这个edge
+[07:47] 跟sentiment之间的
+[07:49] 然后还有ADD conditional edge
+[07:51] 就是呃final sentiment和checker
+[07:53] sentiment去爱的一个艾姐
+[07:55] 然后ADD完了之后呢
+[07:57] 就是会去嗯这个check sentiment就会直接自己来嗯
+[08:02] 来划边了
+[08:03] 自己这个函数里边就会去划边
+[08:05] 走左边还是走右边
+[08:06] 那嗯这两边就是不用去画了啊
+[08:09] 这两边就不用画了
+[08:10] 那我们要画的呢就是perpositive response to end
+[08:13] 就是这个边
+[08:14] 然后还有就是negative的
+[08:16] 这边呢就是rn diagnosis到这边
+[08:19] Negative response
+[08:20] 然后negative response到end的好就完结了
+[08:23] 这个图也没什么好难的
+[08:24] 然后最后就compare一下
+[08:26] 然后这个图就可以跑了
+[08:27] 这个workflow就可以跑了
+[08:29] 那么这个workflow如果是正面的新闻
+[08:32] 就是这款软件界面简洁啊
+[08:34] 运行流畅
+[08:35] 然后你看得到的结果就是一个positive的
+[08:37] 然后response就是感谢你如此暖心的评价
+[08:41] 这个如果你是一个大V啊
+[08:42] 你有很多的评论
+[08:44] 你要去用AI回的话
+[08:46] 那你确实可以去写这样的一个啊
+[08:48] 但是我感觉可能只有明星才需要去自动评
+[08:51] 回复吧
+[08:51] 一般人都没有什么评论啊
+[08:54] 啊然然后就是这个负面的这个啊
+[08:56] 这是一个负面的
+[08:57] Soft toire has a pota
+[08:59] The software has potential
+[09:01] But the performance is inconsistent
+[09:03] And the surface interface can be confusing at times
+[09:07] 就是说这个东西好像不太好用的样子
+[09:10] 然后呢接着呢让他去评估一下呢
+[09:13] 他就走negative的那条线了
+[09:14] 你看negative
+[09:15] 然后呢issue type就是performance有问题
+[09:18] 然后frosty就是嗯用户也不满意
+[09:21] 然后argent也是medium嘛
+[09:23] 然后是中等的啊
+[09:24] 就就是这这感觉就是一个客户嗯
+[09:28] 反馈的一个智能分类的一个系统啊
+[09:30] 就可以把这个问题来分分类啊
+[09:33] 然后根据他的紧急情况来决定你如何去处理
+[09:36] 然后先给他一个renice response
+[09:39] Here's the craft draft
+[09:41] You can use hi there
+[09:43] Thank you
+[09:44] so much for me for reading out哈
+[09:46] 这都是那个很经典的一个客户
+[09:48] 客户服务系统的一个话术啊
+[09:50] 感觉还不错啊
+[09:51] 就是诶这个智能客服系统还可以啊
+[09:54] 但但是我觉得怎么说呢
+[09:56] 非得要用这样的方式去做它吗
+[09:58] 这个哈搞不懂啊
+[09:59] 就是呃如果你直接搞一些tool call
+[10:03] 应该也是可以run这种东西啊
+[10:05] 就是把这些都转换成tool
+[10:07] 然后让大某行去决定去call哪个tool
+[10:09] 应该也是也是可以的啊
+[10:12] 非要这样一步一步走走嘛
+[10:14] 嗯这也是一种方式吧
+[10:16] Work flow
+[10:17] 然后让他大家来去真实的感受一下
+[10:20] 如果真的有人做出了这样的一个真实的产品呢
+[10:23] 也可以打在评论区
+[10:24] 如果只做出了一个demo呢
+[10:25] 请也打在评论区吧好吧
+[10:27] 那么如果你喜欢我的视频呢
+[10:29] 就请一键三连我
+[10:30] 如果你要代码呢
+[10:31] 就就大家就记得去那边
+[10:34] 去这边去folk start一下啊
+[10:37] 去我的GITHUB上
+[10:38] 好
+[10:38] 谢谢大家
+[10:38] 这节课就讲到这里
