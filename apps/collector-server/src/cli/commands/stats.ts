@@ -6,7 +6,7 @@ import type Database from 'better-sqlite3';
 import { Command } from 'commander';
 import { getCliContext } from '../context.js';
 import { emitResult, emitError } from '../output.js';
-import { openReadonlyDb } from '../db.js';
+import { openDbOrEmit } from '../db.js';
 import { countOverview, countOverviewWithSources, aggregateStats, type StatsGroupBy, type Overview, type KeyValue, type VideoFilter } from '../../db/advanced.js';
 import { AGG_SORT_KEYS, type AggregateSortKey } from '../../db/sort.js';
 import { normalizeTimestamp, parseDesc, parseTagsCsv } from './videos.js';
@@ -33,7 +33,7 @@ export function statsCount(db: Database.Database, opts: StatsCountOpts): KeyValu
 
 // ── commander 装配 ──
 
-const STATS_GROUP_BY = ['creator', 'tname', 'lang', 'track-type', 'source'] as const;
+const STATS_GROUP_BY = ['creator', 'tname', 'lang', 'track-type', 'tag', 'source'] as const;
 
 interface StatsCountRawOpts {
   by?: string;
@@ -57,7 +57,7 @@ function parseTime(raw: string | undefined, name: string): number | undefined {
   catch (err) { return emitError(`${name}: ${(err as Error).message}`, 'ARGS'); }
 }
 
-// --by 必填且限定 5 值（source=按平台分组）；commander 的 requiredOption 兜底缺失，这里再校验取值。
+// --by 必填且限定 6 值（source=按平台分组，tag=标签共现分布，六档并聚见 aggregate-tag.ts）；commander 的 requiredOption 兜底缺失，这里再校验取值。
 function parseGroupBy(raw: string | undefined): StatsGroupBy {
   if (raw === undefined || !(STATS_GROUP_BY as readonly string[]).includes(raw)) {
     return emitError(`非法 --by: ${raw ?? '(缺失)'}（可选: ${STATS_GROUP_BY.join('|')}）`, 'ARGS');
@@ -65,10 +65,7 @@ function parseGroupBy(raw: string | undefined): StatsGroupBy {
   return raw as StatsGroupBy;
 }
 
-function openDbOrEmit(dbPath: string): Database.Database {
-  try { return openReadonlyDb(dbPath); }
-  catch (err) { return emitError((err as Error).message, 'DB_UNREADABLE'); }
-}
+// openDbOrEmit 已上收 db.ts（共用，含 DB-only 命令组的显式 --server 忽略警告，2026-10-02）。
 
 export function buildStatsCommand(): Command {
   const stats = new Command('stats')
@@ -86,7 +83,7 @@ export function buildStatsCommand(): Command {
   stats
     .command('count')
     .description('按维度分组计数（默认 Top 20，count 降序）；过滤项同 videos list')
-    .requiredOption('--by <kind>', '分组维度：creator|tname|lang|track-type|source')
+    .requiredOption('--by <kind>', '分组维度：creator|tname|lang|track-type|tag|source')
     .option('--top <n>', 'Top N（默认 20）')
     .option('--sort <key>', `排序键：${AGG_SORT_KEYS.join('|')}（count=计数，key=分组值本身）`)
     .option('--desc [value]', '降序（默认降序；升序传 --desc=false）')

@@ -1,6 +1,7 @@
 // stats 命令组纯处理函数测试：临时 DB 种子 → statsOverview / statsCount。
 // 聚合语义本身由 db/advanced.test.ts 覆盖，此处验 CLI 包装层委托与默认值（topN ?? 20 / filter ?? {}）。
-// parseNum/parseGroupBy 等 commander 装配层私有函数不在单测范围（需整 CLI 上下文）。
+// parseNum 等 commander 装配层私有函数不在单测范围（需整 CLI 上下文）；--by 白名单例外——
+// 经 buildStatsCommand 进程内装配直测（R3 起，先例 output.test.ts 的 captureExit 哨兵）。
 //
 // ⚠️ 已知工具链怪象（2026-08-22 排查记录）：本测试真实调用并断言了 statsOverview/statsCount，
 // 但 node:test + tsx 对 stats.ts 的**行级覆盖**系统性丢失（funcs% 计入正常；videos.ts 单跑同症状）。
@@ -11,6 +12,7 @@
 // |---|---|---|---|
 // | R1 | statsOverview 计数 + statsCount 维度/topN/filter | 通过 | 覆盖率低估见上 ⚠️ |
 // | R2 | statsCount filter.tags 双标签精确 AND | 通过 | --tags CLI 暴露（2026-09-22），VideoFilter.tags 直透 |
+// | R3 | --by tag 白名单：纯函数共现分布 + buildStatsCommand 装配放行/拒绝（失败→通过） | 通过 | CLI 白名单补 'tag'（2026-10-02 消费闭环第 6 项） |
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -20,7 +22,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { openDb, migrate } from '../../db/migrate.js';
 import { ingestVideo } from '../../db/ingest.js';
-import { statsOverview, statsCount } from './stats.js';
+import { statsOverview, statsCount, buildStatsCommand } from './stats.js';
+import { setCliContext } from '../context.js';
 
 const T = 1_700_000_000_000;
 
@@ -167,5 +170,130 @@ test('statsCount：filter.tags 双标签精确 AND（含不存在标签归零）
     ]);
     // 任一标签不存在 → AND 落空 → 空结果
     assert.deepEqual(statsCount(db, { by: 'creator', filter: { tags: ['游戏', '不存在XYZ'] } }), []);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+// by=tag（2026-10-02 CLI 白名单补 'tag'，消费闭环第 6 项）：六档并聚的标签共现分布（带标视频数计，
+// db 层语义见 aggregate-tag.ts）。纯函数层此前即透传支持，真正缺口在装配白名单（见下方 buildStatsCommand 用例）。
+test('statsCount：by=tag 标签共现分布（六档并聚按视频去重）+ filter.tags AND 组合收窄', () => {
+  const { db, dir } = setup();
+  try {
+    ingestVideo(db, {
+      source: 'bilibili',
+      video: {
+        source_vid: 'BV9', title: 'BV9', creator: { source_uid: '1', name: 'UP甲' },
+        extra: { tags: [{ tag_id: 1, tag_name: '游戏' }, { tag_id: 2, tag_name: '实况' }] }, duration: 100, published_at: T,
+      },
+      tracks: [],
+    });
+    ingestVideo(db, {
+      source: 'bilibili',
+      video: {
+        source_vid: 'BV8', title: 'BV8', creator: { source_uid: '2', name: 'UP乙' },
+        extra: { tags: [{ tag_id: 3, tag_name: '游戏' }] }, duration: 100, published_at: T,
+      },
+      tracks: [],
+    });
+    // 游戏 2 视频（BV9+BV8）、实况 1（BV9）；count desc 无并列
+    assert.deepEqual(statsCount(db, { by: 'tag' }), [
+      { key: '游戏', count: 2 },
+      { key: '实况', count: 1 },
+    ]);
+    // AND 圈定子集（仅 BV9）后按标签再聚 → 子集内共现分布；同数并列，两侧同用默认序免排序口径
+    const narrowed = statsCount(db, { by: 'tag', filter: { tags: ['实况'] } });
+    assert.deepEqual(
+      narrowed.map((r) => [r.key, r.count]).sort(),
+      [['游戏', 1], ['实况', 1]].sort(),
+    );
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+// ── buildStatsCommand 装配层（--by 白名单 STATS_GROUP_BY 的回归落点）──
+
+// 异步 capture：parseAsync 的 action 链内 emitResult/emitError 落 stdout/stderr；emitError 的
+// process.exit 换成哨兵抛出（同步版见 main.test.ts captureExit，此处 await 异步版）。
+async function captureParse(args: string[]): Promise<{ out: string; err: string; codes: number[] }> {
+  const origOut = process.stdout.write;
+  const origErr = process.stderr.write;
+  const origExit = process.exit;
+  let out = '';
+  let err = '';
+  const codes: number[] = [];
+  const EXIT_SENTINEL = Symbol('cli-exit');
+  process.stdout.write = ((chunk: unknown) => { out += String(chunk); return true; }) as typeof process.stdout.write;
+  process.stderr.write = ((chunk: unknown) => { err += String(chunk); return true; }) as typeof process.stderr.write;
+  process.exit = ((code?: number) => { codes.push(code ?? 0); throw EXIT_SENTINEL; }) as typeof process.exit;
+  try {
+    await buildStatsCommand().parseAsync(['node', 'collector-cli', ...args]);
+  } catch (e) {
+    if (e !== EXIT_SENTINEL) throw e;
+  } finally {
+    process.stdout.write = origOut;
+    process.stderr.write = origErr;
+    process.exit = origExit;
+  }
+  return { out, err, codes };
+}
+
+// --by tag 失败→通过（2026-10-02 白名单补 'tag'）：补前 parseGroupBy 拒绝 → ARGS 退 2；补后放行出共现分布。
+// 种子（setup 无标签，装配用例自带）：BV9 双标（游戏+实况，bili extra 档）+ BV8 单标（游戏）。
+function setupTagged(): { db: Database.Database; dir: string } {
+  const dir = mkdtempSync(join(tmpdir(), 'cli-stats-tag-'));
+  const db = openDb(join(dir, 'test.db'));
+  migrate(db);
+  for (const [sv, uid, name, tags] of [
+    ['BV9', '1', 'UP甲', [{ tag_id: 1, tag_name: '游戏' }, { tag_id: 2, tag_name: '实况' }]],
+    ['BV8', '2', 'UP乙', [{ tag_id: 3, tag_name: '游戏' }]],
+  ] as const) {
+    ingestVideo(db, {
+      source: 'bilibili',
+      video: { source_vid: sv, title: sv, creator: { source_uid: uid, name }, extra: { tags }, duration: 100, published_at: T },
+      tracks: [],
+    });
+  }
+  return { db, dir };
+}
+
+test('buildStatsCommand：stats count --by tag 白名单放行出标签共现分布（补前 非法 --by 退 2 的回归）', async () => {
+  const { db, dir } = setupTagged();
+  try {
+    db.close(); // action 走 openReadonlyDb 另开只读连接，先放掉写连接
+    setCliContext({ format: 'json', dbPath: join(dir, 'test.db'), serverUrl: 'http://127.0.0.1:1', token: 't', quiet: true, serverExplicit: false });
+    const { out, codes } = await captureParse(['count', '--by', 'tag']);
+    assert.deepEqual(codes, []); // 成功路径不 process.exit
+    assert.deepEqual(JSON.parse(out), [
+      { key: '游戏', count: 2 },
+      { key: '实况', count: 1 },
+    ]);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+// --tags AND 圈定子集后再按标签聚合（消费闭环验收式：stats count --by tag --tags <csv> 出子集共现分布）
+test('buildStatsCommand：--by tag --tags AND 圈定子集的共现分布（仅含命中视频上的标签）', async () => {
+  const { db, dir } = setupTagged();
+  try {
+    db.close();
+    setCliContext({ format: 'json', dbPath: join(dir, 'test.db'), serverUrl: 'http://127.0.0.1:1', token: 't', quiet: true, serverExplicit: false });
+    const { out, codes } = await captureParse(['count', '--by', 'tag', '--tags', '实况']);
+    assert.deepEqual(codes, []);
+    // 子集 = 仅 BV9（BV8 无实况被 AND 排除）→ 其双标各 1；同数并列，两侧同用默认序免排序口径
+    const rows = JSON.parse(out) as Array<{ key: string; count: number }>;
+    assert.deepEqual(
+      rows.map((r) => [r.key, r.count]).sort(),
+      [['游戏', 1], ['实况', 1]].sort(),
+    );
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+// 白名单拒绝路径仍在：--by 非法值 → ARGS 退 2（对齐 HTTP 400 口径）
+test('buildStatsCommand：stats count --by 非法值 → ARGS 退 2（白名单拒绝路径）', async () => {
+  const { db, dir } = setupTagged();
+  try {
+    db.close();
+    setCliContext({ format: 'json', dbPath: join(dir, 'test.db'), serverUrl: 'http://127.0.0.1:1', token: 't', quiet: true, serverExplicit: false });
+    const { out, err, codes } = await captureParse(['count', '--by', 'bogus']);
+    assert.deepEqual(codes, [2]);
+    assert.equal(JSON.parse(out).code, 'ARGS');
+    assert.match(err, /非法 --by/);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
