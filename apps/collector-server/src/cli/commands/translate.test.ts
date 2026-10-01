@@ -5,6 +5,7 @@
 // | 轮次 | 范围 | 结果 | 备注 |
 // |---|---|---|---|
 // | R1 | pending 判定+过滤 + source 三路径 + parseTranslatedFile + fill 预校验 | 通过 | |
+// | R2 | asr-zh-* 前缀判定：仅 ASR 兜底轨不进 pending + 默认轨 asr-zh-* 拒翻 + 显式 --from 放行 | 通过 | 旧 ZH_LANS 精确集合上红，失败→通过锚点（20260922 生产 4 例假阳性回归）|
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -15,7 +16,7 @@ import { openDb, migrate } from '../../db/migrate.js';
 import { ingestVideo } from '../../db/ingest.js';
 import { ServerClient } from '../http.js';
 import {
-  translatePending, translateSource, parseTranslatedFile, translateFill,
+  translatePending, translateSource, parseTranslatedFile, translateFill, isZhLan,
 } from './translate.js';
 
 // 造库：A=ai-en 无中文（pending 目标，2 行）；B=有 ai-zh（不列）；C=无轨（不列）；D=ai-ja 无中文（--from 过滤用）
@@ -49,6 +50,16 @@ function seedDb(): { dbPath: string; cleanup: () => void } {
     source: 'bilibili',
     video: { source_vid: 'BVG', title: 'null lan', duration: 10 },
     tracks: [{ lan: undefined, lan_doc: '未知语言', versions: [{ origin: 'external', payload: payload(['x']) }] }],
+  });
+  // BVH：仅 asr-zh-<engine> 轨（ASR 兜底写回形态，对齐 http/asr.ts 契约：origin='asr' + asr_engine）
+  // —— bug 回归锚点：旧 ZH_LANS 精确集合认不出 asr-zh-*，恒留待补翻清单 + 中文被当翻译源（20260922 生产 4 例假阳性）
+  ingestVideo(db, {
+    source: 'bilibili',
+    video: { source_vid: 'BVH', title: 'ASR兜底视频', duration: 10 },
+    tracks: [{
+      lan: 'asr-zh-fireredasr-aed-l', lan_doc: '中文（ASR·fireredasr-aed-l）',
+      versions: [{ origin: 'asr', asr_engine: 'fireredasr-aed-l', payload: payload(['转写中文一', '转写中文二']) }],
+    }],
   });
   return { dbPath: join(dir, 'test.db'), cleanup: () => { db.close(); rmSync(dir, { recursive: true, force: true }); } };
 }
@@ -170,6 +181,45 @@ test('translateFill：读文件 → 行数预校验（不符抛错不发请求�
   } finally {
     cleanup();
     rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('translate pending：仅有 asr-zh-* 轨的视频不进 pending（ASR 兜底轨视同已有中文）', () => {
+  const { dbPath, cleanup } = seedDb();
+  try {
+    // 1. BVH 仅 asr-zh-<engine> 轨 → 已有中文，不列（旧 ZH_LANS 精确集合认不出 → 假阳性进清单）
+    const r = translatePending(dbPath, {});
+    assert.ok(!r.items.some((i) => i.source_vid === 'BVH'), '仅 asr-zh-* 轨不进 pending');
+    assert.equal(r.total, 4, 'total 与 items 同步排除 BVH');
+    // 2. isZhLan 判定契约直测：精确命中 OR asr-zh- 前缀，防误伤
+    assert.equal(isZhLan('zh'), true);
+    assert.equal(isZhLan('zh-Hant'), true);
+    assert.equal(isZhLan('zh-manual'), true);
+    assert.equal(isZhLan('asr-zh-fireredasr-aed-l'), true, 'ASR 兜底轨前缀命中');
+    assert.equal(isZhLan('asr-zh-unknown'), true, '迁移 v19 回落名同样命中');
+    assert.equal(isZhLan('asr-zh'), false, '裸 asr-zh 非 asr-zh- 前缀（迁移 v19 后不存在该形态）');
+    assert.equal(isZhLan('asr-zhfoo'), false, '前缀须带连字符，不误伤');
+    assert.equal(isZhLan('ai-en'), false);
+    assert.equal(isZhLan(null), false);
+  } finally {
+    cleanup();
+  }
+});
+
+test('translate source：默认轨为 asr-zh-* 时拒绝（不把中文 ASR 文本当翻译源）+ 显式 --from 放行', () => {
+  const { dbPath, cleanup } = seedDb();
+  try {
+    // 1. 缺省轨命中 asr-zh-* → 报错，错误信息带 lan 与 --from 指引（可观察）
+    assert.throws(
+      () => translateSource(dbPath, 'bilibili', 'BVH'),
+      /默认轨已是中文（asr-zh-fireredasr-aed-l）.*--from/,
+    );
+    // 2. 显式 --from asr-zh-* → 放行（重翻自由，与既有 ai-zh 行为对齐）
+    const r = translateSource(dbPath, 'bilibili', 'BVH', 'asr-zh-fireredasr-aed-l');
+    assert.equal(r.lan, 'asr-zh-fireredasr-aed-l');
+    assert.equal(r.lines, 2);
+  } finally {
+    cleanup();
   }
 });
 

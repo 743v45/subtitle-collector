@@ -12,12 +12,21 @@ import { emitResult, emitError, logInfo } from '../output.js';
 import { getCliContext } from '../context.js';
 import { openReadonlyDb } from '../db.js';
 import { getVideo, getVersionPayload } from '../../db/queries.js';
+import { ASR_LAN_PREFIX } from '../../http/asr.js';
 import { extractBody } from '../subtitleFormat.js';
 import { normalizeTimestamp } from './videos.js';
 
 // 「有中文」判定集合（pending 排除条件）：B 站原生/AI/自动翻译中文 + 补翻轨本身。
 // zh-Hant 繁体也算有中文——不强制补简体。精确列举（不用 LIKE 'zh%'），可测试、防误伤。
+// ASR 兜底轨（asr-zh-<engine>）不在精确集合内——lan 按引擎派生无法穷举，走 isZhLan 的前缀匹配
+// （前缀单一事实源 = http/asr.ts ASR_LAN_PREFIX；cli→http import 不违反 depcruise server 分层：
+// 该分层只禁 db/tasks 上行 import，cli 与 http 互引合法且无环——2026-10-02 查证 .dependency-cruiser.cjs）。
 const ZH_LANS = ['zh', 'zh-Hant', 'zh-Hans', 'ai-zh', 'zh-manual'] as const;
+
+/** 「有中文」轨判定：ZH_LANS 精确命中 OR asr-zh- 前缀（ASR 兜底轨 asr-zh-<engine>，迁移 v19 契约）。 */
+export function isZhLan(lan: string | null): boolean {
+  return !!lan && ((ZH_LANS as readonly string[]).includes(lan) || lan.startsWith(`${ASR_LAN_PREFIX}-`));
+}
 
 // ── 纯处理函数（可测：注入依赖，不直接碰 stdout/exit） ──
 
@@ -30,7 +39,7 @@ export interface PendingItem {
 }
 
 export interface TranslatePendingOpts {
-  source?: string; // 平台过滤（bilibili|youtube），缺省两平台混列
+  source?: string; // 平台过滤（bilibili|youtube|douyin），缺省三平台混列
   from?: string; creator?: string; since?: number; until?: number;
   page?: number; size?: number; sort?: 'first_seen' | 'published_at'; asc?: boolean;
 }
@@ -48,10 +57,12 @@ export function translatePending(
     const page = Math.max(1, opts.page ?? 1);
     const size = Math.min(200, Math.max(1, opts.size ?? 20));
     const params: unknown[] = [];
-    // 过滤条件：EXISTS 有轨 / NOT EXISTS 中文轨 / 可选 --source 平台 / --from（有该源语言轨）/ --creator 模糊 / --since/--until 入库时间窗
+    // 过滤条件：EXISTS 有轨 / NOT EXISTS 中文轨（精确集合 + asr-zh- 前缀——ASR 兜底轨按引擎派生无法穷举，
+    // LIKE 'asr-zh-%' 参数化对齐 isZhLan 前缀判定）/ 可选 --source 平台 / --from（有该源语言轨）/ --creator 模糊 / --since/--until 入库时间窗
+    const zhPlaceholders = ZH_LANS.map(() => '?').join(',');
     let where = `WHERE EXISTS (SELECT 1 FROM subtitle_tracks t WHERE t.video_id = v.id)
-      AND NOT EXISTS (SELECT 1 FROM subtitle_tracks t WHERE t.video_id = v.id AND t.lan IN (${ZH_LANS.map(() => '?').join(',')}))`;
-    params.push(...ZH_LANS);
+      AND NOT EXISTS (SELECT 1 FROM subtitle_tracks t WHERE t.video_id = v.id AND (t.lan IN (${zhPlaceholders}) OR t.lan LIKE ?))`;
+    params.push(...ZH_LANS, `${ASR_LAN_PREFIX}-%`);
     if (opts.source) {
       where += ' AND v.source = ?';
       params.push(opts.source);
@@ -113,11 +124,11 @@ export function translateSource(
   try {
     const detail = getVideo(db, source, sourceVid);
     if (!detail) throw new Error(`视频不存在: ${source}/${sourceVid}`);
-    // 源轨选择：显式 --from 精确匹配；缺省取优先级排序后首个轨（若它是中文轨则报错——该视频不需要补翻）
+    // 源轨选择：显式 --from 精确匹配；缺省取优先级排序后首个轨（若它是中文轨——含 asr-zh-* 兜底轨——则报错：该视频不需要补翻）
     const track = fromLan
       ? detail.tracks.find((t) => t.lan === fromLan) ?? throwErr(`源轨不存在: lan=${fromLan}（可用: ${detail.tracks.map((t) => t.lan).join(', ')}）`)
       : detail.tracks[0] ?? throwErr('该视频没有任何字幕轨');
-    if (!fromLan && track.lan && (ZH_LANS as readonly string[]).includes(track.lan)) {
+    if (!fromLan && isZhLan(track.lan)) {
       throw new Error(`默认轨已是中文（${track.lan}），无需补翻；确需重翻请显式 --from <lan>`);
     }
     const ver = track.versions[0] ?? throwErr('源轨没有任何版本');
@@ -184,7 +195,7 @@ export function buildTranslateCommand(): Command {
 
   cmd.command('pending')
     .description('查缺口：有轨但无任何中文轨的视频清单（含各源语言行数）')
-    .option('--source <src>', '视频来源平台（bilibili|youtube；缺省两平台混列）')
+    .option('--source <src>', '视频来源平台（bilibili|youtube|douyin；缺省全平台混列）')
     .option('--from <lan>', '只看有该源语言轨的视频（如 ai-en）')
     .option('--creator <keyword>', 'UP 主名称模糊')
     .option('--since <time>', '入库时间下界（first_seen）')
@@ -215,7 +226,7 @@ export function buildTranslateCommand(): Command {
   cmd.command('source <bvid>')
     .description('取原料：源轨逐行 `行号\\t原文` 文本（stdout 纯文本；翻译后行数须一致）')
     .option('--from <lan>', '源语言轨（精确匹配 lan；缺省取默认优先级首个非中文轨）')
-    .option('--source <source>', '视频来源（默认 bilibili；YouTube 用 youtube）', 'bilibili')
+    .option('--source <source>', '视频来源（默认 bilibili；YouTube 用 youtube，抖音用 douyin）', 'bilibili')
     .option('-o, --output <file>', '写入文件（缺省 stdout）')
     .action((bvid: string, opts) => {
       const ctx = getCliContext();
@@ -233,7 +244,7 @@ export function buildTranslateCommand(): Command {
     .description('写回补翻：译文文件（每行一条，可带行号前缀）→ server 校验行对齐+拷贝时间轴入库')
     .requiredOption('--from <lan>', '源语言轨（时间轴从该轨拷贝）')
     .requiredOption('--file <path>', '译文文件路径')
-    .option('--source <source>', '视频来源（默认 bilibili）', 'bilibili')
+    .option('--source <source>', '视频来源（默认 bilibili；YouTube 用 youtube，抖音用 douyin）', 'bilibili')
     .action(async (bvid: string, opts) => {
       const ctx = getCliContext();
       try {
