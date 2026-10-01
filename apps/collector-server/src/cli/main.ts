@@ -36,7 +36,13 @@ program.hook('preAction', () => {
   };
   const format = normalizeFormat(opts.format);
   const cfg = resolveConfig({ db: opts.db, server: opts.server, token: opts.token });
-  const ctx: CliContext = { format, ...cfg, quiet: !!opts.quiet };
+  const ctx: CliContext = {
+    format,
+    ...cfg,
+    quiet: !!opts.quiet,
+    // 只认命令行显式 --server（env/默认值不告警）——供 DB-only 命令组的 openDbOrEmit 输出忽略警告。
+    serverExplicit: opts.server !== undefined,
+  };
   setCliContext(ctx);
   setQuiet(ctx.quiet);
 });

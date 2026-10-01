@@ -54,7 +54,7 @@ docker exec collector-server node -e 'const db=require("better-sqlite3")("/data/
 | `export subtitle <source> <bvid>` | DB 只读 | 字幕导出:`--sub-format srt\|vtt\|txt\|json --track <lan> --version <id> -o <file>`;不指定轨取默认轨默认版本,纯文本直写 stdout |
 | `export videos` | DB 只读 | 视频列表 json/csv/ndjson(格式随全局 `--format`;过滤同 videos list) |
 | `export bundle` | DB 只读 | 分析原料包:`--out <dir> --track <lan> --limit <n> --name-order <parts>` + videos list 全套过滤 → manifest.json + videos/*.txt + ANALYZE.md;`--name-order` 定 videos/ 文件名组件与顺序(逗号分隔 `id\|name\|time\|author`,默认 `id,name` 即 `<id>-<标题>`,time=发布日期,author=UP 名,`--name-order id` 回纯 ID 形态) |
-| `stats overview` / `stats count --by <kind> --top <n>` | DB 只读 | 总览(全库 total + 分平台 by_source) / 分组计数(`--by` 含 `source` 按平台分组;`--source` 过滤收窄;`--sort count\|key --desc` 排序,2026-08-25) |
+| `stats overview` / `stats count --by <kind> --top <n>` | DB 只读 | 总览(全库 total + 分平台 by_source) / 分组计数(`--by` 六值 `creator\|tname\|lang\|track-type\|tag\|source`,`tag`=标签共现分布(六档并聚按视频去重),可与 `--tags` 精确 AND 组合看子集;`--source` 过滤收窄;`--sort count\|key --desc` 排序,2026-08-25) |
 | `sub search <关键词>` | DB 只读 | 字幕正文检索:`--ctx --regex --max-videos --full`;AI 打标的数据源 |
 | `translate pending/source/fill` | pending/source 读 DB;fill 走 server | 补翻工作流(无中文轨视频):`pending --source <平台>` 查缺口(带各源语言行数)→ `source <vid> --from <lan> --source <平台>` 取逐行待翻文本 → 会话内翻译 → `fill <vid> --from <lan> --file <译文> --source <平台>` 写回 zh-manual 轨 |
 | `asr backfill` | server HTTP + B 站/抖音直链 + 本机 fireredasr | 无字幕视频兜底转写(no-subtitle 圈定,`--source bilibili\|douyin` 定平台,2026-08-29 抖音接入):`--size <n>`(默认 5,先小样本实测速度,RTF≈0.2)/ `--page` / `--max-duration <秒>` / `--dry-run`(只圈定,先行预检口径)/ `--cookie-file`(仅 bilibili 必配——nav 取 wbi keys 即需登录态,匿名 -101,或 $COLLECTOR_BILI_COOKIE_FILE)/ `--asr-url`(默认 127.0.0.1:5079)。bilibili:圈定→wbi playurl 拉音轨;douyin:详情取 extra.play_uri 直构 snssdk 直链下载 mp4(零 cookie,mp4 整段上传由 fireredasr 抽音轨;500MB 上限,超限跳过 video_too_large 不重试)→FireRedASR 转写→写回 `asr-zh-<引擎>` 轨(如 `asr-zh-fireredasr-aed-l`;`--engine` 兼定轨名,不同引擎各自成轨,web 详情页轨选择器可切换比对),成功自动摘标(重跑跳过已完成);失败分类计数不中断批次(douyin 新分类 missing_play_uri/video_too_large/detail_fetch_error) |
@@ -83,6 +83,7 @@ collect 子命令速记:`search <关键词>` 搜候选(不入库)/ `subtitle <vi
 | `scripts/proxy-collector-server.mjs` | 127.0.0.1:21528 → 内网 21527 转发 |
 | `scripts/verify-deployed.mjs` | 部署后服务状态自检(`pnpm verify:deployed -- --token <t> [--server <url>] [--db <路径>]`;HTTP 核心接口 + `--db` 时 SQLite integrity_check,坏页损坏探活测不出——2026-08-24 事故教训;生产库迁 volume 后 `--db` 传导出的备份文件或省略) |
 | `scripts/backup-export.mjs` | 生产备份导出(docker cp volume → 宿主;`node scripts/backup-export.mjs [目录] [--all\|--keep N]`,默认最新 1 份到 `data/exports/`) |
+| `scripts/export-bundle.mjs` | 生产库→分析原料包一条命令(`node scripts/export-bundle.mjs --theme <主题> [过滤器...] [--out <dir>] [--max-age-hours <n>] [--force]`;容器内 VACUUM INTO 新快照 → docker cp → collector-cli `--db` 出包,`--max-age-hours` 内复用 mtime 最新快照;分析闭环第一步) |
 | `scripts/backup-restore.mjs` | 生产备份恢复(`--list` 列卷内备份 / `--drill` 演练(临时卷+容器 21599,不碰生产,季度跑) / `--apply <文件名>` 真恢复(停服换库,旧库改名留证);事故现场不再靠记忆) |
 | `scripts/sqlite-rescue.mjs` | 损坏库抢救重建(`node scripts/sqlite-rescue.mjs <主库> <完好备份> <新库输出>`;分段绕坏页 + 备份兜底 + JSON 列降级 + 孤儿引用登记,2026-08-24 SQLITE_CORRUPT 事故产物) |
 | `scripts/verify-*.mjs` | 链路验收冒烟族(`pnpm test:ext` / `test:youtube`,按需不进 qa) |

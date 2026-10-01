@@ -9,7 +9,7 @@ import type Database from 'better-sqlite3';
 import { Command } from 'commander';
 import { getCliContext } from '../context.js';
 import { emitResult, emitError } from '../output.js';
-import { openReadonlyDb } from '../db.js';
+import { openDbOrEmit } from '../db.js';
 import { listVideosFiltered, getVideoByDbId, VIDEO_SORT_KEYS } from '../../db/advanced.js';
 import * as queries from '../../db/queries.js';
 import type {
@@ -191,14 +191,7 @@ export function parseTime(raw: string | undefined, name: string): number | undef
   }
 }
 
-// 打开只读 DB；失败 → DB_UNREADABLE。emitError 返回 never，两条路径都满足返回类型。
-function openDbOrEmit(dbPath: string): Database.Database {
-  try {
-    return openReadonlyDb(dbPath);
-  } catch (err) {
-    return emitError((err as Error).message, 'DB_UNREADABLE');
-  }
-}
+// openDbOrEmit 已上收 db.ts（共用，含 DB-only 命令组的显式 --server 忽略警告，2026-10-02）。
 
 export function buildVideosCommand(): Command {
   const videos = new Command('videos')

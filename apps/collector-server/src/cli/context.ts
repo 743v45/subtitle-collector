@@ -8,6 +8,10 @@ export interface CliContext {
   serverUrl: string;
   token: string;
   quiet: boolean;
+  // 用户是否在命令行**显式**给了 --server（env COLLECTOR_SERVER / 默认值都算 false）。
+  // DB-only 命令组（videos/sub/export/stats/changes）经 db.ts openDbOrEmit 据此输出「--server 已忽略」警告，
+  // 防「以为查了生产实际查了 dev 库」（2026-10-02 消费端闭环 P0 定案，已两次实际踩坑）。
+  serverExplicit: boolean;
 }
 
 let currentContext: CliContext | null = null;

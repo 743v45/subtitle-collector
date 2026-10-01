@@ -53,13 +53,14 @@ node scripts/youtube-collect-subs.mjs     # stdin 读 videoId,采英文+中文�
 
 当前项目最大缺口是消费端闭环(README Feature 冻结政策的依据),原料包导出是采集侧唯一出口:
 
-```collector-cli
-collector-cli --db <repo>/data/bilibili-collector.db export bundle --creator <UP名> --has-subtitle --out <dir>
-collector-cli --db <repo>/data/bilibili-collector.db export bundle --tag <标签名> --out <dir>
-collector-cli --db <repo>/data/bilibili-collector.db export bundle --tags <标签1>,<标签2> --out <dir>
+```bash
+node scripts/export-bundle.mjs --theme <主题> --creator <UP名> --has-subtitle
+node scripts/export-bundle.mjs --theme <主题> --tag <标签名>
+node scripts/export-bundle.mjs --theme <主题> --tags <标签1>,<标签2>
 ```
 
-- bundle 产物:manifest.json + videos/*.txt + ANALYZE.md;`--track <lan>` 选语言,`--limit <n>` 控量。`--db`/`--out` 一律绝对路径(SKILL.md cwd 陷阱)。
+- 生产数据源两步合一:容器内 `VACUUM INTO` 新快照 → docker cp 到 `data/exports/` → collector-cli `--db <快照绝对路径>` 出包(生产库在 volume,宿主机严禁直开;`--max-age-hours <n>` 内复用 mtime 最新快照不打新)。输出缺省 `analysis/<主题>/bundle/`,或 `--out <dir>` 显式指定(绝对路径,SKILL.md cwd 陷阱)。
+- bundle 产物:manifest.json + videos/*.txt + ANALYZE.md;`--track <lan>` 选语言,`--limit <n>` 控量,`--force` 允许写入已存在非空目录。其余过滤器全量透传 export bundle。
 - 多标签精确过滤用 `--tags`(逗号分隔,AND 语义,全部命中才导出;`--tag` 为模糊单值,二者可叠加,空串按未传)——videos list / export videos / stats count 同款。
 - 分析在 Claude Code 会话中完成(内置 AI pipeline 是远期项);产物落盘 `analysis/<主题>/`,三类模板见 README「分析产物规范」:观点汇总(多 UP 分歧共识)/ 面试题库(题目+考点+参考答案)/ 理念整理(系列视频方法论)。
 

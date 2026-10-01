@@ -13,7 +13,7 @@ import { convertSubtitle, type SubtitleFormat } from '../subtitleFormat.js';
 import { Command } from 'commander';
 import { getCliContext } from '../context.js';
 import { emitResult, emitError } from '../output.js';
-import { openReadonlyDb } from '../db.js';
+import { openDbOrEmit } from '../db.js';
 import { parseNum, parseTime } from './videos.js';
 
 // ── payload body 结构（对齐 subtitleFormat.ts BodyItem）──
@@ -343,13 +343,7 @@ interface SubSearchRawOpts {
 
 const FULL_FORMATS = ['txt', 'srt', 'vtt', 'json'] as const;
 
-function openDbOrEmit(dbPath: string): Database.Database {
-  try {
-    return openReadonlyDb(dbPath);
-  } catch (err) {
-    return emitError((err as Error).message, 'DB_UNREADABLE');
-  }
-}
+// openDbOrEmit 已上收 db.ts（共用，含 DB-only 命令组的显式 --server 忽略警告，2026-10-02）。
 
 export function buildSubCommand(): Command {
   const sub = new Command('sub')

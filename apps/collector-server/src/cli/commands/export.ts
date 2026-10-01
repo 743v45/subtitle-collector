@@ -7,13 +7,12 @@
 // 子命令同名 option，导致子命令收不到值。export videos 的格式语义与全局 --format 重合
 // （json|ndjson|csv），故直接复用全局 ctx.format，不再定义自己的 --format。
 
-import type Database from 'better-sqlite3';
 import { Command } from 'commander';
 import { writeFileSync, existsSync, mkdirSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { getCliContext } from '../context.js';
 import { emitResult, emitError } from '../output.js';
-import { openReadonlyDb } from '../db.js';
+import { openDbOrEmit } from '../db.js';
 import type { VideoListItemAdvanced, PageResult } from '../../db/advanced.js';
 import { VIDEO_SORT_KEYS } from '../../db/advanced.js';
 // resolveSubtitle 已下沉 subtitleFormat.ts（2026-08-23 断环：bundle.ts 也用它，原在本文件会构成 bundle ↔ export 循环）
@@ -132,10 +131,7 @@ function parseNameOrder(raw: string | undefined): FilenamePart[] | undefined {
   return parts as FilenamePart[];
 }
 
-function openDbOrEmit(dbPath: string): Database.Database {
-  try { return openReadonlyDb(dbPath); }
-  catch (err) { return emitError((err as Error).message, 'DB_UNREADABLE'); }
-}
+// openDbOrEmit 已上收 db.ts（共用，含 DB-only 命令组的显式 --server 忽略警告，2026-10-02）。
 
 export function buildExportCommand(): Command {
   const exp = new Command('export')

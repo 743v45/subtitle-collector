@@ -8,6 +8,7 @@
 // |---|---|---|---|
 // | R1 | subtitle 4 格式 + 轨/版本选择 + NOT_FOUND ×4 + -o；videos stdout/-o/table 拒绝；bundle 成功/非空目录 ARGS | 通过 | |
 // | R2 | bundle --name-order：默认 <id>-<标题>、自定义序、纯 id 回旧形态、非法/重复组件 ARGS | 通过 | 默认文件名随需求变更为 id,name |
+// | R3 | -q 用例改断言：--server 忽略警告不再被 -q 抑制（db.ts openDbOrEmit 警告，2026-10-02） | 通过 | |
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -167,13 +168,16 @@ test('export subtitle：payload 结构损坏 → convertSubtitle 抛错进 main 
   } finally { db.close(); rmSync(dir, { recursive: true, force: true }); }
 });
 
-test('export subtitle：payload 损坏 + -q → stderr 静默（main catch 的 quiet 分支），退 1', async () => {
+test('export subtitle：payload 损坏 + -q → main catch 的 stderr 静默，但 --server 忽略警告不抑制，退 1', async () => {
   const { db, dir, dbPath } = setup();
   try {
     db.prepare('UPDATE subtitle_versions SET payload = ?').run('{"body": 42}');
     const r = await cli(['-q', ...args(dbPath, ['export', 'subtitle', 'bilibili', 'BV1'])]);
     assert.equal(r.code, 1);
-    assert.equal(r.err, '');
+    // 2026-10-02 起 DB-only 命令组显式 --server 触发忽略警告（db.ts openDbOrEmit），不受 -q 抑制——
+    // 恰恰要打扰「以为查了生产实际查了 dev 库」的错误姿势；RUNTIME 行仍被 -q 吞掉。
+    assert.doesNotMatch(r.err, /RUNTIME/);
+    assert.match(r.err, /警告: 该命令只读本地 --db，--server 已忽略/);
   } finally { db.close(); rmSync(dir, { recursive: true, force: true }); }
 });
 
