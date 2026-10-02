@@ -35,7 +35,7 @@ pnpm verify:deployed -- --token <t> [--server <url>] [--db <库路径>]
 
 | 层 | 机制 |
 |---|---|
-| 自动 | server 内置每小时容器内 `VACUUM INTO /data/backups/`,滚动 24 份 |
+| 自动 | server 内置每 15 分钟容器内 `VACUUM INTO /data/backups/`,滚动清理:最近 8 份 ∪ 每日末份保 14 天(`COLLECTOR_BACKUP_INTERVAL_MS` 可调) |
 | 导出宿主 | `node scripts/backup-export.mjs`(docker cp 拷出 volume) |
 | 告警 | 备份连续失败 ≥2 次推飞书自定义 bot(`COLLECTOR_BACKUP_WEBHOOK_URL`,缺省只打日志) |
 
