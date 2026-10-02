@@ -9,6 +9,7 @@
 // | 轮次 | 范围 | 结果 | 备注 |
 // |---|---|---|---|
 // | R1 | version 子命令 + --format 非法兜底 json + commander 未知命令退 1 + getCliContext 未初始化 | 通过 | |
+// | R2 | --server 缺省防呆提示：未指 server 提示 / 显式 --server、env 指定、-q 不提示 | 通过 | 2026-10-02 CLI 完整度批次 |
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -22,9 +23,13 @@ const MAIN_TS = join(HERE, 'main.ts');
 const APP_ROOT = resolve(HERE, '../..');
 
 // 跑真 CLI 子进程，收集退出码/stdout/stderr。退出码从 execFile 的 err.code 取（数字）。
-function cli(args: string[]): Promise<{ code: number; out: string; err: string }> {
+// env 注入（可选）：覆盖/追加 process.env——防呆提示用例借此固定 COLLECTOR_SERVER 缺省/指定两态。
+function cli(args: string[], env: Record<string, string> = {}): Promise<{ code: number; out: string; err: string }> {
   return new Promise((resolve_) => {
-    execFile('node', ['--import', 'tsx', MAIN_TS, ...args], { cwd: APP_ROOT }, (err, stdout, stderr) => {
+    execFile('node', ['--import', 'tsx', MAIN_TS, ...args], {
+      cwd: APP_ROOT,
+      env: { ...process.env, ...env },
+    }, (err, stdout, stderr) => {
       const code = err ? (err as NodeJS.ErrnoException & { code?: number | string }).code : 0;
       resolve_({ code: typeof code === 'number' ? code : 1, out: String(stdout), err: String(stderr) });
     });
@@ -96,3 +101,36 @@ test('缺少必填选项：commander 默认错误 → 退 1（不进 main catch�
 
 // main() catch 分支（120-128 行）由 export.cli.test.ts 的「字幕 payload 结构损坏 → convertSubtitle 抛错」
 // 用例覆盖（action 内真异常穿透 parseAsync 才进 catch；emitError 的 process.exit 在真子进程里直接终结）。
+
+// ── --server 缺省防呆提示（2026-10-02 CLI 完整度批次，preAction 内）──
+// 全部走 version 命令（成功路径自然退出，不踩 db.cli.test.ts R2 的早退覆盖报告坑）。
+
+const HINT = /未指定 --server/;
+
+test('未传 --server 且 env 未指定：stderr 防呆提示（本地 dev + 生产指路），命令照常退 0', async () => {
+  // COLLECTOR_SERVER 显式传空串按「未设」固定环境（判定用 truthiness，防宿主 shell 已设该变量）
+  const r = await cli(['version', '--db', '/tmp/none.db'], { COLLECTOR_SERVER: '' });
+  assert.equal(r.code, 0);
+  assert.match(r.err, HINT);
+  assert.match(r.err, /127\.0\.0\.1:21527/, '提示应含默认本地 dev 地址');
+  assert.match(r.err, /collector\.local\.taevas\.host/, '提示应含生产库指路');
+  assert.deepEqual(JSON.parse(r.out), { name: 'collector-cli', version: '0.1.0' });
+});
+
+test('显式 --server → 不提示', async () => {
+  const r = await cli(['version', '--db', '/tmp/none.db', '--server', 'http://127.0.0.1:1']);
+  assert.equal(r.code, 0);
+  assert.doesNotMatch(r.err, HINT);
+});
+
+test('env COLLECTOR_SERVER 已指定 → 不提示（已 deliberate 指定目标，提示反而误导）', async () => {
+  const r = await cli(['version', '--db', '/tmp/none.db'], { COLLECTOR_SERVER: 'https://collector.local.taevas.host' });
+  assert.equal(r.code, 0);
+  assert.doesNotMatch(r.err, HINT);
+});
+
+test('-q 抑制防呆提示（人类提示非安全互锁，区别于 openDbOrEmit 的忽略警告不受 -q 抑制）', async () => {
+  const r = await cli(['-q', 'version', '--db', '/tmp/none.db'], { COLLECTOR_SERVER: '' });
+  assert.equal(r.code, 0);
+  assert.doesNotMatch(r.err, HINT);
+});

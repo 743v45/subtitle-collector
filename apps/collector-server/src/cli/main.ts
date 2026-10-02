@@ -5,6 +5,7 @@
 // 设计参考 [设计文档第3章命令树](docs/superpowers/specs/2026-07-05-collector-cli-design.md)。
 
 import { pathToFileURL } from 'node:url';
+import { writeSync } from 'node:fs';
 import { Command } from 'commander';
 import { resolveConfig } from './config.js';
 import { emitResult, setQuiet, EXIT_CODES, type Format } from './output.js';
@@ -25,8 +26,14 @@ program
   .option('--token <token>', '鉴权 token（默认 $COLLECTOR_TOKEN）')
   .option('-q, --quiet', '抑制 stderr 人类日志（stdout JSON 仍输出）', false);
 
+// DB-only 命令组（openDbOrEmit 只读本地库文件，--server 不参与）：不打缺省防呆提示——本提示指路
+// 「生产库加 --server」，而 DB-only 命令加了 --server 会被 openDbOrEmit 警告「已忽略」，两条提示
+// 自相矛盾；该家族的生产防呆由 openDbOrEmit 的显式 --server 警告承担（查生产走 export-bundle.mjs）。
+const DB_ONLY_GROUPS = new Set(['videos', 'sub', 'export', 'stats', 'changes', 'versions']);
+
 // preAction：构造 CliContext + 同步 quiet 到 output 层。每个子命令 action 前都会跑。
-program.hook('preAction', () => {
+// （commander hook 签名 = (thisCommand, actionCommand)：首参是挂 hook 的 program，次参才是待执行命令。）
+program.hook('preAction', (_thisCmd: Command, actionCmd: Command) => {
   const opts = program.opts() as {
     format?: string;
     db?: string;
@@ -45,6 +52,18 @@ program.hook('preAction', () => {
   };
   setCliContext(ctx);
   setQuiet(ctx.quiet);
+  // --server 缺省防呆（2026-10-02 CLI 完整度批次）：命令行与 env 都没指 server（真·默认值路径）时，
+  // stderr 一行提示当前连的是本地 dev（数据偏旧）+ 生产库指路——防「以为查了生产实际查了 dev」。
+  // -q 抑制（人类提示非安全互锁）；显式 --server / env 指定不提示（已 deliberate 指定目标）。
+  // writeSync 直写 fd 2：本提示后可能紧跟 emitError 的 process.exit，pipe 上异步 stderr 队列会在
+  // exit 时被丢（同 openDbOrEmit 警告的 2026-10-02 实测），防呆提示必须无条件落地。
+  const group = actionCmd.parent?.name() ?? actionCmd.name();
+  if (!ctx.quiet && opts.server === undefined && !process.env.COLLECTOR_SERVER && !DB_ONLY_GROUPS.has(group)) {
+    writeSync(
+      2,
+      '[collector-cli] 未指定 --server：当前连本地 dev 库 http://127.0.0.1:21527（数据偏旧）；生产库需 --server https://collector.local.taevas.host --token <t>\n',
+    );
+  }
 });
 
 function normalizeFormat(raw: string | undefined): Format {
@@ -74,6 +93,7 @@ export async function main(): Promise<void> {
       { buildExportCommand },
       { buildStatsCommand },
       { buildClientsCommand },
+      { buildTasksCommand },
       { buildServerCommand },
       { buildCollectCommand },
       { buildYtSearchCommand },
@@ -88,6 +108,7 @@ export async function main(): Promise<void> {
       import('./commands/export.js'),
       import('./commands/stats.js'),
       import('./commands/clients.js'),
+      import('./commands/tasks.js'),
       import('./commands/server.js'),
       import('./commands/collect.js'),
       import('./commands/collect-yt-search.js'),
@@ -102,6 +123,7 @@ export async function main(): Promise<void> {
     program.addCommand(buildExportCommand());   // export subtitle / export videos
     program.addCommand(buildStatsCommand());    // stats overview / stats count --by
     program.addCommand(buildClientsCommand());  // clients list / reporting / command
+    program.addCommand(buildTasksCommand());    // tasks list / get / retry（采集任务查询与重试）
     program.addCommand(buildServerCommand());   // server ping / status / start / stop
     // collect search / subtitle / dedupe；yt-search 子命令在 collect 组装后挂载
     //（collect-yt-search.ts 复用 collect.ts 导出件，反向 import 会成环——在 main 组装层接线）

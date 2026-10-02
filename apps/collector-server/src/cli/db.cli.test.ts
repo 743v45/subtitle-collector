@@ -8,6 +8,7 @@
 // |---|---|---|---|
 // | R1 | 五组显式 --server 全告警 + 未给不告警 + env 不告警 + -q 仍告警 + 非 DB-only 命令不告警 | 通过 | |
 // | R2 | 子进程 env 注入 NODE_V8_COVERAGE 隔离报告（tsx 转译子进程覆盖条目混入 c8 合并会把全量覆盖率 99.5%→72% 打崩门线） | 通过 | 2026-10-02 |
+// | R3 | DB-only 命令组不打「未指定 --server」缺省防呆提示（与忽略警告互斥，main.ts DB_ONLY_GROUPS） | 通过 | 2026-10-02 CLI 完整度批次 |
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -89,4 +90,11 @@ test('非 DB-only 命令（version，不落 DB）显式 --server → 不告警',
   const r = await cli(['version', '--db', NO_DB, '--server', SERVER, '--token', 't']);
   assert.equal(r.code, 0);
   assert.doesNotMatch(r.err, WARN);
+});
+
+test('DB-only 命令组不打「未指定 --server」缺省防呆提示（两组警告互斥：提示指路加 --server，忽略警告警告已加）', async () => {
+  // 本组 CLI 子进程全走 NO_DB 早退（exit 4），沿用本文件 R2 的 NODE_V8_COVERAGE 隔离 env，不踩覆盖合并坑
+  const r = await cli(['stats', 'overview', '--db', NO_DB]);
+  assert.equal(r.code, 4);
+  assert.doesNotMatch(r.err, /未指定 --server/);
 });

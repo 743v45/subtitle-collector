@@ -154,6 +154,28 @@ export class ServerClient {
     return (data as { video?: Record<string, unknown> } | null)?.video ?? null;
   }
 
+  // 采集任务列表：GET /api/collect-tasks（tasks CLI 组用）。query 透传，server 侧 http/tasks.ts
+  // 解析：status(CSV)/source/batch_id/batch/creator/creator_uid/q/since/until + limit 或
+  // page+page_size（分页形态）+ sort/desc。返回 {ok,total,items[,page,page_size]} 原样。
+  async listCollectTasks(params: Record<string, string | number | boolean> = {}): Promise<unknown> {
+    const qs = new URLSearchParams();
+    for (const [k, v] of Object.entries(params)) qs.set(k, String(v));
+    const suffix = qs.size > 0 ? `?${qs.toString()}` : '';
+    return this.requestJson('GET', `/api/collect-tasks${suffix}`);
+  }
+
+  // 单任务详情：GET /api/collect-tasks/:id → {ok, task}（error=失败原因 / result=回执摘要）。
+  // 不存在 server 404 → ServerResponseError（调用方归一 NOT_FOUND）。
+  async getCollectTask(id: number): Promise<unknown> {
+    return this.requestJson('GET', `/api/collect-tasks/${id}`);
+  }
+
+  // 失败/限流任务重试：POST /api/collect-tasks/retry { ids } → {ok, retried, tasks}
+  //（端点原地重置回 pending 重跑，非可重试行静默跳过；server 重置后立即尝试派发）。
+  async retryCollectTasks(ids: number[]): Promise<unknown> {
+    return this.requestJson('POST', '/api/collect-tasks/retry', { ids });
+  }
+
   // 统一请求：fetch + JSON 解析 + 错误归一化。
   // 连不上 → ServerUnreachableError；非 2xx → ServerResponseError；2xx → 解析后的 JSON（无 body 时返回 null）。
   private async requestJson(method: 'GET' | 'POST' | 'PATCH' | 'DELETE', path: string, body?: Record<string, unknown>): Promise<unknown> {

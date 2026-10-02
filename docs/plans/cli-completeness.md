@@ -30,7 +30,7 @@
 |---|---|---|---|
 | 1 | **「运行即错」级文档漂移三处**：[playbooks.md:70-71](../skills/collector/references/playbooks.md#L70) `tags apply --source ai` 照文档跑必退 2（isPlatform 校验）＋「三档」/「删全部三档」文案 stale；[SKILL.md:63](../skills/collector/SKILL.md#L63) collect 子命令计数 12→实际 11；[SKILL.md:20](../skills/collector/SKILL.md#L20) 退出码表漏 EXT_UPDATE=6（[output.ts:8-16](../../apps/collector-server/src/cli/output.ts#L8) 有定义） | bug 级漂移 | ☐ |
 | 2 | **死工具双删**：`scripts/run-collector-server.mjs`（硬编码已迁移旧仓库路径必挂，功能被 CLI `server start` 覆盖；[playbooks.md](../skills/collector/references/playbooks.md) playbook 1 同步改指 CLI）＋ `scripts/body2subtitle.py`（零引用零登记，功能被 `export subtitle` 覆盖） | 处置 | ☐ |
-| 3 | **采集任务生命周期 CLI**（批次 1 功能最高位）：`tasks list / get / retry` 为主（HTTP 端点已备：`GET /api/collect-tasks` 筛选排序、`GET /api/collect-tasks/:id`、`POST /api/collect-tasks/retry`），`delete` / batch 直暴露视需——**下一批首选**（2026-10-02 消费端闭环批次推迟项登记，见 [consumption-loop.md](consumption-loop.md)「推迟项」） | 闭环配套 | ☐ |
+| 3 | **采集任务生命周期 CLI**（批次 1 功能最高位）：`tasks list / get / retry` 为主（HTTP 端点已备：`GET /api/collect-tasks` 筛选排序、`GET /api/collect-tasks/:id`、`POST /api/collect-tasks/retry`），`delete` / batch 直暴露视需——**下一批首选**（2026-10-02 消费端闭环批次推迟项登记，见 [consumption-loop.md](consumption-loop.md)「推迟项」） | 闭环配套 | ✅（2026-10-02 CLI 完整度批次：`tasks list/get/retry` 落地（[tasks.ts](../../apps/collector-server/src/cli/commands/tasks.ts)，list 对齐 GET /api/collect-tasks 全部筛选参数、get 含失败原因/回执、retry 多 id）；顺带落同批次的「`--server` 缺省防呆提示」（[main.ts](../../apps/collector-server/src/cli/main.ts)）；SKILL.md 命令表+样例块、help 客户端页、README 查询导出段同步；`delete` / batch 直暴露维持视需不落） |
 | 4 | **按字段缺失筛选 → force 刷新代码化**（归属改造清单 P0-2 本体，对齐 no-subtitle 回填先例） | 闭环配套 | ☐ |
 
 ### 批次 2（P1 窗口，消费端配套 + 查询补齐）
@@ -38,7 +38,7 @@
 | # | 缺口 | 归类 | 状态 |
 |---|---|---|---|
 | 5 | videos list 补 5 个过滤参数：`creator_id / creator_uid / tags（多标 AND）/ tag_source / date_field`（db 层 [advanced.ts:10-34](../../apps/collector-server/src/db/advanced.ts#L10) 已支持，纯包装；「按标签选料导 bundle」是消费端高频） | 闭环配套 | ☐ |
-| 6 | `stats count --by tag`：[stats.ts:36](../../apps/collector-server/src/cli/commands/stats.ts#L36) STATS_GROUP_BY 补 tag（[http/stats.ts:12](../../apps/collector-server/src/http/stats.ts#L12) 已有） | 闭环配套 | ✅（2026-10-02 消费闭环第 6 项：白名单+帮助六值、失败→通过用例×3、SKILL.md 同步；commit 待主会话补） |
+| 6 | `stats count --by tag`：[stats.ts:36](../../apps/collector-server/src/cli/commands/stats.ts#L36) STATS_GROUP_BY 补 tag（[http/stats.ts:12](../../apps/collector-server/src/http/stats.ts#L12) 已有） | 闭环配套 | ✅（2026-10-02 消费闭环第 6 项：白名单+帮助六值、失败→通过用例×3、SKILL.md 同步） |
 | 7 | creators 查询 CLI（列表/详情/打分类；`GET /api/creators` 七键排序已备）——与 P0-2 存量回填绑定（查缺资料 UP 清单） | 闭环配套 | ☐ |
 
 ### 批次 3（P2+ 治理）
