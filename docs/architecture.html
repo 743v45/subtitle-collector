@@ -1,0 +1,218 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>bilibili-extensions 项目架构</title>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 32px 24px 64px;
+    font: 15px/1.65 -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+    background: #0b0e14; color: #c9d1d9;
+  }
+  h1 { font-size: 22px; margin: 0 0 4px; color: #e6edf3; }
+  .sub { color: #7d8590; font-size: 13px; margin-bottom: 24px; }
+  h2 {
+    font-size: 16px; margin: 32px 0 12px; padding-bottom: 6px;
+    border-bottom: 1px solid #21262d; color: #e6edf3;
+  }
+  .chart {
+    background: #0d1117; border: 1px solid #21262d; border-radius: 10px;
+    padding: 20px; overflow-x: auto;
+  }
+  .legend {
+    display: flex; flex-wrap: wrap; gap: 18px; margin: 14px 2px 0;
+    font-size: 12.5px; color: #8b949e;
+  }
+  .legend span { display: inline-flex; align-items: center; gap: 6px; }
+  .swatch { width: 26px; height: 0; border-top: 2px solid #58a6ff; }
+  .swatch.dotted { border-top: 2px dotted #8b949e; }
+  .swatch.thick { border-top: 3px solid #f0883e; }
+  .swatch.dashed { border-top: 2px dashed #3fb950; }
+  table { border-collapse: collapse; width: 100%; font-size: 13.5px; margin-top: 8px; }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid #21262d; vertical-align: top; }
+  th { color: #8b949e; font-weight: 600; background: #0d1117; }
+  td a { color: #79c0ff; text-decoration: none; }
+  td a:hover { text-decoration: underline; }
+  code { background: #161b22; padding: 1px 5px; border-radius: 4px; font-size: 12.5px; color: #f0883e; }
+  .tag {
+    display: inline-block; padding: 1px 7px; border-radius: 10px;
+    font-size: 11.5px; background: #1f6feb22; color: #79c0ff; border: 1px solid #1f6feb55;
+  }
+  .tag.aside { background: #6e768122; color: #8b949e; border-color: #6e768155; }
+  .tag.danger { background: #f8514922; color: #f85149; border-color: #f8514955; }
+  .tag.ok { background: #3fb95022; color: #3fb950; border-color: #3fb95055; }
+  .note { color: #8b949e; font-size: 13px; }
+  ul { margin: 6px 0; padding-left: 20px; }
+  li { margin: 3px 0; }
+</style>
+</head>
+<body>
+
+<h1>bilibili-extensions · 项目架构</h1>
+<div class="sub">B 站字幕系统 monorepo（pnpm 9 + turbo，workspace = <code>apps/*</code>）。2026-10-02 全量刷新（首版 2026-07-26 由 4 个 Explore agent 并发摸源码生成）；定位见各链接。</div>
+
+<h2>系统全景（运行时数据流）</h2>
+<div class="chart">
+<div class="mermaid">
+flowchart LR
+  subgraph Browser["🌐 桌面 Chrome"]
+    direction TB
+    BiliPage["B站视频页<br/>__playinfo__ / __INITIAL_STATE__"]
+    YtPage["YouTube 视频页<br/>ytInitialPlayerResponse"]
+    DyPage["抖音视频页<br/>detail XHR / SSR_RENDER_DATA<br/>（接口带页面签名，server 不可直连）"]
+
+    subgraph SubCatch["📦 SubCatch 字幕捕手 · subtitle-collector (MV3)"]
+      direction TB
+      SC_POP["popup<br/>React + shadcn/ui<br/>platforms.ts 数据驱动三平台卡"]
+      SC_BG["background.js (SW)<br/>WS 客户端 + 反向 action×14<br/>navigate 采集编排（dy-nav/nav-gate）"]
+      SC_CNT["content.js / -yt / -dy<br/>ISOLATED · 聚合组装 INGEST"]
+      SC_INJ["inject.js / -yt / -dy<br/>MAIN · hook fetch/XHR"]
+    end
+
+    subgraph VoiceCatch["📦 VoiceCatch · subtitle-extractor（😴 休眠备选）"]
+      direction TB
+      VC_OFF["offscreen.js<br/>@voicetxt/core · Whisper<br/>（voicetxt 失源，已出 workspace）"]
+    end
+  end
+
+  subgraph Phone["📱 Android"]
+    ANDROID["collector-android<br/>Kotlin + Compose + Material 3<br/>系统分享/粘贴 → 建采集任务"]
+  end
+
+  subgraph Local["🖥️ 本机 dev · 127.0.0.1:21527"]
+    direction TB
+    CS["collector-server<br/>node:http + ws + commander CLI"]
+    DB[("SQLite (WAL)<br/>dev 库")]
+    WEB["collector-web SPA（10 tab）<br/>React + Vite + Tailwind + shadcn"]
+    CLI["collector-cli（tsx）<br/>collect/export/stats/asr backfill…"]
+  end
+
+  subgraph Prod["☁️ 生产 · 局域网主机 10.0.0.100（docker）"]
+    direction TB
+    CADDY["caddy 网关<br/>*.taevas.host 子域名分发"]
+    PROD["collector-server 容器<br/>token 强制 + Host/Origin 白名单"]
+    PDB[("SQLite 生产库<br/>docker named volume<br/>（禁 bind mount / 宿主直读）")]
+  end
+
+  FIRE["fireredasr-ui（本机 :5079）<br/>FireRedASR-AED-L<br/>verbose_json 段级出参"]
+  PLAT["平台源站<br/>api.bilibili.com / aweme.snssdk.com"]
+  ANALYSIS["analysis/&lt;主题&gt;/<br/>bundle 原料 → Claude Code<br/>会话分析 → 产物落盘"]
+  VTXT["@voicetxt/core<br/>仓库外 file: 挂载（失源）"]
+
+  %% —— SubCatch 被动采集链（B站 / YouTube；抖音仅主动） ——
+  BiliPage -->|"拦 player / aisubtitle"| SC_INJ
+  YtPage -->|"拦 timedtext (带 pot 明文)"| SC_INJ
+  SC_INJ --> SC_CNT
+  SC_CNT ==>|"chrome.runtime INGEST"| SC_BG
+  SC_BG ==>|"WS /ext · ingest / ingest-upper"| CS
+
+  %% —— SubCatch 主动采集（后台 tab 导航，窗口式超时） ——
+  SC_BG -.->|"navigate + 等被动链"| YtPage
+  SC_BG -.->|"dy-navigate 后台 tab"| DyPage
+  DyPage -->|"hook detail XHR / SSR"| SC_INJ
+  CS -.->|"command（反向 action×14）"| SC_BG
+  CS ==> PDB
+
+  %% —— 手机 / 前端 / CLI 入口 ——
+  ANDROID ==>|"POST /api/collect-tasks（Bearer）<br/>LAN 直连或经 caddy"| CS
+  ANDROID -.-> CADDY
+  CADDY --> PROD
+  WEB -->|"fetch /api 同源"| CS
+  WEB -.->|"vite build → public/（随镜像部署）"| PROD
+  CLI -.->|"DB-only 直读 dev / --server 查生产"| CS
+
+  %% —— ASR backfill 兜底链（server 侧，不走扩展） ——
+  CLI -.->|"①圈定 no-subtitle"| CS
+  CLI -->|"② wbi 音轨 / snssdk 直链 mp4"| PLAT
+  CLI -->|"③ mp4/音轨转写"| FIRE
+  CLI ==>|"④ POST /api/asr/submit<br/>入 asr-zh-[engine] 轨 + 摘标"| CS
+
+  %% —— 消费端闭环 ——
+  CLI ==>|"export bundle（export-bundle.mjs 快照出包）"| ANALYSIS
+
+  %% —— VoiceCatch 转写链（休眠，独立零后端） ——
+  BiliPage -.->|"DASH audio（休眠）"| VC_OFF
+  VC_OFF --> VTXT
+
+  style VoiceCatch stroke:#6e7681,stroke-dasharray:4 3,color:#8b949e
+  style VTXT stroke:#6e7681,color:#8b949e
+</div>
+</div>
+<div class="legend">
+  <span><span class="swatch thick"></span>采集主链（字幕 → server → DB）</span>
+  <span><span class="swatch"></span>运行时调用 / 查询</span>
+  <span><span class="swatch dotted"></span>反向控制 · 构建 · 休眠</span>
+  <span><span class="swatch dashed"></span>ASR / 出包等旁路链</span>
+</div>
+
+<h2>五个 app 一览</h2>
+<table>
+  <thead><tr><th>App</th><th>产品名 / 职责</th><th>技术栈</th><th>关键定位</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><a href="../apps/subtitle-collector/">subtitle-collector</a></td>
+      <td><b>SubCatch 字幕捕手</b>。被动（浏览视频页自动采集，B站/YouTube）+ 主动（server 下发 action，后台 tab 导航取数，三平台）双路径。已接线 <b>B 站 + YouTube + 抖音</b>（抖音 2026-08-29 全量接入：每平台一套四件套 inject/-yt/-dy + format + payload）。</td>
+      <td>MV3 · Vite + @crxjs · popup = React + Tailwind + shadcn</td>
+      <td>SW 中枢 <a href="../apps/subtitle-collector/background.js">background.js</a>；抖音导航编排 <a href="../apps/subtitle-collector/dy-navigate.mjs">dy-navigate.mjs</a> + 互斥门 <a href="../apps/subtitle-collector/nav-gate.mjs">nav-gate.mjs</a>；平台卡 <a href="../apps/subtitle-collector/src/popup/platforms.ts">platforms.ts</a>（数据驱动，小红书 logo 已预取）</td>
+    </tr>
+    <tr>
+      <td><a href="../apps/subtitle-extractor/">subtitle-extractor</a></td>
+      <td><b>VoiceCatch</b>（😴 <b>休眠备选</b>）。浏览器本地 Whisper 转写（B站音轨 or 手选文件）→ SRT/VTT/TXT，零后端。<b>voicetxt 失源后退役为备选</b>；无字幕兜底改由 server 侧 <code>asr backfill</code> 承担（<a href="../README.md">README</a> ASR 条目）。已出 pnpm workspace、测试冻结，代码保留历史定位。</td>
+      <td>MV3 · offscreen document · @voicetxt/core + onnxruntime/transformers.js</td>
+      <td>推理宿主 <a href="../apps/subtitle-extractor/offscreen.js">offscreen.js</a>；抓音轨 <a href="../apps/subtitle-extractor/background.js">background.js</a></td>
+    </tr>
+    <tr>
+      <td><a href="../apps/collector-server/">collector-server</a></td>
+      <td>单进程后端：收件入库（WS）+ 聚合查询（HTTP）+ 反向控制扩展 + 采集任务调度（手机/web/CLI 三入口建任务）+ ASR 写回（<code>/api/asr/submit</code>）+ 内置定时备份。dev 跑本机 loopback；<b>生产跑 docker（named volume + token 强制）</b>，server 不存平台凭据（B 站登录态由扩展 cookie 持有）。</td>
+      <td>Node 22 + tsx · 原生 node:http · ws@8 · better-sqlite3(WAL) · commander CLI</td>
+      <td>HTTP 入口 <a href="../apps/collector-server/src/main.ts">main.ts</a>；WS <a href="../apps/collector-server/src/ws/server.ts">ws/server.ts</a>；写入 <a href="../apps/collector-server/src/db/ingest.ts">db/ingest.ts</a>；任务 <a href="../apps/collector-server/src/tasks/tasks.ts">tasks/tasks.ts</a>；ASR <a href="../apps/collector-server/src/http/asr.ts">http/asr.ts</a>；备份 <a href="../apps/collector-server/src/db/backup.ts">db/backup.ts</a></td>
+    </tr>
+    <tr>
+      <td><a href="../apps/collector-web/">collector-web</a></td>
+      <td>管理/浏览控制台（<b>10 tab</b>：collect / history / videos / stats / creators / categories / tags / clients / changes / settings）。<b>只读 + 管理 + 采集任务提交</b>，不负责页面取数。</td>
+      <td>React 18 + Vite 5 + Tailwind + shadcn/ui · 无路由库（手写 hash 路由）· 无 HTTP 库（自研 useAsync + fetch）</td>
+      <td>路由 <a href="../apps/collector-web/src/router.ts">router.ts</a>；出口 <a href="../apps/collector-web/src/api.ts">api.ts</a>（BASE='' 同源）；构建 outDir → <a href="../apps/collector-web/vite.config.ts">collector-server/public</a></td>
+    </tr>
+    <tr>
+      <td><a href="../apps/collector-android/">collector-android</a></td>
+      <td><b>Android 原生 app</b>（2026-08-26 立项）。手机端采集入口与查询：系统分享菜单/粘贴 三平台链接 → <code>POST /api/collect-tasks</code> 建任务 → <b>浏览器扩展客户端执行</b>；任务列表重试/删除、视频库/字幕查看。Bearer token 连任意 collector-server（server 侧零改动）。</td>
+      <td>Kotlin + Jetpack Compose + Material 3 · Gradle（JDK 21）</td>
+      <td>操作手册 <a href="../docs/help/手机采集.md">docs/help/手机采集.md</a>；单测 <code>./gradlew :app:testDebugUnitTest</code> + detekt（原生链豁免四件套，不进 <code>pnpm qa</code>）；涉 app 改动 bump <code>versionCode</code></td>
+    </tr>
+  </tbody>
+</table>
+
+<h2>五条核心数据流</h2>
+<ul>
+  <li><b>① 字幕采集 → 落库（三平台双路径）</b>：被动路径 = 页面 fetch/XHR → inject（MAIN hook）postMessage → content（ISOLATED 聚合）→ <code>chrome.runtime INGEST</code> → background <code>sendIngest</code> → WS <code>/ext · ingest</code> → <a href="../apps/collector-server/src/db/ingest.ts">ingestVideo</a> 单事务 upsert（<code>(track_id, origin, asr_engine, source_url)</code> 幂等去重）。主动路径 = server 建任务 → WS command（<code>fetch-subtitle / fetch-youtube-subtitle / fetch-douyin-subtitle</code>）→ background 后台 tab 导航到视频页取数（B 站为页面外直调 wbi API）→ 回执入库；抖音接口带页面签名，<b>只能页面上下文取数</b>（<a href="../apps/subtitle-collector/dy-navigate.mjs">dy-navigate.mjs</a>）。</li>
+  <li><b>② 反向控制（server → 扩展）</b>：CLI/前端调 <code>POST /api/clients/:id/command</code> → server 经 WS 下发 <code>{id, action, ...}</code> → <a href="../apps/subtitle-collector/background.js">background.js</a> L557-914 派发，13 分支 / <b>14 个 action</b>（navigate / operate / search / fetch-subtitle / fetch-youtube-subtitle / fetch-douyin-subtitle / expand-douyin-upper / get-upper-info / list-upper-videos / list-yt-channel-videos / yt-search / list-season-videos / set-reporting / set-task-dispatch，其中 fetch-douyin-subtitle 与 expand-douyin-upper 共用分支下沉 <a href="../apps/subtitle-collector/dy-navigate.mjs">dy-navigate.mjs</a>）→ 执行后回 <code>result</code>；不认识的 action 回 needs_update（版本感知派发门槛在 <a href="../apps/collector-server/src/tasks/upper-expand.ts">upper-expand.ts</a>）。</li>
+  <li><b>③ ASR backfill 兜底转写（server 侧，不走扩展）</b>：CLI <code>asr backfill --source bilibili|douyin</code>（<a href="../apps/collector-server/src/cli/commands/asr.ts">asr.ts</a>）——圈定 no-subtitle 视频（GET /api/videos）→ B 站 wbi/view/playurl 直连拉音轨（<a href="../apps/collector-server/src/cli/asr-bili.ts">asr-bili.ts</a>）或抖音 extra.play_uri 直构 snssdk 直链下载 mp4（<a href="../apps/collector-server/src/cli/asr-douyin.ts">asr-douyin.ts</a>，零 cookie，500MB 上限）→ 本机 fireredasr-ui（FireRedASR-AED-L）转写 → <code>POST /api/asr/submit</code>（<a href="../apps/collector-server/src/http/asr.ts">http/asr.ts</a>）入 <code>asr-zh-&lt;engine&gt;</code> 轨、幂等去重、成功摘 no-subtitle 标。</li>
+  <li><b>④ 消费端闭环（分析原料 → 产物）</b>：<a href="../scripts/export-bundle.mjs">scripts/export-bundle.mjs</a> 一条命令 = 生产库容器内 <code>VACUUM INTO</code> + <code>docker cp</code> 快照到 <code>data/exports/</code> → collector-cli <code>export bundle</code> 出包 → <code>analysis/&lt;主题&gt;/bundle/</code>（manifest.json + ANALYZE.md + videos/*.txt）→ Claude Code 会话分析 → 产物落 <code>analysis/&lt;主题&gt;/</code>，最终报告住仓库外 report 仓库（官方流程 <a href="../docs/help/分析工作流.md">docs/help/分析工作流.md</a>，已实跑 4 例）。</li>
+  <li><b>⑤ 本地转写（VoiceCatch，😴 休眠）</b>：inject 读 <code>__playinfo__</code> 音轨 → background 免 CORS 抓 m4s → base64 → offscreen 跑 <code>@voicetxt/core</code> Whisper → SRT/VTT/TXT。与 collector 系统<span class="tag aside">零代码耦合</span>；voicetxt 失源后退役为备选，无字幕兜底职责移交数据流 ③。</li>
+</ul>
+
+<h2>容易被忽略的边界</h2>
+<ul>
+  <li><span class="tag">构建期耦合</span> collector-web 不是独立部署：vite <code>build.outDir</code> 直接写到 <a href="../apps/collector-web/vite.config.ts">../collector-server/public</a>，运行期纯同源 REST（<code>BASE=''</code>），无 CORS / 无 token（dev）。dev 代理 <code>/api</code>、<code>/ping</code> → <code>127.0.0.1:21527</code>；生产随 docker 镜像带上同一份产物。</li>
+  <li><span class="tag danger">生产部署红线</span> 生产真源 = docker <b>named volume</b> <code>subtitle-collector_collector-data</code>（2026-08-24 两次 SQLITE_CORRUPT：bind mount 走 virtiofs，宿主进程直触挂载库哪怕只读也会 mmap 一致性损库）——<b>禁 bind mount、禁宿主直读库文件</b>，查生产一律走 server HTTP 或 <code>docker exec</code>。网关 = caddy（<code>*.taevas.host</code> 子域名分发，现行生产入口 <code>https://collector.local.taevas.host</code>，见 <a href="../docs/superpowers/specs/2026-08-19-caddy-gateway-design.md">网关设计</a> 与 <a href="../docs/skills/collector/SKILL.md">SKILL.md</a> 双库表）；暴露部署 <b>token 强制</b> + Host/Origin 白名单（<a href="../apps/collector-server/src/main.ts">main.ts</a>）。本地 127.0.0.1:21527 仍是 dev 库；CLI 直连远端被 Host 校验 403 时的桥接代理：<a href="../scripts/proxy-collector-server.mjs">scripts/proxy-collector-server.mjs</a>（127.0.0.1:21528 重写 Host 透传）。备份通道：<a href="../apps/collector-server/src/db/backup.ts">db/backup.ts</a> 每 15min 容器内 <code>VACUUM INTO</code> + 分层滚动（最近 8 份 + 每日末份 × 14 天）+ 连续失败 ≥2 次飞书 webhook 告警（异地副本走 <a href="../scripts/backup-export.mjs">backup-export.mjs</a>）。</li>
+  <li><span class="tag">外部依赖</span> <code>@voicetxt/core</code> 经 <code>file:</code> 协议指向仓库外同级目录且<b>当前失源</b>——subtitle-extractor 已从 <a href="../pnpm-workspace.yaml">pnpm-workspace.yaml</a> 正式排除（测试冻结），休眠保留；fireredasr-ui 是独立项目，本仓库只经 HTTP 配置接入（默认 <code>127.0.0.1:5079</code>），缺能力去上游补码不在本仓库内嵌。</li>
+  <li><span class="tag">分析产物边界</span> <code>analysis/</code> 只存原料（bundle）与分析中间产物；<b>最终报告住仓库外</b> report 仓库（<code>Code/report/projects/subtitle-collector/</code>），落盘规范锚点在 <a href="../README.md">README</a>「分析产物规范」条目。</li>
+</ul>
+
+<h2>编排</h2>
+<ul>
+  <li><b>turbo</b>（<a href="../turbo.json">turbo.json</a>）：tasks = <code>build</code> / <code>dev</code> / <code>test</code>，<code>test</code> 依赖 <code>^build</code>；collector-android 走原生 gradle 链，刻意不进 turbo（package.json scripts 用 <code>assemble</code>/<code>unit-test</code>/<code>lint</code> 命名防误挂）。</li>
+  <li><b>根脚本</b>（<a href="../package.json">package.json</a>）：<code>test:ext</code> / <code>test:youtube</code> 走 <code>scripts/verify-*.mjs</code>（puppeteer mock 扩展，<code>--load-extension=dist</code>）；<code>cli</code>、<code>collect-uppers</code>、<code>qa</code> 全量质量门。</li>
+  <li><b>端口/Token</b>：dev 固定 <code>127.0.0.1:21527</code>；生产经 caddy <code>https://collector.local.taevas.host</code>（token 强制）。server 列表存扩展 storage，popup 可改（不再有 config.js 常量）；环境变量见 <a href="../apps/collector-server/.env.example">.env.example</a>。</li>
+</ul>
+
+<script>
+  mermaid.initialize({ startOnLoad: true, theme: 'dark', securityLevel: 'loose',
+    flowchart: { curve: 'basis', padding: 12 } });
+</script>
+</body>
+</html>
