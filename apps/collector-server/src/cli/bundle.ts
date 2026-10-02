@@ -246,7 +246,10 @@ function mergeBundleTags(
     }
     out.set(id, [...winner.values()].sort((a, b) => {
       const pa = rank.get(a.scope)!; const pb = rank.get(b.scope)!;
-      return pa !== pb ? pa - pb : a.name.localeCompare(b.name);
+      // 名称序用码点比较而非 localeCompare：后者跟随机器默认 locale（zh-CN collation 下 Latin 排在
+      // 汉字之后），跨机器导出顺序不稳定，破坏「稳定排序」契约（2026-10-02 实测 zh-CN 机上确定性失败）。
+      // 与 queries.ts 的 mergeTagDetails 镜像同步改（cmpCodepoint 同款实现）。
+      return pa !== pb ? pa - pb : (a.name < b.name ? -1 : a.name > b.name ? 1 : 0);
     }));
   }
   return out;

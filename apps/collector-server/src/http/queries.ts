@@ -25,7 +25,9 @@ function mergeTagDetails(
   if (keepAll) {
     return all.sort((a, b) => {
       const pa = priority.indexOf(a.source); const pb = priority.indexOf(b.source);
-      return pa !== pb ? pa - pb : a.name.localeCompare(b.name);
+      // 名称序用码点比较而非 localeCompare：后者跟随机器默认 locale（zh-CN collation 下 Latin 排在
+      // 汉字之后），跨机器导出顺序不稳定，破坏「稳定排序」契约（2026-10-02 实测 zh-CN 机上确定性失败）。
+      return pa !== pb ? pa - pb : cmpCodepoint(a.name, b.name);
     });
   }
   const rank = new Map(priority.map((s, i) => [s, i]));
@@ -36,8 +38,13 @@ function mergeTagDetails(
   }
   return [...winner.values()].sort((a, b) => {
     const pa = rank.get(a.source) ?? 99; const pb = rank.get(b.source) ?? 99;
-    return pa !== pb ? pa - pb : a.name.localeCompare(b.name);
+    return pa !== pb ? pa - pb : cmpCodepoint(a.name, b.name);
   });
+}
+
+// 码点三态比较（UTF-16 code unit 序）：locale 无关的确定性名称序。
+function cmpCodepoint(a: string, b: string): number {
+  return a < b ? -1 : a > b ? 1 : 0;
 }
 
 // 列表项富化：用 json_extract 从 extra 取 tid/tname/tags/view/season_title，并合并关系档标签按优先级 dedupe。
