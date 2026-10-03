@@ -101,6 +101,7 @@ export async function main(): Promise<void> {
       { buildTagsCommand },
       { buildTranslateCommand },
       { buildAsrCommand },
+      { buildCommentsCommand },
     ] = await Promise.all([
       import('./commands/videos.js'),
       import('./commands/versions.js'),
@@ -116,6 +117,7 @@ export async function main(): Promise<void> {
       import('./commands/tags.js'),
       import('./commands/translate.js'),
       import('./commands/asr.js'),
+      import('./commands/comments.js'),
     ]);
     program.addCommand(buildVideosCommand());   // videos list / get / get-by-id
     program.addCommand(buildVersionsCommand()); // versions get
@@ -134,6 +136,7 @@ export async function main(): Promise<void> {
     program.addCommand(buildTagsCommand());  // tags list / apply / remove（视频标签）
     program.addCommand(buildTranslateCommand()); // translate pending / source / fill（补翻工作流）
     program.addCommand(buildAsrCommand());       // asr backfill（无字幕兜底转写编排）
+    program.addCommand(buildCommentsCommand());  // comments collect / tree / verify（评论采集与树查看,2026-10）
 
     await program.parseAsync(process.argv);
   } catch (err) {

@@ -176,6 +176,23 @@ export class ServerClient {
     return this.requestJson('POST', '/api/collect-tasks/retry', { ids });
   }
 
+  // ── 评论采集通路（C2 端点，PLAN §4.1/§5.2；CLI `comments collect` 消费，D4「CLI 永不写库」）──
+
+  // 评论水位查询：GET /api/comments/count?bvid= → {ok, rows, roots, max_ctime_s}（模式判定+增量水位）。
+  async commentsCount(bvid: string): Promise<Record<string, unknown>> {
+    return this.requestJson('GET', `/api/comments/count?bvid=${encodeURIComponent(bvid)}`) as Promise<Record<string, unknown>>;
+  }
+
+  // 评论写回：POST /api/comments/ingest（raw 条目子集，服务端解析归一+幂等 upsert；full_scan 对账+置顶清打）。
+  async commentsIngest(body: Record<string, unknown>): Promise<Record<string, unknown>> {
+    return this.requestJson('POST', '/api/comments/ingest', body) as Promise<Record<string, unknown>>;
+  }
+
+  // 评论树校验：GET /api/comments/verify?bvid= → {ok, bvid, ...verifyTree}（纯库内读，无副作用）。
+  async commentsVerify(bvid: string): Promise<Record<string, unknown>> {
+    return this.requestJson('GET', `/api/comments/verify?bvid=${encodeURIComponent(bvid)}`) as Promise<Record<string, unknown>>;
+  }
+
   // 统一请求：fetch + JSON 解析 + 错误归一化。
   // 连不上 → ServerUnreachableError；非 2xx → ServerResponseError；2xx → 解析后的 JSON（无 body 时返回 null）。
   private async requestJson(method: 'GET' | 'POST' | 'PATCH' | 'DELETE', path: string, body?: Record<string, unknown>): Promise<unknown> {

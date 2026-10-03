@@ -42,17 +42,25 @@ export async function withRiskRetry<T extends { risk?: boolean }>(
   return last;
 }
 
-/** B 站 JSON API 请求：非 2xx/412/畸形体归一为 parseBiliJson 错误分类；风控走 withRiskRetry。 */
+/** B 站 JSON API 请求：非 2xx/412/畸形体归一为 parseBiliJson 错误分类；风控走 withRiskRetry。
+ * 2026-10-04 随评论采集加 status/bytes 观察字段（[fetch] 日志体量/状态可观察，PLAN §4.7/§9）——
+ * 纯增量字段，既有分支语义不变。 */
 export async function fetchBiliJson(
   deps: NetDeps & { cookie?: string }, url: string,
-): Promise<{ ok: true; data: Record<string, unknown> } | { ok: false; code: string; message: string }> {
+): Promise<{ ok: true; data: Record<string, unknown>; status?: number; bytes?: number }
+  | { ok: false; code: string; message: string; status?: number; bytes?: number }> {
   const fetchImpl = deps.fetchImpl ?? fetch;
   return withRiskRetry(deps, async () => {
     try {
       const res = await fetchImpl(url, { headers: biliHeaders(deps.cookie) });
-      if (res.status === 412) return { ok: false as const, code: 'risk_control', message: 'HTTP 412', risk: true };
-      const parsed = parseBiliJson(await res.json().catch(() => null));
-      return { ...parsed, risk: !parsed.ok && isRiskControl(parsed) };
+      const status = res.status;
+      const text = await res.text();
+      const bytes = text.length;
+      if (status === 412) return { ok: false as const, code: 'risk_control', message: 'HTTP 412', risk: true, status, bytes };
+      let body: unknown = null;
+      try { body = JSON.parse(text); } catch { /* 非 JSON → parseBiliJson 归一 malformed */ }
+      const parsed = parseBiliJson(body);
+      return { ...parsed, risk: !parsed.ok && isRiskControl(parsed), status, bytes };
     } catch (e) {
       return { ok: false as const, code: 'fetch_error', message: (e as Error).message, risk: false };
     }
