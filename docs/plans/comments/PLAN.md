@@ -837,3 +837,17 @@ C0 实测执行记录(§4.9 清单)。环境:宿主 node(tsx)直连 `api.bilibil
 | §4.4 防打转护栏 | 加注 mode=2 游标逐页变化(护栏安全)、mode=3 token 恒定属设计使然(护栏仅对 mode=2 生效) |
 | §7.1 用例清单 | 「direction=2 回退分支」用例替换为「cursor 包裹透传形态」用例 |
 
+
+---
+
+## 附录:验收实录(2026-10-04)
+
+| 环节 | 结果 |
+|---|---|
+| 部署 | collector-server 镜像 rebuild + 容器 recreate(named volume 数据不动,每小时自动备份兜底);`POST /api/comments/ingest` 探活 401(无鉴权)/400(参数校验)正常 |
+| 采集闭环 | BV1DqaB6VEmE(8 条):`--dry-run`(store=would_*)→ 全量(inserted=8)→ 幂等重采(inserted=0,updated 全量)→ verify coverage=1.0 |
+| verify 端点 | counts(3 根/5 楼/8 总)正确;integrity 十项(triple_inconsistent/orphan_floor/dangling_*/rcount_mismatch/overshoot/field_anomaly/dup_rpid/time_anomaly/root_count_gap)全 0 |
+| tree 渲染 | 真实树:UP主标注/IP属地/`(回复对象已删除)`悬空上提/dialog「回复 @」链/楼内互复两层缩进全部正确 |
+| bundle 消费 | `comments/BV1DqaB6VEmE.md` 正文 + manifest `comments` 字段(roots/total/coverage/like_top/last_collected_at)+ ANALYZE 盲区第四类与出处格式约定落位 |
+| 大规模分页 | spike 实测 106 页真实翻页(mode=2 游标内嵌剩余计数 1038→1014 推进);「千条级视频落库→全量」待扩展在线后随日常采集完成(视频入库唯一通路 `collect subtitle` 依赖扩展,验收时两客户端均离线) |
+| 质量门 | 1102 tests 全绿;c8 99.64/94.12/99.82/99.64;台账 39/39 PASS;depcruise 0 违反;skill-sync 23 条全过 |
