@@ -9,6 +9,7 @@
 // | R1 | subtitle 4 格式 + 轨/版本选择 + NOT_FOUND ×4 + -o；videos stdout/-o/table 拒绝；bundle 成功/非空目录 ARGS | 通过 | |
 // | R2 | bundle --name-order：默认 <id>-<标题>、自定义序、纯 id 回旧形态、非法/重复组件 ARGS | 通过 | 默认文件名随需求变更为 id,name |
 // | R3 | -q 用例改断言：--server 忽略警告不再被 -q 抑制（db.ts openDbOrEmit 警告，2026-10-02） | 通过 | |
+// | R4 | bundle 评论导出（C6）：有评论视频落 comments/<BV>.md + manifest comments 字段；0 评论视频无文件无字段 | 通过 | 2026-10-04 |
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -319,6 +320,35 @@ test('export bundle：--out 已存在非空且无 --force → ARGS 退 2', async
     assert.equal(r2.code, 0);
     assert.equal(JSON.parse(r2.out).ok, true);
   } finally { rmSync(dir, { recursive: true, force: true }); rmSync(outDir, { recursive: true, force: true }); }
+});
+
+test('export bundle：评论导出（C6）——有评论视频落 comments/<BV>.md，manifest 仅其带 comments 字段', async () => {
+  const { db, dir, dbPath } = setup();
+  const outDir = join(dir, 'b-comments');
+  try {
+    // 给 BV1 手插一条根评论（comments 表 v20；其余列走缺省，导出只消费这些列）
+    const v1 = (db.prepare("SELECT id FROM videos WHERE source_vid = 'BV1'").get() as { id: number }).id;
+    db.prepare(
+      `INSERT INTO comments (rpid_str, video_id, root_rpid, parent_rpid, dialog_rpid, is_root,
+         uname, message, like_count, rcount, ctime_s, first_seen_at, last_seen_at)
+       VALUES ('r1', ?, '0', '0', '0', 1, '评论区用户', '高赞评论', 88, 1, 1790985600, 1790985600000, 1790985600000)`,
+    ).run(v1);
+    // 不带过滤器：BV1（有评论+字幕）、BV8/BV4（无评论）全量导出，验证字段按视频区分
+    const r = await cli(args(dbPath, ['export', 'bundle', '--out', outDir]));
+    assert.equal(r.code, 0, r.err);
+    const mdPath = join(outDir, 'comments', 'BV1.md');
+    assert.ok(existsSync(mdPath), 'comments/ 目录随首条评论正文创建（export.ts mkdir 分支）');
+    assert.match(readFileSync(mdPath, 'utf-8'), /^# 评论区 · 标题A\n/);
+    const md = readFileSync(mdPath, 'utf-8');
+    assert.match(md, /## 【赞 88】@评论区用户 · 2026-10-03\n高赞评论\n/, '根评论按根组标题+正文渲染');
+    const manifest = JSON.parse(readFileSync(join(outDir, 'manifest.json'), 'utf-8'));
+    const byVid = Object.fromEntries(manifest.videos.map((v: { source_vid: string }) => [v.source_vid, v]));
+    assert.equal(byVid.BV1.comments.file, 'comments/BV1.md');
+    assert.equal(byVid.BV1.comments.total, 1);
+    assert.equal('comments' in byVid.BV8, false, '0 评论视频省略 comments 字段');
+    assert.equal('comments' in byVid.BV4, false, '0 评论视频省略 comments 字段');
+    assert.ok(!existsSync(join(outDir, 'comments', 'BV8.md')), '0 评论视频不出 md 文件');
+  } finally { db.close(); rmSync(dir, { recursive: true, force: true }); }
 });
 
 test('export bundle：--limit abc / --sort bogus / --since bad → ARGS；DB 缺失 → DB_UNREADABLE', async () => {
