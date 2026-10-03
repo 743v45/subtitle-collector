@@ -14,16 +14,16 @@
 | 分析模板二例 | **已达成**：内置三模板（观点汇总/面试题库/理念整理），闭环实跑 4 例 | [analyze-template.ts](../../apps/collector-server/src/cli/analyze-template.ts)、[README.md:43](../../README.md#L43) |
 | 存量回填+完整率指标 | **部分达成**：asr backfill 能力双平台闭环；存量批量回填跑数未执行；完整率指标被显式推迟 → 新 **P1-5 / P3-5** | [DOUYIN-PROGRESS.md:79](../../DOUYIN-PROGRESS.md#L79)、[consumption-loop.md:51](consumption-loop.md#L51) |
 | yt 字幕加固 | **未执行**：yt ASR 兜底选型 ⏳、yt-login 探测未实证 → 新 **P3-1** 待拍板 | [README.md:27](../../README.md#L27) |
-| 提交已上生产重构 | **语义失传**（全历史 pickaxe 零命中；唯一可考关联事实 = 32b9ba6 四巨石 `--allow-degrade` 欠账）→ 待用户追认；可见症状并入 **P2-1** | 本表即全部记录 |
+| 提交已上生产重构 | **经 2026-10-04 追认划销**：语义失传（全历史 pickaxe 零命中），用户确认划销；可见症状（四巨石欠账）并入 **P2-1** 持续偿还 | 本表即全部记录 |
 
 ## 1. P0（止血）
 
-### P0-1 生产 token 轮换 ✅ 暂存（2026-10-04），⏳ 重启生效待用户
+### P0-1 生产 token 轮换 ✅ 生效（2026-10-04）
 
 - **现状**：生产容器 env 实值 = compose 缺省 `change-me-collector-token`（docker inspect 实查 2026-10-04），端口 `0.0.0.0:21527` 全接口监听（[docker-compose.yml:30-31](../../docker-compose.yml#L30)），旧 token 请求 `/api/stats` 返回 200——控制面（含驱动扩展 navigate 任意 URL 的 command 通道，[main.ts:35-36](../../apps/collector-server/src/main.ts#L35) 自述风险面）仅由一个公开可读字符串保护。
 - **动作**：主检出根目录 `.env` 写 `COLLECTOR_TOKEN=<48hex 随机>`（[.gitignore:31](../../.gitignore#L31) 已覆盖不入库；机制为 [docker-compose.yml:20,35-37](../../docker-compose.yml#L20) 既定设计）→ `docker compose up -d` 重建容器使 env 生效。
-- **验收**：旧 token 请求 401；新 token 200；`docker inspect` 实值 ≠ `change-me-*`；popup 更新后 `/api/clients` 心跳正常。
-- **用户侧配套**（见 §5 U-1）：popup server URL 追加 `?token=<新值>`；Android 设置页同步；CLI 写操作带 Bearer。
+- **验收**（2026-10-04 实测全过）：旧 token 请求 401；新 token 200；`docker inspect` 实值 ≠ `change-me-*`；容器重建后 /ping 200。
+- **用户侧配套**（§5 U-1 未完成部分）：popup server URL 追加 `?token=<新值>`；Android 设置页同步；CLI 写操作带 Bearer。
 
 ### P0-2 test:ext 冒烟坏用例修复 ✅（2026-10-04 本轮）
 
@@ -69,6 +69,6 @@
 |---|---|---|---|
 | U-1 | popup / Android 更新 token | P0-1 | popup 服务器配置 URL 追加 `?token=<新值>`（值见主检出 `.env`）；断连窗口内主动采集暂停 |
 | U-2 | douyin 博主批量真机重测 | P2-4 前置 | 悬置 5 周+（[DOUYIN-PROGRESS.md:6](../../DOUYIN-PROGRESS.md#L6)）：健康 sec_uid 匿名 1.5s 通、真实浏览器零到达，候选根因待真机区分 |
-| U-3 | 「提交已上生产重构」语义追认 | §0 | 追认后归位新条目或划销 |
+| U-3 | ~~「提交已上生产重构」语义追认~~ | §0 | ✅（2026-10-04 追认划销） |
 | U-4 | P3-1 / P3-4 拍板 | P3 | 不拍板 = 维持现状（冻结/静止） |
 | U-5 | 下一个分析主题实跑 | P3-3/P3-5、README 🚧 | 解锁「疼了再做」推迟项链（INDEX 台账 → README 分析条目转 ✅ 的互锁条件，[README.md:46](../../README.md#L46)） |
