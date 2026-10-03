@@ -4,6 +4,7 @@
 // | 轮次 | 范围 | 结果 | 备注 |
 // |---|---|---|---|
 // | R1 | parseBiliJson×5 + parseViewCid×3 + parsePlayurlAudio×3 + wbiKeysFromNav×2 + segmentsToCues×3 | 通过 | |
+// | R2 | isRiskControl 风险码超集扩展（-352/-799/-509） | 通过 | 2026-10-04 C3 评论采集；本地 node --test + tsc --noEmit |
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -77,4 +78,14 @@ test('isRiskControl：risk_control / bili_-412 判风控，其余非', () => {
   assert.equal(isRiskControl({ ok: false, code: 'bili_-412' }), true);
   assert.equal(isRiskControl({ ok: false, code: 'need_login' }), false);
   assert.equal(isRiskControl({ ok: true, code: '' }), false);
+});
+
+test('isRiskControl：风险码超集扩展——bili_-352/-799/-509 判风控；-403/-101 等不误判', () => {
+  // 2026-10-04 评论采集扩展（PLAN §4.6）：此前三码落兜底分支 bili_<code>，withRiskRetry 一次都不退避
+  assert.equal(isRiskControl({ ok: false, code: 'bili_-352' }), true, '-352 风控校验失败（UA/buvid 缺失）→ 三档退避');
+  assert.equal(isRiskControl({ ok: false, code: 'bili_-799' }), true, '-799 频率超限 → 三档退避');
+  assert.equal(isRiskControl({ ok: false, code: 'bili_-509' }), true, '-509 频率超限 → 三档退避');
+  assert.equal(isRiskControl({ ok: false, code: 'bili_-403' }), false, '-403 是 wbi 签名错误特有码，处置是强刷 keys 重试，不走退避');
+  assert.equal(isRiskControl({ ok: false, code: 'need_login' }), false, '-101 cookie 失效非风控，不退避');
+  assert.equal(isRiskControl({ ok: false, code: 'bili_12002' }), false, '12002 关评是正常终态，非风控');
 });
