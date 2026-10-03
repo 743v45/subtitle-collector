@@ -173,3 +173,50 @@ CREATE TABLE IF NOT EXISTS clients (
   first_seen_at INTEGER NOT NULL, -- server 首次见到该 client_id（hello upsert 插入时）
   last_seen_at  INTEGER NOT NULL  -- 最近一次连接建立/断开时刻（hello upsert / close touch）
 );
+
+-- B 站评论(2026-10-03 用户现场指令一次性解冻,与 2026-08-29 抖音同类;措辞:评论 comment,非弹幕)。
+-- 两层树:根评论(root_rpid='0')+ 楼中楼平铺(parent 指向楼内被回复条、root 恒指楼根);
+-- dialog 是「回复 @」对话指向(直回根时=自身 rpid,B 站为免渲染「回复 @根作者」)。
+-- 五个 ID 一律存 *_str(rpid/root/parent/dialog/mid 都有 *_str;rpid 已 3.2e11、mid 已 3.5e15,逼近 2^53)。
+-- upper.mid 无 *_str 形态,is_up 由服务端 String(upper_mid) 直读比较。
+-- 幂等 upsert:UNIQUE(rpid_str);重采更新观测列(like/状态/快照),保留首采列(first_seen_at 等)。
+-- 删除不物理删:全量重采(仅根评论、仅完整轮,见 missing 对账守卫)连续两轮未见才确认
+-- ——missing_since 置值=至少缺席一轮完整全量;
+-- last_seen_at < missing_since = 确认缺失(见 db/comments.ts missing 对账)。
+-- 时间口径:ctime_s 是 B 站原值 unix 秒(保真,列名 _s 后缀防与毫秒列混算);其余 *_at 列毫秒 epoch(全库惯例)。
+CREATE TABLE IF NOT EXISTS comments (
+  id             INTEGER PRIMARY KEY AUTOINCREMENT,
+  rpid_str       TEXT NOT NULL,
+  video_id       INTEGER NOT NULL REFERENCES videos(id),
+  root_rpid      TEXT NOT NULL DEFAULT '0',
+  parent_rpid    TEXT NOT NULL DEFAULT '0',
+  dialog_rpid    TEXT NOT NULL DEFAULT '0',
+  is_root        INTEGER NOT NULL DEFAULT 1,  -- root_rpid='0' 冗余派生列(根列表索引前缀/统计免 CASE)
+  mid_str        TEXT,
+  uname          TEXT,                        -- member 快照冗余列(渲染免拆 JSON)
+  member         TEXT,                        -- member 对象 JSON 快照(重采整体替换)
+  message        TEXT,                        -- content.message 原文(检索列)
+  content        TEXT,                        -- content 对象 JSON(emote/jump_url/pictures/@)
+  like_count     INTEGER NOT NULL DEFAULT 0,  -- 点赞数(避 SQL 关键字 LIKE;重采更新)
+  rcount         INTEGER NOT NULL DEFAULT 0,  -- 当前可见楼中楼数(根评论;对账分母 fallback,实时分母=page.count §4.5)
+  reply_total    INTEGER NOT NULL DEFAULT 0,  -- B 站 count 字段:历史楼中楼总数(含已删,可>rcount)
+  ctime_s        INTEGER,                     -- 发布时间,B 站原值 unix 秒!(列名显式 _s 后缀,防当毫秒与 *_at 混算)
+  ip_location    TEXT,                        -- reply_control.location 解析(需登录态 cookie)
+  state          INTEGER NOT NULL DEFAULT 0,  -- 0 正常 / 17 阿瓦隆隐藏(仅自己可见)
+  invisible      INTEGER NOT NULL DEFAULT 0,
+  folded         INTEGER NOT NULL DEFAULT 0,  -- folder.is_folded(该评论自身被折叠;has_folded=「有折叠子回复」不并入)
+  up_like        INTEGER NOT NULL DEFAULT 0,  -- up_action.like(UP 觉得很赞)
+  up_reply       INTEGER NOT NULL DEFAULT 0,  -- up_action.reply(UP 已回复)
+  is_up          INTEGER NOT NULL DEFAULT 0,  -- 评论者==UP 主(String(upper_mid)==mid_str,服务端算)
+  pin_kind       TEXT,                        -- 置顶:'admin'|'upper'|'vote';NULL 非置顶(每轮先清后打)
+  first_seen_at  INTEGER NOT NULL,            -- 首采时刻(毫秒;upsert 保留)
+  last_seen_at   INTEGER NOT NULL,            -- 最近一次在响应中见到(毫秒;missing 判定基准)
+  first_page     INTEGER,                     -- 首采时主列表页序(仅根评论;诊断用)
+  first_sort     TEXT,                        -- 首采排序 'hot'|'time'|'floor'(诊断)
+  batch_id       TEXT,                        -- 首采批次 uuid(crypto.randomUUID(),node:crypto 零新增依赖;同轮所有行同值;重采不动)
+  missing_since  INTEGER                      -- 首次缺席完整全量轮的扫描起始时刻(毫秒;仅根评论参与、仅完整轮置值);NULL=在库正常
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_comments_rpid ON comments(rpid_str);
+CREATE INDEX IF NOT EXISTS idx_comments_video ON comments(video_id, is_root, like_count DESC);
+CREATE INDEX IF NOT EXISTS idx_comments_root ON comments(root_rpid);
+CREATE INDEX IF NOT EXISTS idx_comments_parent ON comments(parent_rpid);
