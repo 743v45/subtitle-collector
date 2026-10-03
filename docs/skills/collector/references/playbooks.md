@@ -12,7 +12,7 @@ collector-cli clients list
 collector-cli collect search 测试关键词 --page 1
 ```
 
-- `server ping` 退 3 或输出 `online:false` → server 没起:`node scripts/run-collector-server.mjs`(本地)或查 docker(生产)。
+- `server ping` 退 3 或输出 `online:false` → server 没起:`collector-cli server start`(本地;默认后台 detached,日志 `.collector-server.log`,停走 `server stop`)或查 docker(生产)。
 - `clients list` 空 → 扩展不在线:`scripts/load-collector-extension.sh` 装扩展 + `scripts/launch-chrome.mjs` 起 Chrome,确认扩展已连 server。
 - `collect search` 是无副作用试探(不入库),通了才继续批量。
 
@@ -66,7 +66,7 @@ node scripts/export-bundle.mjs --theme <主题> --tags <标签1>,<标签2>
 
 ## 5. tags 打标(含 AI 打标工作流)
 
-三档 `manual|batch|ai`(bili 档只读视频自带)。AI 打标官方工作流([tags.ts](../../../apps/collector-server/src/cli/commands/tags.ts) 头注释约定):
+四档 `manual|batch|ai|system`(bili 档只读视频自带,不独立成列;system=系统状态档如 no-subtitle,采集链路自动打/摘)。AI 打标官方工作流([tags.ts](../../../apps/collector-server/src/cli/commands/tags.ts) 头注释约定;`--scope`=档位,`--source`=平台默认 bilibili):
 
 ```collector-cli
 collector-cli sub search <主题关键词> --ctx 8 --max-videos 20
@@ -75,7 +75,7 @@ collector-cli tags list --scope ai
 ```
 
 - 先 `sub search` 读字幕正文判断视频归属 → `tags apply` 打标(打标即建标,视频需已入库)→ `tags list` 核对。
-- `tags remove <bvid...> --names <csv>`;`--source` 省略时删该名字全部三档。
+- `tags remove <bvid...> --names <csv>`:`--scope` 省略删该名字全部四档(只传 `--scope` 则只删该档);`--source` 定平台,默认 bilibili。
 
 ## 6. 补翻工作流(无中文轨视频补中文翻译)
 

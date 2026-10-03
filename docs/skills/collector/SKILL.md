@@ -17,7 +17,7 @@ collector-cli stats overview
 
 - **禁 `pnpm cli`**:pnpm run 回显 banner 混入 stdout,`| jq` 直接解析失败。
 - **禁 `pnpm -s cli`**:silent 模式吞退出码(失败全变 1,丢失语义)。
-- exec tsx 直调:stdout 为数据 + 结果报告(**格式随全局 `--format`**,json 时纯数据 JSON;list 类 `{total,page,size,items}`);失败 `{"ok":false,"error":"...","code":"..."}`;stderr 人类日志(`-q` 抑制)。正确退出码:**0** 成功 / **1** 运行时 / **2** 参数错 / **3** server 不可达 / **4** DB 不可读 / **5** 未找到。
+- exec tsx 直调:stdout 为数据 + 结果报告(**格式随全局 `--format`**,json 时纯数据 JSON;list 类 `{total,page,size,items}`);失败 `{"ok":false,"error":"...","code":"..."}`;stderr 人类日志(`-q` 抑制)。正确退出码:**0** 成功 / **1** 运行时 / **2** 参数错 / **3** server 不可达 / **4** DB 不可读 / **5** 未找到 / **6** 扩展版本过旧(不认识新 action,提示更新扩展而非重试)。
 - 全局选项在子命令前:`--db <path>` / `--server <url>` / `--token <token>` / `--format <json|ndjson|csv|table>` / `-q`。
 - **cwd 陷阱**:`pnpm -C` 把子进程 cwd 切到 `apps/collector-server`,`--db`/`-o`/`--out` 等路径参数按该 cwd 解析——相对路径 `--db data/...` 会找成 `apps/collector-server/data/...`(exit 4)。**路径参数一律用绝对路径**,下文 `<repo>` 指仓库根绝对路径。
 - **兜底纪律:不确定的参数,先跑 `collector-cli <命令> --help` 再动手**——commander 每级自描述,以实时 help 为准(本文速查只列常用项)。
@@ -62,7 +62,7 @@ docker exec collector-server node -e 'const db=require("better-sqlite3")("/data/
 | `clients list/reporting/task-dispatch/command` | server HTTP | 扩展客户端管控;`list --sort last_seen\|first_seen\|name --desc` 含离线客户端(DB 注册表合并在线态,带 popup 改的名字、在线/离线时长、扩展版本与双平台登录态 `bili_login`/`yt_login`——B 站未登录会让充电视频 AI 字幕接口返回空、YouTube 未登录时年龄限制视频播不了且 pot 受限加重,批量采集整批 no_subtitle/pot_limited 的判因依据);`reporting <id> <on\|off>` 切上报 / `task-dispatch <id> <on\|off>` 切任务派发(off=仅上报状态,调度器不派任务);`command <id> <action> --timeout <ms>` |
 | `tasks list/get/retry` | server HTTP | 采集任务查询与重试(2026-10-02):`list` 筛选/排序/分页(`--status failed,limited` 逗号多值 / `--source <平台>` / `--batch-id <id>` / `--batch <名>` / `--creator` / `--creator-uid` / `--q` / `--since --until` / `--limit <n>`(最近 N)或 `--page --page-size`(翻页,输出带 page/page_size) / `--sort created_at\|finished_at\|status`);`get <id>` 单任务详情(失败原因 `error` 与回执摘要 `result` 在 task 内);`retry <id...>` 多 id 批量重试(非可重试行 server 侧静默跳过,看回执 `retried` 计数) |
 | `server ping/status/start/stop` | 本地 | 探活 / 起停(pid 文件;`start --no-detached --port`) |
-| `collect …`(12 子命令) | server→扩展 | 见下方 |
+| `collect …`(11 子命令) | server→扩展 | 见下方 |
 
 采集任务(tasks 组)生产库样例——查失败/受限任务并批量重试:
 
@@ -86,7 +86,6 @@ collect 子命令速记:`search <关键词>` 搜候选(不入库)/ `subtitle <vi
 | `scripts/youtube-collect-videos.mjs` | 列频道视频(stdout 给 videoId 列表;第 2 参月数默认 6,给 240 即全量;InnerTube 续页拉满,`[fetch]/[browse]/[parse]/[filter]` 分步 stderr 日志;2026-08-24 续页 token 适配三层嵌套新结构——扩展侧 tab 注入路径另有 browse 故障,全量列表以此脚本为准) |
 | `scripts/verify-yt-channel.mjs` | YouTube 频道采集验收(`<@handle\|UCxxx\|URL>`;频道全量=youtube-collect-videos.mjs 续页拉满,库内=HTTP /api/videos?creator_uid=,对比输出覆盖率与缺失清单 JSON;全采 exit 0,有缺 exit 1) |
 | `scripts/youtube-collect-subs.mjs` | 采 YouTube 字幕(英文+中文翻译,stdin 读 videoId) |
-| `scripts/run-collector-server.mjs` | 启动 server(node24 ABI 已重编译) |
 | `scripts/launch-chrome.mjs` | 起 Chrome + cdpc 端口(扩展联调) |
 | `scripts/load-collector-extension.sh` | 装扩展到 Chrome |
 | `scripts/proxy-collector-server.mjs` | 127.0.0.1:21528 → 内网 21527 转发 |

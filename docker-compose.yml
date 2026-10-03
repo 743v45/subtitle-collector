@@ -6,7 +6,9 @@
 # named volume 数据落在 Docker VM 磁盘、容器直通，宿主机不存在该文件——误操作路径物理封死。
 # 查生产库一律走 server HTTP/CLI 或 docker exec collector-server node -e '...'。
 #
-# 备份：server 内置每小时容器内 VACUUM INTO /data/backups/（滚动 24 份）；
+# 备份：server 内置定时容器内 VACUUM INTO /data/backups/。频率与滚动保留口径
+# 单源见 apps/collector-server/src/db/backup.ts（人读版：docs/help/Docker 部署.md），
+# 本注释不复述数字，防多处落笔各自老化（2026-10-04 教训：本行曾停留在每小时/24 份旧口径）。
 # 导出到宿主：node scripts/backup-export.mjs（docker cp）。
 #
 # 一次性迁移（bind mount → volume，2026-08-24 已执行）：
