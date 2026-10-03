@@ -51,6 +51,7 @@
 - sub search --tags+池截断 / videos list 富化 / stats completeness / INDEX 台账 / --date-field / help 门禁 → 触发条件：下一分析主题实跑疼了再做。
 - headless 分析初稿（2026-10-02 CLI 完整度批次追加）：`export-bundle` 出包后接 `claude -p` 按 ANALYZE.md 模板无人值守出分析初稿，人工只复核定稿——触发条件：下个分析主题实跑时试跑定形（prompt 模板、输出落点、失败重试策略都要实跑才知道）。
 - server 端 bundle 导出端点（2026-10-02 CLI 完整度批次追加）：`/api/export/bundle` 在 server 内流式出包（zip/tar），免「VACUUM INTO 快照 → docker cp → CLI 出包」三跳——触发条件：库规模或出包频率上来、现有三跳真的疼了再做。
+- web 评论展示（2026-10-03 评论采集落地的显式范围排除，[docs/plans/comments/PLAN.md §1.3](comments/PLAN.md)）→ 挂点已探明：VideoDetail 统计卡 `stat.reply` 计数处 + `/api/videos/:source/:vid/*` 子资源路由先例；触发条件：疼了再做。
 
 ## 执行纪律
 

@@ -725,6 +725,8 @@ Gherkin 验收文档:`docs/quality/acceptance/comments-collect.md`(文档式中�
 | C6 | `feat(bundle): manifest comments 摘要 + comments/*.md 导出 + ANALYZE 模板增补` | bundle.ts 增补 + 批量查询防 N+1 + analyze-template.ts 盲区第四类 + bundle.test.ts 增补 | 全量 qa;出一个含评论主题的实测 bundle |
 | C7 | `docs: 评论采集文档同步(SKILL/help/README/PLAN/验收)` | §9.3 全清单(含 Gherkin 验收文档 `docs/quality/acceptance/comments-collect.md`,§7.4)+ 本文档落盘 `docs/plans/comments/PLAN.md` | `verify-skill-sync` 过(qa 门) |
 
+> 实施记录:2026-10-04 C1-C7 完成,commit 2755ea1..2ba0de3(+本 commit);C0 spike 实录见附录。
+
 ### 9.2 涉及文件清单
 
 ```
