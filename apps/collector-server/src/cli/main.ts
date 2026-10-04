@@ -10,9 +10,10 @@ import { Command } from 'commander';
 import { resolveConfig } from './config.js';
 import { emitResult, setQuiet, EXIT_CODES, type Format } from './output.js';
 import { getCliContext, setCliContext, peekCliContext, type CliContext } from './context.js';
-
-// 与 [package.json](apps/collector-server/package.json) version 保持一致；硬编码避免 tsx 跑 JSON import attribute 的兼容性麻烦。
-const VERSION = '0.1.0';
+// 版本单源：读 [package.json](../../package.json) 的 version（2026-10-05 P1-11 去硬编码），
+// --version 旗标与 version 子命令共用；再导出供测试锁定同源（version.test.ts）。
+import { VERSION } from './version.js';
+export { VERSION };
 
 const program = new Command();
 
