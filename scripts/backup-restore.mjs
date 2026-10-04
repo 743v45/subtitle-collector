@@ -36,7 +36,7 @@ function listBackups() {
 if (mode === 'list') {
   const names = listBackups();
   if (!names.length) die('卷内无备份', 2);
-  console.log(`[restore] ${names.length} 份（新→旧）：\n  ${names.join('\n  ')}`);
+  console.error(`[restore] ${names.length} 份（新→旧）：\n  ${names.join('\n  ')}`);
   process.exit(0);
 }
 
@@ -47,7 +47,7 @@ if (mode === 'drill') {
   const stamp = new Date().toISOString().replace(/[-:T]/g, '').slice(0, 14);
   const vol = `collector-restore-drill-${stamp}`;
   const ctr = `collector-restore-drill-${stamp}`;
-  console.log(`[restore] 演练：用最新备份 ${pick} 恢复到临时卷 ${vol}（生产不受影响）`);
+  console.error(`[restore] 演练：用最新备份 ${pick} 恢复到临时卷 ${vol}（生产不受影响）`);
   try {
     run(['docker', 'volume', 'create', vol]);
     // 卷间拷贝：备份 → 临时卷根（作为该演练库的主文件名）
@@ -67,7 +67,7 @@ if (mode === 'drill') {
     if (!ok) die('演练容器 15s 内未通过 /ping');
     const integrity = run(['docker', 'exec', ctr, 'node', '-e',
       'const db=require("better-sqlite3")("/data/bilibili-collector.db",{readonly:true});console.log(db.pragma("integrity_check",{simple:true})+" videos="+db.prepare("SELECT COUNT(*) c FROM videos").get().c);db.close()']).trim();
-    console.log(`[restore] ✓ 演练通过：${pick} 可恢复——${integrity}`);
+    console.error(`[restore] ✓ 演练通过：${pick} 可恢复——${integrity}`);
   } finally {
     try { execFileSync('docker', ['rm', '-f', ctr], { stdio: 'pipe' }); } catch { /* 已退 */ }
     try { execFileSync('docker', ['volume', 'rm', vol], { stdio: 'pipe' }); } catch { /* 已删 */ }
@@ -80,7 +80,7 @@ if (!target || !/^bilibili-collector-backup-\d{8}-\d{6}\.db$/.test(target)) {
   die('--apply 需要备份文件名（先 --list 查看；形如 bilibili-collector-backup-20260825-090000.db）', 2);
 }
 if (!listBackups().includes(target)) die(`卷内不存在 ${target}`, 2);
-console.log(`[restore] 即将用 ${target} 覆盖生产库（当前库将改名为 .pre-restore-<ts> 留证）。\n[restore] 此操作会停服 ~1 分钟。确认请输入 yes：`);
+console.error(`[restore] 即将用 ${target} 覆盖生产库（当前库将改名为 .pre-restore-<ts> 留证）。\n[restore] 此操作会停服 ~1 分钟。确认请输入 yes：`);
 const answer = await new Promise((r) => process.stdin.once('data', (d) => r(d.toString().trim())));
 if (answer !== 'yes') die('已取消', 0);
 const stamp = new Date().toISOString().replace(/[-:T]/g, '').slice(0, 14);
@@ -88,5 +88,5 @@ run(['docker', 'stop', CONTAINER]);
 run(['docker', 'run', '--rm', '-v', 'subtitle-collector_collector-data:/data', 'alpine', 'sh', '-c',
   `mv /data/bilibili-collector.db /data/bilibili-collector.db.pre-restore-${stamp} && cp /data/backups/${target} /data/bilibili-collector.db && rm -f /data/bilibili-collector.db-shm /data/bilibili-collector.db-wal && ls -la /data/`]);
 run(['docker', 'start', CONTAINER]);
-console.log('[restore] ✓ 生产已从备份恢复；旧库留证为 bilibili-collector.db.pre-restore-' + stamp);
-console.log('[restore] 下一步：pnpm verify:deployed -- --token <t> 做完整自检');
+console.error('[restore] ✓ 生产已从备份恢复；旧库留证为 bilibili-collector.db.pre-restore-' + stamp);
+console.error('[restore] 下一步：pnpm verify:deployed -- --token <t> 做完整自检');

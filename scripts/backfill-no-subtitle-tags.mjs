@@ -11,6 +11,8 @@
 //   --dry-run 只列待打标清单不写库
 // 环境：COLLECTOR_SERVER / COLLECTOR_TOKEN（打标走 server，对齐 tags apply 既定模式）。
 // 日志纪律（§9）：[scan]/[filter]/[apply] 分步 stderr 计数，每步可独立定位。
+// 输出契约（docs/quality/SCRIPTS-CONTRACT.md）：进度/诊断全走 stderr；stdout 仅 --dry-run 的
+// 待打标清单 TSV（source\tvid，可 pipe）；退出码 0 成功（含 dry-run）/ 1 apply 批次失败。
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 // node:sqlite（Node 24 内置）：scripts/ 在 pnpm 隔离下引不到 apps 的 better-sqlite3，零依赖直读
@@ -68,14 +70,21 @@ for (const platform of PLATFORMS) {
   if (targets.length === 0) continue;
   for (let i = 0; i < targets.length; i += BATCH) {
     const chunk = targets.slice(i, i + BATCH);
-    const out = execFileSync('npx', ['tsx', 'src/cli/main.ts', 'tags', 'apply',
-      ...chunk.map((r) => r.source_vid),
-      '--names', 'no-subtitle', '--scope', 'system', '--source', platform, '--format', 'json'],
-    { cwd: CLI_DIR, encoding: 'utf8', timeout: 120000, stdio: ['ignore', 'pipe', 'pipe'] });
-    const j = JSON.parse(out.slice(out.indexOf('{')));
-    inserted += j.inserted ?? 0;
-    missing += (j.missing ?? []).length;
-    log('apply', `${platform} 批次 ${Math.floor(i / BATCH) + 1}/${Math.ceil(targets.length / BATCH)}：inserted=${j.inserted} missing=${(j.missing ?? []).length}`);
+    // 契约①(docs/quality/SCRIPTS-CONTRACT.md):批次失败不能裸 stack 收场——[apply] tag 带输入定位,非 0 退出
+    try {
+      const out = execFileSync('npx', ['tsx', 'src/cli/main.ts', 'tags', 'apply',
+        ...chunk.map((r) => r.source_vid),
+        '--names', 'no-subtitle', '--scope', 'system', '--source', platform, '--format', 'json'],
+      { cwd: CLI_DIR, encoding: 'utf8', timeout: 120000, stdio: ['ignore', 'pipe', 'pipe'] });
+      const j = JSON.parse(out.slice(out.indexOf('{')));
+      inserted += j.inserted ?? 0;
+      missing += (j.missing ?? []).length;
+      log('apply', `${platform} 批次 ${Math.floor(i / BATCH) + 1}/${Math.ceil(targets.length / BATCH)}：inserted=${j.inserted} missing=${(j.missing ?? []).length}`);
+    } catch (e) {
+      log('apply', `✗ ${platform} 批次失败（${chunk.length} 条, 首条 ${chunk[0]?.source_vid}）: ${String(e.message).slice(0, 200)}`);
+      console.error('[apply] ✗ 已打标进度: inserted=' + inserted + ' missing=' + missing + '——修复后重跑(已打标的重复 apply 幂等)');
+      process.exit(1);
+    }
   }
 }
 console.error(`[done] 打标完成：inserted=${inserted} missing=${missing}`);

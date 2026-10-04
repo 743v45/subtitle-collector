@@ -34,7 +34,8 @@ const tagNames = batchTags ? batchTags.split(',').map((s) => s.trim()).filter(Bo
 const CLI_DIR = new URL('../apps/collector-server/', import.meta.url).pathname;
 const env = { ...process.env };
 const t0 = Date.now();
-const el = (m) => console.log(`[${Math.round((Date.now() - t0) / 1000)}s] ${m}`);
+// 契约③(docs/quality/SCRIPTS-CONTRACT.md):进度/诊断走 stderr,stdout 只留数据(STOP_REASON/失败明细)。
+const el = (m) => console.error(`[${Math.round((Date.now() - t0) / 1000)}s] ${m}`);
 
 function collectSubtitle(vid) {
   // --client 透传（2026-08-24）：多客户端时缺省「第一个在线」可能是仅上报态（dispatch=off），
@@ -63,7 +64,7 @@ for (let i = 0; i < vids.length; i++) {
       const err = r.error ?? 'unknown';
       if (err === 'need_login' || err === 'risk_control') {
         el(`  ✗ [${i + 1}/${vids.length}] ${bv} → ${err} —— 按纪律停止批量`);
-        console.log(`\nSTOP_REASON=${err}`);
+        console.log(`STOP_REASON=${err}`); // 数据产物:停止原因供编排方解析(stdout,契约③)
         process.exit(2);
       }
       el(`  ✗ [${i + 1}/${vids.length}] ${bv} → ${err}`);
@@ -84,7 +85,10 @@ for (let i = 0; i < vids.length; i++) {
   if (i < vids.length - 1) await new Promise((r) => setTimeout(r, 1000));
 }
 el(`\n=== 完成：采到 ${done.ok} / 无字幕 ${done.noSubtitle} / 失败 ${done.fail} ===`);
-if (fails.length) console.log('失败明细:\n' + fails.join('\n'));
+if (fails.length) console.log(fails.join('\n')); // 数据产物:失败明细「vid: 错误」逐行(stdout,契约③)
+
+// 契约①:部分失败=整体失败,非 0 退出(2=need_login/risk_control 纪律停止已在前文直退)。
+if (done.fail > 0) { el(`✗ ${done.fail} 条失败,退出码 1`); process.exitCode = 1; }
 
 // --tag 收尾：对采集成功清单一次性打 batch 档标签
 if (tagNames.length > 0 && collectedVids.length > 0) {
@@ -94,7 +98,7 @@ if (tagNames.length > 0 && collectedVids.length > 0) {
     const j = JSON.parse(out.slice(out.indexOf('{')));
     el(`标签：${tagNames.join(',')} × ${collectedVids.length} 视频（batch 档）→ inserted=${j.inserted}${(j.missing ?? []).length ? ' missing=' + j.missing.length : ''}`);
   } catch (e) {
-    console.log(`标签打标失败: ${String(e.message).slice(0, 100)}`);
+    console.error(`[tag-apply] ✗ 批量打标失败: ${String(e.message).slice(0, 100)}（tags apply ${collectedVids.length} 条 --names ${tagNames.join(',')}）`);
   }
 }
-console.log(`总耗时 ${Math.round((Date.now() - t0) / 1000)}s`);
+el(`总耗时 ${Math.round((Date.now() - t0) / 1000)}s`);

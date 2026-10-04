@@ -129,6 +129,8 @@ collect 子命令速记:`search <关键词>` 搜候选(不入库)/ `subtitle <vi
 | `scripts/sqlite-rescue.mjs` | 损坏库抢救重建(`node scripts/sqlite-rescue.mjs <主库> <完好备份> <新库输出>`;分段绕坏页 + 备份兜底 + JSON 列降级 + 孤儿引用登记,2026-08-24 SQLITE_CORRUPT 事故产物) |
 | `scripts/verify-*.mjs` | 链路验收冒烟族(`pnpm test:ext` / `test:youtube`,按需不进 qa) |
 
+> scripts 输出契约(退出码 0/非 0、失败 stderr `[tag]` 分步日志、stdout 只出数据可 pipe):[docs/quality/SCRIPTS-CONTRACT.md](../../quality/SCRIPTS-CONTRACT.md)——新增/改动 scripts 工具前先过其 §3 检查单。
+
 ## 纪律
 
 - **批量采集/验证/诊断前,先确认工具失败路径日志足以定位根因**(HTTP 特征/解析命中/每步计数),详见 CLAUDE.md §9;日志不够先修日志再跑。

@@ -93,5 +93,9 @@ try {
   el(`Chrome ${ver.Browser} + subtitle-extractor 加载`);
   for (const c of CASES) { try { await probe(c.url, c.type); } catch (e) { el(`  ⚠ ${c.type} 探测失败: ${e.message}`); } }
   el(`\n=== 验收完成，总耗时 ${Math.round((Date.now() - t0) / 1000)}s ===`);
-} catch (e) { console.error('失败:', e.message); }
-finally { try { proc.kill(); } catch {}; process.exit(0); }
+  process.exit(0);
+} catch (e) {
+  // 契约①(docs/quality/SCRIPTS-CONTRACT.md):前置失败(CDP 未就绪等)必须非 0 退出——原版恒 exit 0,编排方无从感知
+  console.error('[audio-extract] ✗ 失败:', e.message);
+  process.exit(1);
+} finally { try { proc.kill(); } catch {} }

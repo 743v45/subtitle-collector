@@ -47,5 +47,6 @@
 | [CLAUDE](../../CLAUDE.md) | 开发纪律:样式 / 测试 / 措辞红线 / 路线 |
 | [MANUAL-collector](../../MANUAL-collector.md) | 真机验收清单 |
 | [docs/quality/RULES](../quality/RULES.md) | 测试质量细则 |
+| [docs/quality/SCRIPTS-CONTRACT](../quality/SCRIPTS-CONTRACT.md) | scripts 工具脚本输出契约:退出码 / stderr 分步日志 / stdout 数据可 pipe(含例外登记表) |
 | [docs/superpowers/](../superpowers/) | 历史设计文档与实现计划归档 |
 | [CHANGELOG](../../CHANGELOG.md) | 变更记录 |

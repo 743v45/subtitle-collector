@@ -12,7 +12,8 @@
  *   --server 默认 https://collector.local.taevas.host
  *   --token 默认取环境变量 COLLECTOR_TOKEN
  *   --db    部署机上的 SQLite 库路径(可选;给了才跑完整性检查)
- * 退出码:0 全过 / 1 有失败项。stdout 每项一行结果,失败项带原因(§9 可观察性)。
+ * 退出码:0 全过 / 1 有失败项。结果与失败原因全部走 stderr、带 [check]/[FAIL] 分项 tag——stdout 无数据产物,
+ * 留空(输出契约 docs/quality/SCRIPTS-CONTRACT.md;§9 可观察性)。
  */
 import { DatabaseSync } from 'node:sqlite';
 
@@ -38,7 +39,7 @@ const HTTP_CHECKS = [
 
 let failed = 0;
 const report = (ok, name, detail) => {
-  console.log(`${ok ? '[check]' : '[FAIL]'} ${name}${detail ? ` — ${detail}` : ''}`);
+  console.error(`${ok ? '[check]' : '[FAIL]'} ${name}${detail ? ` — ${detail}` : ''}`);
   if (!ok) failed++;
 };
 
@@ -47,7 +48,7 @@ if (!TOKEN) {
   process.exit(1);
 }
 
-console.log(`[verify-deployed] server=${SERVER} db=${DB ?? '(跳过 DB 检查)'}\n— HTTP 层 —`);
+console.error(`[verify-deployed] server=${SERVER} db=${DB ?? '(跳过 DB 检查)'}\n— HTTP 层 —`);
 for (const c of HTTP_CHECKS) {
   const url = `${SERVER}${c.path}${c.noAuth ? '' : ''}`;
   try {
@@ -73,7 +74,7 @@ for (const c of HTTP_CHECKS) {
 }
 
 if (DB) {
-  console.log('— DB 层 —');
+  console.error('— DB 层 —');
   try {
     // 只读打开:不开 WAL 写路径;integrity_check 全库扫描坏页(HTTP 层测不出的损坏在此暴露)
     const db = new DatabaseSync(DB, { readOnly: true });
@@ -85,8 +86,8 @@ if (DB) {
     report(false, `integrity_check ${DB}`, `打开/查询失败: ${String(e?.message ?? e)}`);
   }
 } else {
-  console.log('— DB 层 —\n[check] 跳过(未传 --db;建议部署机上带库路径跑,坏页损坏 HTTP 探活测不出)');
+  console.error('— DB 层 —\n[check] 跳过(未传 --db;建议部署机上带库路径跑,坏页损坏 HTTP 探活测不出)');
 }
 
-console.log(failed === 0 ? '\n[verify-deployed] ✓ 全部通过' : `\n[verify-deployed] ✗ ${failed} 项失败`);
+console.error(failed === 0 ? '\n[verify-deployed] ✓ 全部通过' : `\n[verify-deployed] ✗ ${failed} 项失败`);
 process.exit(failed === 0 ? 0 : 1);

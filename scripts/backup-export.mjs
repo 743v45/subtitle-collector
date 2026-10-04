@@ -6,6 +6,8 @@
 // 用法：node scripts/backup-export.mjs [目标目录] [--all] [--keep N]
 //   默认导出最新 1 份；--all 导出全部现存；--keep N 导出最新 N 份。
 // 失败路径可观察（§9）：docker exec 列目录 / docker cp 失败均带信息退出非 0。
+// 输出契约（docs/quality/SCRIPTS-CONTRACT.md）：进度/结果走 stderr 带 [backup-export] tag；
+// 数据产物 = 落盘的备份文件本身，stdout 留空。退出码：0 成功 / 1 列备份失败 / 2 容器内无备份 / 3 单份 cp 失败。
 
 import { execFileSync } from 'node:child_process';
 import { mkdirSync, existsSync, statSync } from 'node:fs';
@@ -45,7 +47,7 @@ if (names.length === 0) {
 }
 
 const picked = all ? names : names.slice(0, Math.max(1, keep)); // names 新→旧，取前 N
-console.log(`[backup-export] volume 内共 ${names.length} 份，导出 ${picked.length} 份 → ${target}`);
+console.error(`[backup-export] volume 内共 ${names.length} 份，导出 ${picked.length} 份 → ${target}`);
 
 for (const n of picked) {
   try {
@@ -53,10 +55,10 @@ for (const n of picked) {
     const st = statSync(join(target, n));
     const size = (st.size / 1024 / 1024).toFixed(1);
     const mtime = new Date(st.mtimeMs).toISOString().replace('T', ' ').slice(0, 19);
-    console.log(`[backup-export] ✓ ${n} (${size}MB, 备份产生于 ${mtime} UTC)`);
+    console.error(`[backup-export] ✓ ${n} (${size}MB, 备份产生于 ${mtime} UTC)`);
   } catch (err) {
     console.error(`[backup-export] ✗ ${n}: ${err.message}`);
     process.exit(3);
   }
 }
-console.log(`[backup-export] 完成：最新一份在 ${join(target, picked[0])}`);
+console.error(`[backup-export] 完成：最新一份在 ${join(target, picked[0])}`);

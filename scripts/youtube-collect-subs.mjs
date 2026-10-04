@@ -15,7 +15,7 @@ const LANGS = 'en,zh-Hans';
 mkdirSync(OUT_DIR, { recursive: true });
 const lines = readFileSync(0, 'utf8').split('\n').filter(Boolean);
 const videoIds = [...new Set(lines.map((l) => l.split('\t')[0]).filter((v) => /^[A-Za-z0-9_-]{11}$/.test(v)))];
-process.stderr.write(`采字幕(yt-dlp): ${videoIds.length} 视频 → ${OUT_DIR}/  透传: ${EXTRA.join(' ') || '(无)'}\n`);
+process.stderr.write(`[subs] 采字幕(yt-dlp): ${videoIds.length} 视频 → ${OUT_DIR}/  透传: ${EXTRA.join(' ') || '(无)'}\n`);
 
 const manifest = join(OUT_DIR, 'manifest.tsv');
 let ok = 0, fail = 0;
@@ -47,5 +47,10 @@ for (const vid of videoIds) {
   }
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, SLEEP_MS); // 同步 sleep
 }
-process.stderr.write(`\n完成: 成功 ${ok} / 失败 ${fail} → ${manifest}\n`);
-process.stderr.write(fail > 0 ? `⚠️ 失败视频多因 YouTube bot 限流。换网络(热点新 IP)或导出 cookies.txt(浏览器扩展)后重跑:\n  node scripts/youtube-collect-videos.mjs | node scripts/youtube-collect-subs.mjs youtube-subs --cookies /path/to/cookies.txt\n` : '');
+process.stderr.write(`\n[subs] 完成: 成功 ${ok} / 失败 ${fail} → ${manifest}\n`);
+if (fail > 0) {
+  // 契约①(docs/quality/SCRIPTS-CONTRACT.md):部分失败=整体失败,非 0 退出供编排方感知;exitCode 而非
+  // process.exit,让上面两条 stderr 提示先落盘再退出。
+  process.stderr.write(`[subs] ⚠️ 失败视频多因 YouTube bot 限流。换网络(热点新 IP)或导出 cookies.txt(浏览器扩展)后重跑:\n[subs]   node scripts/youtube-collect-videos.mjs | node scripts/youtube-collect-subs.mjs youtube-subs --cookies /path/to/cookies.txt\n`);
+  process.exitCode = 1;
+}
