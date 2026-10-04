@@ -37,19 +37,19 @@
 
 | # | 缺口 | 归类 | 状态 |
 |---|---|---|---|
-| 5 | videos list 补 5 个过滤参数：`creator_id / creator_uid / tags（多标 AND）/ tag_source / date_field`（db 层 [advanced.ts:10-34](../../apps/collector-server/src/db/advanced.ts#L10) 已支持，纯包装；「按标签选料导 bundle」是消费端高频） | 闭环配套 | ☐（2026-10-04 注：子项 `tags（多标 AND）` 已由 0fd6972 落地于 videos list / export / stats 四处，余 4 参数仍待） |
+| 5 | videos list 补 5 个过滤参数：`creator_id / creator_uid / tags（多标 AND）/ tag_source / date_field`（db 层 [advanced.ts:10-34](../../apps/collector-server/src/db/advanced.ts#L10) 已支持，纯包装；「按标签选料导 bundle」是消费端高频） | 闭环配套 | ☐→转挂账本 [P1-6](improvement-backlog-2026-10.md)（2026-10-05；子项 `tags（多标 AND）` 已由 0fd6972 落地，余 4 参数本轮执行） |
 | 6 | `stats count --by tag`：[stats.ts:36](../../apps/collector-server/src/cli/commands/stats.ts#L36) STATS_GROUP_BY 补 tag（[http/stats.ts:12](../../apps/collector-server/src/http/stats.ts#L12) 已有） | 闭环配套 | ✅（2026-10-02 消费闭环第 6 项：白名单+帮助六值、失败→通过用例×3、SKILL.md 同步） |
-| 7 | creators 查询 CLI（列表/详情/打分类；`GET /api/creators` 七键排序已备）——与存量回填绑定（账本 [P1-5](improvement-backlog-2026-10.md)；查缺资料 UP 清单） | 闭环配套 | ☐ |
+| 7 | creators 查询 CLI（列表/详情/打分类；`GET /api/creators` 七键排序已备）——与存量回填绑定（账本 [P1-5](improvement-backlog-2026-10.md)；查缺资料 UP 清单） | 闭环配套 | ☐→转挂账本 [P1-7](improvement-backlog-2026-10.md)（2026-10-05 本轮执行） |
 
 ### 批次 3（P2+ 治理）
 
 | # | 缺口 | 归类 | 状态 |
 |---|---|---|---|
-| 8 | tags 改名/删标（HTTP `PATCH/DELETE /api/tags/:id` 已备；AI 打标纠错场景） | 已有能力包装 | ☐ |
-| 9 | categories CRUD / settings 读写 CLI（tag-priority、collect-timeout） | 已有能力包装 | ☐ |
-| 10 | 选项命名统一：`tags list --topN`→`--top`、`translate pending --asc`→`--desc` 惯例；**直接 breaking 不留 alias**（对齐 2026-08-24 `--source` 语义统一先例），同步 SKILL.md | 治理 | ☐ |
-| 11 | CLI VERSION 硬编码（[main.ts:14](../../apps/collector-server/src/cli/main.ts#L14)）改为读 package.json | 治理 | ☐ |
-| 12 | scripts 层最小契约成文并统一：退出码 0/非 0、失败 stderr 带 `[tag]` 分步日志（§9 可观察性）、stdout 数据可 pipe；现有优质工具（`youtube-collect-videos.mjs`）即范本。**不推 CLI 的 0-6 语义** | 治理 | ☐ |
+| 8 | tags 改名/删标（HTTP `PATCH/DELETE /api/tags/:id` 已备；AI 打标纠错场景） | 已有能力包装 | ☐→转挂账本 [P1-8](improvement-backlog-2026-10.md)（2026-10-05 本轮执行） |
+| 9 | categories CRUD / settings 读写 CLI（tag-priority、collect-timeout） | 已有能力包装 | ☐→转挂账本 [P1-9](improvement-backlog-2026-10.md)（2026-10-05 本轮执行） |
+| 10 | 选项命名统一：`tags list --topN`→`--top`、`translate pending --asc`→`--desc` 惯例；**直接 breaking 不留 alias**（对齐 2026-08-24 `--source` 语义统一先例），同步 SKILL.md | 治理 | ☐→转挂账本 [P1-10](improvement-backlog-2026-10.md)（2026-10-05 本轮执行） |
+| 11 | CLI VERSION 硬编码（[main.ts:14](../../apps/collector-server/src/cli/main.ts#L14)）改为读 package.json | 治理 | ☐→转挂账本 [P1-11](improvement-backlog-2026-10.md)（2026-10-05 本轮执行） |
+| 12 | scripts 层最小契约成文并统一：退出码 0/非 0、失败 stderr 带 `[tag]` 分步日志（§9 可观察性）、stdout 数据可 pipe；现有优质工具（`youtube-collect-videos.mjs`）即范本。**不推 CLI 的 0-6 语义** | 治理 | ☐→转挂账本 [P1-12](improvement-backlog-2026-10.md)（2026-10-05 本轮执行） |
 
 ## 3. 每项执行纪律 checklist
 

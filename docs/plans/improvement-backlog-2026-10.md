@@ -42,6 +42,15 @@
 | P1-3 | 静态台账固化：`node scripts/quality-baseline.mjs update --write`（tasks.ts 538→529、sub.ts 458→452 两项已改善未入账；死工具删除后台账同步） | 此后 dry-run 零漂移 | ✅（2026-10-04 本轮） |
 | P1-4 | manifest description 去掉未接入的小红书（[manifest.json:6](../../apps/subtitle-collector/manifest.json#L6)）+ bump 0.1.31（logo 预取保留，[platforms.ts:96](../../apps/subtitle-collector/src/popup/platforms.ts#L96) 注释口径不变） | build 过；popup 品牌头显示 0.1.31 | ✅（2026-10-04 本轮） |
 | P1-5 | 存量 no-subtitle 回填跑数：`asr backfill` 对存量批量执行一轮（含美国加息批次 6 条待兜底），顺带盘点全库 no-subtitle 规模 | 跑数报告（回填数/失败数/剩余）；不违冻结（既有能力执行，非新采集能力） | ☐ 排队 |
+| P1-6 | videos list 补 4 过滤参数：`creator_id / creator_uid / tag_source / date_field`（db 层 advanced.ts 已支持，纯包装；cli-completeness #5 余量——tags 多标 AND 已由 0fd6972 落地） | 4 参数可用；失败→通过用例；SKILL.md/help 同步 | ☐ 本轮执行 |
+| P1-7 | creators 查询 CLI：`creators list/get`（`GET /api/creators` 七键排序已备；存量回填查缺资料配套，cli-completeness #7） | list/get 可用（排序/筛选透传）；失败→通过用例；SKILL.md/help 同步 | ☐ 本轮执行 |
+| P1-8 | tags 改名/删标 CLI：`tags rename/delete`（HTTP `PATCH/DELETE /api/tags/:id` 已备；AI 打标纠错场景，cli-completeness #8） | rename/delete 可用（含 404/冲突路径）；失败→通过用例；SKILL.md/help 同步 | ☐ 本轮执行 |
+| P1-9 | categories CRUD / settings 读写 CLI：`categories add/list/update/delete` + `settings get/set`（tag-priority、collect-timeout，cli-completeness #9；HTTP 端点已备） | 全子命令可用；失败→通过用例；SKILL.md/help 同步 | ☐ 本轮执行 |
+| P1-10 | 选项命名统一：`tags list --topN`→`--top`、`translate pending --asc`→`--desc`；直接 breaking 不留 alias（对齐 `--source` 语义统一先例），同步 SKILL.md/help/测试（cli-completeness #10） | 旧参数退 2 列全合法键；全仓无旧名残留 | ☐ 本轮执行 |
+| P1-11 | CLI VERSION 硬编码改读 package.json（cli/main.ts，cli-completeness #11） | VERSION 与 package.json 同源；单测锁定 | ☐ 本轮执行 |
+| P1-12 | scripts 层最小契约成文并统一：退出码 0/非 0、失败 stderr 带 `[tag]` 分步日志、stdout 数据可 pipe；**不推 CLI 的 0-6 语义**；现有优质工具（youtube-collect-videos.mjs）即范本（cli-completeness #12） | 契约文档落 docs/；存量 scripts 对齐或登记例外 | ☐ 本轮执行 |
+
+> 2026-10-05 `/grill-me` 追加轮（用户拍板「按推荐追加 + 逐项完成」）：上表 P1-6~P1-12 = cli-completeness 批次 2/3 余量（已有能力包装，零冻结截留）转挂编号；小包装插本段与 P1-5 并列，大项 web 评论展示落 P2-5 排偿债三件之后。
 
 ## 3. P2（偿债/结构性，按窗口推进）
 
@@ -51,6 +60,7 @@
 | P2-2 | 备份与 server 解耦 | 备份定时器与 server 同进程同生死（[main.ts:128](../../apps/collector-server/src/main.ts#L128)），server 挂 = 采集停 + 备份同时停（14h 备份空窗前科）；告警也依赖同进程活着。方案候选：compose sidecar / host 定时 `docker exec` 触发 VACUUM INTO | ☐ |
 | P2-3 | 采集执行体单点缓解 | 三入口写 collect_tasks，唯一执行者 = 一台桌面 Chrome 的扩展 SW，扩展不在线任务全停；方案候选：dispatched 超时改派 / 多客户端派发（状态机已备，缺 policy） | ☐ |
 | P2-4 | douyin 遗留三件 | popup 抖音卡、popup「上报」哑按钮（[DOUYIN-PROGRESS.md:161](../../DOUYIN-PROGRESS.md#L161)）、博主批量 CLI 入口；**前置 = U-2 真机验证通过** | ☐ 前置未满足 |
+| P2-5 | web 评论展示 | VideoDetail 评论树渲染 + server 评论查询子路由（挂点已探明：统计卡 `stat.reply` 计数处 + `/api/videos/:source/:vid/*` 子资源先例，[comments/PLAN.md §1.3](comments/PLAN.md) 显式排除项）；2026-10-05 用户指令提级执行（消费侧非冻结截留） | ☐ 本轮执行 |
 
 ## 4. P3（观察 / 待拍板）
 
@@ -67,7 +77,7 @@
 
 | # | 事项 | 关联 | 说明 |
 |---|---|---|---|
-| U-1 | popup / Android 更新 token | P0-1 | popup 服务器配置 URL 追加 `?token=<新值>`（值见主检出 `.env`）；断连窗口内主动采集暂停 |
+| U-1 | popup / Android 更新 token | P0-1 | popup 服务器配置 URL 追加 `?token=<新值>`（值见主检出 `.env`）；断连窗口内主动采集暂停。2026-10-05 催办：已向用户给出操作步骤 |
 | U-2 | douyin 博主批量真机重测 | P2-4 前置 | 悬置 5 周+（[DOUYIN-PROGRESS.md:6](../../DOUYIN-PROGRESS.md#L6)）：健康 sec_uid 匿名 1.5s 通、真实浏览器零到达，候选根因待真机区分 |
 | U-3 | ~~「提交已上生产重构」语义追认~~ | §0 | ✅（2026-10-04：原意从老记忆考得，核实 08-25/26 已补提交落地，已完成划销） |
 | U-4 | P3-1 / P3-4 拍板 | P3 | 不拍板 = 维持现状（冻结/静止） |
