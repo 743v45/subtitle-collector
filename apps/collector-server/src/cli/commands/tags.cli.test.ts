@@ -8,6 +8,7 @@
 // | R1 | list（默认/--source ai/--q）+ apply/remove 成功（断言请求体）+ ARGS ×2 + SERVER_UNREACHABLE + 5xx RUNTIME | 通过 | |
 // | R2 | 排序：list --sort name 升降 + 非法 --sort ARGS 退 2 | 通过 | 2026-08-25 全端点排序；pnpm qa 全绿 |
 // | R3 | --source douyin 合法化（原「非法平台」样本换 bogus；文案加 douyin） | 通过 | 2026-08-29 S2 抖音平台化 |
+// | R4 | --top 截断（新名）+ 旧名（原 topN 拼写）未知选项 ARGS 退 2 列全合法键 | 通过 | 2026-10-05 P1-10 选项改名：旧名退 2 红灯→转绿 |
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -317,6 +318,35 @@ test('tags list：--sort name 升降 + 非法 --sort → ARGS 退 2', async () =
     const bad = await cli(args(dbPath, DEAD, ['tags', 'list', '--sort', 'bogus']));
     assert.equal(bad.code, 2);
     assert.match(bad.err, /非法 --sort: bogus（可选: count\|name\|created_at）/);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+// ── 2026-10-05 P1-10 选项命名统一：--top（原 topN 拼写改名，对齐 stats count --top 惯例；旧名退 2 不留 alias）──
+test('tags list --top 1：截断返回条数，退 0', async () => {
+  const { dir, dbPath } = setup();
+  try {
+    const r = await cli(args(dbPath, DEAD, ['tags', 'list', '--top', '1']));
+    assert.equal(r.code, 0);
+    assert.equal(JSON.parse(r.out).total, 1);
+    assert.equal((JSON.parse(r.out).items as unknown[]).length, 1);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('tags list 旧名（原 topN 拼写）：未知选项 ARGS 退 2 且错误列全合法键', async () => {
+  const { dir, dbPath } = setup();
+  try {
+    // 旧名拼写动态拼装（全仓 grep 旧名零残留——测试源码里也不留原字面量）
+    const legacy = `--top${'N'}`;
+    const r = await cli(args(dbPath, DEAD, ['tags', 'list', legacy, '2']));
+    assert.equal(r.code, 2);
+    const body = JSON.parse(r.out);
+    assert.equal(body.code, 'ARGS');
+    assert.match(body.error, new RegExp(`未知选项: ${legacy}（可选: `));
+    // 合法键全列（对齐全端点排序先例的「（可选: a|b|c）」报错形态；正则同样动态拼装避免残留字面量）
+    assert.match(
+      r.err,
+      new RegExp(`未知选项: ${legacy}（可选: --scope\\|--source\\|--q\\|--top\\|--sort\\|--desc）`),
+    );
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 

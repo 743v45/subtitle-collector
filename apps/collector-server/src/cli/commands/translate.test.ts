@@ -61,6 +61,11 @@ function seedDb(): { dbPath: string; cleanup: () => void } {
       versions: [{ origin: 'asr', asr_engine: 'fireredasr-aed-l', payload: payload(['转写中文一', '转写中文二']) }],
     }],
   });
+  // 排序方向断言前置：错开 pending 目标的 first_seen_at（ingest 缺省同为插入毫秒，
+  // 全 tie 时 ORDER BY 的 id DESC 兜底会让升降序不可区分——BVA > BVD > BVF > BVG）
+  for (const [vid, offset] of [['BVD', 10_000], ['BVF', 20_000], ['BVG', 30_000]] as const) {
+    db.prepare('UPDATE videos SET first_seen_at = first_seen_at - ? WHERE source_vid = ?').run(offset, vid);
+  }
   return { dbPath: join(dir, 'test.db'), cleanup: () => { db.close(); rmSync(dir, { recursive: true, force: true }); } };
 }
 
@@ -72,6 +77,12 @@ test('translate pending：缺中文判定 + 过滤 + 各源轨行数标注', () 
     assert.equal(r.total, 4);
     const vids = r.items.map((i) => i.source_vid).sort();
     assert.deepEqual(vids, ['BVA', 'BVD', 'BVF', 'BVG']);
+    // 1a. 排序方向（P1-10：旗标 asc → desc 语义跟随新名）：缺省降序（最新入库在前）；
+    // desc:false 升序——旧 asc 旗标的能力等价物，排序键已错开可区分方向
+    r = translatePending(dbPath, {});
+    assert.deepEqual(r.items.map((i) => i.source_vid), ['BVA', 'BVD', 'BVF', 'BVG'], '缺省降序');
+    r = translatePending(dbPath, { desc: false });
+    assert.deepEqual(r.items.map((i) => i.source_vid), ['BVG', 'BVF', 'BVD', 'BVA'], 'desc:false 升序');
     const a = r.items.find((i) => i.source_vid === 'BVA')!;
     assert.equal(a.langs.length, 1);
     assert.equal(a.langs[0].lan, 'ai-en');
@@ -92,10 +103,10 @@ test('translate pending：缺中文判定 + 过滤 + 各源轨行数标注', () 
     // 4. --since/--until 入库时间窗（first_seen，全部排除 → 0）
     r = translatePending(dbPath, { since: 9999999999999 });
     assert.equal(r.total, 0);
-    // 4b. --until 下界排除 + --asc 升序（发布序反转不断言内容，仅走到分支）
+    // 4b. --until 下界排除 + desc:false 升序（P1-10 改名后旗标语义：false=升序）
     r = translatePending(dbPath, { until: 1 });
     assert.equal(r.total, 0);
-    r = translatePending(dbPath, { asc: true, sort: 'published_at' });
+    r = translatePending(dbPath, { desc: false, sort: 'published_at' });
     assert.equal(r.total, 4);
 
     // 5. 分页：size=1 → 第 1 页 1 条、total 仍 3

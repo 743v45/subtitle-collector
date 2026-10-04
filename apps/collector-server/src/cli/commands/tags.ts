@@ -13,6 +13,7 @@ import { listTags, TAG_SORT_KEYS, type TagSource, type TagSortKey } from '../../
 import type { Source } from '../../tasks/source.js';
 import { parseDesc } from './videos.js';
 import { handleHttpError, parseIntOpt } from './tasks.js';
+import { installUnknownOptionGuard } from './unknown-option.js';
 
 // ── 纯处理函数（可测：注入依赖，不直接碰 stdout/exit） ──
 
@@ -84,14 +85,18 @@ export function buildTagsCommand(): Command {
   const cmd = new Command('tags')
     .description('视频标签库（list 直读 DB；apply/remove/rename/delete 走 server HTTP）');
 
-  cmd.command('list')
+  const list = cmd.command('list')
     .description('标签库列表（含各档计数；--scope 过滤该档计数>0 的标签，--source 平台收窄计数）')
     .option('--scope <scope>', '档位过滤 manual|batch|ai|system')
     .option('--source <src>', '平台过滤（bilibili|youtube|douyin），计数只算该平台视频')
     .option('--q <keyword>', '名称模糊')
-    .option('--topN <n>', '最多返回条数（默认 500）', '500')
+    // --top：P1-10 选项命名统一（原 topN 拼写，直接 breaking 不留 alias，对齐 stats count --top 惯例）
+    .option('--top <n>', '最多返回条数（默认 500）', '500')
     .option('--sort <key>', `排序键：${TAG_SORT_KEYS.join('|')}（count 语义跟随 --scope 档）`)
-    .option('--desc [value]', '降序（默认降序；升序传 --desc=false）')
+    .option('--desc [value]', '降序（默认降序；升序传 --desc=false）');
+  // 未知/旧名选项 → ARGS 退 2 且列全合法键（P1-10；装在叶子命令上，组根不生效）
+  installUnknownOptionGuard(list);
+  list
     .action((opts) => {
       const ctx = getCliContext();
       try {
@@ -112,7 +117,7 @@ export function buildTagsCommand(): Command {
           scope: opts.scope as TagSource | undefined,
           source: opts.source,
           q: opts.q,
-          topN: Math.min(500, Math.max(1, Number(opts.topN) || 500)),
+          topN: Math.min(500, Math.max(1, Number(opts.top) || 500)),
           sort: opts.sort as TagSortKey | undefined,
           desc: parseDesc(opts.desc),
         }), ctx.format);
