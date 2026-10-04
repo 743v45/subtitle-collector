@@ -34,7 +34,8 @@ services:
     environment:
       COLLECTOR_PORT: "21527"
       COLLECTOR_HOST: "0.0.0.0"
-      # ⚠️ 生产必改！生成：node -e "console.log(require('crypto').randomBytes(24).toString('hex'))"
+      # ⚠️ 硬门（B2）：暴露部署下 token 为空或占位符（change-me-collector-token）→ server 拒绝启动（exit 1）。
+      # 生成：node -e "console.log(require('crypto').randomBytes(24).toString('hex'))"
       # 设置后：扩展的 server URL 须带 ?token=xxx（popup 服务器配置里填完整 URL），CLI 须带 Bearer token。
       COLLECTOR_TOKEN: ${COLLECTOR_TOKEN:-change-me-collector-token}
       # 从宿主 localhost（经 -p 映射）访问无需填；从局域网 IP/主机名访问则填上，逗号分隔。

@@ -15,7 +15,7 @@ import { handleTranslateHttp } from './http/translate.js';
 import { handleAsrHttp } from './http/asr.js';
 import { handleSettingsHttp } from './http/settings.js';
 import { handleTasksHttp } from './http/tasks.js';
-import { runHandler, httpAuthOk, httpOriginAllowed } from './http/http-util.js';
+import { runHandler, httpAuthOk, httpOriginAllowed, isPlaceholderToken } from './http/http-util.js';
 import { attachTaskScheduler } from './tasks/tasks.js';
 
 const DB_PATH = process.env.COLLECTOR_DB_PATH ?? './bilibili-collector.db';
@@ -35,9 +35,17 @@ const ALLOWED_HOSTS = (process.env.COLLECTOR_ALLOWED_HOSTS ?? '')
 // HTTP /api/* 鉴权（此前 token 只护 WS hello，HTTP 控制面——含可驱动扩展 navigate 任意 URL 的
 // /api/clients/:id/command——完全裸奔）。仅暴露部署强制：同源浏览器免 token（web/手机零配置），
 // 其余（curl/CLI/扩展 Origin）必须 Bearer；loopback 部署保持免鉴权。
+// B2 启动闸（含占位符拒绝）：暴露部署必须配置非占位符 token——占位符（change-me-collector-token）
+// 等效未配置，查 README/compose 文档即可猜到，控制面（navigate 任意 URL）等于公开接口。
+// 拒绝路径位于 openDb 之前（保持现状）：不碰库、不监听端口，直接退出。
 const HTTP_AUTH_REQUIRED = HOST === '0.0.0.0' || ALLOWED_HOSTS.length > 0;
-if (HTTP_AUTH_REQUIRED && !process.env.COLLECTOR_TOKEN) {
-  console.error('[collector-server] 已暴露到非 loopback（COLLECTOR_HOST=0.0.0.0 / COLLECTOR_ALLOWED_HOSTS），必须设置 COLLECTOR_TOKEN（HTTP /api/* 强制 Bearer）');
+if (HTTP_AUTH_REQUIRED && (!TOKEN || isPlaceholderToken(TOKEN))) {
+  console.error(
+    TOKEN
+      ? `[collector-server] 已暴露到非 loopback，COLLECTOR_TOKEN 仍是占位符（${TOKEN}）——等效未配置，拒绝启动。`
+      : '[collector-server] 已暴露到非 loopback（COLLECTOR_HOST=0.0.0.0 / COLLECTOR_ALLOWED_HOSTS），必须设置 COLLECTOR_TOKEN（HTTP /api/* 强制 Bearer）',
+  );
+  console.error('[collector-server] 生成强随机 token：node -e "console.log(require(\'crypto\').randomBytes(24).toString(\'hex\'))"');
   process.exit(1);
 }
 
