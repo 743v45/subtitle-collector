@@ -45,7 +45,7 @@
 
 | # | 缺口 | 归类 | 状态 |
 |---|---|---|---|
-| 8 | tags 改名/删标（HTTP `PATCH/DELETE /api/tags/:id` 已备；AI 打标纠错场景） | 已有能力包装 | ☐→转挂账本 [P1-8](improvement-backlog-2026-10.md)（2026-10-05 本轮执行） |
+| 8 | tags 改名/删标（HTTP `PATCH/DELETE /api/tags/:id` 已备；AI 打标纠错场景） | 已有能力包装 | ✅（2026-10-05 随账本 [P1-8](improvement-backlog-2026-10.md) 落地 336acf5——`tags rename <id> --name <新名>`/`tags delete <id>` 纯 server HTTP 包装（ServerClient 增两方法，handleHttpError 归一 404→5/409→1），16 用例失败→通过，SKILL.md/help 同步） |
 | 9 | categories CRUD / settings 读写 CLI（tag-priority、collect-timeout） | 已有能力包装 | ☐→转挂账本 [P1-9](improvement-backlog-2026-10.md)（2026-10-05 本轮执行） |
 | 10 | 选项命名统一：`tags list --topN`→`--top`、`translate pending --asc`→`--desc` 惯例；**直接 breaking 不留 alias**（对齐 2026-08-24 `--source` 语义统一先例），同步 SKILL.md | 治理 | ☐→转挂账本 [P1-10](improvement-backlog-2026-10.md)（2026-10-05 本轮执行） |
 | 11 | CLI VERSION 硬编码（[main.ts:14](../../apps/collector-server/src/cli/main.ts#L14)）改为读 package.json | 治理 | ✅（2026-10-05 转挂账本 [P1-11](improvement-backlog-2026-10.md) 落地：version.ts 单源 readFileSync + 兜底日志，main.ts 再导出；红灯（未导出不可测）→8 用例转绿锁「CLI 输出 === package.json version」，SKILL.md 无版本示例无需同步，65cdb45） |
