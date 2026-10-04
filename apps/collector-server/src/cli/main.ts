@@ -96,6 +96,8 @@ export async function main(): Promise<void> {
       { buildClientsCommand },
       { buildTasksCommand },
       { buildCreatorsCommand },
+      { buildCategoriesCommand },
+      { buildSettingsCommand },
       { buildServerCommand },
       { buildCollectCommand },
       { buildYtSearchCommand },
@@ -113,6 +115,8 @@ export async function main(): Promise<void> {
       import('./commands/clients.js'),
       import('./commands/tasks.js'),
       import('./commands/creators.js'),
+      import('./commands/categories.js'),
+      import('./commands/settings.js'),
       import('./commands/server.js'),
       import('./commands/collect.js'),
       import('./commands/collect-yt-search.js'),
@@ -130,6 +134,8 @@ export async function main(): Promise<void> {
     program.addCommand(buildClientsCommand());  // clients list / reporting / command
     program.addCommand(buildTasksCommand());    // tasks list / get / retry（采集任务查询与重试）
     program.addCommand(buildCreatorsCommand()); // creators list / get（UP 主查询,2026-10 账本 P1-7）
+    program.addCommand(buildCategoriesCommand()); // categories list / add / update / delete（UP 主分类 CRUD,2026-10 账本 P1-9）
+    program.addCommand(buildSettingsCommand()); // settings get / set（tag-priority、collect-timeout,2026-10 账本 P1-9）
     program.addCommand(buildServerCommand());   // server ping / status / start / stop
     // collect search / subtitle / dedupe；yt-search 子命令在 collect 组装后挂载
     //（collect-yt-search.ts 复用 collect.ts 导出件，反向 import 会成环——在 main 组装层接线）
