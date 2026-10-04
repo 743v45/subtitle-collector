@@ -27,6 +27,8 @@ pnpm verify:deployed -- --token <t> [--server <url>] [--db <库路径>]
 
 跑 `/ping` + 核心只读 API + SQLite `integrity_check`。**坏页损坏 HTTP 探活测不出**,要测库完整性必须带 `--db`(2026-08-24 生产库 SQLITE_CORRUPT 事故的产物)。
 
+日常快速健康检查用 web 设置页的「服务状态」卡:版本 / 运行时长 / 在线客户端 / 库计数 / 鉴权徽章(只显是否启用,不回显 token)。
+
 > [!danger] 数据卷红线:禁 bind mount,只用 named volume
 > 数据库走 named volume `collector-data` → `/data`,不进镜像不经 bind mount。原因:bind mount 走 virtiofs,SQLite WAL 的 mmap(-shm) 跨虚拟机共享一致性有缺陷,宿主机进程直触挂载库(哪怕只读)两次引发 **SQLITE_CORRUPT**(曾丢当日数据)。
 > 查生产库一律走 server HTTP / CLI,或 `docker exec collector-server node -e '...'`——宿主机上不存在该文件,误操作路径物理封死。

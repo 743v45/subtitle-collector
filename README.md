@@ -30,6 +30,13 @@ B 站**字幕（subtitle）**相关浏览器扩展与配套服务的 monorepo（
 ### 查询与导出（✅）
 
 - ✅ web 后台：视频库**列表布局**（一行一视频：平台图标+标题 / 创作者 / 播放 / 时长 / 轨道数 / 发布时间 / 分区 / 标签列，窄屏自动折叠次要列）、多维筛选搜索（关键词、字幕正文、**多标签下拉多选**、标签档位、分区、时间、时长/播放区间等；全部 URL query 承载，刷新/分享还原，视频详情的轨/版本选择亦进 URL）、UP 主 / 创作者分类管理（一套共享分类值——Agent 与人工在 UP 主两个槽位分开打标，创作者页按槽位 全部/Agent/人工 筛选，数量列点击跳转创作者列表按分类过滤） / 采集日志；**原站外链跳转**（视频标题旁 ↗ 开 B 站/YouTube/抖音视频页、UP 名/创作者 ↗ 开空间页/频道页/博主主页，覆盖视频库/详情/创作者/任务卡各处，站内详情整行点击不受影响）
+- ✅ **CLI 全功能 web 化**（2026-10-04，进度见 [docs/plans/cli-web-parity-progress.md](docs/plans/cli-web-parity-progress.md)）：CLI 全部子命令有 server HTTP 形态，web 与 CLI `--server` 走同一套 API + 鉴权无旁路——新增「字幕检索」「补翻」两 tab（工作流组）与五大操作面（操作手册见 [docs/help/](docs/help/INDEX.md) 各 web 页）：
+  - **web 字幕检索页**（`#/search`，`sub search` 的 web 形态）：关键词/正则模式/区分大小写/上下文秒/平台/创作者，命中片段 `[分:秒]` + 高亮 + 上下文折叠，标题跳视频详情
+  - **web 补翻工作台**（`#/translate`，`translate` 三步的 web 形态）：pending 清单（平台/源语言筛选）→ 双栏工作台（左行号+原文只读，右译文逐行 + 实时行数校验 + 文件载入 → 写回 `zh-manual` 轨，替代 CLI 文件中转）
+  - **web ASR 转写兜底卡**（`asr backfill` 的 web 形态）：预览圈定（dry_run 同步直答）→ 提交转写 → 进度卡轮询/取消/终态系统通知；cookie 未配置黄条警示不硬拦；服务装配走 `COLLECTOR_ASR_BASE_URL` / `COLLECTOR_BILI_COOKIE_FILE` / `COLLECTOR_ASR_ENGINE` 三 env（容器访问宿主机 fireredasr 用 `host.docker.internal`）
+  - **web 导出三通道**（`export videos/subtitle/bundle` 的 web 形态）：视频库「导出」CSV/NDJSON/JSON（当前筛选透传）、「原料包」对话框（zip 直下：limit ≤1000 / 文件名组成 / 字幕轨，匹配/导出/错误三数回显 + 缺字幕黄警）、视频详情「按轨导出」条（选轨 + 格式即下）
+  - **web 批量操作**：视频库多选批量打标/摘标（全档摘标二次确认）、视频详情合集卡（展开全集 → 未采默认勾选 → 建任务）、采集页搜索采集卡（B站/YouTube 关键词 → 候选已采标注 → 勾选建任务，503 提示扩展离线）与条件采集面板（`collect find` job 化：粉丝数/时间窗/分区）、创作者页「刷新资料」
+  - **server 配套**：`GET /api/status`（设置页服务状态卡：版本/运行时长/在线客户端/库计数/鉴权徽章）+ jobs 运行时（迁移 v20 jobs 表 + 串行 runner + asr-backfill/collect-find 两 worker + `POST/GET/DELETE /api/jobs`）+ sub-search / translate pending/source / check-exists / season/preview / collect-search / upper-info/refresh 等端点；顺带修静态托管目录路径 EISDIR 崩 server（目录一律 404）与 CLI `collect find --tid` 透传缺失
 - ✅ 采集任务历史页多维查询：按 UP（名字模糊 / mid 精确；任务行 UP 归属冗余——批量提交/重采/ingest 回填，未入库/失败任务也命中）、时间范围（今天 / 近7天 / 近30天 / 自定义）、平台、采集方式（批量/单点）、标题/关键词（vid 段搜 BV 号）、批次聚焦筛选；URL query 承载，可刷新/分享还原；重试并入原批次（聚焦视图实时看重试行，不另开新批）、任务全部到终态时浏览器系统通知（提交/重试后切走标签页，跑完即被提醒）
 - ✅ 采集任务 CLI `tasks list/get/retry`（2026-10-02）：`list` 对齐 web 历史页的筛选/排序/分页参数（status/source/batch/creator/q/since/until/limit/page/page_size/sort），`get <id>` 单任务详情（失败原因/回执），`retry <id...>` 多 id 批量重试——server HTTP 通道，agent/脚本侧免开 web
 - ✅ 视频标签六档：manual/batch/ai/system（落表，system=系统状态标如 no-subtitle，采集链路自动打/摘）+ bili（视频自带）/ **season（合集，只读实时读 extra.ugc_season.title）**，tag_priority 可调 + 按档位过滤/聚合

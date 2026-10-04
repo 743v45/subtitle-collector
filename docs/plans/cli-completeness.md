@@ -65,7 +65,13 @@
 
 > CLAUDE.md §8：经确认的绕过发生后，必须把该操作登记为 CLI 完整度缺口（落本段）。
 
-（空——2026-08-25 起点。登记格式：日期 / 被绕过的操作 / 缺口描述 / 是否已转正为 §2 台账条目。）
+（登记格式：日期 / 被绕过的操作 / 缺口描述 / 是否已转正为 §2 台账条目。）
+
+**2026-10-04（CLI 全功能 web 化轮次收尾盘点，见 [cli-web-parity-progress.md](cli-web-parity-progress.md)）**：
+
+1. **douyin 博主批量**：web/HTTP 有（`POST /api/upper-videos/expand` source=douyin），CLI 无对应命令形态（B 站 `collect upper-videos <mid>` 的抖音镜像缺失）——真实缺口，未转正（待排期入 §2 台账）。
+2. **collect discover**：多 UP 拉最新与 `collect new-videos` 能力重叠，本轮 web 化豁免（用户 2026-10-04 拍板）——不立缺口，不纳入记录见 §5。
+3. **clients command 通用命令不做 web UI**（安全考量——泛型下发通道不设人肉操作面，用户 2026-10-04 拍板）；server start/stop、videos get-by-id 同豁免——CLI 已覆盖、web 不镜像，非 CLI 缺口，见 §5。
 
 ## 5. 不纳入记录（2026-08-25 共识，防重议）
 
@@ -74,3 +80,5 @@
 - **scripts 全量对齐 CLI 退出码 0-6**：最小契约即可（见 #12）。
 - **navigate/operate 泛型下发**：扩展 10 个 WS action 中这两个无专属子命令，经泛型 `clients command` 已覆盖，不立缺口（[background.js:562-854](../../apps/subtitle-collector/background.js#L562)）。
 - ~~**README 分析条目状态**（🚧 vs 已跑通 2 例）：README 纪律问题，不属本计划，另行处理。~~ ✅ 划销（2026-10-02）：消费端闭环已实跑 4 例（ai-mianshiguan、shilanwei、美国加息202609、ai-agent-岗位分析），README 需求锚点已按实况对齐（[consumption-loop.md](consumption-loop.md) 第 5 项），欠账清零。
+- **collect discover 的 web 镜像**（2026-10-04）：多 UP 拉最新与 `collect new-videos` 重叠，本轮 web 化豁免（用户拍板）。
+- **clients command / server start/stop / videos get-by-id 的 web UI**（2026-10-04）：不做——clients command 出于安全考量（泛型下发不设人肉操作面），其余为纯运维/内部动作已有 CLI 通路（用户拍板）。
