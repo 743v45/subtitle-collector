@@ -64,6 +64,7 @@ docker exec collector-server node -e 'const db=require("better-sqlite3")("/data/
 | `tags list/apply/remove` | list 读 DB;apply/remove 走 server | `tags list --sort count\|name\|created_at --desc`(count 语义跟随 `--scope` 档)/ `tags apply <vid...> --names <csv> --scope manual\|batch\|ai\|system --source <平台>`(打标即建标;scope=档位,source=平台默认 bilibili——YouTube 11 位 ID 用 `--source youtube`,抖音 19 位 aweme_id 用 `--source douyin`;system=系统状态档如 no-subtitle,采集链路自动打/摘) |
 | `clients list/reporting/task-dispatch/command` | server HTTP | 扩展客户端管控;`list --sort last_seen\|first_seen\|name --desc` 含离线客户端(DB 注册表合并在线态,带 popup 改的名字、在线/离线时长、扩展版本与双平台登录态 `bili_login`/`yt_login`——B 站未登录会让充电视频 AI 字幕接口返回空、YouTube 未登录时年龄限制视频播不了且 pot 受限加重,批量采集整批 no_subtitle/pot_limited 的判因依据);`reporting <id> <on\|off>` 切上报 / `task-dispatch <id> <on\|off>` 切任务派发(off=仅上报状态,调度器不派任务);`command <id> <action> --timeout <ms>` |
 | `tasks list/get/retry` | server HTTP | 采集任务查询与重试(2026-10-02):`list` 筛选/排序/分页(`--status failed,limited` 逗号多值 / `--source <平台>` / `--batch-id <id>` / `--batch <名>` / `--creator` / `--creator-uid` / `--q` / `--since --until` / `--limit <n>`(最近 N)或 `--page --page-size`(翻页,输出带 page/page_size) / `--sort created_at\|finished_at\|status`);`get <id>` 单任务详情(失败原因 `error` 与回执摘要 `result` 在 task 内);`retry <id...>` 多 id 批量重试(非可重试行 server 侧静默跳过,看回执 `retried` 计数) |
+| `creators list/get` | server HTTP | UP 主(创作者)查询(2026-10-05):`list` 筛选/七键排序/分页(`--q` UP 名/平台 uid 模糊 / `--category <名>` 分类精确 + `--scope agent\|human` 选槽位(单独传=该槽位已打标) / `--source <平台>` / `--page <n> --size <n>`(端点钳 size≤100,默认 20) / `--sort first_seen\|fans\|video_count\|following\|level\|updated_at\|name`);`get <id>` 单创作者详情(P2 字段 sign/level/sex/official/fans/following + 分类 join,库内 id 非 uid);存量 no-subtitle 回填查缺资料 UP 清单用(账本 P1-5 配套) |
 | `server ping/status/start/stop` | 本地 | 探活 / 起停(pid 文件;`start --no-detached --port`) |
 | `collect …`(11 子命令) | server→扩展 | 见下方 |
 
@@ -73,6 +74,14 @@ docker exec collector-server node -e 'const db=require("better-sqlite3")("/data/
 collector-cli --server https://collector.local.taevas.host --token <t> tasks list --status failed,limited --sort created_at
 collector-cli --server https://collector.local.taevas.host --token <t> tasks get 123
 collector-cli --server https://collector.local.taevas.host --token <t> tasks retry 123 124
+```
+
+UP 主(creators 组)生产库样例——存量回填查缺资料 UP 清单(按粉丝量降序看大 UP,或按分类筛):
+
+```collector-cli
+collector-cli --server https://collector.local.taevas.host --token <t> creators list --source bilibili --sort fans --size 20
+collector-cli --server https://collector.local.taevas.host --token <t> creators list --category AI --scope agent
+collector-cli --server https://collector.local.taevas.host --token <t> creators get 42
 ```
 
 collect 子命令速记:`search <关键词>` 搜候选(不入库)/ `subtitle <vid> [--source bilibili|youtube|douyin]` 采单个入库(vid=平台 ID:B 站 BV 号 / YouTube 11 位 / 抖音 19 位 aweme_id;douyin 经扩展 navigate 后台 tab 开 douyin.com/video/<id> 页面上下文取数——server 无法直连抖音 API;三平台回执 reason=no_subtitle 都自动打 no-subtitle 系统标,采到轨自动摘;douyin 图集回 reason=not_video→failed)/ `dedupe <vid...> [--source <平台>]` 批量判重 / `season` 整合集 / `upper-info <mid>` UP 资料入库 / `upper-videos <mid> --all` 拉列表 / `new-videos <mid>` / `discover <mid...>` 多 UP 发现 / `find <关键词> --min-fans --since-days` 条件检索 / `yt-videos <handle> --since-days --collect [--force]` YouTube 频道(--collect 逐条采,已有字幕轨的默认跳过,--force 强制重采) / `yt-search <关键词> --order --since-days --collect` YouTube 搜索。**抖音博主批量**(2026-08-29):web 采集页「按 UP / 频道 / 博主批量」或 `POST /api/upper-videos/expand {source:'douyin', sec_uid}`(裸 sec_uid 或 …/user/<sec_uid> 主页链接均可;扩展内 max_cursor 游标翻页聚合成一次回传,server 不感知游标;无 CLI 命令)。**超时三平台分档**(settings `collect_timeout_ms` 三键 bilibili/youtube/douyin,web 设置页可调):bilibili 预算式默认 90s(server 等回执预算);youtube/douyin 窗口式默认 45s(扩展侧无进展窗口,server 回执预算=窗口+135s);CLI `--timeout` 缺省 180s 覆盖全链路。**批量建任务端点同语义**:`POST /api/collect-tasks/batch {vids,source,force?}` 默认跳过已有字幕轨的入库视频(skipped_collected 返回),force=true 强制重采(2026-08-25)。

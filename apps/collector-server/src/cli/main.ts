@@ -95,6 +95,7 @@ export async function main(): Promise<void> {
       { buildStatsCommand },
       { buildClientsCommand },
       { buildTasksCommand },
+      { buildCreatorsCommand },
       { buildServerCommand },
       { buildCollectCommand },
       { buildYtSearchCommand },
@@ -111,6 +112,7 @@ export async function main(): Promise<void> {
       import('./commands/stats.js'),
       import('./commands/clients.js'),
       import('./commands/tasks.js'),
+      import('./commands/creators.js'),
       import('./commands/server.js'),
       import('./commands/collect.js'),
       import('./commands/collect-yt-search.js'),
@@ -127,6 +129,7 @@ export async function main(): Promise<void> {
     program.addCommand(buildStatsCommand());    // stats overview / stats count --by
     program.addCommand(buildClientsCommand());  // clients list / reporting / command
     program.addCommand(buildTasksCommand());    // tasks list / get / retry（采集任务查询与重试）
+    program.addCommand(buildCreatorsCommand()); // creators list / get（UP 主查询,2026-10 账本 P1-7）
     program.addCommand(buildServerCommand());   // server ping / status / start / stop
     // collect search / subtitle / dedupe；yt-search 子命令在 collect 组装后挂载
     //（collect-yt-search.ts 复用 collect.ts 导出件，反向 import 会成环——在 main 组装层接线）

@@ -176,6 +176,23 @@ export class ServerClient {
     return this.requestJson('POST', '/api/collect-tasks/retry', { ids });
   }
 
+  // 创作者列表：GET /api/creators（creators CLI 组用）。query 透传，server 侧 http/creators.ts
+  // 解析：q/category/source/scope(agent|human) + page/size（端点钳 size 1..100，默认 20）+
+  // sort/desc（七键 first_seen|fans|video_count|following|level|updated_at|name，非法 400）。
+  // 返回 {ok,total,items} 原样（ok 外壳由调用方剥）。
+  async listCreators(params: Record<string, string | number | boolean> = {}): Promise<unknown> {
+    const qs = new URLSearchParams();
+    for (const [k, v] of Object.entries(params)) qs.set(k, String(v));
+    const suffix = qs.size > 0 ? `?${qs.toString()}` : '';
+    return this.requestJson('GET', `/api/creators${suffix}`);
+  }
+
+  // 创作者详情：GET /api/creators/:id → {ok, creator}（P2 字段 sign/level/... + 分类名 join）。
+  // 不存在 server 404 → ServerResponseError（调用方归一 NOT_FOUND）。
+  async getCreator(id: number): Promise<unknown> {
+    return this.requestJson('GET', `/api/creators/${id}`);
+  }
+
   // ── 评论采集通路（C2 端点，PLAN §4.1/§5.2；CLI `comments collect` 消费，D4「CLI 永不写库」）──
 
   // 评论水位查询：GET /api/comments/count?bvid= → {ok, rows, roots, max_ctime_s}（模式判定+增量水位）。

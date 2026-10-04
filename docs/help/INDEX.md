@@ -23,7 +23,7 @@
 
 ## 查询与导出
 
-- [[检索视频库]] — web 列表筛选 + `videos list` 全参数
+- [[检索视频库]] — web 列表筛选 + `videos list` 全参数 + `creators` UP 主查询
 - [[全文检索字幕]] — `sub search` 带时间戳定位
 - [[标签体系]] — 六档标签的打、摘、查
 - [[导出字幕与视频]] — srt/vtt/txt/json 与 csv/ndjson

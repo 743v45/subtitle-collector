@@ -77,8 +77,9 @@ export async function tasksRetry(client: TasksClient, ids: number[]): Promise<un
 // ── commander 装配 ──
 
 /** 整数选项/位置参数解析：非法 → ARGS 退 2。端点侧对非法数字是静默忽略，CLI 显式报错
- *  （agent 拼错参数不该被吞成「查了个寂寞」，对齐 clients command --timeout 口径）。 */
-function parseIntOpt(raw: string, name: string): number {
+ *  （agent 拼错参数不该被吞成「查了个寂寞」，对齐 clients command --timeout 口径）。
+ *  export 供 creators.ts 复用（同纯 HTTP 通道组；collect.ts「单一来源」先例）。 */
+export function parseIntOpt(raw: string, name: string): number {
   const n = Number.parseInt(raw, 10);
   if (!Number.isFinite(n)) return emitError(`非法 ${name}: ${raw}（需整数）`, 'ARGS');
   return n;
@@ -89,8 +90,9 @@ function parseIntOpt(raw: string, name: string): number {
  * - `ServerUnreachableError`（server 没开/ECONNREFUSED）→ `SERVER_UNREACHABLE`（退 3）。
  * - `ServerResponseError` status 404 → `NOT_FOUND`（退 5）；其余非 2xx → `RUNTIME`（退 1，带 status/body）。
  * - 非上述异常：重新抛出，由 main.ts 兜底按 RUNTIME 处理。
+ * export 供 creators.ts 复用（同为纯 server HTTP 通道组；collect.ts「错误归一口径单一来源」先例）。
  */
-function handleHttpError(err: unknown): never {
+export function handleHttpError(err: unknown): never {
   if (err instanceof ServerUnreachableError) {
     emitError(err.message, 'SERVER_UNREACHABLE');
   }
