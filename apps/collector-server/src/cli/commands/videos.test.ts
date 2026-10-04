@@ -7,6 +7,7 @@
 // | R1 | normalizeTimestamp + videosList/get/getById 纯函数 | 通过 | 全部用临时 DB，无副作用 |
 // | R2 | videosList paid 过滤（v.paid=1） | 通过 | 4 默认非付费 + 1 付费 ingest，--paid 仅命中付费 |
 // | R3 | videosList tags 精确 AND + parseTagsCsv 空值归一 | 通过 | --tags 复数过滤 CLI 暴露（2026-09-22），样本标签 BV1=游戏+实况 |
+// | R4 | videosList creator_id/creator_uid/tag_source/date_field 四参透传 + parseTagSource/parseDateField | 通过 | P1-6（cli-completeness #5 余量），HTTP filter.ts 已暴露同名参数对齐语义 |
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -16,7 +17,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { openDb, migrate } from '../../db/migrate.js';
 import { ingestVideo } from '../../db/ingest.js';
-import { videosList, videosGet, videosGetById, normalizeTimestamp, parseDesc, parseTagsCsv } from './videos.js';
+import { videosList, videosGet, videosGetById, normalizeTimestamp, parseDesc, parseTagsCsv, parseTagSource, parseDateField } from './videos.js';
 
 const T = 1_700_000_000_000; // 基准毫秒时间戳（2023-11-14T22:13:20.000Z）
 
@@ -291,4 +292,73 @@ test('parseDesc：缺省 true（CLI 缺省降序）；裸 true / true/false/1/0/
   assert.equal(parseDesc('0'), false);
   assert.equal(parseDesc('no'), false);
   assert.equal(parseDesc('TRUE'), true, '大小写不敏感');
+});
+
+// ── videosList: creator_id / creator_uid / tag_source / date_field 四参透传（P1-6，cli-completeness #5 余量）──
+// db 层 advanced.ts VideoFilter 既有能力，CLI 纯包装；HTTP filter.ts 已暴露同名参数（creator_id/creator_uid/
+// tag_source/date_field），此处对齐其语义。证据形态 = 结果集差异（参数生效于 SQL 的直接观察）。
+
+test('videosList: creatorId 按 creators.id 精确过滤（结果集差异为证）', () => {
+  const { db, dir } = setup();
+  try {
+    const creatorId = (db.prepare("SELECT creator_id FROM videos WHERE source_vid = 'BV1'").get() as { creator_id: number }).creator_id;
+    // Alpha UP 名下 BV1/BV2 同一 creator_id，其余排除
+    assert.deepEqual(titles(videosList(db, { creatorId }).items).sort(), ['标题A', '标题B']);
+    // 不存在的 creator_id → 空集（参数确实进了 WHERE）
+    assert.equal(videosList(db, { creatorId: 999999 }).total, 0);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('videosList: creatorUid 按 source_uid 精确命中，不误匹配其他 uid', () => {
+  const { db, dir } = setup();
+  try {
+    assert.deepEqual(titles(videosList(db, { creatorUid: '1' }).items).sort(), ['标题A', '标题B']);
+    assert.deepEqual(titles(videosList(db, { creatorUid: '2' }).items).sort(), ['标题C', '标题D']);
+    // 不存在的 uid → 空集
+    assert.equal(videosList(db, { creatorUid: 'no-such-uid' }).total, 0);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('videosList: tagSource 档位过滤（tag 匹配收窄 + 单独存在性）', () => {
+  const { db, dir } = setup();
+  try {
+    // manual 档给 BV2 打「游戏」（样本 extra.tags 全是 bili 档，关系表原本为空）
+    const tagId = (db.prepare("INSERT INTO tags (name, created_at) VALUES ('游戏', 1) RETURNING id").get() as { id: number }).id;
+    const vid2 = (db.prepare("SELECT id FROM videos WHERE source_vid = 'BV2'").get() as { id: number }).id;
+    db.prepare("INSERT INTO video_tags (video_id, tag_id, source, created_at) VALUES (?, ?, 'manual', 1)").run(vid2, tagId);
+    // 缺省六档并查：bili 档 BV1/BV3 + manual 档 BV2
+    assert.deepEqual(titles(videosList(db, { tag: '游戏' }).items).sort(), ['标题A', '标题B', '标题C']);
+    // tagSource 收窄到 manual → 只 BV2；收窄到 bili → 只 BV1/BV3（同一 tag 名，档位切换结果集翻转）
+    assert.deepEqual(titles(videosList(db, { tag: '游戏', tagSource: ['manual'] }).items), ['标题B']);
+    assert.deepEqual(titles(videosList(db, { tag: '游戏', tagSource: ['bili'] }).items).sort(), ['标题A', '标题C']);
+    // tagSource 单独存在性（不带 tag/tags）：manual 档只有 BV2 有标，system 档无人打标 → 0
+    assert.deepEqual(titles(videosList(db, { tagSource: ['manual'] }).items), ['标题B']);
+    assert.equal(videosList(db, { tagSource: ['system'] }).total, 0);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('videosList: dateField 切换 since/until 比对列（first_seen 缺省 vs published_at）', () => {
+  const { db, dir } = setup();
+  try {
+    // 同一 since=T+1500：比对 first_seen（样本 T+100~T+400）→ 0 条；比对 published_at（T+1000~T+4000）→ 3 条
+    assert.equal(videosList(db, { since: T + 1500 }).total, 0);
+    assert.deepEqual(titles(videosList(db, { since: T + 1500, dateField: 'published_at' }).items).sort(), ['标题B', '标题C', '标题D']);
+    // until 同理：T+2500 比 published_at → BV1/BV2
+    assert.deepEqual(titles(videosList(db, { until: T + 2500, dateField: 'published_at' }).items).sort(), ['标题A', '标题B']);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('parseTagSource：CSV 解析 trim 滤空；空串/全逗号归一 undefined；undefined 透传', () => {
+  assert.equal(parseTagSource(undefined), undefined);
+  assert.equal(parseTagSource(''), undefined);
+  assert.equal(parseTagSource(' , , '), undefined);
+  assert.deepEqual(parseTagSource('manual, bili ,'), ['manual', 'bili']);
+  // 非法档位分支走 emitError（process.exit），在 CLI 子进程测试覆盖（对齐 parseSort 先例）
+});
+
+test('parseDateField：first_seen/published_at 放行；undefined 透传', () => {
+  assert.equal(parseDateField(undefined), undefined);
+  assert.equal(parseDateField('first_seen'), 'first_seen');
+  assert.equal(parseDateField('published_at'), 'published_at');
+  // 非法值分支走 emitError（process.exit），在 CLI 子进程测试覆盖
 });
