@@ -319,3 +319,130 @@ test('tags list：--sort name 升降 + 非法 --sort → ARGS 退 2', async () =
     assert.match(bad.err, /非法 --sort: bogus（可选: count\|name\|created_at）/);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
+
+// ── 2026-10-05 P1-8 标签库纠错：tags rename / delete（走 server PATCH/DELETE /api/tags/:id）──
+// 红灯轮：子命令未实现 → commander unknown action 全红；实现后转绿。
+
+test('tags rename：PATCH /api/tags/:id body {name} 形状正确，透传回执，退 0', async () => {
+  const { dir, dbPath } = setup();
+  const srv = await startMockServer(() => ({ status: 200, json: { ok: true, tag: { id: 7, name: '面试真题', created_at: 1 } } }));
+  try {
+    const r = await cli(args(dbPath, srv.url, ['tags', 'rename', '7', '--name', '面试真题']));
+    assert.equal(r.code, 0);
+    assert.deepEqual(JSON.parse(r.out), { ok: true, tag: { id: 7, name: '面试真题', created_at: 1 } });
+    assert.equal(srv.reqs[0]!.method, 'PATCH');
+    assert.equal(srv.reqs[0]!.path, '/api/tags/7');
+    assert.deepEqual(srv.reqs[0]!.body, { name: '面试真题' });
+  } finally { await srv.close(); rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('tags rename：--name 首尾空白 → trim 后透传', async () => {
+  const { dir, dbPath } = setup();
+  const srv = await startMockServer(() => ({ status: 200, json: { ok: true, tag: { id: 7, name: '面试真题', created_at: 1 } } }));
+  try {
+    const r = await cli(args(dbPath, srv.url, ['tags', 'rename', '7', '--name', ' 面试真题 ']));
+    assert.equal(r.code, 0);
+    assert.deepEqual(srv.reqs[0]!.body, { name: '面试真题' });
+  } finally { await srv.close(); rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('tags rename：id 不存在 server 404 → NOT_FOUND 退 5', async () => {
+  const { dir, dbPath } = setup();
+  const srv = await startMockServer(() => ({ status: 404, json: { ok: false, error: 'not found' } }));
+  try {
+    const r = await cli(args(dbPath, srv.url, ['tags', 'rename', '999', '--name', '新名']));
+    assert.equal(r.code, 5);
+    const body = JSON.parse(r.out);
+    assert.equal(body.code, 'NOT_FOUND');
+    assert.equal(body.status, 404);
+    assert.match(r.err, /404/);
+  } finally { await srv.close(); rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('tags rename：撞已有名 server 409 → RUNTIME 退 1（改名冲突带 status/body）', async () => {
+  const { dir, dbPath } = setup();
+  const srv = await startMockServer(() => ({ status: 409, json: { ok: false, error: 'tag name already exists' } }));
+  try {
+    const r = await cli(args(dbPath, srv.url, ['tags', 'rename', '7', '--name', '已存在名']));
+    assert.equal(r.code, 1);
+    const body = JSON.parse(r.out);
+    assert.equal(body.code, 'RUNTIME');
+    assert.equal(body.status, 409);
+    assert.match(r.err, /409/);
+  } finally { await srv.close(); rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('tags rename：--name 全空白 → ARGS 退 2，不发请求', async () => {
+  const { dir, dbPath } = setup();
+  const srv = await startMockServer(() => ({ status: 200, json: { ok: true } }));
+  try {
+    const r = await cli(args(dbPath, srv.url, ['tags', 'rename', '7', '--name', '   ']));
+    assert.equal(r.code, 2);
+    assert.equal(JSON.parse(r.out).code, 'ARGS');
+    assert.equal(srv.reqs.length, 0);
+  } finally { await srv.close(); rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('tags rename：id 非整数 → ARGS 退 2，不发请求', async () => {
+  const { dir, dbPath } = setup();
+  const srv = await startMockServer(() => ({ status: 200, json: { ok: true } }));
+  try {
+    const r = await cli(args(dbPath, srv.url, ['tags', 'rename', 'abc', '--name', '新名']));
+    assert.equal(r.code, 2);
+    assert.equal(JSON.parse(r.out).code, 'ARGS');
+    assert.equal(srv.reqs.length, 0);
+  } finally { await srv.close(); rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('tags rename：server 不可达 → SERVER_UNREACHABLE 退 3', async () => {
+  const { dir, dbPath } = setup();
+  try {
+    const r = await cli(args(dbPath, DEAD, ['tags', 'rename', '7', '--name', '新名']));
+    assert.equal(r.code, 3);
+    assert.equal(JSON.parse(r.out).code, 'SERVER_UNREACHABLE');
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('tags delete：DELETE /api/tags/:id，透传 {ok:true}，退 0', async () => {
+  const { dir, dbPath } = setup();
+  const srv = await startMockServer(() => ({ status: 200, json: { ok: true } }));
+  try {
+    const r = await cli(args(dbPath, srv.url, ['tags', 'delete', '7']));
+    assert.equal(r.code, 0);
+    assert.deepEqual(JSON.parse(r.out), { ok: true });
+    assert.equal(srv.reqs[0]!.method, 'DELETE');
+    assert.equal(srv.reqs[0]!.path, '/api/tags/7');
+  } finally { await srv.close(); rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('tags delete：id 不存在 server 404 → NOT_FOUND 退 5', async () => {
+  const { dir, dbPath } = setup();
+  const srv = await startMockServer(() => ({ status: 404, json: { ok: false, error: 'not found' } }));
+  try {
+    const r = await cli(args(dbPath, srv.url, ['tags', 'delete', '999']));
+    assert.equal(r.code, 5);
+    const body = JSON.parse(r.out);
+    assert.equal(body.code, 'NOT_FOUND');
+    assert.equal(body.status, 404);
+  } finally { await srv.close(); rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('tags delete：id 非整数 → ARGS 退 2，不发请求', async () => {
+  const { dir, dbPath } = setup();
+  const srv = await startMockServer(() => ({ status: 200, json: { ok: true } }));
+  try {
+    const r = await cli(args(dbPath, srv.url, ['tags', 'delete', 'x7']));
+    assert.equal(r.code, 2);
+    assert.equal(JSON.parse(r.out).code, 'ARGS');
+    assert.equal(srv.reqs.length, 0);
+  } finally { await srv.close(); rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('tags delete：server 不可达 → SERVER_UNREACHABLE 退 3', async () => {
+  const { dir, dbPath } = setup();
+  try {
+    const r = await cli(args(dbPath, DEAD, ['tags', 'delete', '7']));
+    assert.equal(r.code, 3);
+    assert.equal(JSON.parse(r.out).code, 'SERVER_UNREACHABLE');
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});

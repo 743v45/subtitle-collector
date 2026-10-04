@@ -137,7 +137,7 @@ export async function main(): Promise<void> {
     collectCmd.addCommand(buildYtSearchCommand());
     program.addCommand(collectCmd);
     program.addCommand(buildSubCommand());   // sub search（字幕正文片段检索）
-    program.addCommand(buildTagsCommand());  // tags list / apply / remove（视频标签）
+    program.addCommand(buildTagsCommand());  // tags list / apply / remove / rename / delete（视频标签与标签库纠错）
     program.addCommand(buildTranslateCommand()); // translate pending / source / fill（补翻工作流）
     program.addCommand(buildAsrCommand());       // asr backfill（无字幕兜底转写编排）
     program.addCommand(buildCommentsCommand());  // comments collect / tree / verify（评论采集与树查看,2026-10）

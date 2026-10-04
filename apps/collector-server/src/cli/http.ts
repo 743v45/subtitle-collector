@@ -113,6 +113,19 @@ export class ServerClient {
     return this.requestJson('POST', '/api/tags/remove', body);
   }
 
+  // 标签改名：PATCH /api/tags/:id { name } → {ok, tag}（2026-10-05 P1-8 标签库纠错）。
+  // AI 打标打错标签改名：video_tags 走 tag_id 引用，已有打标关系自动跟随新名；
+  // 撞已有名 server 409（UNIQUE）。id = 标签库 id（`tags list` 输出的 id 列，非视频 id）。
+  async renameTag(id: number, name: string): Promise<unknown> {
+    return this.requestJson('PATCH', `/api/tags/${id}`, { name });
+  }
+
+  // 删标签：DELETE /api/tags/:id → {ok:true}。server 侧应用层级联（先删该标签全部档位关系
+  // 再删实体，无孤儿）；id 不存在 server 404 → ServerResponseError（调用方归一 NOT_FOUND）。
+  async deleteTag(id: number): Promise<unknown> {
+    return this.requestJson('DELETE', `/api/tags/${id}`);
+  }
+
   // 批量建采集任务：POST /api/collect-tasks/batch（任务系统调度执行,扩展串行;
   // creator_uid 可选——合集/UP 批量的归属,未入库失败任务也能按 UP 筛）。
   async createCollectTasksBatch(body: {

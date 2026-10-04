@@ -72,10 +72,13 @@ node scripts/export-bundle.mjs --theme <主题> --tags <标签1>,<标签2>
 collector-cli sub search <主题关键词> --ctx 8 --max-videos 20
 collector-cli tags apply <bvid1> <bvid2> --names <标签1>,<标签2> --scope ai --source bilibili
 collector-cli tags list --scope ai
+collector-cli tags rename <标签id> --name <新名>
+collector-cli tags delete <标签id>
 ```
 
 - 先 `sub search` 读字幕正文判断视频归属 → `tags apply` 打标(打标即建标,视频需已入库)→ `tags list` 核对。
 - `tags remove <bvid...> --names <csv>`:`--scope` 省略删该名字全部四档(只传 `--scope` 则只删该档);`--source` 定平台,默认 bilibili。
+- 打错标签的库内纠错(2026-10-05):`tags rename <标签id> --name <新名>`(已有打标关系自动跟随新名;撞已有名 409→RUNTIME 退 1)/ `tags delete <标签id>`(删标签含全部档位关系;不存在 404→NOT_FOUND 退 5)——标签 id 取 `tags list` 输出的 id 列。
 
 ## 6. 补翻工作流(无中文轨视频补中文翻译)
 

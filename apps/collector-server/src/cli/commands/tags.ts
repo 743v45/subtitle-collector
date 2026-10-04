@@ -1,6 +1,8 @@
-// tags 命令组：视频标签（list / apply / remove）。
-// 读写分工遵循 CLI 不变量（db.ts:1-2）：list 直连只读 SQLite；apply/remove 是写操作走 HTTP ServerClient。
+// tags 命令组：视频标签（list / apply / remove / rename / delete）。
+// 读写分工遵循 CLI 不变量（db.ts:1-2）：list 直连只读 SQLite；apply/remove/rename/delete 是写操作走 HTTP ServerClient。
 // AI 打标工作流：agent 会话 sub search 读字幕 → 判断 → tags apply BV... --names "..." --scope ai --source bilibili。
+// 标签库纠错（2026-10-05 P1-8 / cli-completeness #8）：tags rename/delete 对标签实体操作
+// （apply/remove 作用于视频×标签关系；rename/delete 作用于标签本身），打错标签改名/删除重建用。
 // 命名约定（2026-08-24 全局统一）：--source=平台（默认 bilibili）；--scope=档位（manual|batch|ai|system）。
 import { Command } from 'commander';
 import { ServerClient, ServerUnreachableError, ServerResponseError } from '../http.js';
@@ -10,6 +12,7 @@ import { openReadonlyDb } from '../db.js';
 import { listTags, TAG_SORT_KEYS, type TagSource, type TagSortKey } from '../../db/tags.js';
 import type { Source } from '../../tasks/source.js';
 import { parseDesc } from './videos.js';
+import { handleHttpError, parseIntOpt } from './tasks.js';
 
 // ── 纯处理函数（可测：注入依赖，不直接碰 stdout/exit） ──
 
@@ -50,6 +53,18 @@ export async function tagsRemove(
   return client.removeTags(vids, names, scope, platform);
 }
 
+/** `tags rename <id> --name <新名>`：经 server PATCH /api/tags/:id 改标签名（标签库纠错，P1-8）。
+ *  已有打标关系走 tag_id 引用自动跟随新名；撞已有名 server 409（UNIQUE）→ 装配层归一 RUNTIME。 */
+export async function tagsRename(client: ServerClient, id: number, name: string): Promise<unknown> {
+  return client.renameTag(id, name);
+}
+
+/** `tags delete <id>`：经 server DELETE /api/tags/:id 删标签（应用层级联：先删全部档位关系再删实体）。
+ *  不存在 server 404 → 装配层归一 NOT_FOUND（退 5）。 */
+export async function tagsDelete(client: ServerClient, id: number): Promise<unknown> {
+  return client.deleteTag(id);
+}
+
 // ── commander 装配 ──
 
 function parseNames(csv: string): string[] {
@@ -67,7 +82,7 @@ function isPlatform(v: string): v is Source {
 
 export function buildTagsCommand(): Command {
   const cmd = new Command('tags')
-    .description('视频标签库（list 直读 DB；apply/remove 走 server HTTP）');
+    .description('视频标签库（list 直读 DB；apply/remove/rename/delete 走 server HTTP）');
 
   cmd.command('list')
     .description('标签库列表（含各档计数；--scope 过滤该档计数>0 的标签，--source 平台收窄计数）')
@@ -145,6 +160,37 @@ export function buildTagsCommand(): Command {
         if (err instanceof ServerUnreachableError) emitError(`server 不可达: ${err.message}（COLLECTOR_SERVER 指对了吗？）`, 'SERVER_UNREACHABLE');
         else if (err instanceof ServerResponseError) emitError(`server 拒绝: ${err.message}`, 'RUNTIME');
         else emitError(`移除失败: ${(err as Error).message}`, 'RUNTIME');
+      }
+    });
+
+  // rename/delete 走纯 server HTTP 通道（无扩展命令分支），错误归一复用 tasks.ts handleHttpError
+  //（SERVER_UNREACHABLE 3 / 404 NOT_FOUND 5 / 其余非 2xx RUNTIME 1；collect.ts「单一来源」先例）。
+  cmd.command('rename <id>')
+    .description('标签改名（标签库纠错：已有打标关系走 tag_id 引用自动跟随新名；撞已有名 server 409 → RUNTIME 退 1）')
+    .requiredOption('--name <name>', '新标签名')
+    .action(async (id: string, opts: { name: string }) => {
+      const name = opts.name.trim();
+      if (!name) { emitError('--name 不能为空', 'ARGS'); return; }
+      const numId = parseIntOpt(id, '<id>');
+      const ctx = getCliContext();
+      try {
+        const out = await tagsRename(new ServerClient(ctx.serverUrl, ctx.token), numId, name);
+        emitResult(out, ctx.format);
+      } catch (err) {
+        handleHttpError(err);
+      }
+    });
+
+  cmd.command('delete <id>')
+    .description('删除标签（应用层级联：先删该标签全部档位关系再删实体，无孤儿；不存在 → NOT_FOUND 退 5）')
+    .action(async (id: string) => {
+      const numId = parseIntOpt(id, '<id>');
+      const ctx = getCliContext();
+      try {
+        const out = await tagsDelete(new ServerClient(ctx.serverUrl, ctx.token), numId);
+        emitResult(out, ctx.format);
+      } catch (err) {
+        handleHttpError(err);
       }
     });
 
