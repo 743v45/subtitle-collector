@@ -72,7 +72,7 @@
 | U-3 | ~~「提交已上生产重构」语义追认~~ | §0 | ✅（2026-10-04：原意从老记忆考得，核实 08-25/26 已补提交落地，已完成划销） |
 | U-4 | P3-1 / P3-4 拍板 | P3 | 不拍板 = 维持现状（冻结/静止） |
 | U-5 | 下一个分析主题实跑 | P3-3/P3-5、README 🚧 | 解锁「疼了再做」推迟项链（INDEX 台账 → README 分析条目转 ✅ 的互锁条件，[README.md:46](../../README.md#L46)） |
-| U-6 | crontab 一行修复（本机终端粘贴） | A1 | `crontab /tmp/crontab-new-20261004.txt && crontab -l \| grep backup-export`（AI 环境安装 crontab 稳定挂起，文件已备好且内容验证正确）；贴完次日 10:23 起每日出卷恢复 |
+| U-6 | ~~crontab 一行修复（本机终端粘贴）~~ | A1 | ✅（2026-10-05 用户终端粘贴，env-inventory 5/5 全绿：绝对路径 node + 每周一 11:23 healthcheck 巡检行均已生效） |
 | U-7 | 分支合并 + server 部署 + 扩展重载 | 补充批次 | 分支 `supplement-design-tree-e2e-acceptance`（14+ commits）待合并主检出；`docker compose up -d --build` 后跑 `verify-deployed --via-docker` 验收；扩展 0.1.33 chrome://extensions 重载；合并后再补每周 healthcheck cron 行（现在加会指向主检出尚不存在的脚本） |
 
 ## 6. 补充树（2026-10-04 第二轮盘点，多镜头工作流产出）
@@ -81,7 +81,7 @@
 
 | # | 项 | 落地 | 状态 |
 |---|---|---|---|
-| A1 | 异地备份复活+healthcheck 巡检 | [backup-healthcheck.mjs](../../scripts/backup-healthcheck.mjs)（9c4d899，四项检查+飞书告警，19 测试）；手动出卷恢复时新性（群晖 20261004-043710.db，428MB）；crontab 修复见 U-6 | ◐ U-6 余留 |
+| A1 | 异地备份复活+healthcheck 巡检 | [backup-healthcheck.mjs](../../scripts/backup-healthcheck.mjs)（9c4d899，四项检查+飞书告警，19 测试）；手动出卷恢复时新性（群晖 20261004-043710.db，428MB）；crontab 修复+每周一巡检行已生效（U-6 ✅ 2026-10-05） | ✅ |
 | A2 | 备份产物落盘自检+主库日检 | 358c60e：快照 quick_check/每日首份全量 integrity_check/主库 24h 日检，non-ok 走 failStreak≥2 独立文案 | ✅ |
 | A3 | verify-deployed --via-docker | 6974f12：容器内只读 integrity_check+库/-wal 水位，生产实跑 ok（428MB）；文档六处同步（7eb9aa5） | ✅ |
 | A4 | backup-restore 硬化 | a42734a：卷名动态解析+--volume-name 覆盖/auto-create 防线/apply 校验前置/--pick 抽验/残留 sweep；六项实测过；顺手修 die() 跳 finally 老 bug（曾留 5 周残留容器）；[acceptance-log.md](acceptance-log.md) 起账 | ✅ |
