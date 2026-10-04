@@ -13,6 +13,7 @@ import { handleStatsHttp } from './http/stats.js';
 import { handleTagsHttp } from './http/tags.js';
 import { handleTranslateHttp } from './http/translate.js';
 import { handleAsrHttp } from './http/asr.js';
+import { handleCommentsHttp } from './http/comments.js';
 import { handleSettingsHttp } from './http/settings.js';
 import { handleTasksHttp } from './http/tasks.js';
 import { runHandler, httpAuthOk, httpOriginAllowed, isPlaceholderToken } from './http/http-util.js';
@@ -100,6 +101,7 @@ const API_ROUTES: Array<[prefix: string, handler: (req: IncomingMessage, res: Se
   ['/api/tags', (req, res, db) => handleTagsHttp(req, res, db)],
   ['/api/translate', (req, res, db) => handleTranslateHttp(req, res, db)],
   ['/api/asr', (req, res, db) => handleAsrHttp(req, res, db)],
+  ['/api/comments', (req, res, db) => handleCommentsHttp(req, res, db)],
   ['/api/settings', (req, res, db) => handleSettingsHttp(req, res, db)],
   ['/api/', (req, res, db) => handleQueryHttp(req, res, db)],
 ];

@@ -92,3 +92,24 @@ collector-cli --server <生产server> translate fill <bvid> --from ai-en --file 
 - ③ 会话内翻译产出 zh.txt(每行一条译文,可保留行号前缀;空行占位不可省),`translate fill` 写回:行数校验+时间轴从源轨拷贝,落 `zh-manual` 轨(origin=manual 不去重,重复 fill 堆版本快照)。
 - fill 走 server HTTP(对齐 tags apply 先例)——`--db` 用于 pending/source 与行数预校验,`--server` 决定写哪个库,两者指向同一库。
 - 补翻后该视频默认轨变中文(trackPriority zh-manual 档),`export subtitle`/`export bundle` 自动受益。
+
+## 7. 评论树采集 → bundle 消费
+
+B 站视频评论区(根评论+楼中楼完整分析树)采集入库;`export bundle` 自动携带评论原料,无新参数。
+
+```bash
+node scripts/bili-cookie-from-chrome.mjs --refresh   # cookie 准备(SESSDATA ~1 个月;-101 时重跑;必配)
+```
+
+```collector-cli
+collector-cli comments collect --bvid <BV> --dry-run      # 试跑:取数解析计数,不写库
+collector-cli comments collect --bvid <BV> --mode full    # 全量(auto 首采同效;写库走 server HTTP)
+collector-cli comments verify --bvid <BV>                 # 校验(coverage / root_count_gap / dangling 族)
+collector-cli comments tree --bvid <BV> --limit 20        # 树形速览(点赞 top 20 根)
+```
+
+- 通路:`comments collect` 宿主进程直连 B 站(wbi 签名+cookie),写库只走 server HTTP——server 必须可达(生产 `--server <url> --token <t>`);视频须先入库,否则 NOT_FOUND 退 5。
+- 日常增量:`--mode incremental`(auto 分流默认)+ `--refresh-roots 50` 补老楼新回复;删除对账只在 full 轮发生。
+- 批量:`--bvid-file <文件>`(每行一个 BV,串行 5s 间隔,失败不阻断,per-video 回执)。
+- `tree`/`verify` 是 DB 只读:显式 `--server` 被忽略并警告,查生产先快照再 `--db <快照绝对路径>`。
+- 消费:库内有评论的视频,`export bundle` 自动出 `comments/<BV>.md` 正文 + manifest `comments` 摘要(roots/total/coverage/like_top/last_collected_at);操作手册见 docs/help/采集评论.md。

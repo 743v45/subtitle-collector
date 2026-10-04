@@ -62,7 +62,12 @@ export function wbiKeysFromNav(navData: Record<string, unknown>): { img_key: str
 }
 
 /** HTTP 412 / fetch 异常之外，B 站响应体级别的风控码判定（asr-net 退避决策用）。
+ * 2026-10-04 随评论采集扩展：-352（风控校验失败，UA/buvid 缺失）/ -799、-509（频率超限）
+ * 也判风控走 withRiskRetry 三档退避（PLAN §4.6）——对 ASR 链路是行为超集（此前这些码落
+ * 兜底分支 bili_<code> 一次都不退避），无回归。-403 是 wbi 签名错误特有码，不在此列
+ * （处置是强刷 keys 重试而非退避干等，PLAN §4.6）。
  * 类型谓词：true 时收窄为失败形态（其 code 字段必然存在可读）。 */
 export function isRiskControl(parsed: { ok: boolean; code?: string }): parsed is { ok: false; code?: string } {
-  return !parsed.ok && (parsed.code === 'risk_control' || parsed.code === 'bili_-412');
+  return !parsed.ok && (parsed.code === 'risk_control' || parsed.code === 'bili_-412'
+    || parsed.code === 'bili_-352' || parsed.code === 'bili_-799' || parsed.code === 'bili_-509');
 }

@@ -19,7 +19,8 @@ export function openReadonlyDb(dbPath: string): Database {
 }
 
 // 打开只读 DB；失败 → DB_UNREADABLE（emitError 返回 never，两条路径都满足返回类型）。
-// 同时承担 DB-only 命令组的 --server 静默警告（一处生效）：videos/sub/export/stats/changes 五组
+// 同时承担 DB-only 命令组的 --server 静默警告（一处生效）：videos/sub/export/stats/changes/comments 六组
+// （comments 为 2026-10-04 C5 新增的 tree/verify 只读查看组）
 // 全部只读 --db，全局 --server 被静默忽略已两次造成「以为查了生产实际查了 dev 库」——
 // 用户显式给了 --server 时 stderr 输出一行中文警告指路快照脚本；env COLLECTOR_SERVER / 默认值不告警。
 // 警告走 fs.writeSync 直写 fd 2 而非 process.stderr.write：后者在 pipe（被脚本/测试子进程捕获时）

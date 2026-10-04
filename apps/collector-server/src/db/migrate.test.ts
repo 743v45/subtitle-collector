@@ -517,6 +517,6 @@ test('v19 迁移：新库（无 asr-zh 存量）全量重放安全，不留脏�
     migrate(db);
     assert.doesNotThrow(() => runMigrations(db), '新库重放 v19 纯 UPDATE 应完整执行不报错');
     assert.equal(db.inTransaction, false, '不应残留打开的事务');
-    assert.equal(db.pragma('user_version', { simple: true }), 19, '账本写到 19');
+    assert.equal(db.pragma('user_version', { simple: true }), MIGRATIONS[MIGRATIONS.length - 1].version, '账本写到最新（随新增步骤自动跟随）');
   } finally { db.close(); }
 });

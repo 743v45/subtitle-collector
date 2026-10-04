@@ -294,6 +294,10 @@ export function buildExportCommand(): Command {
         now: Date.now(), nameOrder: parseNameOrder(raw.nameOrder),
       });
       mkdirSync(join(raw.out, 'videos'), { recursive: true });
+      // 评论正文（comments/<BV>.md，C6）有导出才建目录，避免无评论包出现空目录
+      if (built.files.some((f) => f.path.startsWith('comments/'))) {
+        mkdirSync(join(raw.out, 'comments'), { recursive: true });
+      }
       for (const f of built.files) writeFileSync(join(raw.out, f.path), f.content);
       emitResult({
         ok: true, path: raw.out,
