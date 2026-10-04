@@ -6,6 +6,7 @@ import { CHANGE_SORT_KEYS, type ChangeSortKey } from '../db/sort.js';
 import { parseVideoFilter } from './filter.js';
 import { applyVideoTags, removeVideoTags, getVideoTagsByVideoIds, getVideoTagsForDetail, type TagSource } from '../db/tags.js';
 import { getTagPriority, type TagPrioritySource } from '../db/settings.js';
+import { handleCommentsTreeHttp } from './comments-tree.js';
 import { json, readJsonBody, parseTagScope, parseSortParams } from './http-util.js';
 
 // 合并 bili（extra.tags）+ season（extra.ugc_season.title）与关系三档，同名按 tag_priority 取优先档（winner）。
@@ -45,6 +46,25 @@ function mergeTagDetails(
 // 码点三态比较（UTF-16 code unit 序）：locale 无关的确定性名称序。
 function cmpCodepoint(a: string, b: string): number {
   return a < b ? -1 : a > b ? 1 : 0;
+}
+
+// 详情路由用：extra（TEXT JSON 字符串或已 parse 对象）→ bili 档标签名 + season 标题。
+// extra 非合法 JSON → 两者皆空（降级不炸）；P2-5 顺手自 handleQueryHttp 提出补复杂度（P2-1 增量偿还）。
+function parseExtraTagNames(rawExtra: unknown): { biliNames: string[]; seasonNames: string[] } {
+  let biliNames: string[] = [];
+  let seasonNames: string[] = [];
+  try {
+    const extraObj = typeof rawExtra === 'string' ? JSON.parse(rawExtra) : rawExtra;
+    const arr = (extraObj as { tags?: unknown } | null)?.tags;
+    if (Array.isArray(arr)) {
+      biliNames = (arr as Array<{ tag_name?: unknown }>)
+        .map((x) => (x && typeof x.tag_name === 'string' ? x.tag_name : null))
+        .filter((t): t is string => t !== null);
+    }
+    const seasonTitle = (extraObj as { ugc_season?: { title?: unknown } } | null)?.ugc_season?.title;
+    if (typeof seasonTitle === 'string' && seasonTitle) seasonNames = [seasonTitle];
+  } catch { /* extra 非合法 JSON → 无 bili/season 标签 */ }
+  return { biliNames, seasonNames };
 }
 
 // 列表项富化：用 json_extract 从 extra 取 tid/tname/tags/view/season_title，并合并关系档标签按优先级 dedupe。
@@ -164,6 +184,10 @@ export async function handleQueryHttp(req: IncomingMessage, res: ServerResponse,
     }
   }
 
+  // 单视频评论树（web 详情页用，P2-5）：路由与处理整体在 http/comments-tree.ts
+  // （与 CLI comments tree 共享 db/comments-tree.ts shapeTree，§6.3 同语义）
+  if (await handleCommentsTreeHttp(req, res, db, url, pathname)) return;
+
   const detailMatch = pathname.match(/^\/api\/videos\/([^/]+)\/([^/]+)$/);
   if (detailMatch) {
     const source = detailMatch[1];
@@ -171,20 +195,8 @@ export async function handleQueryHttp(req: IncomingMessage, res: ServerResponse,
     const detail = getVideo(db, source, sourceVid);
     if (!detail) { json(res, 404, { ok: false, error: 'not found' }); return; }
     // 全档 tag_details（不去重，详情页五档全展示）：bili（extra.tags）+ season（extra.ugc_season.title）+ 关系三档
-    // 注意 getVideo 返回的 extra 是 TEXT（JSON 字符串），需 parse 后再取 tags
-    let biliNames: string[] = [];
-    let seasonNames: string[] = [];
-    try {
-      const extraObj = typeof detail.video.extra === 'string' ? JSON.parse(detail.video.extra) : detail.video.extra;
-      const arr = (extraObj as { tags?: unknown } | null)?.tags;
-      if (Array.isArray(arr)) {
-        biliNames = (arr as Array<{ tag_name?: unknown }>)
-          .map((x) => (x && typeof x.tag_name === 'string' ? x.tag_name : null))
-          .filter((t): t is string => t !== null);
-      }
-      const seasonTitle = (extraObj as { ugc_season?: { title?: unknown } } | null)?.ugc_season?.title;
-      if (typeof seasonTitle === 'string' && seasonTitle) seasonNames = [seasonTitle];
-    } catch { /* extra 非合法 JSON → 无 bili/season 标签 */ }
+    // 注意 getVideo 返回的 extra 是 TEXT（JSON 字符串），parseExtraTagNames 内容错降级为空
+    const { biliNames, seasonNames } = parseExtraTagNames(detail.video.extra);
     const relTags = getVideoTagsForDetail(db, detail.video.id as number);
     const priority = getTagPriority(db);
     json(res, 200, { ok: true, ...detail, tag_details: mergeTagDetails(biliNames, relTags, priority, true, seasonNames) });

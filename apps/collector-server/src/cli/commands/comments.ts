@@ -10,6 +10,7 @@ import { emitResult, emitError, logInfo } from '../output.js';
 import { getCliContext } from '../context.js';
 import { openDbOrEmit } from '../db.js';
 import { treeByVideo, type CommentRecord, type CommentTree } from '../../db/comments.js';
+import { shapeTree, type CommentFloorNode } from '../../db/comments-tree.js';
 import { verifyTree } from '../../db/comments-verify.js';
 import { getVideo } from '../../db/queries.js';
 import { handleHttpError } from './collect.js';
@@ -175,92 +176,44 @@ function rootHeader(r: CommentRecord): string {
   return `## ${seg.join(' · ')}${statusTags(r)}`;
 }
 
-function floorLine(f: CommentRecord, depth: number, dialogAuthor: string | null): string {
-  const indent = '  '.repeat(Math.max(0, Math.min(depth, 3) - 1));
+function floorLine(f: CommentFloorNode): string {
+  const indent = '  '.repeat(Math.max(0, Math.min(f.depth, 3) - 1));
   const seg = [`【赞 ${f.like_count}】@${f.uname ?? '(未知用户)'}${f.is_up === 1 ? '(UP主)' : ''}`];
   if (f.ip_location) seg.push(`IP属地:${f.ip_location}`);
   let line = `${indent}- ${seg.join(' · ')}`;
-  // 「回复 @」对话指向(§2.4:直回根 dialog=自身 rpid 省略;悬空省略前缀——verify R3 软警告)
-  if (f.dialog_rpid !== '0' && f.dialog_rpid !== f.rpid_str && dialogAuthor != null) {
-    line += ` 回复 @${dialogAuthor}`;
-  }
-  if (f.parent_rpid !== '0' && f.parent_rpid !== f.dialog_rpid) line += '(回复对象已删除)';
+  // 「回复 @」对话指向(§2.4:直回根 dialog=自身 rpid 省略;悬空省略前缀——verify R3 软警告;
+  // 指向作者名由 shapeTree 的 reply_to 派生,'0'/自身/悬空 → null)
+  if (f.reply_to != null) line += ` 回复 @${f.reply_to}`;
+  if (f.parent_missing) line += '(回复对象已删除)';
   line += `:${f.message ?? '(无正文)'}${statusTags(f)}`;
   return line;
 }
 
-/** 楼层深度(parent 链,≤3 层,更深拍平保留「回复 @」前缀,§6.3)。 */
-function floorDepth(f: CommentRecord, byRpid: Map<string, CommentRecord>): number {
-  let depth = 1;
-  let cur: CommentRecord | undefined = f;
-  const guard = new Set<string>();
-  while (cur && cur.parent_rpid !== '0' && !guard.has(cur.parent_rpid)) {
-    guard.add(cur.parent_rpid);
-    const p = byRpid.get(cur.parent_rpid);
-    if (!p || p.is_root === 1) break;
-    depth++;
-    cur = p;
-  }
-  return Math.min(depth, 3);
-}
-
-/** rpid → 记录索引（根+全部楼中楼;floorDepth/dialogAuthorOf 查询用）。 */
-function indexByRpid(tree: CommentTree): Map<string, CommentRecord> {
-  const byRpid = new Map<string, CommentRecord>();
-  for (const r of tree.roots) byRpid.set(r.rpid_str, r);
-  for (const list of tree.floorsByRoot.values()) for (const f of list) byRpid.set(f.rpid_str, f);
-  return byRpid;
-}
-
-/** 「回复 @」对话指向作者名(§2.4:直回根 dialog=自身 rpid 由 floorLine 省略;悬空 → null)。 */
-function dialogAuthorOf(f: CommentRecord, byRpid: Map<string, CommentRecord>): string | null {
-  if (f.dialog_rpid === '0' || f.dialog_rpid === f.rpid_str) return null;
-  return byRpid.get(f.dialog_rpid)?.uname ?? null;
-}
-
-/** 单根段渲染（根头 + 正文 + 楼中楼组）。 */
-function renderRootGroup(
-  lines: string[], tree: CommentTree, byRpid: Map<string, CommentRecord>, r: CommentRecord,
-): void {
-  lines.push('');
-  lines.push(rootHeader(r));
-  if (r.message) lines.push(r.message);
-  const group = tree.floorsByRoot.get(r.rpid_str) ?? [];
-  for (const f of group) {
-    lines.push(floorLine(f, floorDepth(f, byRpid), dialogAuthorOf(f, byRpid)));
-  }
-}
-
-/** 孤儿楼层组（根已删,§3.4 不丢弃;§6.3「根已删除的楼层」）。 */
-function appendOrphanFloors(
-  lines: string[], tree: CommentTree, byRpid: Map<string, CommentRecord>, shownRootIds: Set<string>,
-): void {
-  const orphanGroups = [...tree.floorsByRoot.entries()].filter(([rid]) => !shownRootIds.has(rid) && !byRpid.has(rid));
-  const orphanFloors = orphanGroups.flatMap(([, l]) => l);
-  if (orphanFloors.length > 0) {
-    lines.push('');
-    lines.push(`## 根已删除的楼层(${orphanFloors.length} 条)`);
-    for (const f of orphanFloors) lines.push(floorLine(f, 1, null));
-  }
-}
-
-/** 评论树 → §6.3 式缩进文本(根 like 降序/组内 ctime 升序由 treeByVideo 保证;limit 只截根数)。 */
+/** 评论树 → §6.3 式缩进文本(根 like 降序/组内 ctime 升序由 treeByVideo 保证;limit 只截根数)。
+ *  树形组装(深度拍平/回复指向/对象已删/孤儿组/截根)下沉 db/comments-tree.ts shapeTree——
+ *  P2-5 起 web 评论子路由共享同一派生逻辑;文本字节形态由 comments.test.ts renderTree 用例锁定。 */
 export function renderTree(tree: CommentTree, opts: { limit?: number } = {}): string {
+  const shaped = shapeTree(tree, { limit: opts.limit });
   const lines: string[] = [];
-  const floors = [...tree.floorsByRoot.values()].reduce((a, l) => a + l.length, 0);
-  lines.push(`评论区树:共 ${tree.roots.length + floors} 条(根 ${tree.roots.length} / 楼中楼 ${floors})`);
-  if (tree.roots.length === 0 && floors === 0) {
+  lines.push(`评论区树:共 ${shaped.counts.rows} 条(根 ${shaped.counts.roots} / 楼中楼 ${shaped.counts.floors})`);
+  if (shaped.counts.rows === 0) {
     lines.push('(该视频暂无评论)');
     return lines.join('\n');
   }
-  const byRpid = indexByRpid(tree);
-  const roots = opts.limit ? tree.roots.slice(0, opts.limit) : tree.roots;
-  const shownRootIds = new Set(roots.map((r) => r.rpid_str));
-  for (const r of roots) renderRootGroup(lines, tree, byRpid, r);
-  appendOrphanFloors(lines, tree, byRpid, shownRootIds);
-  if (opts.limit && tree.roots.length > opts.limit) {
+  for (const r of shaped.roots) {
     lines.push('');
-    lines.push(`(仅显示点赞前 ${opts.limit} 根,共 ${tree.roots.length} 根;--limit 调整)`);
+    lines.push(rootHeader(r));
+    if (r.message) lines.push(r.message);
+    for (const f of r.floors) lines.push(floorLine(f));
+  }
+  if (shaped.orphans.length > 0) {
+    lines.push('');
+    lines.push(`## 根已删除的楼层(${shaped.orphans.length} 条)`);
+    for (const f of shaped.orphans) lines.push(floorLine(f));
+  }
+  if (shaped.truncated) {
+    lines.push('');
+    lines.push(`(仅显示点赞前 ${opts.limit} 根,共 ${shaped.counts.roots} 根;--limit 调整)`);
   }
   return lines.join('\n');
 }

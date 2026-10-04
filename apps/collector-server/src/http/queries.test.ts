@@ -7,6 +7,7 @@
 // |---|---|---|---|
 // | R1 | pot_limited 派生 / changes 全维 / 富化降级 / 详情 / 打标 400 | 通过 | 建表时既有 |
 // | R2 | tag_source 单独筛选存在性过滤（2026-08-29 修复静默忽略） | 通过 | 各档独立 + 多档 OR + 组合不回归 |
+// | R3 | +4 组：GET /api/videos/:s/:v/comments 评论树子路由（404/空树/树形组装/limit 校验） | 通过 | 树形组装走 db/comments-tree.ts shapeTree（P2-5 web 评论展示，2026-10-05） |
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -18,6 +19,7 @@ import { join } from 'node:path';
 import type Database from 'better-sqlite3';
 import { openDb, migrate } from '../db/migrate.js';
 import { ingestVideo } from '../db/ingest.js';
+import { upsertComments, clearAndSetPins, type CommentUpsertRow } from '../db/comments.js';
 import { handleQueryHttp } from './queries.js';
 
 async function setup(): Promise<{ db: Database.Database; port: number; cleanup: () => void }> {
@@ -333,5 +335,115 @@ test('未知路径 / 方法不匹配 → 兜底 404（videos/:s/:v/tags 用 GET 
     // 完全未知的路径
     r = await call(s.port, '/api/nonsense', 'GET');
     assert.equal(r.status, 404);
+  } finally { s.cleanup(); }
+});
+
+// ── GET /api/videos/:s/:v/comments：评论树子路由（P2-5 web 评论展示）──
+// 树形组装经 db/comments-tree.ts shapeTree（与 CLI comments tree 共享，§6.3 语义一致）。
+// BV1 评论区种子（形态对齐 cli comments.test.ts seedDb：UP 根置顶 + 楼中楼 + 悬空对象 + 孤儿组）
+function seedComments(db: Database.Database): void {
+  const videoId = (db.prepare("SELECT id FROM videos WHERE source_vid = 'BV1'").get() as { id: number }).id;
+  const up = (o: Partial<CommentUpsertRow> & { rpid_str: string }): CommentUpsertRow => ({
+    root_rpid: '0', parent_rpid: '0', dialog_rpid: '0', mid_str: null, uname: null, member: null,
+    message: null, content: null, like_count: 0, rcount: 0, reply_total: 0, ctime_s: null,
+    ip_location: null, state: 0, invisible: 0, folded: 0, up_like: 0, up_reply: 0, ...o,
+  });
+  upsertComments(db, {
+    videoId, upperMid: '9001', fetchedAt: 1_700_000_000_000, batchId: 'b1', page: 1, sort: 'time',
+    replies: [
+      up({ rpid_str: '101', mid_str: '9001', uname: 'UP酱', message: '根UP', like_count: 20, ctime_s: 1_700_000_000, ip_location: '上海', up_reply: 1, rcount: 3 }),
+      up({ rpid_str: '102', mid_str: '8002', uname: '张三', message: '根张三', like_count: 10, ctime_s: 1_700_000_100, state: 5 }),
+      up({ rpid_str: '201', root_rpid: '101', parent_rpid: '101', dialog_rpid: '101', mid_str: '8003', uname: '李四', message: '楼1', like_count: 3, ctime_s: 1_700_000_200 }),
+      up({ rpid_str: '202', root_rpid: '101', parent_rpid: '999', dialog_rpid: '101', mid_str: '8004', uname: '王五', message: '楼2', ctime_s: 1_700_000_300 }),
+      up({ rpid_str: '203', root_rpid: '101', parent_rpid: '201', dialog_rpid: '201', mid_str: '8005', uname: '赵六', message: '楼3', state: 17, ctime_s: 1_700_000_400 }),
+      up({ rpid_str: '301', root_rpid: '777', parent_rpid: '777', dialog_rpid: '777', mid_str: '8007', uname: '孤儿', message: '孤楼', ctime_s: 1_700_000_600 }),
+    ],
+  });
+  clearAndSetPins(db, videoId, [{ rpid_str: '101', kind: 'upper' }]);
+}
+
+test('GET /api/videos/:s/:v/comments: 视频不存在 → 404', async () => {
+  const s = await setup();
+  try {
+    const r = await call(s.port, '/api/videos/bilibili/NOPE/comments');
+    assert.equal(r.status, 404);
+    assert.equal(r.json.ok, false);
+    assert.equal(r.json.error, 'video not found');
+  } finally { s.cleanup(); }
+});
+
+test('GET /api/videos/:s/:v/comments: 在库无评论 → 200 空树（counts 全 0 + 空数组）', async () => {
+  const s = await setup();
+  try {
+    const r = await call(s.port, '/api/videos/bilibili/BV2/comments');
+    assert.equal(r.status, 200);
+    assert.equal(r.json.ok, true);
+    assert.equal(r.json.source, 'bilibili');
+    assert.equal(r.json.source_vid, 'BV2');
+    assert.deepEqual(r.json.counts, { rows: 0, roots: 0, floors: 0 });
+    assert.deepEqual(r.json.roots, []);
+    assert.deepEqual(r.json.orphans, []);
+    assert.equal(r.json.truncated, false);
+    assert.equal(r.json.limit, 0);
+  } finally { s.cleanup(); }
+});
+
+test('GET /api/videos/:s/:v/comments: 树形组装全要素（根赞降序/置顶/楼层 depth+回复指向/对象已删/孤儿组）', async () => {
+  const s = await setup();
+  try {
+    seedComments(s.db);
+    const r = await call(s.port, '/api/videos/bilibili/BV1/comments');
+    assert.equal(r.status, 200);
+    assert.equal(r.json.ok, true);
+    assert.deepEqual(r.json.counts, { rows: 6, roots: 2, floors: 4 }, 'counts = 根 2 + 楼 4（含孤儿）');
+    assert.equal(r.json.truncated, false);
+    assert.equal(r.json.limit, 0);
+    // 根赞降序：101(20) 在前；置顶/UP主标记随行透传
+    const [rootUp, rootZ] = r.json.roots;
+    assert.equal(rootUp.rpid_str, '101');
+    assert.equal(rootUp.pin_kind, 'upper');
+    assert.equal(rootUp.is_up, 1);
+    assert.equal(rootUp.uname, 'UP酱');
+    assert.equal(rootUp.message, '根UP');
+    assert.equal(rootZ.rpid_str, '102');
+    // 101 组楼：depth/reply_to/parent_missing 派生列（语义与 CLI tree 一致）
+    const fl = rootUp.floors;
+    assert.deepEqual(fl.map((f: any) => f.rpid_str), ['201', '202', '203']);
+    assert.deepEqual(
+      fl.map((f: any) => [f.depth, f.reply_to, f.parent_missing]),
+      [[1, 'UP酱', false], [1, 'UP酱', true], [2, '李四', false]],
+    );
+    // 孤儿组（根 777 不在树）：depth 恒 1、无回复指向
+    assert.deepEqual(r.json.orphans.map((f: any) => f.rpid_str), ['301']);
+    assert.equal(r.json.orphans[0].depth, 1);
+    assert.equal(r.json.orphans[0].reply_to, null);
+  } finally { s.cleanup(); }
+});
+
+test('GET /api/videos/:s/:v/comments: limit 截根 / 0 不限 / 非法值 400', async () => {
+  const s = await setup();
+  try {
+    seedComments(s.db);
+    // limit=1：只 1 根 + truncated 置位 + counts 恒全树
+    let r = await call(s.port, '/api/videos/bilibili/BV1/comments?limit=1');
+    assert.equal(r.status, 200);
+    assert.equal(r.json.roots.length, 1);
+    assert.equal(r.json.roots[0].rpid_str, '101');
+    assert.equal(r.json.truncated, true);
+    assert.deepEqual(r.json.counts, { rows: 6, roots: 2, floors: 4 });
+    assert.equal(r.json.limit, 1);
+    assert.deepEqual(r.json.orphans.map((f: any) => f.rpid_str), ['301'], '孤儿组不受 limit 影响');
+    // limit=0：不限
+    r = await call(s.port, '/api/videos/bilibili/BV1/comments?limit=0');
+    assert.equal(r.status, 200);
+    assert.equal(r.json.roots.length, 2);
+    assert.equal(r.json.truncated, false);
+    // 非法值 → 400
+    r = await call(s.port, '/api/videos/bilibili/BV1/comments?limit=abc');
+    assert.equal(r.status, 400);
+    assert.equal(r.json.ok, false);
+    r = await call(s.port, '/api/videos/bilibili/BV1/comments?limit=-1');
+    assert.equal(r.status, 400);
+    assert.equal(r.json.ok, false);
   } finally { s.cleanup(); }
 });

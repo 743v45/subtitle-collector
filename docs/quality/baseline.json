@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-10-03T20:33:00.510Z",
+  "generatedAt": "2026-10-04T21:24:47.582Z",
   "rules": {
     "complexity": 15,
     "maxLines": 400
@@ -36,7 +36,7 @@
       "complexity": 25
     },
     "apps/collector-server/src/http/queries.ts": {
-      "complexity": 46
+      "complexity": 39
     },
     "apps/collector-server/src/http/tags.ts": {
       "complexity": 21
