@@ -89,7 +89,7 @@ collect 子命令速记:`search <关键词>` 搜候选(不入库)/ `subtitle <vi
 | `scripts/launch-chrome.mjs` | 起 Chrome + cdpc 端口(扩展联调) |
 | `scripts/load-collector-extension.sh` | 装扩展到 Chrome |
 | `scripts/proxy-collector-server.mjs` | 127.0.0.1:21528 → 内网 21527 转发 |
-| `scripts/verify-deployed.mjs` | 部署后服务状态自检(`pnpm verify:deployed -- --token <t> [--server <url>] [--db <路径>]`;HTTP 核心接口 + `--db` 时 SQLite integrity_check,坏页损坏探活测不出——2026-08-24 事故教训;生产库迁 volume 后 `--db` 传导出的备份文件或省略) |
+| `scripts/verify-deployed.mjs` | 部署后服务状态自检(`pnpm verify:deployed -- --token <t> [--server <url>] [--via-docker [容器名]\|--db <路径>]`;HTTP 核心接口 + DB 层 SQLite integrity_check,坏页损坏探活测不出——2026-08-24 事故教训;生产库在 named volume 宿主无文件,DB 层走 `--via-docker`(docker exec 容器内校验,缺省容器名 collector-server),`--db` 只用于导出的备份文件) |
 | `scripts/backup-export.mjs` | 生产备份导出(docker cp volume → 宿主;`node scripts/backup-export.mjs [目录] [--all\|--keep N]`,默认最新 1 份到 `data/exports/`) |
 | `scripts/backup-healthcheck.mjs` | 备份体系巡检(只读,防链路静默死——2026-10-04 异地导出 cron 裸 node 死 40 天教训):卷内最新备份 <30min / 异地最新 .db <48h / 异地副本 `sqlite3 -readonly` quick_check+videos 行数 / 宿主 data/exports 快照盘点(仅日志);`node scripts/backup-healthcheck.mjs [--dry-run]`,任一失败 exit 1+推飞书(`COLLECTOR_BACKUP_WEBHOOK_URL`);与 backup-export 分工:export 搬副本出卷,healthcheck 只验链路活着,建议 cron 每周跑(node 绝对路径);恢复演练见 backup-restore --drill |
 | `scripts/export-bundle.mjs` | 生产库→分析原料包一条命令(`node scripts/export-bundle.mjs --theme <主题> [过滤器...] [--out <dir>] [--max-age-hours <n>] [--force]`;容器内 VACUUM INTO 新快照 → docker cp → collector-cli `--db` 出包,`--max-age-hours` 内复用 mtime 最新快照;分析闭环第一步) |

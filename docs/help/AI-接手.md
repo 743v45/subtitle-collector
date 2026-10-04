@@ -53,7 +53,7 @@
 ```bash
 node scripts/backup-export.mjs [目录] [--all|--keep N]      # 生产备份导出宿主
 node scripts/backup-restore.mjs --list / --drill / --apply <文件名>  # 恢复/演练(--drill 不碰生产)
-pnpm verify:deployed -- --token <t> [--server <url>] [--db <库路径>]  # 部署后自检(含 integrity_check)
+pnpm verify:deployed -- --token <t> [--server <url>] [--via-docker [容器名]]  # 部署后自检(容器内 integrity_check;生产库在容器卷里)
 pnpm qa                                                     # 全量质量门(涉代码提交前必跑)
 node scripts/verify-docs-sync.mjs                           # 文档漂移门(指针/版本断言/备份常数)
 ```
