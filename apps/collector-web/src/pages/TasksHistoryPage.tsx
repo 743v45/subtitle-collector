@@ -25,7 +25,7 @@ import { parseSourceFilter } from '@/lib/platformSource';
 import { taskHistoryFromQuery, isMidLike, todayStart, DAY_MS } from '../taskHistoryFilterUrl';
 import type { CollectTask, CollectTaskStatus } from '../types';
 
-const PAGE_SIZE = 50;
+const PAGE_SIZE = 20; // 每页展示单元数（2026-10-05 单元口径：total=单任务/批次单元数,50 → 20）
 const REFRESH_MS = 2000; // 有进行中任务时的轮询节拍,对齐 CollectPage
 
 // 状态筛选档位:全部 / 进行中 / 已完成 / 受限 / 失败(进行中含排队,与列表语义一致)
@@ -125,8 +125,8 @@ export function TasksHistoryPage() {
     setTasks((prev) => prev.filter((t) => t.id !== id));
     try {
       await deleteCollectTask(id);
-      setTotal((t) => Math.max(0, t - 1));
       toast('已删除任务', 'success');
+      void reload(); // 展示单元口径（2026-10-05）：删批次成员不减单元,本地推算不可靠 → 重拉对齐真值
     } catch {
       toast('删除失败，已恢复列表', 'error');
       void reload(); // 失败:重新拉真值
@@ -139,7 +139,7 @@ export function TasksHistoryPage() {
     setTasks((prev) => prev.filter((t) => t.batch_id !== batchId));
     let failed = 0;
     for (const id of ids) {
-      try { await deleteCollectTask(id); setTotal((t) => Math.max(0, t - 1)); } catch { failed++; /* 继续删 */ }
+      try { await deleteCollectTask(id); } catch { failed++; /* 继续删;total 以收尾 reload 对齐（展示单元口径,整批只算 1 单元） */ }
     }
     for (const id of ids) deletingRef.current.delete(id);
     if (failed === 0) toast(`已删除批次（${ids.length} 个任务）`, 'success');
@@ -179,7 +179,7 @@ export function TasksHistoryPage() {
     return () => clearInterval(t);
   }, [hasActive, queryKey]); // eslint-disable-line react-hooks/exhaustive-deps -- 条件轮询:起止只看在途有无,翻页/改筛选经 queryKey 重建
 
-  // 分组渲染(同采集页:batch_id 聚卡,单成员批次走单任务行)
+  // 分组渲染(同采集页:batch_id 聚卡,单成员批次走单任务行);单元口径下 items 恰含本页各批次完整成员、批次不跨页（server 保证）
   const listNodes: Array<ReactNode> = [];
   const batched = new Set<string>();
   for (const t of tasks) {
@@ -388,7 +388,7 @@ export function TasksHistoryPage() {
 
       {/* 分页 */}
       <div className="flex items-center justify-between">
-        <span className="text-xs tabular-nums text-muted-foreground">第 {f.page} / {totalPages} 页 · 每页 {PAGE_SIZE} 条</span>
+        <span className="text-xs tabular-nums text-muted-foreground">第 {f.page} / {totalPages} 页 · 每页 {PAGE_SIZE} 批/条</span>
         <div className="flex gap-2">
           <Button variant="outline" size="sm" disabled={f.page <= 1} onClick={() => updateQuery({ page: f.page - 1 > 1 ? String(f.page - 1) : null })}>
             <ChevronLeft className="size-4" /> 上一页

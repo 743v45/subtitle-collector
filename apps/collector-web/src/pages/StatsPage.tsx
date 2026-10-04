@@ -1,14 +1,18 @@
+// 数据看板：overview 数字卡 + 分组聚合 Top 榜。
+// 2026-10-05 聚合面板抽至 StatsAggregatePanel.tsx 偿还行数台账；Q7 两项同批落地：
+// - 采集时间范围缺失端不再渲染裸 "-"（旧行首 "- ~ 2026-…"），改「最早未知 / 最晚未知」
+// - 按分区时展示「已分区覆盖率」徽标 = (1 - 未分区视频数 / 聚合总数) × 100%（1 位小数）
 import { getStatsOverview, getStatsAggregate } from '../api';
 import { useAsync } from '@/lib/useAsync';
 import { useQueryUpdater, useRoute } from '../router';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Button } from '@/components/ui/button';
+import { Badge } from '@/components/ui/badge';
 import { Card, CardContent } from '@/components/ui/card';
 import { PlatformSelect } from '@/components/PlatformSelect';
 import { parseSourceFilter } from '@/lib/platformSource';
-import { cn } from '@/lib/utils';
-import { PlatformIcon, platformIconClass } from '@/components/PlatformIcon';
-import type { StatsGroupBy, KeyValue, StatsOverview } from '../types';
+import { StatsAggregatePanel, UNKNOWN_KEY } from './StatsAggregatePanel';
+import type { KeyValue, StatsGroupBy, StatsOverview } from '../types';
 
 const GROUP_LABEL: Record<StatsGroupBy, string> = {
   tname: '分区',
@@ -18,18 +22,10 @@ const GROUP_LABEL: Record<StatsGroupBy, string> = {
   tag: '标签',
   source: '平台',
 };
-const TRACK_TYPE_LABEL: Record<string, string> = { '1': 'AI 字幕', '2': 'CC 字幕' };
-const SOURCE_LABEL: Record<string, string> = { bilibili: '哔哩哔哩', youtube: 'YouTube', douyin: '抖音' };
 
-// 条形宽度用静态字面量数组（Tailwind JIT 扫描源码字面量识别 w-[X%] 任意值类），
-// 避免运行时拼接类名导致 JIT 漏生成；也符合「禁 style={{}} 内联」政策。
-const WIDTH_CLASSES = [
-  'w-[0%]', 'w-[10%]', 'w-[20%]', 'w-[30%]', 'w-[40%]',
-  'w-[50%]', 'w-[60%]', 'w-[70%]', 'w-[80%]', 'w-[90%]', 'w-[100%]',
-];
-
-function fmtTime(ms: number | null): string {
-  if (!ms) return '-';
+// Q7：时间范围端点缺失文案（ms 为 null/0 时）
+function fmtRangePoint(ms: number | null, missing: string): string {
+  if (!ms) return missing;
   return new Date(ms).toLocaleString('zh-CN');
 }
 
@@ -41,6 +37,63 @@ function StatCard({ label, value }: { label: string; value: number }) {
         <div className="text-2xl font-semibold tabular-nums">{value.toLocaleString('zh-CN')}</div>
       </CardContent>
     </Card>
+  );
+}
+
+// overview 区块（数字卡 + 采集时间范围 + 已分区覆盖率徽标，2026-10-05 抽组件偿还 StatsPage
+// 圈复杂度台账）。覆盖率只在按分区且聚合非空时算：未分区 = server COALESCE 占位 key（UNKNOWN_KEY）。
+function StatsOverviewPanel({
+  overview, o, groupBy, agg,
+}: {
+  overview: { loading: boolean; error: string | null; reload: () => void };
+  o: StatsOverview | null;
+  groupBy: StatsGroupBy;
+  agg: { loading: boolean; error: string | null; data: KeyValue[] | null };
+}) {
+  const aggItems = groupBy === 'tname' && agg.data && agg.data.length > 0 ? agg.data : null;
+  const aggTotal = aggItems ? aggItems.reduce((s, d) => s + d.count, 0) : 0;
+  const unknownCount = aggItems ? (aggItems.find((d) => d.key === UNKNOWN_KEY)?.count ?? 0) : 0;
+  const coveragePct = aggItems && aggTotal > 0 ? ((1 - unknownCount / aggTotal) * 100).toFixed(1) : null;
+  return (
+    <>
+      {overview.loading && (
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-6" aria-busy="true">
+          {Array.from({ length: 6 }).map((_, i) => <Skeleton key={i} className="h-[88px]" />)}
+        </div>
+      )}
+      {overview.error && (
+        <div className="text-sm text-destructive">
+          加载统计失败：{overview.error}{' '}
+          <button className="cursor-pointer underline" onClick={overview.reload}>重试</button>
+        </div>
+      )}
+      {o && (
+        <>
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-6">
+            <StatCard label="视频" value={o.videos} />
+            <StatCard label="字幕轨" value={o.tracks} />
+            <StatCard label="字幕版本" value={o.versions} />
+            <StatCard label="创作者" value={o.creators} />
+            <StatCard label="语言数" value={o.languages} />
+            <StatCard label="分区数" value={o.categories} />
+          </div>
+          <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+            <span>
+              采集时间范围：{fmtRangePoint(o.first_seen_min, '最早未知')} ~ {fmtRangePoint(o.first_seen_max, '最晚未知')}
+            </span>
+            {coveragePct !== null && (
+              <Badge
+                variant="outline"
+                className="tabular-nums"
+                title={`未分区 ${unknownCount} / 共 ${aggTotal} 个视频（按当前平台筛选与聚合口径）`}
+              >
+                已分区覆盖率 {coveragePct}%
+              </Badge>
+            )}
+          </div>
+        </>
+      )}
+    </>
   );
 }
 
@@ -70,33 +123,8 @@ export function StatsPage() {
       {/* 平台筛选（共享 PlatformSelect，对齐 VideoList 三选项） */}
       <PlatformSelect value={source} onChange={(v) => updateQuery({ source: v })} />
 
-      {/* overview 数字卡（随平台筛选联动） */}
-      {overview.loading && (
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-6" aria-busy="true">
-          {Array.from({ length: 6 }).map((_, i) => <Skeleton key={i} className="h-[88px]" />)}
-        </div>
-      )}
-      {overview.error && (
-        <div className="text-sm text-destructive">
-          加载统计失败：{overview.error}{' '}
-          <button className="cursor-pointer underline" onClick={overview.reload}>重试</button>
-        </div>
-      )}
-      {o && (
-        <>
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-6">
-            <StatCard label="视频" value={o.videos} />
-            <StatCard label="字幕轨" value={o.tracks} />
-            <StatCard label="字幕版本" value={o.versions} />
-            <StatCard label="创作者" value={o.creators} />
-            <StatCard label="语言数" value={o.languages} />
-            <StatCard label="分区数" value={o.categories} />
-          </div>
-          <div className="text-xs text-muted-foreground">
-            采集时间范围：{fmtTime(o.first_seen_min)} ~ {fmtTime(o.first_seen_max)}
-          </div>
-        </>
-      )}
+      {/* overview 数字卡（随平台筛选联动；覆盖率徽标在面板内） */}
+      <StatsOverviewPanel overview={overview} o={o} groupBy={groupBy} agg={agg} />
       {overview.data && source && !o && (
         <div className="text-sm text-muted-foreground">该平台暂无数据</div>
       )}
@@ -109,74 +137,13 @@ export function StatsPage() {
           </Button>
         ))}
       </div>
-      <AggregatePanel
+      <StatsAggregatePanel
         groupBy={groupBy}
         loading={agg.loading}
         error={agg.error}
         data={agg.data}
         reload={agg.reload}
       />
-    </div>
-  );
-}
-
-function AggregatePanel({
-  groupBy, loading, error, data, reload,
-}: {
-  groupBy: StatsGroupBy;
-  loading: boolean;
-  error: string | null;
-  data: KeyValue[] | null;
-  reload: () => void;
-}) {
-  if (loading) {
-    return (
-      <div className="mt-3 space-y-2" aria-busy="true">
-        {Array.from({ length: 8 }).map((_, i) => <Skeleton key={i} className="h-8" />)}
-      </div>
-    );
-  }
-  if (error) {
-    return (
-      <div className="mt-3 text-sm text-destructive">
-        加载失败：{error}{' '}
-        <button className="cursor-pointer underline" onClick={reload}>重试</button>
-      </div>
-    );
-  }
-  if (!data || data.length === 0) {
-    return (
-      <div className="mt-3 text-sm text-muted-foreground">
-        暂无数据——采集入库后这里会出现聚合统计
-      </div>
-    );
-  }
-  const max = Math.max(1, ...data.map((d) => d.count));
-  return (
-    <div className="mt-3 space-y-1.5">
-      {data.map((d, i) => {
-        const label = groupBy === 'track-type'
-          ? (TRACK_TYPE_LABEL[d.key] ?? d.key)
-          : groupBy === 'source'
-            ? (SOURCE_LABEL[d.key] ?? d.key)
-            : d.key;
-        const widthIdx = Math.min(10, Math.floor((d.count / max) * 10));
-        return (
-          <div key={i} className="flex items-center gap-3 text-sm">
-            <div className="flex w-40 shrink-0 items-center gap-1 truncate text-muted-foreground" title={label}>
-              <span className="mr-1 tabular-nums">#{i + 1}</span>
-              {groupBy === 'source' && (
-                <PlatformIcon source={d.key} className={cn('h-3.5 w-3.5', platformIconClass(d.key))} />
-              )}
-              <span className="min-w-0 truncate">{label}</span>
-            </div>
-            <div className="h-5 flex-1 overflow-hidden rounded bg-muted">
-              <div className={cn('h-full rounded bg-primary/40 transition-all', WIDTH_CLASSES[widthIdx])} />
-            </div>
-            <div className="w-12 shrink-0 text-right tabular-nums">{d.count}</div>
-          </div>
-        );
-      })}
     </div>
   );
 }

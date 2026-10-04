@@ -1,10 +1,12 @@
 // StatsPage 测试：overview 数字卡 + 时间范围、groupBy 按钮 URL 驱动聚合、榜单渲染（track-type 标签/宽度档）、空错态。
+// Q7（2026-10-05）：时间范围缺失端「最早未知/最晚未知」、已分区覆盖率徽标、Top10+「其他」聚合行。
 //
 // 测试轮次记录表（对齐全局 8.2）：
 // | 轮次 | 范围 | 结果 | 备注 |
 // |---|---|---|---|
 // | R1 | overview + groupBy 切换 + 榜单 + 空错态 + 非法 groupBy 回落 | 通过 | fmtTime null → '-' |
 // | R2 | douyin（2026-08-29 接入）：URL source=douyin 白名单透传 + 榜单 key 中文化「抖音」 | 通过 | |
+// | R3 | Q7（2026-10-05）：缺失端改「最早未知/最晚未知」；覆盖率徽标（unknown 占位 key）；tname Top10+其他聚合、非 tname 不聚合 | 通过 | 时间范围缺失文案随 UI 更新（R1 的 '-' 断言退役） |
 import { test, expect, vi, beforeEach, afterEach, beforeAll } from 'vitest';
 import { render, screen, fireEvent, cleanup, waitFor } from '@testing-library/react';
 import { StatsPage } from './StatsPage';
@@ -50,7 +52,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-test('overview 数字卡 + 采集时间范围（null → -）', async () => {
+test('overview 数字卡 + 采集时间范围（缺失端 → 最早未知/最晚未知，Q7）', async () => {
   render(<StatsPage />);
   expect(await screen.findByText('123')).toBeInTheDocument();
   expect(screen.getByText('456')).toBeInTheDocument();
@@ -68,7 +70,58 @@ test('overview 数字卡 + 采集时间范围（null → -）', async () => {
       : Promise.resolve(ok(aggregate([]))));
   render(<StatsPage />);
   await screen.findByText('123');
-  expect(screen.getByText(/采集时间范围：- ~ -/)).toBeInTheDocument();
+  // Q7：缺失端不再渲染裸 "-"（旧行首 "- ~ 2026-…" 歧义），改「最早未知/最晚未知」
+  expect(screen.getByText(/采集时间范围：最早未知 ~ 最晚未知/)).toBeInTheDocument();
+});
+
+// Q7 已分区覆盖率徽标：(1 - 未分区视频数 / 聚合总数) × 100%（1 位小数）；未分区 = server COALESCE 占位 key '(unknown)'；
+// 仅按分区（tname）且聚合非空时渲染，切到其他分组维度即隐藏
+test('Q7 已分区覆盖率徽标：tname 显示 (1-未分区/总数)×100% + title 明细；切非 tname 隐藏', async () => {
+  fetchMock.mockImplementation((url: string) => {
+    if (url === '/api/stats?type=overview') return Promise.resolve(ok(overviewBody(OVERVIEW)));
+    if (url.startsWith('/api/stats?')) return Promise.resolve(ok(aggregate([{ key: '主分区', count: 8 }, { key: '(unknown)', count: 2 }])));
+    return Promise.reject(new Error(`unmatched: ${url}`));
+  });
+  render(<StatsPage />);
+  // 总数 10、未分区 2 → 覆盖率 80.0%；title 带未分区明细
+  const badge = await screen.findByText('已分区覆盖率 80.0%');
+  expect(badge).toHaveAttribute('title', expect.stringContaining('未分区 2 / 共 10 个视频'));
+  // 全部分区（无 unknown 占位）→ 100.0%
+  cleanup();
+  fetchMock.mockImplementation((url: string) => {
+    if (url === '/api/stats?type=overview') return Promise.resolve(ok(overviewBody(OVERVIEW)));
+    return Promise.resolve(ok(aggregate([{ key: '主分区', count: 8 }, { key: '次分区', count: 3 }])));
+  });
+  render(<StatsPage />);
+  expect(await screen.findByText('已分区覆盖率 100.0%')).toBeInTheDocument();
+  // 切到按语言：徽标隐藏（只对分区维度有意义）
+  fireEvent.click(screen.getByRole('button', { name: '按语言' }));
+  await waitFor(() => expect(String(fetchMock.mock.calls.at(-1)![0])).toContain('groupBy=lang'));
+  expect(screen.queryByText(/已分区覆盖率/)).not.toBeInTheDocument();
+});
+
+// Q7 Top10+其他：按分区且条目 >10 时，Top 10 直出、余量聚合「其他（M 个分区 · K 个视频）」（无排名号）；
+// 其他分组维度不聚合（server 响应本来就 ≤20 条，其他维度全量直出）
+test('Q7 Top10+其他：tname 超 10 条 → 余量聚合「其他（M 个分区 · K 个视频）」；非 tname 全量直出', async () => {
+  // 12 个分区，计数 120 起每名 -10：Top10 = 120..30，余量 20+10=30
+  const items = Array.from({ length: 12 }, (_, i) => ({ key: `分区${i + 1}`, count: 120 - i * 10 }));
+  fetchMock.mockImplementation((url: string) => {
+    if (url === '/api/stats?type=overview') return Promise.resolve(ok(overviewBody(OVERVIEW)));
+    return Promise.resolve(ok(aggregate(items)));
+  });
+  render(<StatsPage />);
+  expect(await screen.findByText('分区1')).toBeInTheDocument();
+  expect(screen.getByText('#10')).toBeInTheDocument();
+  expect(screen.queryByText('#11')).not.toBeInTheDocument();
+  expect(screen.getByText('其他（2 个分区 · 30 个视频）')).toBeInTheDocument();
+  expect(screen.queryByText('分区11')).not.toBeInTheDocument(); // 不再逐行直出尾部（query：getByText 缺元素会抛错而非返回空）
+
+  // 同样 12 条按语言分组：不聚合，「其他」行不出现
+  cleanup();
+  window.history.replaceState(null, '', '#/stats?groupBy=lang');
+  render(<StatsPage />);
+  expect(await screen.findByText('分区11')).toBeInTheDocument();
+  expect(screen.queryByText(/其他（\d+ 个分区/)).not.toBeInTheDocument();
 });
 
 test('overview 失败：错误 + 重试恢复', async () => {

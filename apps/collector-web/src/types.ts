@@ -70,6 +70,9 @@ export interface ChangeRow {
   new_value: string | null;
   changed_at: number;
   source?: string | null; // 派生列：实体行所属平台（bilibili|youtube|douyin；不可判 null）
+  ref_source?: string | null;   // entity=video 时的跳转定位（平台，与 ref_vid 配对；无定位 null）
+  ref_vid?: string | null;      // entity=video 时的跳转定位（平台内视频 ID）
+  ref_creator_id?: number | null; // entity=creator 时的跳转定位（creators.id；无定位 null）
 }
 
 // B 站登录态快照（扩展从 /x/web-interface/nav 抽取；hello / login-state 上报）。
@@ -119,6 +122,7 @@ export interface CollectTask {
   creator_source_uid?: string | null; // UP uid（入库取 creators、未入库回落任务行 creator_uid；任务卡跳空间）
   created_at: number;
   finished_at: number | null;
+  video_title?: string | null; // 任务对应视频标题（UI 改造批次新增；批量任务 null）
 }
 
 // ── UP 全部视频条目（/api/upper-videos/expand；arc/search 原样字段 + server 已采标注）──

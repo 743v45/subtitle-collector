@@ -3,7 +3,8 @@ import { getVideo, getVersion, videoApplyTags, videoRemoveTags } from '../api';
 import { useAsync } from '@/lib/useAsync';
 import { TrackSwitcher } from '@/components/TrackSwitcher';
 import { VersionSwitcher } from '@/components/VersionSwitcher';
-import { SubtitleView, type SubtitleLine } from '@/components/SubtitleView';
+import { SubtitlePanel, type SubtitleLine } from '@/components/SubtitlePanel';
+import { CommentsSection } from '@/components/CommentTree';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -18,16 +19,13 @@ import { cn } from '@/lib/utils';
 import { ExtLink } from '@/components/ExtLink';
 import { ArrowLeft, ExternalLink, Loader2, X } from 'lucide-react';
 import type { ReactNode } from 'react';
-import type { VideoStat } from '../types';
+import type { VideoExtra, VideoInfo, VideoStat } from '../types';
 
-function errMsg(e: unknown): string {
-  return e instanceof Error ? e.message : String(e);
-}
+function errMsg(e: unknown): string { return e instanceof Error ? e.message : String(e); }
 
 function fmtDuration(sec: number | null | undefined): string | null {
   if (sec == null) return null;
-  const m = Math.floor(sec / 60);
-  const s = Math.floor(sec % 60);
+  const m = Math.floor(sec / 60), s = Math.floor(sec % 60);
   return `${m}:${String(s).padStart(2, '0')}`;
 }
 function fmtTime(ms: number | null | undefined): string | null {
@@ -44,11 +42,48 @@ function copyrightLabel(c: number | undefined): string | null {
   return String(c);
 }
 
+// 仅 bilibili 源的元信息行（分区/版权/P 数 + 评论区入口，Q5 懒加载评论树）。
+function BiliMetaFields({ source, sourceVid, e }: { source: string; sourceVid: string; e: VideoExtra | undefined }) {
+  return (
+    <>
+      {source === 'bilibili' && <Field label="分区" value={e?.tname ?? '-'} />}
+      {source === 'bilibili' && <Field label="版权" value={copyrightLabel(e?.copyright) ?? '-'} />}
+      {source === 'bilibili' && <Field label="P 数" value={e?.pages?.length != null ? String(e.pages.length) : '-'} />}
+      {source === 'bilibili' && <CommentsSection sourceVid={sourceVid} />}
+    </>
+  );
+}
+
+// 基础元信息卡（2026-10-05 抽组件偿还 VideoDetail 圈复杂度台账；分区/版权/P 数/评论区仅 bilibili 源）。
+function MetaCard({ source, sourceVid, v, duration, published }: {
+  source: string;
+  sourceVid: string;
+  v: VideoInfo;
+  duration: string | null;
+  published: string | null;
+}) {
+  const e = v.extra;
+  return (
+    <Card className="bg-muted/30">
+      <CardContent className="grid grid-cols-2 gap-3 p-4 text-sm sm:grid-cols-3 md:grid-cols-4">
+        <Field label="作者" value={v.creator_name ?? '-'}>
+          {v.creator_name && v.creator_source_uid
+            ? <ExtLink href={creatorUrl(source, v.creator_source_uid)} label={`在原站打开 ${v.creator_name} 的空间`}>{v.creator_name}</ExtLink>
+            : (v.creator_name ?? '-')}
+        </Field>
+        <Field label="时长" value={duration ?? '-'} />
+        <Field label="来源ID" value={sourceVid} mono />
+        <Field label="发布时间" value={published ?? '-'} />
+        <BiliMetaFields source={source} sourceVid={sourceVid} e={e} />
+      </CardContent>
+    </Card>
+  );
+}
+
 export function VideoDetail({ source, sourceVid, onBack }: { source: string; sourceVid: string; onBack: () => void }) {
   const toast = useToast();
-  // URL 复现：非默认轨/版本选择进 query（#/videos/bilibili/BV…?track=12&ver=45，与带入的
-  // 列表筛选参数共存同一 query），刷新/分享/后退还原；无参数回落默认轨+默认版本（默认值省略
-  // 不写 URL）。UI 选择只写 query（单向数据流），state 一律由下方 effect 从 query 派生。
+  // URL 复现：非默认轨/版本选择进 query（#/videos/bilibili/BV…?track=12&ver=45），刷新/分享/后退
+  // 还原；无参数回落默认轨+默认版本。UI 选择只写 query（单向数据流），state 由下方 effect 从 query 派生。
   const route = useRoute();
   const updateQuery = useQueryUpdater();
   const detailQ = useAsync(() => getVideo(source, sourceVid), [source, sourceVid]);
@@ -188,22 +223,8 @@ export function VideoDetail({ source, sourceVid, onBack }: { source: string; sou
         </Button>
       </div>
 
-      {/* 基础元信息 */}
-      <Card className="bg-muted/30">
-        <CardContent className="grid grid-cols-2 gap-3 p-4 text-sm sm:grid-cols-3 md:grid-cols-4">
-          <Field label="作者" value={v.creator_name ?? '-'}>
-            {v.creator_name && v.creator_source_uid
-              ? <ExtLink href={creatorUrl(source, v.creator_source_uid)} label={`在原站打开 ${v.creator_name} 的空间`}>{v.creator_name}</ExtLink>
-              : (v.creator_name ?? '-')}
-          </Field>
-          <Field label="时长" value={duration ?? '-'} />
-          <Field label="来源ID" value={sourceVid} mono />
-          <Field label="发布时间" value={published ?? '-'} />
-          {source === 'bilibili' && <Field label="分区" value={e?.tname ?? '-'} />}
-          {source === 'bilibili' && <Field label="版权" value={copyrightLabel(e?.copyright) ?? '-'} />}
-          {source === 'bilibili' && <Field label="P 数" value={e?.pages?.length != null ? String(e.pages.length) : '-'} />}
-        </CardContent>
-      </Card>
+      {/* 基础元信息（抽 MetaCard 组件） */}
+      <MetaCard source={source} sourceVid={sourceVid} v={v} duration={duration} published={published} />
 
       {/* 标签（五档带色全展示不去重；manual/batch/ai 可增删，bili/season 为视频自带只读） */}
       <Card>
@@ -292,7 +313,8 @@ export function VideoDetail({ source, sourceVid, onBack }: { source: string; sou
           }}
         />
       </section>
-      {track && (
+      {/* 版本切换仅多版本时展示（Q4）：单版本无切换意义，VersionSwitcher 内部对 ≤1 也返回 null */}
+      {track && track.versions.length > 1 && (
         <section className="space-y-2">
           <h3 className="text-sm font-medium text-muted-foreground">版本</h3>
           <VersionSwitcher versions={track.versions} selected={selectedVersion} onSelect={(id) => updateQuery({ ver: String(id) })} />
@@ -308,7 +330,7 @@ export function VideoDetail({ source, sourceVid, onBack }: { source: string; sou
           </div>
         )}
         {!bodyQ.loading && !bodyQ.error && (
-          <SubtitleView body={(bodyQ.data?.version?.payload?.body ?? []) as SubtitleLine[]} sourceVid={sourceVid} />
+          <SubtitlePanel body={(bodyQ.data?.version?.payload?.body ?? []) as SubtitleLine[]} sourceVid={sourceVid} />
         )}
       </section>
     </div>
