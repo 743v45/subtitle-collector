@@ -309,3 +309,29 @@ export function setCreatorBlocked(
   if (info.changes === 0) return null;
   return getCreatorBySourceUid(db, source, source_uid);
 }
+
+// 批量打分类（web UP 列表多选批量，2026-10-05 web 契约）：单事务一条 UPDATE 写出现的槽位 +
+// updated_at。id 不存在的行 SQLite 不计 changes，调用方以返回的 updated 为准（不做逐 id 404——
+// 批量语义下部分失效属正常）。槽位参数三态（对齐 http 层 parseCategorySlot，2026-10-05 对抗审查
+// blocker 修复）：undefined = 键缺席（web「不变」）→ 不进 SET 子句保持原值；null = 清空该槽位；
+// 数字 = 写该分类 id。两槽位都缺席返回 0（无槽可写，不 bump updated_at）。返回实际更新行数。
+export function setCreatorsBatchCategory(
+  db: Database.Database,
+  ids: number[],
+  agentCategoryId?: number | null,
+  humanCategoryId?: number | null,
+): number {
+  const sets: string[] = [];
+  const vals: (number | null)[] = [];
+  if (agentCategoryId !== undefined) { sets.push('category_agent_id = ?'); vals.push(agentCategoryId); }
+  if (humanCategoryId !== undefined) { sets.push('category_human_id = ?'); vals.push(humanCategoryId); }
+  if (sets.length === 0) return 0;
+  const run = db.transaction((): number => {
+    const info = db.prepare(
+      `UPDATE creators SET ${sets.join(', ')}, updated_at = ? WHERE id IN `
+      + `(${ids.map(() => '?').join(',')})`,
+    ).run(...vals, Date.now(), ...ids);
+    return info.changes;
+  });
+  return run();
+}

@@ -7,6 +7,7 @@ import { buildOrderBy, cmpBySortKey, TASK_SORT_KEYS, type TaskSortKey } from '..
 import { DOUYIN_AWEME_ID_RE, DOUYIN_PAGE_HOSTS, DOUYIN_SHORT_HOSTS, douyinWatchUrl, parseDouyinUrl } from './douyin-url.js';
 import { markNoSubtitleForReceipt, migrateTaskVidFromReceipt } from './amend.js';
 import { EXT_NEEDS_UPDATE_ERROR, extNeedsUpdate } from './ext-version.js';
+import { TASK_JOINS, TASK_SELECT, buildTaskWhere } from './tasks-page.js';
 import type { Source } from './source.js';
 
 // 平台枚举与 UP/频道展开族（2026-08-29 抽出到 ./source.ts 与 ./upper-expand.ts，防本文件台账
@@ -38,20 +39,16 @@ export interface CollectTask {
   creator_name?: string | null; // UP 名（入库经 creators、未入库经任务行 creator_uid 关联资料行；两处都无则 null）
   creator_source_uid?: string | null; // UP 外链 uid（入库取 creators.source_uid、未入库回落任务行 creator_uid；任务卡跳空间页）
   creator_uid?: string | null; // 任务行 UP 归属冗余列（批量提交已知 / 建任务查库 / ingest 回填；历史页筛未入库任务）
+  video_title?: string | null; // 任务对应视频标题（2026-10-05 web 契约；与 title 同源 v.title，批量任务无对应视频 null）
   created_at: number;
   finished_at: number | null;
 }
 
-// 任务行查询的公共 FROM/JOIN（标题与 UP 名经 join 带出；videos 有 UNIQUE(source, source_vid)、
-// creators 单行，JOIN 不扇出）。ct = 任务行 creator_uid 关联的资料行（未入库但已知 UP 的任务，
-// P2 通道采过资料的库里有名字可回显）；c 与 ct 理论上同源同行（视频入库后归属一致），COALESCE 兜底。
-const TASK_JOINS = `
-  FROM collect_tasks t
-  LEFT JOIN videos v ON v.source = t.source AND v.source_vid = t.source_vid
-  LEFT JOIN creators c ON c.id = v.creator_id
-  LEFT JOIN creators ct ON ct.source = t.source AND ct.source_uid = t.creator_uid
-`;
-const TASK_SELECT = `SELECT t.*, v.title AS title, COALESCE(c.name, ct.name) AS creator_name, COALESCE(c.source_uid, t.creator_uid) AS creator_source_uid ${TASK_JOINS}`;
+// 任务行查询的公共 FROM/JOIN/SELECT 与历史页「展示单元」真分页（listTasksPaged）在 ./tasks-page.ts
+// （2026-10-05 迁出：假分页修复 + video_title 增补，防本文件台账恶化）。TASK_JOINS/TASK_SELECT 在此
+// re-export，tasks.ts 内部与既有 import 路径（http/CLI/测试）均不变；tasks-page.ts 对本文件只引类型，
+// 运行时单向依赖不成环。
+export { TASK_JOINS, TASK_SELECT } from './tasks-page.js';
 
 // 任务行 + 库内视频标题（videos 有 UNIQUE(source, source_vid),JOIN 不扇出）
 const TASK_WITH_TITLE = `${TASK_SELECT} WHERE t.id = ?`;
@@ -305,10 +302,8 @@ export function retryTask(db: Database.Database, id: number): CollectTask | null
   return getTask(db, id);
 }
 
-// 任务列表筛选（2026-08-22 历史页多维查询）。UP 归属双来源：任务行冗余列 t.creator_uid
-// （批量提交已知 / 建任务查库回填 / ingest 回填——未入库任务也能筛）+ 入库后 v→creators；
-// q 是入库元数据维度（标题），但 vid 段匹配 t.source_vid 覆盖未入库任务（按 BV 号找任务）；
-// status/source/since/until/batchId 全走 t.* 列，覆盖全部任务。
+// 任务列表筛选（2026-08-22 历史页多维查询；WHERE 构造在 ./tasks-page.ts buildTaskWhere，limit 与
+// paged 两模式共用）。
 export interface TaskListFilter {
   status?: readonly TaskStatus[];
   source?: Source;
@@ -321,38 +316,17 @@ export interface TaskListFilter {
   until?: number;      // created_at 毫秒上界（含）
 }
 
-// 任务列表(采集页最近 N 条 / 历史页分页+多维筛选共用)。
-// 批次补全:limit/offset 与全部筛选只限制种子行,种子涉及的批次成员全量带出——展示侧聚合要完整成员
-// 才算得出「n/m 完成」进度;筛选同样只作用于种子(补全跨筛选/跨状态拉齐整批,分组完整)。
+// 任务列表 limit 模式（采集页最近 N 条）。批次补全:limit/offset 与全部筛选只限制种子行,种子涉及的
+// 批次成员全量带出——展示侧聚合要完整成员才算得出「n/m 完成」进度;筛选同样只作用于种子
+// (补全跨筛选/跨状态拉齐整批,分组完整)。
+// 注意：历史页 paged（page+page_size）模式不走本函数——旧行为按「行」分页再补全批次成员是假分页
+// （total 数行、页面溢出 page_size、整批被页边界劈开），已改「展示单元」真分页 listTasksPaged
+// （./tasks-page.ts，2026-10-05），http 层按 paged 形态分流。limit 模式行为保持不变。
 export function listTasks(
   db: Database.Database, limit = 20, offset = 0, filter: TaskListFilter = {},
   sort: TaskSortKey = 'created_at', desc = true,
 ): { total: number; items: CollectTask[] } {
-  const conds: string[] = [];
-  const params: unknown[] = [];
-  if (filter.status?.length) {
-    conds.push(`t.status IN (${filter.status.map(() => '?').join(',')})`);
-    params.push(...filter.status);
-  }
-  if (filter.source) { conds.push('t.source = ?'); params.push(filter.source); }
-  if (filter.batchId) { conds.push('t.batch_id = ?'); params.push(filter.batchId); }
-  if (filter.batchScope === 'batch') conds.push('t.batch_id IS NOT NULL');
-  if (filter.batchScope === 'single') conds.push('t.batch_id IS NULL');
-  if (filter.creator) {
-    conds.push('(ct.name LIKE ? OR c.name LIKE ?)');
-    params.push(`%${filter.creator}%`, `%${filter.creator}%`);
-  }
-  if (filter.creatorUid) {
-    conds.push('(t.creator_uid = ? OR v.creator_id IN (SELECT id FROM creators WHERE source_uid = ?))');
-    params.push(filter.creatorUid, filter.creatorUid);
-  }
-  if (filter.q) {
-    conds.push('(v.title LIKE ? OR t.source_vid LIKE ?)');
-    params.push(`%${filter.q}%`, `%${filter.q}%`);
-  }
-  if (filter.since != null) { conds.push('t.created_at >= ?'); params.push(filter.since); }
-  if (filter.until != null) { conds.push('t.created_at <= ?'); params.push(filter.until); }
-  const where = conds.length ? `WHERE ${conds.join(' AND ')}` : '';
+  const { where, params } = buildTaskWhere(filter);
   // total 与 seed 同 FROM/WHERE（筛选条件引用 v./c. 列时 total 也必须 join；LEFT JOIN 单行不扇出,COUNT 语义不变）
   const total = (db.prepare(
     `SELECT COUNT(*) AS n ${TASK_JOINS} ${where}`,

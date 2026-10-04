@@ -1,7 +1,8 @@
 // http/comments.ts 端点测试（C2，规格唯一来源 docs/plans/comments/PLAN.md §4.1/§5.2/§7.1）：
 // POST /api/comments/ingest（服务端 parseReplyRow 解析归一 + upsert 幂等 + full_scan 触发 missing 对账
 // + pins 仅 full 轮清打 + 批量事务原子性）+ GET /api/comments/count（0 评论 200 非 404 / 水位只看根）
-// + GET /api/comments/verify（纯库内校验，R4 分母走 rcount 快照）。
+// + GET /api/comments/verify（纯库内校验，R4 分母走 rcount 快照）+ GET /api/comments/tree
+// （web 评论页签，2026-10-05：两层级树/置顶前置/节点白名单/空树 200）。
 // 夹具：临时文件库 + migrate + ingestVideo 种子；真实 HTTP server 直挂 handler（经 runHandler 兜底，
 // 对齐 main.ts 生产装配——事务中途失败的 500 归一依赖它）。§2.3 映射前的原始条目形态由 rawReply 构造。
 //
@@ -9,6 +10,7 @@
 // | 轮次 | 范围 | 结果 | 备注 |
 // |---|---|---|---|
 // | R1 | ingest 200/400 族/404 + missing 四态 + pins 清打 + 事务回滚 + count/verify 全形态 + 缺省容错 | 通过 | 2026-10-04 C2 |
+// | R2 | tree 分组/排序/置顶前置/节点形态 + 孤儿楼不计入树 + 空树 200 + 404/400 | 通过 | 2026-10-05 web 契约 |
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -409,5 +411,112 @@ test('comments verify：纯库内校验 200（dangling 夹具回执字段 + R4 r
     // 不在库 → 404；缺参 → 400
     assert.equal((await get(port, 'verify', 'BVnope')).status, 404);
     assert.equal((await get(port, 'verify')).status, 400);
+  } finally { cleanup(); }
+});
+
+// ── GET /api/comments/tree（web 评论页签，2026-10-05 契约）──
+// 根+楼中楼两层级；置顶稳定前置；节点 snake_case 白名单子集逐字对齐；空树 200；404/400 归 resolveVideo。
+
+test('comments tree：根/楼分组 + 根按 like_count 降序 + 楼按 ctime 升序 + 节点形态白名单', async () => {
+  const { port, cleanup } = await setup();
+  try {
+    // 根 r1(赞 2) / r2(赞 10) / r3(赞 5)，楼挂在 r1 下两楼（ctime 乱序入库）
+    const r = await ingest(port, ingestBody({}, [
+      rawReply({ rpid_str: 'r1', like: 2, ctime: 1000 }),
+      rawReply({ rpid_str: 'r2', like: 10, ctime: 2000 }),
+      rawReply({ rpid_str: 'r3', like: 5, ctime: 3000 }),
+      rawFloor('r1c2', 'r1', { ctime: 6000 }),
+      rawFloor('r1c1', 'r1', { ctime: 5000 }),
+    ]));
+    assert.equal(r.status, 200);
+
+    const t = await get(port, 'tree', 'BV1');
+    assert.equal(t.status, 200);
+    assert.equal(t.json.ok, true);
+    assert.equal(t.json.bvid, 'BV1');
+    assert.equal(t.json.total_rows, 5);
+    assert.equal(t.json.total_roots, 3);
+    // 根序：like_count DESC → r2(10), r3(5), r1(2)
+    assert.deepEqual(t.json.tree.map((n: any) => n.rpid_str), ['r2', 'r3', 'r1']);
+    // 楼序：组内 ctime ASC → r1c1(5000) 在 r1c2(6000) 前
+    const r1 = t.json.tree.find((n: any) => n.rpid_str === 'r1');
+    assert.deepEqual(r1.replies.map((n: any) => n.rpid_str), ['r1c1', 'r1c2']);
+    // 节点形态：白名单键逐字对齐 web 契约（snake_case，replies 恒在）
+    assert.deepEqual(Object.keys(t.json.tree[0]), ['rpid_str', 'uname', 'mid_str', 'message', 'like_count', 'ctime_s', 'pin_kind', 'replies']);
+    assert.deepEqual(Object.keys(r1.replies[0]), ['rpid_str', 'uname', 'mid_str', 'message', 'like_count', 'ctime_s', 'pin_kind', 'replies']);
+    assert.equal(t.json.tree[0].like_count, 10);
+    assert.equal(t.json.tree[0].message, '正文');
+    assert.equal(t.json.tree[0].uname, '用户A');
+    assert.equal(t.json.tree[0].mid_str, '100');
+    assert.equal(t.json.tree[0].ctime_s, 2000);
+    assert.equal(t.json.tree[0].pin_kind, null);
+  } finally { cleanup(); }
+});
+
+test('comments tree：置顶根稳定前置（赞数最低也排第一）+ 普通根相对序不变 + 空 pins 不前置', async () => {
+  const { port, db, cleanup } = await setup();
+  try {
+    // full 轮 + pins：r3 打 admin 置顶（r3 赞最低）
+    const r = await ingest(port, ingestBody({ full_scan: true, pins: [{ rpid_str: 'r3', kind: 'admin' }] }, [
+      rawReply({ rpid_str: 'r1', like: 20, ctime: 1000 }),
+      rawReply({ rpid_str: 'r2', like: 10, ctime: 2000 }),
+      rawReply({ rpid_str: 'r3', like: 1, ctime: 3000 }),
+    ]));
+    assert.equal(r.status, 200);
+
+    const t = await get(port, 'tree', 'BV1');
+    assert.deepEqual(t.json.tree.map((n: any) => n.rpid_str), ['r3', 'r1', 'r2'], '置顶在前，其余保持赞数降序');
+    assert.equal(t.json.tree[0].pin_kind, 'admin');
+    assert.equal(t.json.tree[1].pin_kind, null);
+
+    // 第二个视频同数据但不打 pin → 顺序纯按赞数（对照，证明前置由 pin_kind 驱动而非 fixture 偏差）
+    ingestVideo(db, {
+      source: 'bilibili',
+      video: { source_vid: 'BV2', title: '对照视频', creator: { source_uid: 'u1', name: 'UP主' }, duration: 60, published_at: 1700000000000 },
+      tracks: [],
+    });
+    await ingest(port, ingestBody({ bvid: 'BV2' }, [
+      rawReply({ rpid_str: 's1', like: 20, ctime: 1000 }),
+      rawReply({ rpid_str: 's2', like: 10, ctime: 2000 }),
+      rawReply({ rpid_str: 's3', like: 1, ctime: 3000 }),
+    ]));
+    const t2 = await get(port, 'tree', 'BV2');
+    assert.deepEqual(t2.json.tree.map((n: any) => n.rpid_str), ['s1', 's2', 's3']);
+  } finally { cleanup(); }
+});
+
+test('comments tree：孤儿楼层计入 total_rows 但不进树；在库无评论 → 200 空树；404/400', async () => {
+  const { port, db, cleanup } = await setup();
+  try {
+    // 根 r1 + 楼挂 r1 + 孤儿楼（root 指向不存在的 r9）
+    const r = await ingest(port, ingestBody({}, [
+      rawReply({ rpid_str: 'r1', ctime: 1000 }),
+      rawFloor('r1c1', 'r1', { ctime: 5000 }),
+      rawFloor('orphan', 'r9', { ctime: 6000 }),
+    ]));
+    assert.equal(r.status, 200);
+
+    const t = await get(port, 'tree', 'BV1');
+    assert.equal(t.status, 200);
+    assert.equal(t.json.total_rows, 3, '孤儿楼层计入库内总行数');
+    assert.equal(t.json.total_roots, 1);
+    assert.equal(t.json.tree.length, 1, '孤儿楼无挂载点不进树（§3.4）');
+    assert.deepEqual(t.json.tree[0].replies.map((n: any) => n.rpid_str), ['r1c1']);
+
+    // 在库视频无评论 → 200 空树（对齐 count 端点语义，非 404）
+    ingestVideo(db, {
+      source: 'bilibili',
+      video: { source_vid: 'BVempty', title: '无评论视频', creator: { source_uid: 'u1', name: 'UP主' }, duration: 60, published_at: 1700000000000 },
+      tracks: [],
+    });
+    const empty = await get(port, 'tree', 'BVempty');
+    assert.equal(empty.status, 200);
+    assert.deepEqual(empty.json.tree, []);
+    assert.equal(empty.json.total_rows, 0);
+    assert.equal(empty.json.total_roots, 0);
+
+    // 视频不在库 → 404；缺 bvid → 400
+    assert.equal((await get(port, 'tree', 'BVnope')).status, 404);
+    assert.equal((await get(port, 'tree')).status, 400);
   } finally { cleanup(); }
 });

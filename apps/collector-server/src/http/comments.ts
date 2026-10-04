@@ -1,10 +1,12 @@
 // HTTP handler：B 站评论采集通路（C2，规格唯一来源 docs/plans/comments/PLAN.md §4.1/§5.2）。
-// 三端点（读 GET / 写 POST 惯例）：
+// 四端点（读 GET / 写 POST 惯例）：
 //   POST /api/comments/ingest —— §2.3 映射前的原始条目子集 → 服务端 parseReplyRow 解析归一
 //                                 → upsertComments（单事务幂等）→ full_scan:true 时 missing 对账
 //                                 + 置顶先清后打；
 //   GET  /api/comments/count?bvid=   —— 行数/根数/水位（§4.3 步 0 模式判定与增量水位依赖）；
-//   GET  /api/comments/verify?bvid=  —— 纯库内校验（§5.2 入口 2，无副作用）。
+//   GET  /api/comments/verify?bvid=  —— 纯库内校验（§5.2 入口 2，无副作用）；
+//   GET  /api/comments/tree?bvid=    —— 根+楼中楼两层级树（web 评论页签展示，2026-10-05；
+//                                 复用 treeByVideo CLI 口径，置顶稳定前置；节点白名单子集）。
 // 消费方是 CLI `comments collect`（宿主直连 B 站采、经本端点写生产库——「CLI 永不写库」纪律，D4）。
 // Bearer 鉴权由 main.ts 对 /api/* 统一执行（httpAuthOk），本 handler 不重复。
 // oid 仅链路观察用（对照传输体量），服务端定位只认 bvid（评论恒挂 videos.id，先采视频再谈评论）。
@@ -15,8 +17,10 @@ import {
   clearAndSetPins,
   commentsCount,
   reconcileMissing,
+  treeByVideo,
   upsertComments,
   type CommentPin,
+  type CommentRecord,
   type CommentUpsertRow,
 } from '../db/comments.js';
 import { verifyTree } from '../db/comments-verify.js';
@@ -126,12 +130,63 @@ function parseIngestBody(b: unknown): IngestParsed | { error: string } {
 
 // ── 端点 ──
 
-/** bvid 查询参数 → 库内视频（count/verify 共用）；错误带 HTTP 状态。评论恒 bilibili 域。 */
+/** bvid 查询参数 → 库内视频（count/verify/tree 共用）；错误带 HTTP 状态。评论恒 bilibili 域。 */
 function resolveVideo(db: Database.Database, bvid: string | null): { videoId: number; bvid: string } | { status: number; error: string } {
   if (!bvid) return { status: 400, error: 'bvid query param required' };
   const detail = getVideo(db, 'bilibili', bvid);
   if (!detail) return { status: 404, error: `video not found: bilibili/${bvid}` };
   return { videoId: detail.video.id as number, bvid };
+}
+
+// GET /api/comments/tree 的节点形态（web 契约 2026-10-05）：CommentRecord 白名单子集，snake_case
+// 与列名逐字对齐；replies 只挂一层（根→楼中楼），楼层节点恒空数组（B 站楼中楼只两级）。
+export interface CommentTreeNode {
+  rpid_str: string;
+  uname: string | null;
+  mid_str: string | null;
+  message: string | null;
+  like_count: number;
+  ctime_s: number | null;
+  pin_kind: string | null;
+  replies: CommentTreeNode[];
+}
+
+function toTreeNode(rec: CommentRecord, replies: CommentTreeNode[]): CommentTreeNode {
+  return {
+    rpid_str: rec.rpid_str,
+    uname: rec.uname,
+    mid_str: rec.mid_str,
+    message: rec.message,
+    like_count: rec.like_count,
+    ctime_s: rec.ctime_s,
+    pin_kind: rec.pin_kind,
+    replies,
+  };
+}
+
+/** GET /api/comments/tree?bvid=：根+楼中楼两层级树（web 评论页签展示，2026-10-05）。
+ * 排序：置顶（pin_kind 非空）稳定前置（相对序不变），其余保持 CLI 口径（treeByVideo：
+ * 根 like_count DESC/ctime_s ASC/id ASC；楼层 ctime_s ASC/id ASC）；响应顺序以页面渲染为准。
+ * total_rows = 库内全部评论行（含根已删的孤儿楼层——它们计入分母但不进树，§3.4 保留口径）；
+ * total_roots = 根评论数；视频在库但无评论 → 200 空树（对齐 count 端点，非 404）。 */
+function handleTree(res: ServerResponse, db: Database.Database, bvid: string | null): void {
+  const v = resolveVideo(db, bvid);
+  if ('error' in v) { json(res, v.status, { ok: false, error: v.error }); return; }
+  const tree = treeByVideo(db, v.videoId);
+  // 稳定分区：置顶在前、普通在后，各自保持 treeByVideo 的既有相对序（filter 保序）
+  const pinned = tree.roots.filter((r) => r.pin_kind != null);
+  const normal = tree.roots.filter((r) => r.pin_kind == null);
+  const nodes = [...pinned, ...normal].map((root) =>
+    toTreeNode(root, (tree.floorsByRoot.get(root.rpid_str) ?? []).map((f) => toTreeNode(f, []))),
+  );
+  const c = commentsCount(db, v.videoId);
+  json(res, 200, {
+    ok: true,
+    bvid: v.bvid,
+    total_rows: c.rows,
+    total_roots: tree.roots.length,
+    tree: nodes,
+  });
 }
 
 /** POST /api/comments/ingest：解析归一 → upsert（单事务）→ full 轮 missing 对账 + 置顶清打。 */
@@ -188,6 +243,11 @@ export async function handleCommentsHttp(req: IncomingMessage, res: ServerRespon
     // 纯库内校验：R4 分母走库内 rcount 快照（rootPageCounts 缺省 → 'rcount fallback'）、
     // R9 外部总量缺省跳过——collect 轮的实时分母/外部哨兵由 CLI 采集侧（C4）自带，不在此端点。
     json(res, 200, { ok: true, bvid: v.bvid, ...verifyTree(db, v.videoId) });
+    return;
+  }
+
+  if (url.pathname === '/api/comments/tree' && req.method === 'GET') {
+    handleTree(res, db, url.searchParams.get('bvid'));
     return;
   }
 
