@@ -5,6 +5,7 @@
 
 ## 上手
 
+- [[AI-接手]] — 新 AI 会话默认入口:载体分工 + 按任务必读 + 记忆晋升规约
 - [[开始使用]] — 三端装起来跑通第一条链路
 - [[环境变量]] — 五个变量与 token / 暴露部署的组合
 - [[Docker 部署]] — 生产部署、备份、数据卷红线
@@ -46,5 +47,11 @@
 | [CLAUDE](../../CLAUDE.md) | 开发纪律:样式 / 测试 / 措辞红线 / 路线 |
 | [MANUAL-collector](../../MANUAL-collector.md) | 真机验收清单 |
 | [docs/quality/RULES](../quality/RULES.md) | 测试质量细则 |
+| [改造账本](../plans/improvement-backlog-2026-10.md) | 改善项唯一台账:登记/划销/优先级 |
+| [CLI 完整度台账](../plans/cli-completeness.md) | CLI 缺口登记与划销(含反向登记) |
+| [消费端演进](../plans/consumption-loop.md) | 消费端闭环规划与推迟项登记 |
+| [DOUYIN-PROGRESS](../../DOUYIN-PROGRESS.md) | 抖音全量集成进度与决策记录 |
+| [docs/architecture.html](../architecture.html) | 架构总览静态页(数据流/红线/双库) |
+| [平台接入手册](../platform-onboarding.md) | 新平台接入的清单与决策记录模板 |
 | [docs/superpowers/](../superpowers/) | 历史设计文档与实现计划归档 |
 | [CHANGELOG](../../CHANGELOG.md) | 变更记录 |

@@ -38,6 +38,8 @@
 
 ---
 
+> 注:本文件止于 v0.2(2026-08-19),此后变更以 [docs/plans/improvement-backlog-2026-10.md](docs/plans/improvement-backlog-2026-10.md) 划销 + git log 为准;下方「下一里程碑」(主动采集/服务端控制中心)已上线,现状见 README Feature 列表。
+
 ## 下一里程碑（规划中，未开工）
 
 **主动采集 / 服务端控制中心** —— 把 collector-server 从"被动接收器"升级成"采集大脑"：服务端表达需求 → 拉视频列表 → 控制采集速度 → 驱动采集终端逐个入库 → 进度可见。详见上方探索笔记，核心架构岔路（结构化任务 API vs AI Agent 对话循环 vs 实验驱动）待拍板。

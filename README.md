@@ -154,5 +154,7 @@ pnpm verify:deployed -- --token <t> [--server <url>] [--db <库路径>]
 - 开发规范、样式政策、测试质量政策、字幕/弹幕措辞红线：见 [CLAUDE.md](CLAUDE.md)。
 - 翻阅式操作手册（按任务切页，可用 Obsidian 打开仓库根直接翻）：见 [docs/help/INDEX.md](docs/help/INDEX.md)。
 - 服务端运维手册：见 [MANUAL-collector.md](MANUAL-collector.md)。
-- 设计文档与实现计划：见 [docs/superpowers/specs/](docs/superpowers/specs) 与 [docs/superpowers/plans/](docs/superpowers/plans)。
-- 变更记录：见 [CHANGELOG.md](CHANGELOG.md)。
+- 历史设计文档与实现计划归档：见 [docs/superpowers/](docs/superpowers)。
+- 变更记录：见 [CHANGELOG.md](CHANGELOG.md)（止于 2026-08-19，此后以 [改造账本](docs/plans/improvement-backlog-2026-10.md) 划销 + git log 为准）。
+- 改造账本（唯一台账）：见 [docs/plans/improvement-backlog-2026-10.md](docs/plans/improvement-backlog-2026-10.md)——改善项登记/划销/优先级的唯一载体。
+- AI 接手页（新 AI 会话默认入口）：见 [docs/help/AI-接手.md](docs/help/AI-接手.md)。

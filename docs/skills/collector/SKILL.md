@@ -42,7 +42,7 @@ docker exec collector-server node -e 'const db=require("better-sqlite3")("/data/
 
 历史教训(2026-08-24 两次 SQLITE_CORRUPT):旧 bind mount 走 virtiofs,宿主机进程直触挂载库(哪怕只读)会引发 mmap 一致性损坏;named volume 已根除此路径,但「宿主直读」习惯须保持禁用。
 
-**生产备份**(2026-08-25 grilling 定案的四层体系):① server 内置每 **15min** 容器内 `VACUUM INTO /data/backups/`(启动即备一次,分层滚动:最近 8 份 + 每日末份 × 14 天,RPO 15min 保人工资产);② 每日 10:23 cron 导最新 1 份到群晖同步盘(异地,`crontab -l` 可查);③ 恢复走 `node scripts/backup-restore.mjs --list / --drill / --apply <文件名>`(--drill 恢复演练不碰生产,**每季度跑一次**);④ 连续失败 ≥2 次推飞书 webhook(.env 配 `COLLECTOR_BACKUP_WEBHOOK_URL`,缺省只打日志)。导出到任意宿主目录:`node scripts/backup-export.mjs [目录] [--all|--keep N]`。
+**生产备份**(2026-08-25 grilling 定案的四层体系):① server 内置定时容器内 `VACUUM INTO /data/backups/`(启动即备一次,分层滚动;备份间隔/保留份数/保留天数等参数**单源见 [apps/collector-server/src/db/backup.ts](../../../apps/collector-server/src/db/backup.ts)**,此处不复述数字以防漂移);② 每日 10:23 cron 导最新 1 份到群晖同步盘(异地,`crontab -l` 可查);③ 恢复走 `node scripts/backup-restore.mjs --list / --drill / --apply <文件名>`(--drill 恢复演练不碰生产,按定案节奏定期跑);④ 连续失败 ≥2 次推飞书 webhook(.env 配 `COLLECTOR_BACKUP_WEBHOOK_URL`,缺省只打日志)。导出到任意宿主目录:`node scripts/backup-export.mjs [目录] [--all|--keep N]`。
 
 ## 命令组速查(细节靠 --help)
 
