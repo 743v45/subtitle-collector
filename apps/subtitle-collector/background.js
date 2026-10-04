@@ -19,7 +19,7 @@ import { selectStaleFetches } from "./fetch-resume.mjs";
 import { upperAllCacheHit } from "./upper-cache.mjs";
 import { createDouyinCommands } from "./dy-navigate.mjs";
 import { navGate } from "./nav-gate.mjs";
-import { isAllowedNavigateUrl } from "./navigate-guard.mjs";
+import { handleNavigateCommand } from "./navigate-guard.mjs";
 import { fmtLength, cmdError } from "./format.mjs";
 const EXT_VERSION = chrome.runtime.getManifest().version;
 
@@ -555,17 +555,8 @@ async function connect() {
     }
     if (!msg.id) return;
     try {
-      if (msg.action === "navigate") {
-        // C6 兜底闸（白名单族见 navigate-guard.mjs，与 server 端 clients.ts 同一份字面量）：
-        // server HTTP 入口已拦，这里防旁路通道/直连 WS 的越权导航。扩展端无 HTTP 状态可回——
-        // 校验失败打日志（带目标 URL）并静默丢弃该消息（不回 result，server 侧按超时收尾）。
-        if (!isAllowedNavigateUrl(msg.url)) {
-          console.warn(`[background] navigate 目标被拒（非法 URL / 非 http(s) / host 不在白名单族），忽略消息 url=${msg.url}`);
-          return;
-        }
-        await chrome.tabs.create({ url: msg.url });
-        ws.send(JSON.stringify({ type: "result", id: msg.id, ok: true, data: { opened: true } }));
-      } else if (msg.action === "operate") {
+      // navigate 命令域（navigate-guard.mjs）：C6 兜底闸+开 tab+回执整体下沉，被拒打日志静默丢弃
+      if (msg.action === "navigate") { await handleNavigateCommand(ws, msg); } else if (msg.action === "operate") {
         // 只找 B 站视频页（manifest content_scripts matches 决定哪些 tab 注入了 content.js）
         const [tab] = await chrome.tabs.query({ active: true, currentWindow: true, url: ["*://www.bilibili.com/video/*", "*://www.bilibili.com/list/*"] });
         if (!tab?.id) {
