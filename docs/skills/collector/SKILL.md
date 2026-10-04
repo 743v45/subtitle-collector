@@ -63,7 +63,7 @@ docker exec collector-server node -e 'const db=require("better-sqlite3")("/data/
 | `comments tree/verify` | DB 只读 | 评论树查看与完整性校验(R0-R9):`tree --bvid --limit`(点赞前 N 根)/ `verify --bvid --stat-reply <n>`(外部总量哨兵,给了才启 R9 规模对账);建议全局 `--format json`;显式 `--server` 出「只读本地 --db」警告(videos/sub/export/stats/changes/comments 同组) |
 | `tags list/apply/remove` | list 读 DB;apply/remove 走 server | `tags list --sort count\|name\|created_at --desc`(count 语义跟随 `--scope` 档)/ `tags apply <vid...> --names <csv> --scope manual\|batch\|ai\|system --source <平台>`(打标即建标;scope=档位,source=平台默认 bilibili——YouTube 11 位 ID 用 `--source youtube`,抖音 19 位 aweme_id 用 `--source douyin`;system=系统状态档如 no-subtitle,采集链路自动打/摘) |
 | `clients list/reporting/task-dispatch/command` | server HTTP | 扩展客户端管控;`list --sort last_seen\|first_seen\|name --desc` 含离线客户端(DB 注册表合并在线态,带 popup 改的名字、在线/离线时长、扩展版本与双平台登录态 `bili_login`/`yt_login`——B 站未登录会让充电视频 AI 字幕接口返回空、YouTube 未登录时年龄限制视频播不了且 pot 受限加重,批量采集整批 no_subtitle/pot_limited 的判因依据);`reporting <id> <on\|off>` 切上报 / `task-dispatch <id> <on\|off>` 切任务派发(off=仅上报状态,调度器不派任务);`command <id> <action> --timeout <ms>` |
-| `tasks list/get/retry` | server HTTP | 采集任务查询与重试(2026-10-02):`list` 筛选/排序/分页(`--status failed,limited` 逗号多值 / `--source <平台>` / `--batch-id <id>` / `--batch <名>` / `--creator` / `--creator-uid` / `--q` / `--since --until` / `--limit <n>`(最近 N)或 `--page --page-size`(翻页,输出带 page/page_size) / `--sort created_at\|finished_at\|status`);`get <id>` 单任务详情(失败原因 `error` 与回执摘要 `result` 在 task 内);`retry <id...>` 多 id 批量重试(非可重试行 server 侧静默跳过,看回执 `retried` 计数) |
+| `tasks list/get/retry` | server HTTP | 采集任务查询与重试(2026-10-02):`list` 筛选/排序/分页(`--status failed,limited` 逗号多值 / `--source <平台>` / `--batch-id <id>` / `--batch <名>` / `--creator` / `--creator-uid` / `--q` / `--since --until` / `--limit <n>`(最近 N)或 `--page --page-size`(翻页,输出带 page/page_size;**展示单元口径** 2026-10-05:单条任务/整批各算 1 单元,整批必落同一页——items 可超 page_size,total=单元数,写翻页脚本按单元算) / `--sort created_at\|finished_at\|status`);`get <id>` 单任务详情(失败原因 `error` 与回执摘要 `result` 在 task 内);`retry <id...>` 多 id 批量重试(非可重试行 server 侧静默跳过,看回执 `retried` 计数) |
 | `server ping/status/start/stop` | 本地 | 探活 / 起停(pid 文件;`start --no-detached --port`) |
 | `collect …`(11 子命令) | server→扩展 | 见下方 |
 
@@ -97,6 +97,7 @@ collect 子命令速记:`search <关键词>` 搜候选(不入库)/ `subtitle <vi
 | `scripts/export-bundle.mjs` | 生产库→分析原料包一条命令(`node scripts/export-bundle.mjs --theme <主题> [过滤器...] [--out <dir>] [--max-age-hours <n>] [--force]`;容器内 VACUUM INTO 新快照 → docker cp → collector-cli `--db` 出包,`--max-age-hours` 内复用 mtime 最新快照;分析闭环第一步) |
 | `scripts/backup-restore.mjs` | 生产备份恢复(`--list` 列卷内备份 / `--drill` 演练(临时卷+容器 21599,不碰生产,季度跑) / `--apply <文件名>` 真恢复(停服换库,旧库改名留证);事故现场不再靠记忆) |
 | `scripts/sqlite-rescue.mjs` | 损坏库抢救重建(`node scripts/sqlite-rescue.mjs <主库> <完好备份> <新库输出>`;分段绕坏页 + 备份兜底 + JSON 列降级 + 孤儿引用登记,2026-08-24 SQLITE_CORRUPT 事故产物) |
+| `scripts/web-screenshots.mjs` | collector-web 全功能截图走查(UI 评审/grill 用;`node scripts/web-screenshots.mjs [--base http://localhost:21527] [--out <dir>]`;10 个 tab + 视频/创作者详情各一张 `shot-<view>.png`,详情 ID 走 API 探测缺了只少两张;浏览器同源导航过 server 免鉴权通道,不碰日常 Chrome profile;行尾打印 console 报错与 ≥400 API 响应,有失败视图 exit 1) |
 | `scripts/verify-*.mjs` | 链路验收冒烟族(`pnpm test:ext` / `test:youtube`,按需不进 qa) |
 
 ## 纪律
