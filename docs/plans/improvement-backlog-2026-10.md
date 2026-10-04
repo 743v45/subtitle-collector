@@ -48,7 +48,7 @@
 | P1-9 | categories CRUD / settings 读写 CLI：`categories add/list/update/delete` + `settings get/set`（tag-priority、collect-timeout，cli-completeness #9；HTTP 端点已备） | 全子命令可用；失败→通过用例；SKILL.md/help 同步 | ✅（2026-10-05，categories/settings 七子命令落地+35 用例+SKILL/help 同步，36c0bcb） |
 | P1-10 | 选项命名统一：`tags list --topN`→`--top`、`translate pending --asc`→`--desc`；直接 breaking 不留 alias（对齐 `--source` 语义统一先例），同步 SKILL.md/help/测试（cli-completeness #10） | 旧参数退 2 列全合法键；全仓无旧名残留 | ✅（2026-10-05，两旗标改名+unknown-option 守卫退 2 列全键+SKILL/help 同步+旧名零残留（HTTP topN 参数按 §5 不纳入），e897ca2） |
 | P1-11 | CLI VERSION 硬编码改读 package.json（cli/main.ts，cli-completeness #11） | VERSION 与 package.json 同源；单测锁定 | ✅（2026-10-05，version.ts 单源读 package.json（tsx/dist/容器三形态路径均成立）+ 失败兜底日志；红灯轮证硬编码不可测后 8 用例转绿，main.test.ts 断言同步去字面量，65cdb45） |
-| P1-12 | scripts 层最小契约成文并统一：退出码 0/非 0、失败 stderr 带 `[tag]` 分步日志、stdout 数据可 pipe；**不推 CLI 的 0-6 语义**；现有优质工具（youtube-collect-videos.mjs）即范本（cli-completeness #12） | 契约文档落 docs/；存量 scripts 对齐或登记例外 | ☐ 本轮执行 |
+| P1-12 | scripts 层最小契约成文并统一：退出码 0/非 0、失败 stderr 带 `[tag]` 分步日志、stdout 数据可 pipe；**不推 CLI 的 0-6 语义**；现有优质工具（youtube-collect-videos.mjs）即范本（cli-completeness #12） | 契约文档落 docs/；存量 scripts 对齐或登记例外 | ✅（2026-10-05，[SCRIPTS-CONTRACT.md](../quality/SCRIPTS-CONTRACT.md) 落盘（三契约+适用范围+范本+检查单+24 脚本盘点表+例外登记表）；7 脚本顺手对齐（部分失败 exit 1 / 进度改 stderr / [tag] 日志），dry 通路验证，4b9f88b） |
 
 > 2026-10-05 `/grill-me` 追加轮（用户拍板「按推荐追加 + 逐项完成」）：上表 P1-6~P1-12 = cli-completeness 批次 2/3 余量（已有能力包装，零冻结截留）转挂编号；小包装插本段与 P1-5 并列，大项 web 评论展示落 P2-5 排偿债三件之后。
 
