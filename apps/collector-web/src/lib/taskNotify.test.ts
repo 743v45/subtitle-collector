@@ -1,9 +1,15 @@
 // ── 任务完成通知纯函数（2026-08-22）──
 // terminalTransitions：轮询前后两次任务列表的「进行中→终态」转移检测
 // （被删除的任务不算完成——id 在 next 消失即出局）；notifyText：终态汇总文案。
+//
+// 测试轮次记录表（对齐全局 8.2）：
+// | 轮次 | 范围 | 结果 | 备注 |
+// |---|---|---|---|
+// | R1 | 转移检测/汇总文案/发送降级 全绿 | 通过 | 2026-08-22 |
+// | R2 | sendJobDoneNotification（Phase 4 jobs 单任务通知） | 通过 | title 带类型中文+#id、tag 含 job id、四降级分支 |
 import { test } from 'vitest';
 import assert from 'node:assert/strict';
-import { isActiveStatus, notifyText, terminalTransitions, sendTaskDoneNotification, requestTaskNotifyPermission } from './taskNotify.ts';
+import { isActiveStatus, notifyText, terminalTransitions, sendTaskDoneNotification, requestTaskNotifyPermission, sendJobDoneNotification } from './taskNotify.ts';
 import type { CollectTask, CollectTaskStatus } from '../types';
 
 function task(id: number, status: CollectTaskStatus): CollectTask {
@@ -184,4 +190,47 @@ test('requestTaskNotifyPermission：requestPermission 拒绝（rejected）与同
   try {
     requestTaskNotifyPermission(); // 不抛即过
   } finally { sync.restore(); }
+});
+
+// ── sendJobDoneNotification（Phase 4：jobs 台账单任务完成通知；tag 带 job id 多 job 各弹各条）──
+
+test('sendJobDoneNotification：granted → title 带类型中文+#id，body 透传，tag 含 job id', () => {
+  const n = stubNotification({ permission: 'granted' });
+  try {
+    sendJobDoneNotification({ id: 7, type: 'asr-backfill' }, '圈定 5 · 成功 4 · 失败 need_login 1');
+    assert.equal(n.calls.length, 1);
+    assert.equal(n.calls[0]!.title, 'ASR 转写完成（#7）');
+    assert.deepEqual(n.calls[0]!.options, { body: '圈定 5 · 成功 4 · 失败 need_login 1', tag: 'job-done-7' });
+  } finally { n.restore(); }
+});
+
+test('sendJobDoneNotification：未知类型回落原值不炸（server 先行加类型的兼容口径）', () => {
+  const n = stubNotification({ permission: 'granted' });
+  try {
+    sendJobDoneNotification({ id: 1, type: 'future-job' }, 'x');
+    assert.equal(n.calls[0]!.title, 'future-job完成（#1）');
+  } finally { n.restore(); }
+});
+
+test('sendJobDoneNotification：denied 与 API 不可用均静默，构造抛错被吞', () => {
+  const n = stubNotification({ permission: 'denied' });
+  try {
+    sendJobDoneNotification({ id: 1, type: 'asr-backfill' }, 'x');
+    assert.equal(n.calls.length, 0);
+  } finally { n.restore(); }
+
+  const g = globalThis as any;
+  const prev = g.Notification;
+  delete g.Notification;
+  try {
+    sendJobDoneNotification({ id: 1, type: 'asr-backfill' }, 'x'); // 不抛即过
+  } finally {
+    if (prev !== undefined) g.Notification = prev;
+  }
+
+  const thr = stubNotification({ permission: 'granted', ctorThrows: true });
+  try {
+    sendJobDoneNotification({ id: 1, type: 'asr-backfill' }, 'x'); // 不抛即过
+    assert.equal(thr.calls.length, 0);
+  } finally { thr.restore(); }
 });

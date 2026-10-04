@@ -4,9 +4,8 @@ import type {
   TagSource, CollectTask, CollectTaskStatus, UpperVideoItem, Category,
 } from './types';
 import type { SubtitleLine } from '@/components/SubtitleView';
+import { BASE, ensureOk } from './api-core';
 export type { Category };
-
-const BASE = '';
 
 export interface CreatorListItem {
   id: number;
@@ -21,18 +20,6 @@ export interface CreatorListItem {
   category_human_id: number | null;
   category_human_name: string | null;
   first_seen_at: number;
-}
-
-async function ensureOk<T>(r: Response, parse: (json: any) => T): Promise<T> {
-  if (!r.ok) {
-    // 尽量带出 server 错误文案（如「扩展离线：…」），带不出回落裸状态码
-    let detail = `HTTP ${r.status}`;
-    try { const j = await r.json(); if (j?.error) detail += `：${j.error}`; } catch { /* 非 JSON 忽略 */ }
-    throw new Error(detail);
-  }
-  const json = await r.json();
-  if (json.ok === false) throw new Error(json.error ?? 'API error');
-  return parse(json);
 }
 
 // ── 视频 ──

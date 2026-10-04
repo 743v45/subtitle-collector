@@ -72,6 +72,45 @@ export function videoListFromQuery(q: URLSearchParams): VideoListQueryState {
   };
 }
 
+// ── VideoList query state → server VideoFilter（snake_case API 口径）──
+// 视频 API（api.ts listVideos）与导出端点（api-export.ts）共用此映射，两处不漂移。
+// 转换：日期 → 毫秒时间戳（since 当天 00:00，until 当天 23:59:59.999）；分钟 → 秒；万 → 绝对值；
+// 非法数字（空/NaN）→ 字段省略。page/size 走 opts（导出端点全量拉取不传，列表按需传）。
+function numOrNull(s: string): number | undefined {
+  const n = Number(s);
+  return s !== '' && Number.isFinite(n) ? Math.floor(n) : undefined;
+}
+
+const nonEmpty = (s: string): string | undefined => s || undefined;
+
+export function videoListStateToFilter(f: VideoListQueryState, opts: { page?: number; size?: number } = {}): VideoFilter {
+  const minDur = numOrNull(f.minDur);
+  const maxDur = numOrNull(f.maxDur);
+  const minView = numOrNull(f.minView);
+  const maxView = numOrNull(f.maxView);
+  return {
+    q: nonEmpty(f.q),
+    source: nonEmpty(f.source),
+    subtitle_q: nonEmpty(f.sq),
+    tname: nonEmpty(f.tname),
+    tags: f.tags.length > 0 ? f.tags : undefined,
+    tag_source: f.tagSource ? [f.tagSource] : undefined,
+    lang: nonEmpty(f.lang),
+    has_subtitle: f.hasSubtitle ? true : undefined,
+    date_field: f.dateField,
+    since: f.sinceDate ? new Date(f.sinceDate + 'T00:00:00').getTime() : undefined,
+    until: f.untilDate ? new Date(f.untilDate + 'T23:59:59.999').getTime() : undefined,
+    min_duration: minDur != null ? minDur * 60 : undefined,
+    max_duration: maxDur != null ? maxDur * 60 : undefined,
+    min_view: minView != null ? minView * 10000 : undefined,
+    max_view: maxView != null ? maxView * 10000 : undefined,
+    sort: f.sort,
+    desc: f.sort ? f.desc : undefined, // false 显式发：省略会被 server 缺省降序吃掉
+    page: opts.page,
+    size: opts.size,
+  };
+}
+
 export function videoListToQuery(s: VideoListQueryState): URLSearchParams {
   const u = new URLSearchParams();
   if (s.q) u.set('q', s.q);

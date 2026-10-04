@@ -11,6 +11,7 @@
 // | R3 | TaskRow 预览失败路径：getVideo 500、getVersion 500+重试 | 通过 | |
 // | R4 | BatchTaskCard：五类徽章派生、展开子行、重试/删除/聚焦回调 | 通过 | |
 // | R5 | resubmitTasks：无可重试不发请求；retry 端点 alreadyOk 拆分 | 通过 | |
+// | R6 | skipped 语义（2026-10 Phase 3）：resubmitTasks 返回 skipped、retrySummary 附加「不可重试行已跳过」 | 通过 | skipped=0 不附加 |
 import { test, expect, vi, afterEach } from 'vitest';
 import { render, screen, fireEvent, cleanup, waitFor } from '@testing-library/react';
 import {
@@ -103,24 +104,28 @@ test('resultSummary 全分支', () => {
   expect(resultSummary(t({ status: 'succeeded', result: 'not-json{' }))).toBe('');
 });
 
-test('retrySummary 四分支', () => {
+test('retrySummary 四分支：skipNote 仅 skipped>0 时附加', () => {
   expect(retrySummary({ dispatched: 2, alreadyOk: 1 })).toBe('已重新下发 2 个任务；1 个库内已有字幕，直接标记成功');
   expect(retrySummary({ dispatched: 0, alreadyOk: 1 })).toContain('直接标记成功');
   expect(retrySummary({ dispatched: 2, alreadyOk: 0 })).toBe('已重试 2 个任务（扩展在线即开始采集）');
   expect(retrySummary({ dispatched: 0, alreadyOk: 0 })).toBe('没有可重试的任务（可能已在队列中）');
+  // Phase 3：入参带不可重试行（在途/succeeded）→ 末尾点明已跳过，免「少重试了」困惑
+  expect(retrySummary({ dispatched: 2, alreadyOk: 0, skipped: 1 })).toBe('已重试 2 个任务（扩展在线即开始采集），不可重试行已跳过');
+  expect(retrySummary({ dispatched: 0, alreadyOk: 0, skipped: 3 })).toBe('没有可重试的任务（可能已在队列中），不可重试行已跳过');
+  expect(retrySummary({ dispatched: 0, alreadyOk: 0, skipped: 0 })).toBe('没有可重试的任务（可能已在队列中）');
 });
 
 // ── resubmitTasks ──
 
-test('resubmitTasks：无可重试行 → 不发请求，全 0', async () => {
+test('resubmitTasks：无可重试行 → 不发请求，全 0 + skipped=入参行数', async () => {
   const fetchMock = vi.fn();
   vi.stubGlobal('fetch', fetchMock);
   const r = await resubmitTasks([task({ id: 1, status: 'succeeded' }), task({ id: 2, status: 'pending' })]);
-  expect(r).toEqual({ dispatched: 0, alreadyOk: 0 });
+  expect(r).toEqual({ dispatched: 0, alreadyOk: 0, skipped: 2 });
   expect(fetchMock).not.toHaveBeenCalled();
 });
 
-test('resubmitTasks：retry 端点 POST ids，retried - alreadyOk = dispatched', async () => {
+test('resubmitTasks：retry 端点 POST ids，retried - alreadyOk = dispatched，skipped = 入参 - 可重试数', async () => {
   stubFetch((url, init) => {
     if (url.includes('/api/collect-tasks/retry')) {
       expect(init?.method).toBe('POST');
@@ -134,7 +139,7 @@ test('resubmitTasks：retry 端点 POST ids，retried - alreadyOk = dispatched',
   const r = await resubmitTasks([
     task({ id: 1, status: 'failed' }), task({ id: 2, status: 'succeeded' }), task({ id: 3, status: 'limited' }),
   ]);
-  expect(r).toEqual({ dispatched: 1, alreadyOk: 1 });
+  expect(r).toEqual({ dispatched: 1, alreadyOk: 1, skipped: 1 });
 });
 
 // ── TaskRow ──

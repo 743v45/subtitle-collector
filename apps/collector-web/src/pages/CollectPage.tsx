@@ -1,44 +1,19 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { createCollectTask, createCollectTasksBatch, deleteCollectTask, expandUpperVideos, listCollectTasks, getStatsOverview } from '../api';
+import { createCollectTask, createCollectTasksBatch, deleteCollectTask, expandUpperVideos, listCollectTasks } from '../api';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
-import { Skeleton } from '@/components/ui/skeleton';
 import { cn } from '@/lib/utils';
-import { useAsync } from '@/lib/useAsync';
-import { navigate } from '../router';
 import { Loader2, Search, Send } from 'lucide-react';
 import type { CollectTask, UpperVideoItem } from '../types';
 import { BatchTaskCard, TaskRow, resubmitTasks, retrySummary } from '@/components/TaskCards';
 import { useToast } from '@/components/ui/toast';
 import { isActiveStatus, requestTaskNotifyPermission, sendTaskDoneNotification, terminalTransitions } from '@/lib/taskNotify';
 import { parseUpperTarget, upperCreatorUid, type UpperTarget } from '@/lib/upperTarget';
+import { LibrarySummary } from './LibrarySummary';
+import { CollectSearchSection } from './CollectSearchSection';
 
 const REFRESH_MS = 2000;
-
-// ── 库摘要行：总量 + 今日采集（点击进看板）──
-function LibrarySummary({ refreshKey }: { refreshKey: number }) {
-  // overview 返回 { total, by_source }（2026-08-24 分平台小节）；摘要行只看全库 total
-  const { data } = useAsync(() => getStatsOverview(), [refreshKey]);
-  const o = data?.total;
-  if (!o) {
-    return <Skeleton className="h-9 w-full" />;
-  }
-  return (
-    <button
-      onClick={() => navigate('/stats')}
-      className="flex w-full cursor-pointer items-center justify-between rounded-md border bg-muted/30 px-3 py-2 text-sm text-muted-foreground transition-colors duration-150 hover:bg-muted/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
-    >
-      <span>
-        库内 <span className="font-medium tabular-nums text-foreground">{o.videos.toLocaleString('zh-CN')}</span> 视频
-        · <span className="font-medium tabular-nums text-foreground">{o.tracks.toLocaleString('zh-CN')}</span> 字幕轨
-      </span>
-      <span>
-        今日 +<span className="font-medium tabular-nums text-foreground">{o.today_videos.toLocaleString('zh-CN')}</span>
-      </span>
-    </button>
-  );
-}
 
 // ── 按 UP/频道/博主批量（2026-08-19；2026-08-24 双平台；2026-08-29 +抖音）：输入 → server 经扩展拉全量 → 过滤+勾选 → 批量建任务 ──
 // 目标识别/归属解析在 lib/upperTarget.ts（纯函数，douyin 形态一并收敛）。
@@ -484,6 +459,9 @@ export function CollectPage() {
 
       {/* 按 UP 批量：输入 UID/空间链接 → 全量列表 → 过滤+勾选 → 批量建任务 */}
       <UpperBatchSection onTasksChanged={refresh} />
+
+      {/* 搜索采集（Phase 3）：平台+关键词 → 候选勾选 → 批量建任务（任务列表共用上方轮询区） */}
+      <CollectSearchSection onTasksChanged={refresh} />
 
       {/* 任务列表（2s 轮询,有进行中任务时提示）；批次聚合为一卡,单任务独立一卡 */}
       <div className="space-y-2">

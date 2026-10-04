@@ -14,7 +14,9 @@ import { ExtLink } from '@/components/ExtLink';
 import { PlatformIcon, platformIconClass } from '@/components/PlatformIcon';
 import { TagMultiSelect } from '@/components/TagMultiSelect';
 import { navigate, useQueryUpdater, useRoute } from '../router';
-import { videoListFromQuery } from '../videoFilterUrl';
+import { videoListFromQuery, videoListStateToFilter } from '../videoFilterUrl';
+import { VideoListExportBar } from './VideoListExportBar';
+import { BulkCheckCell, BulkCheckHead, VideoBulkBar, type SelSetter } from './VideoListBulkBar';
 import { ArrowDown, ArrowUp, ChevronDown, Film, RotateCcw, X } from 'lucide-react';
 import type { VideoFilter, VideoListItem } from '../types';
 
@@ -87,38 +89,13 @@ export function VideoList() {
   const { data: tagAggData } = useAsync(() => getStatsAggregate('tag', {}, 200), []);
   const tagOptions = (tagAggData ?? []).filter((t) => t.key);
 
-  // 日期 → 毫秒时间戳（since 当天 00:00，until 当天 23:59:59.999）；分钟 → 秒；万 → 绝对值
-  const since = f.sinceDate ? new Date(f.sinceDate + 'T00:00:00').getTime() : undefined;
-  const until = f.untilDate ? new Date(f.untilDate + 'T23:59:59.999').getTime() : undefined;
-  const min_duration = f.minDur && Number.isFinite(Number(f.minDur)) ? Math.floor(Number(f.minDur)) * 60 : undefined;
-  const max_duration = f.maxDur && Number.isFinite(Number(f.maxDur)) ? Math.floor(Number(f.maxDur)) * 60 : undefined;
-  const min_view = f.minView && Number.isFinite(Number(f.minView)) ? Math.floor(Number(f.minView)) * 10000 : undefined;
-  const max_view = f.maxView && Number.isFinite(Number(f.maxView)) ? Math.floor(Number(f.maxView)) * 10000 : undefined;
+  // web query state → server VideoFilter（日期→ms、分钟→秒、万→绝对值）。
+  // 列表请求与工具栏导出（VideoListExportBar）共用同一映射，两处不漂移
+  const vf = videoListStateToFilter(f);
 
   const queryKey = route.query.toString();
   const { data, loading, error, reload } = useAsync(
-    () =>
-      listVideos({
-        q: f.q || undefined,
-        source: f.source || undefined,
-        subtitle_q: f.sq || undefined,
-        tname: f.tname || undefined,
-        tags: f.tags.length > 0 ? f.tags : undefined,
-        tag_source: f.tagSource ? [f.tagSource] : undefined,
-        lang: f.lang || undefined,
-        has_subtitle: f.hasSubtitle || undefined,
-        date_field: f.dateField,
-        since,
-        until,
-        min_duration,
-        max_duration,
-        min_view,
-        max_view,
-        sort: f.sort,
-        desc: f.sort ? f.desc : undefined,
-        page: f.page,
-        size: PAGE_SIZE,
-      }),
+    () => listVideos({ ...vf, page: f.page, size: PAGE_SIZE }),
     [queryKey],
   );
 
@@ -128,6 +105,11 @@ export function VideoList() {
 
   // 折叠态（瞬态 UI,不进 URL）
   const [showMore, setShowMore] = useState(false);
+
+  // 批量打标/摘标勾选（Phase 3）：只存当前页 key（source:vid），queryKey 变化（翻页/筛选）即清空——跨页不保留。
+  // 勾选列与操作条在 VideoListBulkBar（无条件挂载操作条,主组件零新增分支）。
+  const [selKeys, setSelKeys] = useState<Set<string>>(new Set());
+  useEffect(() => { setSelKeys(new Set()); }, [queryKey]);
 
   function resetAll() {
     setQInput('');
@@ -146,12 +128,16 @@ export function VideoList() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-2">
         <h2 className="text-xl font-semibold tracking-tight">视频库</h2>
-        {/* tabular-nums：计数变化时宽度稳定不跳动 */}
-        <span className="text-sm text-muted-foreground">
-          共 <span className="font-medium tabular-nums text-foreground">{total}</span> 条
-        </span>
+        <div className="flex items-center gap-3">
+          {/* tabular-nums：计数变化时宽度稳定不跳动 */}
+          <span className="text-sm text-muted-foreground">
+            共 <span className="font-medium tabular-nums text-foreground">{total}</span> 条
+          </span>
+          {/* 导出工具栏：列表导出下拉（CSV/NDJSON/JSON）+ 原料包按钮（筛选随当前 query） */}
+          <VideoListExportBar filter={vf} />
+        </div>
       </div>
 
       {/* 主筛选行 */}
@@ -380,6 +366,9 @@ export function VideoList() {
         </div>
       </div>
 
+      {/* 批量操作条（Phase 3）：选中>0 或有上次操作结果时由组件自行显形 */}
+      <VideoBulkBar items={items} sel={selKeys} setSel={setSelKeys} />
+
       {/* 列表区：一行一视频的横向列表（窄屏隐藏次要列，Tailwind 响应式 table-cell），
           loading / error / 空态改造成行式；表头纯展示（排序仍走顶部筛选）。
           容器 rounded+shadow 出卡片质感；表头 muted 底与正文分层 */}
@@ -390,6 +379,7 @@ export function VideoList() {
         <Table className="table-fixed">
           <TableHeader className="bg-muted/50">
             <TableRow className="hover:bg-transparent">
+              <BulkCheckHead sel={selKeys} setSel={setSelKeys} items={items} />
               <TableHead className="w-[96px] pl-3" aria-label="封面" />
               <TableHead className="w-[34%] min-w-[200px]">标题</TableHead>
               <TableHead className="hidden w-32 md:table-cell">创作者</TableHead>
@@ -405,6 +395,7 @@ export function VideoList() {
             {loading &&
               Array.from({ length: 8 }).map((_, i) => (
                 <TableRow key={`sk-${i}`}>
+                  <TableCell className="pl-2"><Skeleton className="size-4" /></TableCell>
                   <TableCell className="pl-3"><Skeleton className="h-5 w-full max-w-64" /></TableCell>
                   <TableCell className="hidden md:table-cell"><Skeleton className="h-4 w-20" /></TableCell>
                   <TableCell><Skeleton className="ml-auto h-4 w-10" /></TableCell>
@@ -418,7 +409,7 @@ export function VideoList() {
 
             {!loading && error && (
               <TableRow>
-                <TableCell colSpan={8} className="py-6 text-center">
+                <TableCell colSpan={9} className="py-6 text-center">
                   <div className="text-sm text-destructive">加载失败：{error}</div>
                   <Button variant="outline" size="sm" className="mt-2" onClick={reload}>
                     重试
@@ -427,11 +418,13 @@ export function VideoList() {
               </TableRow>
             )}
 
-            {!loading && !error && items.map((v) => <VideoRow key={v.id} v={v} onOpen={openVideo} />)}
+            {!loading && !error && items.map((v) => (
+              <VideoRow key={v.id} v={v} onOpen={openVideo} sel={selKeys} setSel={setSelKeys} />
+            ))}
 
             {!loading && !error && items.length === 0 && (
               <TableRow>
-                <TableCell colSpan={8} className="py-10 text-center">
+                <TableCell colSpan={9} className="py-10 text-center">
                   {/* 空态给行动指引：可能是筛选过严（给重置），也可能是库真没数据（引导去采集） */}
                   {secondaryActive || f.q || f.sq || f.source || f.tname ? (
                     <div className="space-y-1.5">
@@ -459,7 +452,7 @@ export function VideoList() {
   );
 }
 
-function VideoRow({ v, onOpen }: { v: VideoListItem; onOpen: (source: string, sourceVid: string) => void }) {
+function VideoRow({ v, onOpen, sel, setSel }: { v: VideoListItem; onOpen: (source: string, sourceVid: string) => void; sel: Set<string>; setSel: SelSetter }) {
   // tag_details（四档带色）优先；旧接口只回 tags 时退化为无色 outline Badge
   const tagDetails: { name: string; source?: TagSource }[] =
     v.tag_details ?? (v.tags ?? []).map((name) => ({ name }));
@@ -471,6 +464,8 @@ function VideoRow({ v, onOpen }: { v: VideoListItem; onOpen: (source: string, so
   return (
     // 整行点击进详情（onOpen 已附加当前列表 query → 返回原样还原）
     <TableRow onClick={() => onOpen(v.source, v.source_vid)} className="cursor-pointer">
+      {/* 勾选框（Phase 3 批量打标/摘标）：BulkCheckCell 自行截停点击冒泡，不影响整行进详情 */}
+      <BulkCheckCell v={v} sel={sel} setSel={setSel} />
       {/* 封面缩略图（16:10 圆角）：媒体库观感的锚点;无封面回落 Film 占位,懒加载减流量 */}
       <TableCell className="pl-3">
         <div className="flex h-[50px] w-[80px] items-center justify-center overflow-hidden rounded bg-muted">

@@ -8,6 +8,7 @@
 // | R2 | 任务派发开关（2026-08-23 仅上报状态）：badge 展示 + 切换 POST /api/clients/:id/task-dispatch | 通过 | |
 // | R3 | 客户端命名（2026-08-24）：client() helper 扩全量字段；新增名字/离线时长/离线无按钮断言；计数文案改「客户端 N · 在线 M」 | 通过 | |
 // | R4 | B 站登录态（2026-08-24 充电视频 no_subtitle 根因可观察化）：已登录徽章+账号+大会员 / 未登录红徽章 / null（旧扩展）不渲染 | 通过 | |
+// | R5 | 派发关语义说明（2026-10 Phase 3 小文案）：关位在线客户端渲染「关 = 仅上报状态，不派采集任务」，开位/离线不渲染 | 通过 | |
 import { test, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, cleanup, act, waitFor } from '@testing-library/react';
 import { ClientsPage } from './ClientsPage';
@@ -107,6 +108,8 @@ test('任务派发：仅上报客户端显示「仅上报状态」badge，接受
   render(<ClientsPage />);
   expect(await screen.findByText('c1')).toBeInTheDocument();
   expect(screen.getByText('仅上报状态')).toBeInTheDocument(); // c1 的 badge
+  // 关位语义说明（Phase 3 小文案）：仅关位在线的 c1 渲染
+  expect(screen.getByText('关 = 仅上报状态，不派采集任务')).toBeInTheDocument();
   // c1（仅上报）→ 按钮动作是恢复；c2（接受）→ 按钮动作是停派
   expect(screen.getByRole('button', { name: /恢复接任务/ })).toBeInTheDocument();
   expect(screen.getByRole('button', { name: /停派任务/ })).toBeInTheDocument();

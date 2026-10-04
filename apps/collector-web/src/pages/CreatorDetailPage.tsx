@@ -11,7 +11,9 @@ import { creatorUrl, videoUrl } from '../lib/externalLinks';
 import { PlatformIcon, platformIconClass } from '@/components/PlatformIcon';
 import { cn } from '@/lib/utils';
 import { ExtLink } from '@/components/ExtLink';
-import { ArrowLeft, UserRound } from 'lucide-react';
+import { ArrowLeft, Loader2, RefreshCw, UserRound } from 'lucide-react';
+import { refreshUpperInfo } from '../api-extra';
+import { collectErrorText } from '../lib/collectErrors';
 import type { CreatorDetail, VideoListItem } from '@/types';
 
 function fmtTime(ms: number): string {
@@ -170,7 +172,11 @@ export function CreatorDetailPage({
           <div className="grid gap-4 md:grid-cols-2">
             {/* 资料 */}
             <Card>
-              <CardHeader><CardTitle className="text-base">资料</CardTitle></CardHeader>
+              <CardHeader className="flex-row items-center justify-between space-y-0">
+                <CardTitle className="text-base">资料</CardTitle>
+                {/* 刷新 UP 资料（Phase 3）：非 bilibili 不渲染（douyin 无 upper-info 语义） */}
+                <RefreshInfoButton creator={creator} reload={reload} />
+              </CardHeader>
               <CardContent className="space-y-2">
                 <Field label="签名" value={creator.sign} />
                 {creator.source === 'bilibili' && <Field label="等级" value={creator.level != null ? String(creator.level) : null} />}
@@ -256,5 +262,35 @@ export function CreatorDetailPage({
         </>
       )}
     </div>
+  );
+}
+
+// 刷新 UP 资料（CLI upper-info refresh 的 web 入口）：经扩展重拉 B 站空间信息回写；
+// 成功 toast 带最新名称/粉丝数，并 reload 资料卡。仅 bilibili 渲染（组件自身 null，调用侧零分支）。
+function RefreshInfoButton({ creator, reload }: { creator: CreatorDetail; reload: () => void }) {
+  const toast = useToast();
+  const [busy, setBusy] = useState(false);
+  if (creator.source !== 'bilibili') return null;
+
+  const run = async () => {
+    if (busy) return;
+    setBusy(true);
+    try {
+      const r = await refreshUpperInfo({ mid: String(creator.source_uid) });
+      const name = r.creator.name ?? creator.name ?? creator.source_uid;
+      toast(`已刷新：${name}（粉丝 ${r.creator.fans?.toLocaleString('zh-CN') ?? '?'}）`, 'success');
+      reload();
+    } catch (e: unknown) {
+      toast(`刷新失败：${collectErrorText(e)}`, 'error');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Button variant="outline" size="sm" className="gap-1" disabled={busy} onClick={() => void run()}>
+      {busy ? <Loader2 className="size-3.5 animate-spin" aria-hidden="true" /> : <RefreshCw className="size-3.5" aria-hidden="true" />}
+      刷新资料
+    </Button>
   );
 }

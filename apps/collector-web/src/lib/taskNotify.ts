@@ -6,6 +6,7 @@
 // 边界：Chrome 后台标签 >5min 后 timer 节流至 1 次/分钟，通知最多延迟约 1 分钟；
 // SPA 内离开采集页/历史页后轮询即停，不提醒；长尾批次等最后一个任务到终态才弹（避免中途刷屏）。
 import type { CollectTask, CollectTaskStatus } from '../types';
+import { jobTypeLabel } from './jobMeta';
 
 export function isActiveStatus(s: CollectTaskStatus): boolean {
   return s === 'pending' || s === 'dispatched';
@@ -50,4 +51,16 @@ export function requestTaskNotifyPermission(): void {
   try {
     void Notification.requestPermission()?.catch(() => { /* 拒绝即降级静默 */ });
   } catch { /* 老式回调形态异常静默 */ }
+}
+
+// ── jobs 台账完成通知（Phase 4；与上面 collect-task 批量汇总互补：单 job 单条）──
+
+// JobCard 轮询观察到「进行中→done」转移时发一条；title 带任务类型，body 汇总由调用方给
+// （与卡片内展示同一份 jobResultSummary，口径一致）。tag 带 job id——多 job 并存各弹各条。
+export function sendJobDoneNotification(job: { id: number; type: string }, body: string): void {
+  if (typeof Notification === 'undefined' || Notification.permission !== 'granted') return;
+  const title = `${jobTypeLabel(job.type)}完成（#${job.id}）`;
+  try {
+    new Notification(title, { body, tag: `job-done-${job.id}` });
+  } catch { /* 构造失败（策略/极老环境）静默 */ }
 }

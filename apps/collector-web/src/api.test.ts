@@ -461,3 +461,4 @@ test('setCreatorCategory：平台段 + uid 编码 + body {scope,name}；失败�
   await expect(api.setCreatorCategory('youtube', 'UC%20x', 'human', '无')).rejects.toThrow('HTTP 400：分类不存在');
   expect(lastCall().url).toBe('/api/creators/by-uid/youtube/UC%2520x/category');
 });
+

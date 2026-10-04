@@ -4,6 +4,8 @@ import { useAsync } from '@/lib/useAsync';
 import { TrackSwitcher } from '@/components/TrackSwitcher';
 import { VersionSwitcher } from '@/components/VersionSwitcher';
 import { SubtitleView, type SubtitleLine } from '@/components/SubtitleView';
+import { TrackExportBar } from '@/components/TrackExportBar';
+import { CollectSeasonCard } from '@/components/CollectSeasonCard';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -205,6 +207,9 @@ export function VideoDetail({ source, sourceVid, onBack }: { source: string; sou
         </CardContent>
       </Card>
 
+      {/* 合集卡（Phase 3）：extra.ugc_season 存在才渲染（组件自身 null，这里保持零分支） */}
+      <CollectSeasonCard extra={e} />
+
       {/* 标签（五档带色全展示不去重；manual/batch/ai 可增删，bili/season 为视频自带只读） */}
       <Card>
         <CardContent className="space-y-2 p-4">
@@ -310,6 +315,9 @@ export function VideoDetail({ source, sourceVid, onBack }: { source: string; sou
         {!bodyQ.loading && !bodyQ.error && (
           <SubtitleView body={(bodyQ.data?.version?.payload?.body ?? []) as SubtitleLine[]} sourceVid={sourceVid} />
         )}
+        {/* 按轨导出条（CLI export subtitle 的 web 形态）：与 SubtitleView 同级、不动其内部；
+            无轨时组件自身渲染 null，这里保持零分支（复杂度在台账线 45） */}
+        <TrackExportBar source={source} sourceVid={sourceVid} tracks={tracks} />
       </section>
     </div>
   );

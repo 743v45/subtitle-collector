@@ -57,7 +57,7 @@ test('parseHash：未知路径 → collect（容错不崩）', () => {
 });
 
 test('parseHash：全部 tab 直达', () => {
-  for (const t of ['stats', 'clients', 'categories', 'tags', 'changes', 'creators', 'collect'] as const) {
+  for (const t of ['stats', 'clients', 'categories', 'tags', 'changes', 'creators', 'collect', 'search', 'translate'] as const) {
     assert.equal(parseHash(`#/${t}`).tab, t, `tab ${t}`);
   }
 });

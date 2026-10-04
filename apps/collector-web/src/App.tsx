@@ -10,12 +10,14 @@ import { CreatorsPage } from './pages/CreatorsPage';
 import { CreatorDetailPage } from './pages/CreatorDetailPage';
 import { ChangesLog } from './pages/ChangesLog';
 import { TasksHistoryPage } from './pages/TasksHistoryPage';
+import { SubSearchPage } from './pages/SubSearchPage';
+import { TranslatePage } from './pages/TranslatePage';
 import { SettingsPage } from './pages/SettingsPage';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { cn } from '@/lib/utils';
 import { navigate, useRoute, type Tab } from './router';
 import {
-  BarChart3, Captions, Film, FolderTree, History, Inbox, MonitorSmartphone, MoreHorizontal, ScrollText, Settings, Tags, Users,
+  BarChart3, Captions, Film, FolderTree, History, Inbox, Languages, MonitorSmartphone, MoreHorizontal, ScrollText, Search, Settings, Tags, Users,
   type LucideIcon,
 } from 'lucide-react';
 
@@ -25,6 +27,8 @@ const TABS: { key: Tab; label: string; icon: LucideIcon }[] = [
   { key: 'collect', label: '采集', icon: Inbox },
   { key: 'history', label: '历史', icon: History },
   { key: 'videos', label: '视频', icon: Film },
+  { key: 'search', label: '字幕检索', icon: Search },
+  { key: 'translate', label: '补翻', icon: Languages },
   { key: 'stats', label: '看板', icon: BarChart3 },
   { key: 'creators', label: '创作者', icon: Users },
   { key: 'categories', label: '创作者分类', icon: FolderTree },
@@ -38,8 +42,9 @@ const PRIMARY_TABS = TABS.filter((t) => PRIMARY_KEYS.has(t.key));
 const SECONDARY_TABS = TABS.filter((t) => !PRIMARY_KEYS.has(t.key));
 
 // 桌面侧栏分组：工作流（日常操作）→ 内容组织（库的维度）→ 系统（运维）
+// Phase 1（CLI 全功能 web 化）：search/translate 归工作流组（字幕检索=消费侧查询,补翻=字幕加工）
 const NAV_GROUPS: { title: string; keys: readonly Tab[] }[] = [
-  { title: '工作流', keys: ['collect', 'history', 'videos'] },
+  { title: '工作流', keys: ['collect', 'history', 'videos', 'search', 'translate'] },
   { title: '内容组织', keys: ['creators', 'categories', 'tags'] },
   { title: '系统', keys: ['stats', 'clients', 'changes', 'settings'] },
 ];
@@ -84,6 +89,10 @@ export default function App() {
     <TasksHistoryPage />
   ) : tab === 'collect' ? (
     <CollectPage />
+  ) : tab === 'search' ? (
+    <SubSearchPage />
+  ) : tab === 'translate' ? (
+    <TranslatePage />
   ) : tab === 'stats' ? (
     <StatsPage />
   ) : tab === 'clients' ? (

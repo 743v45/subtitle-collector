@@ -1,15 +1,81 @@
 // ── 设置页（2026-08-22）──
-// 系统级配置的集中入口（区别于功能页内嵌的操作开关）。当前：采集超时（按平台分档）。
+// 系统级配置的集中入口（区别于功能页内嵌的操作开关）。当前：server 状态卡 + 采集超时（按平台分档）。
 // 后续新配置项落本页，不再散进功能页。
 import { useEffect, useState } from 'react';
 import { getCollectTimeout, setCollectTimeout } from '../api';
+import { getServerStatus } from '../api-extra';
+import type { ServerStatus } from '../api-extra';
 import { Button } from '@/components/ui/button';
+import { Badge } from '@/components/ui/badge';
 import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useToast } from '@/components/ui/toast';
 import { useAsync } from '@/lib/useAsync';
 import { Loader2 } from 'lucide-react';
+
+// 秒 → 人话时长（天/小时取整，秒以下不展示）；非法值（负数/NaN）回落 —
+export function humanizeUptime(s: number): string {
+  if (!Number.isFinite(s) || s < 0) return '—';
+  const d = Math.floor(s / 86400);
+  const h = Math.floor((s % 86400) / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  if (d > 0) return `${d} 天 ${h} 小时`;
+  if (h > 0) return `${h} 小时 ${m} 分钟`;
+  if (m > 0) return `${m} 分钟`;
+  return '不到 1 分钟';
+}
+
+// server 状态卡（CLI status 的 web 形态）：版本/运行时长/在线客户端/库计数/鉴权徽章/db 路径。
+// 鉴权只展示状态徽章，绝不回显 token 本体。
+function ServerStatusCard() {
+  const { data, loading, error, reload } = useAsync<ServerStatus>(() => getServerStatus(), []);
+  return (
+    <Card>
+      <CardContent className="space-y-2 p-4">
+        <div className="flex items-center justify-between">
+          <div className="text-sm font-medium">服务状态</div>
+          {data && <Badge variant="outline" className="font-mono font-normal">v{data.version}</Badge>}
+        </div>
+        {loading && <Skeleton className="h-20 w-full" />}
+        {!loading && error && (
+          <div>
+            <div className="text-sm text-destructive">状态获取失败：{error}</div>
+            <Button variant="outline" size="sm" className="mt-2" onClick={reload}>
+              重试
+            </Button>
+          </div>
+        )}
+        {!loading && !error && data && (
+          <div className="space-y-2 text-sm">
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
+              <span>运行 {humanizeUptime(data.uptime_s)}</span>
+              <span>
+                在线客户端 <span className="tabular-nums">{data.online_clients}</span>
+              </span>
+              {data.config.auth_required ? (
+                data.config.token_configured ? (
+                  <Badge>鉴权已启用</Badge>
+                ) : (
+                  <Badge variant="destructive">鉴权未配 token</Badge>
+                )
+              ) : (
+                <Badge variant="outline">鉴权未启用</Badge>
+              )}
+            </div>
+            <div className="flex flex-wrap gap-x-4 gap-y-1 text-muted-foreground">
+              <span>视频 {data.counts.videos}</span>
+              <span>轨 {data.counts.tracks}</span>
+              <span>版本 {data.counts.versions}</span>
+              <span>任务 {data.counts.collect_tasks}</span>
+            </div>
+            <div className="break-all font-mono text-xs text-muted-foreground">{data.db_path}</div>
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
 
 // 采集超时卡片：youtube/douyin=扩展无进展窗口（持续无新进展判超时,慢视频轨加载极慢时调大,如反复
 // 「YouTube 采集超时（45s）」的长视频）;bilibili=server 等回执预算（扩展纯 API 拉取无自限）。
@@ -94,6 +160,7 @@ export function SettingsPage() {
   return (
     <div className="space-y-4">
       <h2 className="text-xl font-semibold tracking-tight">设置</h2>
+      <ServerStatusCard />
       <CollectTimeoutCard />
     </div>
   );

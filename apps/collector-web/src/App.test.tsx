@@ -15,6 +15,8 @@ import App from './App';
 vi.mock('./pages/CollectPage', () => ({ CollectPage: () => <div data-testid="page-collect">COLLECT</div> }));
 vi.mock('./pages/VideoList', () => ({ VideoList: () => <div data-testid="page-videos">VIDEOLIST</div> }));
 vi.mock('./pages/TasksHistoryPage', () => ({ TasksHistoryPage: () => <div data-testid="page-history">HISTORY</div> }));
+vi.mock('./pages/SubSearchPage', () => ({ SubSearchPage: () => <div data-testid="page-search">SUBSEARCH</div> }));
+vi.mock('./pages/TranslatePage', () => ({ TranslatePage: () => <div data-testid="page-translate">TRANSLATE</div> }));
 vi.mock('./pages/VideoDetail', () => ({
   VideoDetail: ({ onBack }: { onBack: () => void }) => (
     <button data-testid="vd-back" onClick={onBack}>VD 返回</button>
@@ -42,6 +44,10 @@ beforeEach(() => {
     if (url === '/api/settings/tag-priority') return Promise.resolve(ok({ priority: ['manual', 'batch', 'bili', 'season', 'ai'] }));
     if (url.startsWith('/api/categories')) return Promise.resolve(ok({ items: [] }));
     if (url === '/api/settings/collect-timeout') return Promise.resolve(ok({ bilibili: 90000, youtube: 45000 }));
+    if (url === '/api/status') return Promise.resolve(ok({
+      version: '0.0.0', uptime_s: 60, config: { host: 'h', port: 1, auth_required: false, token_configured: false, allowed_hosts: '*' },
+      db_path: '/x.db', online_clients: 0, counts: { videos: 0, creators: 0, tracks: 0, versions: 0, collect_tasks: 0 },
+    }));
     if (url.startsWith('/api/creators')) return Promise.resolve(ok({ total: 0, items: [] }));
     if (url.startsWith('/api/videos')) return Promise.resolve(ok({ total: 0, items: [] }));
     if (url.startsWith('/api/stats?type=overview')) return Promise.resolve(ok({
@@ -94,6 +100,18 @@ test('hash 直达 history → TasksHistoryPage（mock 标记）', () => {
   window.history.replaceState(null, '', '#/history');
   render(<App />);
   expect(screen.getByTestId('page-history')).toBeInTheDocument();
+});
+
+test('hash 直达 search / translate（含工作台 vid query）→ Phase 1 新页挂载（mock 标记）', () => {
+  window.history.replaceState(null, '', '#/search');
+  const a = render(<App />);
+  expect(screen.getByTestId('page-search')).toBeInTheDocument();
+  a.unmount();
+
+  window.history.replaceState(null, '', '#/translate?vid=bilibili%3ABV1&from=en');
+  const b = render(<App />);
+  expect(screen.getByTestId('page-translate')).toBeInTheDocument();
+  b.unmount();
 });
 
 test('hash 直达 stats / clients / changes → 对应真实页面挂载', async () => {

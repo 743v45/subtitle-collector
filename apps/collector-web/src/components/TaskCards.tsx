@@ -37,23 +37,24 @@ export function retryable(t: CollectTask): boolean {
 // 重试提交（2026-08-22 抽取两页共用；同日改为原地重置）：failed/limited 行经 retry 端点重置回
 // pending 原行重跑——不建新行，批次卡/聚焦视图/进度徽章随原行实时更新（旧方案新建行挂原批，
 // 原失败行永不更新，批次徽章永远停在「失败」）。在途/succeeded 行 server 端逐个跳过。
-// 返回统计供调用方 toast：alreadyOk=库内已有字幕直接标记成功（免重采），dispatched=重新下发。
+// 返回统计供调用方 toast：alreadyOk=库内已有字幕直接标记成功（免重采），dispatched=重新下发，skipped=不可重试被跳过的行数。
 // 顺带在用户手势内请求通知授权——重试后跑完要能弹系统提醒。
-export async function resubmitTasks(list: CollectTask[]): Promise<{ dispatched: number; alreadyOk: number }> {
+export async function resubmitTasks(list: CollectTask[]): Promise<{ dispatched: number; alreadyOk: number; skipped: number }> {
   const ids = list.filter(retryable).map((t) => t.id);
-  if (ids.length === 0) return { dispatched: 0, alreadyOk: 0 };
+  if (ids.length === 0) return { dispatched: 0, alreadyOk: 0, skipped: list.length };
   requestTaskNotifyPermission();
   const r = await retryCollectTasks(ids);
   const alreadyOk = r.tasks.filter((t) => t.status === 'succeeded').length; // already_collected 短路
-  return { dispatched: r.retried - alreadyOk, alreadyOk };
+  return { dispatched: r.retried - alreadyOk, alreadyOk, skipped: list.length - ids.length };
 }
 
 // 重试结果 → toast 文案（两页共用）
-export function retrySummary({ dispatched, alreadyOk }: { dispatched: number; alreadyOk: number }): string {
-  if (dispatched > 0 && alreadyOk > 0) return `已重新下发 ${dispatched} 个任务；${alreadyOk} 个库内已有字幕，直接标记成功`;
-  if (alreadyOk > 0) return `${alreadyOk} 个任务库内已有字幕，已直接标记成功（免重采）`;
-  if (dispatched > 0) return `已重试 ${dispatched} 个任务（扩展在线即开始采集）`;
-  return '没有可重试的任务（可能已在队列中）';
+export function retrySummary({ dispatched, alreadyOk, skipped = 0 }: { dispatched: number; alreadyOk: number; skipped?: number }): string {
+  const skipNote = skipped > 0 ? '，不可重试行已跳过' : '';
+  if (dispatched > 0 && alreadyOk > 0) return `已重新下发 ${dispatched} 个任务；${alreadyOk} 个库内已有字幕，直接标记成功${skipNote}`;
+  if (alreadyOk > 0) return `${alreadyOk} 个任务库内已有字幕，已直接标记成功（免重采）${skipNote}`;
+  if (dispatched > 0) return `已重试 ${dispatched} 个任务（扩展在线即开始采集）${skipNote}`;
+  return `没有可重试的任务（可能已在队列中）${skipNote}`;
 }
 
 export function formatTs(ts: number | null | undefined): string {

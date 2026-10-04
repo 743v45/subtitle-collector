@@ -10,6 +10,8 @@
 // | R3 | 标签增删（POST/DELETE 端点契约 + toast + reload） | 通过 | 包 ToastProvider 断言文案 |
 // | R4 | 轨/版本：URL 参数命中/非法回落默认、切换写回 query、正文/失败重试 | 通过 | hash 直改 + hashchange |
 // | R5 | douyin（2026-08-29）：B 站专属字段降级、stat 同构、douyin 外链、bili 档话题标签只读 | 通过 | |
+// | R6 | 按轨导出条（CLI 全功能 web 化 Phase 2）：字幕正文区挂 TrackExportBar，轨选项来自 detail.tracks；URL 组装带 track+format | 通过 | 页面接线断言，组件内部见 TrackExportBar.test.tsx |
+// | R7 | 合集卡（Phase 3）：extra.ugc_season 直通渲染折叠头；无 season 不渲染 | 通过 | 组件行为见 CollectSeasonCard.test.tsx |
 import { test, expect, vi, afterEach } from 'vitest';
 import { render, screen, fireEvent, cleanup, waitFor } from '@testing-library/react';
 import { VideoDetail } from './VideoDetail';
@@ -388,4 +390,80 @@ test('无版本轨：selectedVersion=null → 不发 getVersion，正文空', as
   await waitFor(() => expect(versionCalls).toHaveLength(0));
   // 版本区不渲染（单版本拦截在 VersionSwitcher 内部）
   expect(screen.getByText('字幕正文')).toBeInTheDocument();
+});
+
+// ── R6：按轨导出条（TrackExportBar 页面接线；组件内部行为见 TrackExportBar.test.tsx）──
+
+// 下载链 stub（download.test.ts R3 同款）：jsdom 无 createObjectURL，defineProperty 覆盖 + 锚点 click 拦截
+function stubAnchorDownload() {
+  Object.defineProperty(URL, 'createObjectURL', { value: vi.fn(() => 'blob:mock'), configurable: true });
+  Object.defineProperty(URL, 'revokeObjectURL', { value: vi.fn(), configurable: true });
+  return vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {});
+}
+
+test('按轨导出条：挂字幕正文区（SubtitleView 之后）、默认轨 + srt 缺省；导出 → export subtitle 端点 + toast', async () => {
+  stubAnchorDownload();
+  const exportUrls: string[] = [];
+  stubFetch((url) => {
+    if (url.includes('/api/videos/')) return detailPayload();
+    if (url.includes('/api/versions/')) return versionBody('正文行');
+    if (url.startsWith('/api/export/subtitle/')) {
+      exportUrls.push(url);
+      return new Response('1\n00:00:01,000 --> 00:00:02,000\n字幕行', {
+        status: 200,
+        headers: {
+          'content-type': 'application/x-subrip',
+          'content-disposition': 'attachment; filename="BV1test.srt"',
+        },
+      });
+    }
+  });
+  renderDetailWithToast();
+  expect(await screen.findByText('正文行')).toBeInTheDocument();
+
+  // 条与默认轨显示（label = lan_doc + 默认标 + lan）；与 SubtitleView 同区并存
+  expect(screen.getByText('按轨导出：')).toBeInTheDocument();
+  expect(screen.getByLabelText('选择导出字幕轨')).toHaveTextContent('中文（简体）（默认） · zh-CN');
+  expect(screen.getByLabelText('选择导出格式')).toHaveTextContent('SRT');
+
+  fireEvent.click(screen.getByRole('button', { name: '导出' }));
+  await waitFor(() => expect(exportUrls).toEqual(['/api/export/subtitle/bilibili/BV1test?track=11&format=srt']));
+  expect(await screen.findByText('已导出 BV1test.srt')).toBeInTheDocument();
+});
+
+test('无字幕视频（tracks 空）→ 按轨导出条不渲染', async () => {
+  stubFetch((url) => {
+    if (url.includes('/api/videos/')) return detailPayload({ tracks: [], tags: [] });
+    if (url.includes('/api/versions/')) return versionBody('不应有正文');
+  });
+  renderDetail();
+  expect(await screen.findByText('详情页视频')).toBeInTheDocument();
+  expect(screen.queryByText('按轨导出：')).toBe(null);
+});
+
+// ── 合集卡（Phase 3）：页面接线（组件内部行为见 CollectSeasonCard.test.tsx）──
+
+test('合集卡：extra.ugc_season 存在 → 元信息卡下方渲染折叠头（初始不拉 season/preview）', async () => {
+  const calls: string[] = [];
+  vi.stubGlobal('fetch', vi.fn(async (input: any) => {
+    const url = typeof input === 'string' ? input : input.url;
+    calls.push(url);
+    if (url.includes('/api/videos/')) return jsonResponse(detailPayload({ extra: JSON.stringify({ ugc_season: { id: 777, title: '加息全集' } }) }));
+    return jsonResponse({ ok: true });
+  }));
+  renderDetail();
+  expect(await screen.findByText('详情页视频')).toBeInTheDocument();
+  expect(screen.getByText(/合集：加息全集/)).toBeInTheDocument();
+  // 初始不展开不请求；点击展开才拉（组件内部逻辑，这里断言接线与首帧）
+  expect(calls.some((u) => u.includes('/api/season/preview'))).toBe(false);
+});
+
+test('合集卡：extra 无 ugc_season（默认 fixture）→ 不渲染合集折叠头', async () => {
+  stubFetch((url) => {
+    if (url.includes('/api/videos/')) return detailPayload();
+    if (url.includes('/api/versions/')) return versionBody('x');
+  });
+  renderDetail();
+  expect(await screen.findByText('详情页视频')).toBeInTheDocument();
+  expect(screen.queryByText(/合集：/)).toBe(null);
 });

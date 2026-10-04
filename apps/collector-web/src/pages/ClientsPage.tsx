@@ -70,6 +70,10 @@ function ClientCard({ c, now, busy, onToggleReporting, onToggleDispatch }: {
           {/* 平台登录态（B 站：2026-08-24 充电视频 no_subtitle 判因；YouTube：2026-08-25 镜像——年龄限制/pot 受限判因） */}
           <ClientLoginBadge login={c.bili_login} platform="bilibili" />
           <ClientLoginBadge login={c.yt_login} platform="youtube" />
+          {/* 派发关语义说明（Phase 3 小文案）：开关处于关位时点明「不是断连，只是不派任务」 */}
+          {dispatchOn === false && c.connected && (
+            <div className="text-xs text-muted-foreground">关 = 仅上报状态，不派采集任务</div>
+          )}
         </div>
         {c.connected && (
           <div className="flex shrink-0 items-center gap-2">

@@ -4,9 +4,10 @@
 // 不引 react-router：8 tab + 2 详情 + query 的规模，手写 ~80 行成本低于引库（含 20 筛选同步胶水仍要自写）。
 import { useEffect, useState } from 'react';
 
-export type Tab = 'collect' | 'history' | 'videos' | 'stats' | 'clients' | 'categories' | 'tags' | 'creators' | 'changes' | 'settings';
+export type Tab = 'collect' | 'history' | 'videos' | 'search' | 'stats' | 'clients' | 'categories' | 'tags' | 'creators' | 'changes' | 'translate' | 'settings';
 
-export const TABS: readonly Tab[] = ['collect', 'history', 'videos', 'stats', 'creators', 'categories', 'tags', 'clients', 'changes', 'settings'];
+// search=字幕检索（videos 之后 stats 之前）；translate=补翻（settings 之前）——CLI 全功能 web 化 Phase 1
+export const TABS: readonly Tab[] = ['collect', 'history', 'videos', 'search', 'stats', 'creators', 'categories', 'tags', 'clients', 'changes', 'translate', 'settings'];
 
 export interface Route {
   tab: Tab;
