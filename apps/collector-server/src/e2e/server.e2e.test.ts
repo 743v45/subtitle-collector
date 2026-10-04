@@ -19,6 +19,7 @@
 // | R3 | 采集任务生命周期：单条→派发→succeeded、双击去重、失败分类（普通/needs_update/pot_limited）、retry（重置重跑/already_collected）、youtube watch/shorts、batch+历史筛选+删除、upper-videos/expand（含空页终止/整页重复停滞终止） | 通过 | B3 重写为「先设 handler 再建任务」受控时序（原写法命令到达时已被默认 handler 回执） |
 // | R4 | 超时与迟到改判：bilibili 超时 15s → failed「扩展执行超时」→ 迟到 result / 迟到 ingest 改判 succeeded + 心跳 sweep 存活断言 | 通过 | 观察窗 14s→17s：首轮 sweep（子进程 t≈30.7s）差 0.3s 未跑到 |
 // | R5 | token 鉴权：WS 错 token nack+close(4001)、暴露部署（0.0.0.0）HTTP 401/Bearer/同源/sec-fetch-site/evil-Host 403、缺 token 拒启动 | 通过 | |
+// | R7 | B1：401 结构化日志（method/url/host/originHostname/secFetchSite/hasBearer；token 不入日志断言）+ 同源伪造对放行不落 401 | 通过 | pnpm test 全绿 |
 // | R6 | 终验：验收命令裸跑（无 c8）+ c8 覆盖率跑均 17/17 通过；无残留子进程/临时目录 | 通过 | 全程 ~46s（含真实 15s 超时 + 17s 心跳观察窗） |
 
 import { describe, it, before, after } from 'node:test';
@@ -949,12 +950,24 @@ describe('D. token 鉴权', () => {
       assert.equal(res.status, 401);
       assert.deepEqual(res.json, { ok: false, error: 'unauthorized' });
 
+      // B1：401 落结构化日志（docker logs grep '[http] 401' 的观测口径）；
+      // 净化断言——authorization 头值（token）绝不入日志，只记 hasBearer 布尔
+      await until('401 结构化日志', () => srv.logs().includes('[http] 401'));
+      const line401 = srv.logs().split('\n').find((l) => l.includes('[http] 401'))!;
+      assert.match(line401, /method=GET url=\/api\/videos host=127\.0\.0\.1 originHostname=-> secFetchSite=-> hasBearer=false/);
+      assert.ok(!line401.includes('sec-token'), 'token 不得出现在 401 日志里');
+
+      // 同源放行路（伪造 Host/Origin 头免 token 的已知边界,2026-10-04 拍板接受现状）走 200,不落 401
+      const spoof = await rawReq(srv.port, 'GET', '/api/clients', { Host: 'localhost:21527', Origin: 'http://localhost' });
+      assert.equal(spoof.status, 200);
+
       // Bearer → 200
       res = await api(srv.base, 'GET', '/api/videos', undefined, { Authorization: 'Bearer sec-token' });
       assert.equal(res.status, 200);
-      // 错 Bearer → 401
+      // 错 Bearer → 401（日志侧 hasBearer=true：带 Bearer 形态头但 token 不对）
       res = await api(srv.base, 'GET', '/api/videos', undefined, { Authorization: 'Bearer nope' });
       assert.equal(res.status, 401);
+      await until('401 hasBearer=true 日志', () => srv.logs().split('\n').some((l) => l.includes('[http] 401') && l.includes('hasBearer=true')));
 
       // 同源浏览器（Origin hostname === Host hostname）→ 免 token
       res = await api(srv.base, 'GET', '/api/videos', undefined, { Origin: `http://127.0.0.1:${srv.port}` });

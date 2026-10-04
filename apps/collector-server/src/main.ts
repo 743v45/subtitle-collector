@@ -104,6 +104,22 @@ const API_ROUTES: Array<[prefix: string, handler: (req: IncomingMessage, res: Se
   ['/api/', (req, res, db) => handleQueryHttp(req, res, db)],
 ];
 
+// B1 401 结构化日志的配套净化：请求方可控的头（host/origin/url/sec-fetch-site）进日志前
+// 去端口、去控制字符、截断，防伪造头把换行等注入内容带进日志。
+// authorization 头任何情况下不落日志——只记 hasBearer 布尔（是否带 Bearer 形态头），防 token 入日志。
+const sanitizeForLog = (v: string | undefined, max = 64): string => {
+  if (!v) return '->';
+  const cleaned = String(v).replace(/[\x00-\x1f\x7f]/g, '').split(':')[0].trim().slice(0, max);
+  return cleaned || '->';
+};
+const originHostnameForLog = (v: string | undefined): string => {
+  if (!v) return '->';
+  try {
+    // URL hostname 本就不含端口；再截断 + 控制字符净化对齐 sanitizeForLog
+    return new URL(String(v)).hostname.replace(/[\x00-\x1f\x7f]/g, '').slice(0, 64) || '->';
+  } catch { return '->'; }
+};
+
 const httpServer = createServer((req, res) => {
   if (req.url === '/ping') { res.writeHead(200, { 'Content-Type': 'application/json' }); res.end('{"ok":true}'); return; }
   if (!originAllowed(req)) { res.writeHead(403, { 'Content-Type': 'application/json' }); res.end('{"ok":false,"error":"forbidden"}'); return; } // C2
@@ -116,6 +132,15 @@ const httpServer = createServer((req, res) => {
     authorization: req.headers['authorization'] as string | undefined,
     secFetchSite: req.headers['sec-fetch-site'] as string | undefined,
   })) {
+    // B1：401 此前零日志——暴露部署下鉴权失败不可观测。结构化一行供 docker logs grep '[http] 401'。
+    const authz = req.headers['authorization'];
+    console.warn(
+      `[http] 401 method=${req.method ?? '->'} url=${sanitizeForLog(req.url, 120)}`
+      + ` host=${sanitizeForLog(req.headers['host'] as string | undefined)}`
+      + ` originHostname=${originHostnameForLog(req.headers['origin'] as string | undefined)}`
+      + ` secFetchSite=${sanitizeForLog(req.headers['sec-fetch-site'] as string | undefined)}`
+      + ` hasBearer=${typeof authz === 'string' && authz.startsWith('Bearer ')}`,
+    );
     res.writeHead(401, { 'Content-Type': 'application/json; charset=utf-8' });
     res.end('{"ok":false,"error":"unauthorized"}');
     return;
