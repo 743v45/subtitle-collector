@@ -60,7 +60,7 @@
 | P2-2 | 备份与 server 解耦 | 备份定时器与 server 同进程同生死（[main.ts:128](../../apps/collector-server/src/main.ts#L128)），server 挂 = 采集停 + 备份同时停（14h 备份空窗前科）；告警也依赖同进程活着。方案候选：compose sidecar / host 定时 `docker exec` 触发 VACUUM INTO | ☐ |
 | P2-3 | 采集执行体单点缓解 | 三入口写 collect_tasks，唯一执行者 = 一台桌面 Chrome 的扩展 SW，扩展不在线任务全停；方案候选：dispatched 超时改派 / 多客户端派发（状态机已备，缺 policy） | ☐ |
 | P2-4 | douyin 遗留三件 | popup 抖音卡、popup「上报」哑按钮（[DOUYIN-PROGRESS.md:161](../../DOUYIN-PROGRESS.md#L161)）、博主批量 CLI 入口；**前置 = U-2 真机验证通过** | ☐ 前置未满足 |
-| P2-5 | web 评论展示 | VideoDetail 评论树渲染 + server 评论查询子路由（挂点已探明：统计卡 `stat.reply` 计数处 + `/api/videos/:source/:vid/*` 子资源先例，[comments/PLAN.md §1.3](comments/PLAN.md) 显式排除项）；2026-10-05 用户指令提级执行（消费侧非冻结截留） | ☐ 本轮执行 |
+| P2-5 | web 评论展示 | VideoDetail 评论树渲染 + server 评论查询子路由（挂点已探明：统计卡 `stat.reply` 计数处 + `/api/videos/:source/:vid/*` 子资源先例，[comments/PLAN.md §1.3](comments/PLAN.md) 显式排除项）；2026-10-05 用户指令提级执行（消费侧非冻结截留） | ✅（2026-10-05，server：db/comments-tree.ts shapeTree 共享 + GET /api/videos/:source/:vid/comments（091e248）；web：CommentTreePanel 懒展开 + limit=20「加载全部」（本 commit）） |
 
 ## 4. P3（观察 / 待拍板）
 

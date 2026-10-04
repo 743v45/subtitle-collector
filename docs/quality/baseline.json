@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-10-04T21:24:47.582Z",
+  "generatedAt": "2026-10-04T21:55:37.588Z",
   "rules": {
     "complexity": 15,
     "maxLines": 400
@@ -53,8 +53,7 @@
       "maxLines": 426
     },
     "apps/collector-web/src/api.ts": {
-      "complexity": 26,
-      "maxLines": 434
+      "maxLines": 432
     },
     "apps/collector-web/src/components/TaskCards.tsx": {
       "complexity": 24
@@ -83,7 +82,7 @@
       "maxLines": 403
     },
     "apps/collector-web/src/pages/VideoDetail.tsx": {
-      "complexity": 42
+      "complexity": 27
     },
     "apps/collector-web/src/pages/VideoList.tsx": {
       "complexity": 52,

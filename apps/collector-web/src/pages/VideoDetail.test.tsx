@@ -10,6 +10,7 @@
 // | R3 | 标签增删（POST/DELETE 端点契约 + toast + reload） | 通过 | 包 ToastProvider 断言文案 |
 // | R4 | 轨/版本：URL 参数命中/非法回落默认、切换写回 query、正文/失败重试 | 通过 | hash 直改 + hashchange |
 // | R5 | douyin（2026-08-29）：B 站专属字段降级、stat 同构、douyin 外链、bili 档话题标签只读 | 通过 | |
+// | R6 | 评论树入口（P2-5）：bilibili 懒展开拉 /comments 渲染树、douyin/youtube 无入口 | 通过 | 收起不发请求 |
 import { test, expect, vi, afterEach } from 'vitest';
 import { render, screen, fireEvent, cleanup, waitFor } from '@testing-library/react';
 import { VideoDetail } from './VideoDetail';
@@ -388,4 +389,62 @@ test('无版本轨：selectedVersion=null → 不发 getVersion，正文空', as
   await waitFor(() => expect(versionCalls).toHaveLength(0));
   // 版本区不渲染（单版本拦截在 VersionSwitcher 内部）
   expect(screen.getByText('字幕正文')).toBeInTheDocument();
+});
+
+// ── 评论树入口（P2-5 web 评论展示）：统计卡下方懒展开，树渲染细节在 CommentTreePanel.test.tsx ──
+
+test('评论（bilibili）：入口存在且收起不发 /comments 请求；展开 → limit=20 → 评论树渲染', async () => {
+  const urls: string[] = [];
+  stubFetch((url) => {
+    urls.push(url);
+    if (url.includes('/comments')) {
+      return {
+        ok: true, source: 'bilibili', source_vid: 'BV1test',
+        counts: { rows: 2, roots: 1, floors: 1 },
+        roots: [{
+          id: 1, rpid_str: '101', root_rpid: '0', parent_rpid: '0', dialog_rpid: '0', is_root: 1,
+          uname: 'UP酱', message: '根评论正文', like_count: 20, ctime_s: 1797411600,
+          ip_location: '广东', state: 0, folded: 0, up_reply: 0, is_up: 1, pin_kind: null,
+          floors: [{
+            id: 2, rpid_str: '201', root_rpid: '101', parent_rpid: '101', dialog_rpid: '101', is_root: 0,
+            uname: '张三', message: '楼层正文', like_count: 8, ctime_s: 1797411700,
+            ip_location: null, state: 0, folded: 0, up_reply: 0, is_up: 0, pin_kind: null,
+            depth: 1, reply_to: null, parent_missing: false,
+          }],
+        }],
+        orphans: [], truncated: false, limit: 20,
+      };
+    }
+    if (url.includes('/api/videos/')) return detailPayload();
+    if (url.includes('/api/versions/')) return versionBody('正文内容行');
+  });
+  renderDetail();
+  await screen.findByText('详情页视频');
+  // 收起：按钮在但不发评论请求
+  expect(screen.getByRole('button', { name: '评论' })).toBeInTheDocument();
+  await waitFor(() => expect(urls.filter((u) => u.includes('/comments'))).toHaveLength(0));
+  // 展开：limit=20 → 头部计数 + 根头行 + 楼层
+  fireEvent.click(screen.getByRole('button', { name: '评论' }));
+  expect(await screen.findByText('评论区树：共 2 条（根 1 / 楼中楼 1）')).toBeInTheDocument();
+  expect(screen.getByText('【赞 20】@UP酱（UP主）')).toBeInTheDocument();
+  expect(screen.getByText('【赞 8】@张三：楼层正文')).toBeInTheDocument();
+  expect(urls.find((u) => u.includes('/comments'))).toContain('/api/videos/bilibili/BV1test/comments?limit=20');
+});
+
+test('评论（youtube/douyin）：无评论入口（统计卡不挂面板）', async () => {
+  stubFetch((url) => {
+    if (url.includes('/api/videos/')) return detailPayload({ tags: [] });
+    if (url.includes('/api/versions/')) return versionBody('yt line');
+  });
+  renderDetail('youtube', 'dQw4w9WgXcQ');
+  await screen.findByText('详情页视频');
+  expect(screen.queryByRole('button', { name: '评论' })).toBe(null);
+
+  stubFetch((url) => {
+    if (url.includes('/api/videos/')) return detailPayload({ tags: [] });
+    if (url.includes('/api/versions/')) return versionBody('dy line');
+  });
+  renderDetail('douyin', '7300000000000000001');
+  await screen.findByText('详情页视频');
+  expect(screen.queryByRole('button', { name: '评论' })).toBe(null);
 });

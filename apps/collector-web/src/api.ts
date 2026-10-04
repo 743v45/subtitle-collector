@@ -2,6 +2,7 @@ import type {
   VideoListItem, VideoDetail, VideoFilter, ClientInfo,
   StatsOverview, KeyValue, StatsGroupBy, CreatorDetail, ChangeRow,
   TagSource, CollectTask, CollectTaskStatus, UpperVideoItem, Category,
+  VideoComments,
 } from './types';
 import type { SubtitleLine } from '@/components/SubtitleView';
 export type { Category };
@@ -38,26 +39,16 @@ async function ensureOk<T>(r: Response, parse: (json: any) => T): Promise<T> {
 // ── 视频 ──
 export async function listVideos(filter: VideoFilter = {}): Promise<{ total: number; items: VideoListItem[] }> {
   const u = new URLSearchParams();
-  if (filter.q) u.set('q', filter.q);
-  if (filter.source) u.set('source', filter.source);
-  if (filter.tid != null) u.set('tid', String(filter.tid));
-  if (filter.tname) u.set('tname', filter.tname);
-  if (filter.tag) u.set('tag', filter.tag);
+  // 字符串参数真值才发；数字参数（since/min_view 等）0 合法 → != null 才发；
+  // desc 显式发：省略会被 server 缺省降序吃掉（P2-5 顺手表驱动化，偿还 maxLines 台账）
+  const strs = { q: filter.q, source: filter.source, tname: filter.tname, tag: filter.tag, subtitle_q: filter.subtitle_q, lang: filter.lang, date_field: filter.date_field, sort: filter.sort };
+  for (const [k, v] of Object.entries(strs)) if (v) u.set(k, v);
+  const nums = { tid: filter.tid, since: filter.since, until: filter.until, min_duration: filter.min_duration, max_duration: filter.max_duration, creator_id: filter.creator_id, min_view: filter.min_view, max_view: filter.max_view };
+  for (const [k, v] of Object.entries(nums)) if (v != null) u.set(k, String(v));
   if (filter.tags?.length) u.set('tags', filter.tags.join(','));
   if (filter.tag_source?.length) u.set('tag_source', filter.tag_source.join(','));
-  if (filter.subtitle_q) u.set('subtitle_q', filter.subtitle_q);
-  if (filter.lang) u.set('lang', filter.lang);
   if (filter.has_subtitle) u.set('has_subtitle', 'true');
-  if (filter.since != null) u.set('since', String(filter.since));
-  if (filter.until != null) u.set('until', String(filter.until));
-  if (filter.min_duration != null) u.set('min_duration', String(filter.min_duration));
-  if (filter.max_duration != null) u.set('max_duration', String(filter.max_duration));
-  if (filter.creator_id != null) u.set('creator_id', String(filter.creator_id));
-  if (filter.min_view != null) u.set('min_view', String(filter.min_view));
-  if (filter.max_view != null) u.set('max_view', String(filter.max_view));
-  if (filter.date_field) u.set('date_field', filter.date_field);
-  if (filter.sort) u.set('sort', filter.sort);
-  if (filter.desc != null) u.set('desc', String(filter.desc)); // false 显式发：省略会被 server 缺省降序吃掉
+  if (filter.desc != null) u.set('desc', String(filter.desc));
   u.set('page', String(filter.page ?? 1));
   u.set('size', String(filter.size ?? 20));
   const r = await fetch(`${BASE}/api/videos?${u}`);
@@ -80,6 +71,13 @@ export async function getVideo(source: string, sourceVid: string): Promise<Video
 export async function getVersion(versionId: number): Promise<{ version: { id: number; origin: string; payload: { body: SubtitleLine[] }; captured_at: number } }> {
   const r = await fetch(`${BASE}/api/versions/${versionId}`);
   return ensureOk(r, (j) => j);
+}
+
+// 单视频评论树（P2-5 web；树组装与 CLI comments tree 共享 server db 层 shapeTree）。limit>0 → 只取点赞前 N 根，0/缺省省略参数=server 不限
+export async function getVideoComments(source: string, sourceVid: string, limit?: number): Promise<VideoComments> {
+  const q = limit ? `?limit=${limit}` : '';
+  const r = await fetch(`${BASE}/api/videos/${source}/${encodeURIComponent(sourceVid)}/comments${q}`);
+  return ensureOk(r, (j) => ({ counts: j.counts, roots: j.roots ?? [], orphans: j.orphans ?? [], truncated: j.truncated ?? false, limit: j.limit ?? 0 }));
 }
 
 // ── change_log（最近采集/变更流水）──

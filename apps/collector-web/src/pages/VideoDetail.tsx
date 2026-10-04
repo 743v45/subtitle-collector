@@ -4,6 +4,7 @@ import { useAsync } from '@/lib/useAsync';
 import { TrackSwitcher } from '@/components/TrackSwitcher';
 import { VersionSwitcher } from '@/components/VersionSwitcher';
 import { SubtitleView, type SubtitleLine } from '@/components/SubtitleView';
+import { CommentTreePanel } from '@/components/CommentTreePanel';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -18,7 +19,7 @@ import { cn } from '@/lib/utils';
 import { ExtLink } from '@/components/ExtLink';
 import { ArrowLeft, ExternalLink, Loader2, X } from 'lucide-react';
 import type { ReactNode } from 'react';
-import type { VideoStat } from '../types';
+import type { VideoInfo, VideoStat } from '../types';
 
 function errMsg(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
@@ -161,11 +162,9 @@ export function VideoDetail({ source, sourceVid, onBack }: { source: string; sou
   const v = detailQ.data.video;
   const tracks = detailQ.data.tracks;
   const track = tracks.find((t) => t.id === selectedTrack);
-  const duration = fmtDuration(v.duration);
   const e = v.extra;
   const stat: VideoStat | undefined = e?.stat;
   const tagDetails = detailQ.data.tag_details ?? [];
-  const published = fmtTime(v.published_at);
 
   return (
     <div className="mx-auto max-w-3xl space-y-3">
@@ -188,22 +187,8 @@ export function VideoDetail({ source, sourceVid, onBack }: { source: string; sou
         </Button>
       </div>
 
-      {/* 基础元信息 */}
-      <Card className="bg-muted/30">
-        <CardContent className="grid grid-cols-2 gap-3 p-4 text-sm sm:grid-cols-3 md:grid-cols-4">
-          <Field label="作者" value={v.creator_name ?? '-'}>
-            {v.creator_name && v.creator_source_uid
-              ? <ExtLink href={creatorUrl(source, v.creator_source_uid)} label={`在原站打开 ${v.creator_name} 的空间`}>{v.creator_name}</ExtLink>
-              : (v.creator_name ?? '-')}
-          </Field>
-          <Field label="时长" value={duration ?? '-'} />
-          <Field label="来源ID" value={sourceVid} mono />
-          <Field label="发布时间" value={published ?? '-'} />
-          {source === 'bilibili' && <Field label="分区" value={e?.tname ?? '-'} />}
-          {source === 'bilibili' && <Field label="版权" value={copyrightLabel(e?.copyright) ?? '-'} />}
-          {source === 'bilibili' && <Field label="P 数" value={e?.pages?.length != null ? String(e.pages.length) : '-'} />}
-        </CardContent>
-      </Card>
+      {/* 基础元信息（P2-5 顺手抽出 MetaCard，偿还组件复杂度台账） */}
+      <MetaCard v={v} source={source} sourceVid={sourceVid} />
 
       {/* 标签（五档带色全展示不去重；manual/batch/ai 可增删，bili/season 为视频自带只读） */}
       <Card>
@@ -271,6 +256,9 @@ export function VideoDetail({ source, sourceVid, onBack }: { source: string; sou
         </Card>
       )}
 
+      {/* 评论（P2-5 web 评论展示）：B 站评论区树，统计卡下方懒展开；其余平台无评论区不挂 */}
+      {source === 'bilibili' && <CommentTreePanel source={source} sourceVid={sourceVid} />}
+
       {/* 简介 */}
       {e?.desc && (
         <Card>
@@ -312,6 +300,30 @@ export function VideoDetail({ source, sourceVid, onBack }: { source: string; sou
         )}
       </section>
     </div>
+  );
+}
+
+/** 元信息卡：作者外链/时长/来源ID/发布时间 + B 站专属分区/版权/P 数（douyin/youtube 三字段不渲染）。 */
+function MetaCard({ v, source, sourceVid }: { v: VideoInfo; source: string; sourceVid: string }) {
+  const e = v.extra;
+  const duration = fmtDuration(v.duration);
+  const published = fmtTime(v.published_at);
+  return (
+    <Card className="bg-muted/30">
+      <CardContent className="grid grid-cols-2 gap-3 p-4 text-sm sm:grid-cols-3 md:grid-cols-4">
+        <Field label="作者" value={v.creator_name ?? '-'}>
+          {v.creator_name && v.creator_source_uid
+            ? <ExtLink href={creatorUrl(source, v.creator_source_uid)} label={`在原站打开 ${v.creator_name} 的空间`}>{v.creator_name}</ExtLink>
+            : (v.creator_name ?? '-')}
+        </Field>
+        <Field label="时长" value={duration ?? '-'} />
+        <Field label="来源ID" value={sourceVid} mono />
+        <Field label="发布时间" value={published ?? '-'} />
+        {source === 'bilibili' && <Field label="分区" value={e?.tname ?? '-'} />}
+        {source === 'bilibili' && <Field label="版权" value={copyrightLabel(e?.copyright) ?? '-'} />}
+        {source === 'bilibili' && <Field label="P 数" value={e?.pages?.length != null ? String(e.pages.length) : '-'} />}
+      </CardContent>
+    </Card>
   );
 }
 

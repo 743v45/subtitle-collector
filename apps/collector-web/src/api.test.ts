@@ -8,6 +8,7 @@
 // | R2 | setTaskDispatch（2026-08-23 仅上报状态） | 通过 | 与 setReporting 同构 |
 // | R3 | listVideos desc=false 显式发送（2026-08-29 排序升序修复） | 通过 | 缺省发送会被 server 降序缺省吃掉 |
 // | R4 | expandUpperVideos douyin 档（channel 键承载 sec_uid） | 通过 | 2026-08-29 C1 修复：三平台请求体形状钉死，对齐 server tasks.test |
+// | R5 | getVideoComments URL 组装（limit 有/无两态，P2-5 web 评论展示） | 通过 | listVideos 表驱动化由 R1-R3 存量断言锁行为 |
 import { test, expect, vi, afterEach } from 'vitest';
 import * as api from './api';
 import type { VideoDetail } from './types';
@@ -129,6 +130,19 @@ test('getVideo：extra JSON 字符串 → 解析成对象；sourceVid 编码', a
   const d: VideoDetail = await api.getVideo('bilibili', 'BV1/abc');
   expect(lastCall().url).toBe('/api/videos/bilibili/BV1%2Fabc');
   expect((d.video.extra as Record<string, unknown>)?.tname).toBe('科技');
+});
+
+// P2-5 web 评论展示：评论树端点 URL 组装——limit>0 进 query；0/缺省省略（server 缺省不限）
+test('getVideoComments：limit>0 → ?limit=N；0 → 无参数；响应解包 roots/orphans 缺省数组', async () => {
+  fetchMock.mockResolvedValueOnce(ok({ counts: { rows: 1, roots: 1, floors: 0 }, roots: [{ rpid_str: '101' }], truncated: true, limit: 20 }));
+  const r = await api.getVideoComments('bilibili', 'BV1test', 20);
+  expect(lastCall().url).toBe('/api/videos/bilibili/BV1test/comments?limit=20');
+  expect(r.counts).toEqual({ rows: 1, roots: 1, floors: 0 });
+  expect(r.roots).toEqual([{ rpid_str: '101' }]);
+  expect(r.orphans).toEqual([]); // 响应缺 orphans → 解包回落空数组
+  fetchMock.mockResolvedValueOnce(ok({ counts: { rows: 0, roots: 0, floors: 0 } }));
+  await api.getVideoComments('bilibili', 'BV1test', 0);
+  expect(lastCall().url).toBe('/api/videos/bilibili/BV1test/comments');
 });
 
 test('getVideo：extra 非法 JSON 字符串 → 落回空对象', async () => {

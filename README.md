@@ -48,7 +48,7 @@ B 站**字幕（subtitle）**相关浏览器扩展与配套服务的 monorepo（
   - **面试题库**：面试相关视频 → 题目 + 考点 + 参考答案
   - **理念整理**：某 UP 主系列视频 → 核心理念 / 方法论提炼
 - 📋 内置 AI pipeline（CLI 一条命令自动分析，需 API 集成）：远期，待手动流程跑顺后再评估
-- ✅ **B 站评论分析树**（2026-10-03，用户现场指令一次性解冻）：单视频全量采集（wbi 游标 + 楼中楼翻全，完整 root/parent/dialog 对话链）→ comments 表入库（增量重采：ctime_s 水位追新 + `--refresh-roots` like top-N 根重翻 + missing 两轮删除确认）→ CLI comments collect/tree/verify → bundle 导出评论原料（manifest 摘要 + comments/*.md）；专栏/动态评论区、评论写操作、web 评论展示、其他平台评论不在本期范围
+- ✅ **B 站评论分析树**（2026-10-03，用户现场指令一次性解冻）：单视频全量采集（wbi 游标 + 楼中楼翻全，完整 root/parent/dialog 对话链）→ comments 表入库（增量重采：ctime_s 水位追新 + `--refresh-roots` like top-N 根重翻 + missing 两轮删除确认）→ CLI comments collect/tree/verify → web 详情页评论区树（2026-10-05，账本 P2-5）→ bundle 导出评论原料（manifest 摘要 + comments/*.md）；专栏/动态评论区、评论写操作、其他平台评论不在本期范围
 
 ### 移动端（🚧 Android 原生 app，2026-08-26 立项）
 
