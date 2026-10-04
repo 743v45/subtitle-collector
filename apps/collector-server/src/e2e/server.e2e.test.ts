@@ -479,8 +479,8 @@ describe('A. loopback 无 token：真 main.ts 子进程基础链路', () => {
     assert.equal(r.status, 502);
     assert.equal(r.json.error, '页面打不开');
 
-    // 离线 client → 404
-    r = await api(srv.base, 'POST', '/api/clients/ext-none/command', { action: 'navigate' });
+    // 离线 client → 404（C6 后 navigate 目标须合法白名单族 URL）
+    r = await api(srv.base, 'POST', '/api/clients/ext-none/command', { action: 'navigate', url: `https://www.bilibili.com/video/${bv('navnone')}` });
     assert.equal(r.status, 404);
     // 无 action → 400
     r = await api(srv.base, 'POST', '/api/clients/ext-a/command', { url: 'x' });
@@ -488,7 +488,7 @@ describe('A. loopback 无 token：真 main.ts 子进程基础链路', () => {
 
     // 回执超时 → 504（handler 静默 + timeout 120ms）
     ext.handler = () => { /* 静默：不回执 */ };
-    r = await api(srv.base, 'POST', '/api/clients/ext-a/command', { action: 'navigate', timeout: 120 });
+    r = await api(srv.base, 'POST', '/api/clients/ext-a/command', { action: 'navigate', url: `https://www.bilibili.com/video/${bv('navto')}`, timeout: 120 });
     assert.equal(r.status, 504);
     // reporting 回执超时同理 → 504（requestReportingChange 默认 5s，无 timeout 参数可注入）
     r = await api(srv.base, 'POST', '/api/clients/ext-a/reporting', { enabled: false });
