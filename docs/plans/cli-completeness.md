@@ -37,7 +37,7 @@
 
 | # | 缺口 | 归类 | 状态 |
 |---|---|---|---|
-| 5 | videos list 补 5 个过滤参数：`creator_id / creator_uid / tags（多标 AND）/ tag_source / date_field`（db 层 [advanced.ts:10-34](../../apps/collector-server/src/db/advanced.ts#L10) 已支持，纯包装；「按标签选料导 bundle」是消费端高频） | 闭环配套 | ☐→转挂账本 [P1-6](improvement-backlog-2026-10.md)（2026-10-05；子项 `tags（多标 AND）` 已由 0fd6972 落地，余 4 参数本轮执行） |
+| 5 | videos list 补 5 个过滤参数：`creator_id / creator_uid / tags（多标 AND）/ tag_source / date_field`（db 层 [advanced.ts:10-34](../../apps/collector-server/src/db/advanced.ts#L10) 已支持，纯包装；「按标签选料导 bundle」是消费端高频） | 闭环配套 | ✅（2026-10-05 全五子项落地：`tags（多标 AND）` 0fd6972 前此已落；余 4 参数随账本 [P1-6](improvement-backlog-2026-10.md) 落地 b90a514——`--creator-id/--creator-uid/--tag-source/--date-field` 对齐 HTTP filter.ts 同名参数语义，失败→通过用例×4（结果集差异）+非法值 ARGS×2+help 文案断言，SKILL.md/help 同步） |
 | 6 | `stats count --by tag`：[stats.ts:36](../../apps/collector-server/src/cli/commands/stats.ts#L36) STATS_GROUP_BY 补 tag（[http/stats.ts:12](../../apps/collector-server/src/http/stats.ts#L12) 已有） | 闭环配套 | ✅（2026-10-02 消费闭环第 6 项：白名单+帮助六值、失败→通过用例×3、SKILL.md 同步） |
 | 7 | creators 查询 CLI（列表/详情/打分类；`GET /api/creators` 七键排序已备）——与存量回填绑定（账本 [P1-5](improvement-backlog-2026-10.md)；查缺资料 UP 清单） | 闭环配套 | ☐→转挂账本 [P1-7](improvement-backlog-2026-10.md)（2026-10-05 本轮执行） |
 
