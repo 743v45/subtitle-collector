@@ -39,7 +39,8 @@ function extractItems(data: unknown): unknown[] | null {
 }
 
 // CSV 字段转义：含逗号/引号/换行的字段用双引号包裹，内部引号双写。
-function csvEscape(v: unknown): string {
+// 导出供 http/export.ts 复用（web 下载通道的 csv 序列化，与 CLI stdout 同一转义口径，勿复刻）。
+export function csvEscape(v: unknown): string {
   if (v === null || v === undefined) return '';
   const s = typeof v === 'object' ? JSON.stringify(v) : String(v);
   if (/[",\n\r]/.test(s)) {

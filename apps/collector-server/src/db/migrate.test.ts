@@ -7,6 +7,7 @@
 // | R1 | 版本账本/幂等/v5-v16 各步骤 | 通过 | |
 // | R2 | v18 collect_tasks.source CHECK 放行 douyin（旧库重建/新库重放） | 通过 | 2026-08-29 S2 抖音平台化 |
 // | R3 | v19 ASR 轨按引擎改名（有 engine 改名/无 engine 回落 unknown/幂等重放/新库重放） | 通过 | 2026-08-29 多引擎版本比对 |
+// | R4 | v20 jobs 表建表（v19 旧库升级/列清单/CHECK/索引/重放幂等/新库重放） | 通过 | 2026-10-04 CLI 全功能 web 化 Phase 4 |
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -517,6 +518,54 @@ test('v19 迁移：新库（无 asr-zh 存量）全量重放安全，不留脏�
     migrate(db);
     assert.doesNotThrow(() => runMigrations(db), '新库重放 v19 纯 UPDATE 应完整执行不报错');
     assert.equal(db.inTransaction, false, '不应残留打开的事务');
-    assert.equal(db.pragma('user_version', { simple: true }), 19, '账本写到 19');
+    assert.equal(db.pragma('user_version', { simple: true }), MIGRATIONS[MIGRATIONS.length - 1].version, '账本写到最新');
+  } finally { db.close(); }
+});
+
+// ── v20（2026-10-04 CLI 全功能 web 化 Phase 4）：jobs 通用任务台账（新建表/索引，IF NOT EXISTS 重放安全）──
+test('v20 迁移：v19 旧库升级建 jobs 表（列齐全 + status CHECK + 两索引），重放幂等', () => {
+  const db = new Database(':memory:');
+  try {
+    // 模拟 v19 形态旧库：全量 schema（尚无 jobs）+ 账本拨回 19
+    migrate(db);
+    db.prepare('DROP TABLE jobs').run(); // schema.sql 已双写 v20 的 jobs——摘掉才等价 v19 时代的真实旧库
+    db.pragma('user_version = 19');
+    assert.equal(db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='jobs'").get(), undefined, '升级前无 jobs 表');
+
+    runMigrations(db);
+    assert.equal(db.pragma('user_version', { simple: true }), MIGRATIONS[MIGRATIONS.length - 1].version, '账本应写到最新');
+
+    // 列齐全（与 schema.sql 双写一致）
+    const cols = (db.prepare('PRAGMA table_info(jobs)').all() as Array<{ name: string }>).map((c) => c.name);
+    assert.deepEqual(cols, [
+      'id', 'type', 'params_json', 'status', 'progress_json', 'result_json',
+      'error', 'created_at', 'updated_at', 'started_at', 'finished_at',
+    ], 'jobs 列清单逐列比对');
+
+    // status CHECK 约束：五种合法状态可写，非法值被拒
+    const ins = db.prepare("INSERT INTO jobs (type, params_json, status, created_at, updated_at) VALUES ('asr-backfill', '{}', ?, 1, 1)");
+    for (const s of ['pending', 'running', 'done', 'failed', 'cancelled']) {
+      assert.doesNotThrow(() => ins.run(s), `合法状态 ${s} 应可写`);
+    }
+    assert.throws(() => ins.run('bogus'), /CHECK/, '非法 status 应被 CHECK 拒绝');
+
+    // 两索引在场
+    const idx = (db.prepare("SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='jobs'").all() as Array<{ name: string }>).map((r) => r.name);
+    assert.ok(idx.includes('idx_jobs_status'), 'idx_jobs_status 应存在');
+    assert.ok(idx.includes('idx_jobs_created'), 'idx_jobs_created 应存在');
+
+    // 重放幂等（IF NOT EXISTS 短路；runMigrations 只容忍特定 duplicate 错误，非 IF NOT EXISTS 建表会直接炸）
+    assert.doesNotThrow(() => runMigrations(db), '重放应因 IF NOT EXISTS 幂等');
+  } finally { db.close(); }
+});
+
+test('v20 迁移：新库（schema.sql 已带 jobs）全量重放安全，不留脏事务', () => {
+  const db = new Database(':memory:');
+  try {
+    migrate(db);
+    assert.doesNotThrow(() => runMigrations(db), '新库重放 v20 建表应完整执行不报错');
+    assert.equal(db.inTransaction, false, '不应残留打开的事务');
+    assert.equal(db.pragma('user_version', { simple: true }), MIGRATIONS[MIGRATIONS.length - 1].version, '账本写到最新');
+    assert.ok(db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='jobs'").get(), 'jobs 表在场');
   } finally { db.close(); }
 });

@@ -1,7 +1,7 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import type Database from 'better-sqlite3';
-import { readFileSync, existsSync } from 'node:fs';
-import { join, extname } from 'node:path';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { openDb, migrate, runMigrations } from './db/migrate.js';
 import { attachBackupTimer } from './db/backup.js';
 import { attachWsServer } from './ws/server.js';
@@ -13,10 +13,16 @@ import { handleStatsHttp } from './http/stats.js';
 import { handleTagsHttp } from './http/tags.js';
 import { handleTranslateHttp } from './http/translate.js';
 import { handleAsrHttp } from './http/asr.js';
-import { handleSettingsHttp } from './http/settings.js';
+import { handleSettingsHttp, type StatusContext } from './http/settings.js';
+import { handleSubSearchHttp } from './http/sub-search.js';
+import { handleExportHttp } from './http/export.js';
 import { handleTasksHttp } from './http/tasks.js';
+import { handleCollectProxyHttp } from './http/collect-proxy.js';
+import { handleJobsHttp } from './http/jobs.js';
+import { createStaticFileServer } from './http/static-files.js';
 import { runHandler, httpAuthOk, httpOriginAllowed } from './http/http-util.js';
 import { attachTaskScheduler } from './tasks/tasks.js';
+import { attachJobsWorker } from './jobs/runner.js';
 
 const DB_PATH = process.env.COLLECTOR_DB_PATH ?? './bilibili-collector.db';
 const PORT = Number(process.env.COLLECTOR_PORT ?? 21527);
@@ -45,6 +51,19 @@ const db = openDb(DB_PATH);
 migrate(db);
 runMigrations(db);
 
+// /api/status 上下文（http/settings.ts StatusContext）：进程启动时刻 + 配置快照单点装配。
+// token 只带 tokenConfigured 布尔，明文不出进程边界。
+const STARTED_AT = Date.now();
+const STATUS_CONTEXT: StatusContext = {
+  host: HOST,
+  port: PORT,
+  authRequired: HTTP_AUTH_REQUIRED,
+  tokenConfigured: TOKEN !== '',
+  allowedHosts: ALLOWED_HOSTS,
+  dbPath: DB_PATH,
+  startedAt: STARTED_AT,
+};
+
 // C2: loopback HTTP 对浏览器是真实攻击面——DNS rebinding 可绕同源策略读 /api/* 与静态页。
 // /ping 外的所有请求校验 Host（防 rebinding）+ Origin（浏览器请求须来自扩展或同源）。
 // 设了 COLLECTOR_ALLOWED_HOSTS 时,额外放行这些 Host 及其 Origin(用于显式暴露到非 loopback)。
@@ -57,7 +76,8 @@ const originAllowed = (req: IncomingMessage): boolean =>
     allowedHosts: ALLOWED_HOSTS,
   });
 
-// Task 6 Step 15: 静态托管 collector-web 构建产物。
+// Task 6 Step 15: 静态托管 collector-web 构建产物（实现抽至 http/static-files.ts——
+// 目录路径 EISDIR 崩进程回归修复，2026-10-04）。
 // 落在 C2 httpOriginAllowed 守卫之后（调用点先校验 Origin 再走 serveStatic），
 // 确保静态文件不绕过安全校验。
 const PUBLIC_DIR = join(process.cwd(), 'public');
@@ -70,15 +90,7 @@ const MIME: Record<string, string> = {
   '.json': 'application/json; charset=utf-8',
   '.ico': 'image/x-icon',
 };
-function serveStatic(req: IncomingMessage, res: ServerResponse) {
-  const url = new URL(req.url ?? '/', 'http://localhost');
-  const fp = join(PUBLIC_DIR, url.pathname === '/' ? '/index.html' : url.pathname);
-  // 路径穿越防护：解析后必须在 PUBLIC_DIR 之下
-  if (!fp.startsWith(PUBLIC_DIR) || !existsSync(fp)) { res.writeHead(404); res.end('not found'); return; }
-  const contentType = MIME[extname(fp)] ?? 'application/octet-stream';
-  res.writeHead(200, { 'Content-Type': contentType });
-  res.end(readFileSync(fp));
-}
+const serveStatic = createStaticFileServer(PUBLIC_DIR, MIME);
 
 // /api/* 路由分发表（createServer 回调按序前缀匹配）；全部 handler 统一三参（req, res, db）。
 // /api/upper-videos/expand（按 UP 批量的列表拉取）复用 tasks handler——批量采集域。
@@ -92,7 +104,20 @@ const API_ROUTES: Array<[prefix: string, handler: (req: IncomingMessage, res: Se
   ['/api/tags', (req, res, db) => handleTagsHttp(req, res, db)],
   ['/api/translate', (req, res, db) => handleTranslateHttp(req, res, db)],
   ['/api/asr', (req, res, db) => handleAsrHttp(req, res, db)],
-  ['/api/settings', (req, res, db) => handleSettingsHttp(req, res, db)],
+  ['/api/settings', (req, res, db) => handleSettingsHttp(req, res, db, STATUS_CONTEXT)],
+  // /api/status 也走 handleSettingsHttp（status 路由与其同文件），但前缀不同须单列一行（否则落 /api/ 兜底 404）
+  ['/api/status', (req, res, db) => handleSettingsHttp(req, res, db, STATUS_CONTEXT)],
+  ['/api/sub-search', (req, res, db) => handleSubSearchHttp(req, res, db)],
+  // 文件下载通道（CLI 全功能 web 化 Phase 2）：videos/subtitle/bundle 三个导出端点，内部按 pathname 分支
+  ['/api/export', (req, res, db) => handleExportHttp(req, res, db)],
+  // 采集编排三端点（CLI 全功能 web 化 Phase 3）：collect-search / season/preview / upper-info/refresh，
+  // server 内部白名单选 action 驱动扩展（非通用代理），内部按 pathname 分支；前缀须在 /api/ 兜底之前
+  ['/api/collect-search', (req, res, db) => handleCollectProxyHttp(req, res, db)],
+  ['/api/season', (req, res, db) => handleCollectProxyHttp(req, res, db)],
+  ['/api/upper-info', (req, res, db) => handleCollectProxyHttp(req, res, db)],
+  // jobs 任务台账（CLI 全功能 web 化 Phase 4）：asr-backfill / collect-find 长任务的提交/查询/取消，
+  // 执行由 attachJobsWorker 的进程内串行执行器消费；前缀须在 /api/ 兜底之前
+  ['/api/jobs', (req, res, db) => handleJobsHttp(req, res, db)],
   ['/api/', (req, res, db) => handleQueryHttp(req, res, db)],
 ];
 
@@ -119,12 +144,13 @@ const httpServer = createServer((req, res) => {
     if (req.url?.startsWith(prefix)) { void runHandler(res, () => handler(req, res, db)); return; }
   }
   // 静态托管 collector-web 产物（非 /ping 非 /api/ 的请求）——C2 校验已在上方通过
-  if (req.url && !req.url.startsWith('/api/') && req.url !== '/ping') { serveStatic(req, res); return; }
+  if (req.url && !req.url.startsWith('/api/') && req.url !== '/ping') { serveStatic(req.url, res); return; }
   res.writeHead(404); res.end('not found');
 });
 
 attachWsServer(httpServer, db, TOKEN);
 attachTaskScheduler(db); // 采集任务调度器（pending → 扩展派发 → 回执落 status）
+attachJobsWorker(db); // jobs 串行执行器（asr-backfill / collect-find；启动恢复把在途任务置 cancelled）
 attachBackupTimer(db, DB_PATH); // 容器内定时备份（VACUUM INTO 一致性快照，2026-08-24 损库事故产物）
 
 httpServer.listen(PORT, HOST, () => {

@@ -25,8 +25,9 @@ import { resolveDouyinVideoUrl, downloadDouyinVideo } from '../asr-douyin.js';
 import { transcribeAt } from '../asr-transcribe.js';
 import { buildPlayurlQuery } from '../wbi.js';
 
-const BILI_API = 'https://api.bilibili.com';
-const DEFAULT_ASR_API = 'http://127.0.0.1:5079';
+// 单点化 export（jobs worker 装配同源缺省值，CLI 不变）
+export const BILI_API = 'https://api.bilibili.com';
+export const DEFAULT_ASR_API = 'http://127.0.0.1:5079';
 export const DEFAULT_ENGINE = 'fireredasr-aed-l';
 export { defaultSleep };
 
@@ -55,6 +56,9 @@ export interface BackfillDeps {
   sleep?: (ms: number) => Promise<void>;
   log?: (msg: string) => void;
   pollDeadlineMs?: number;   // 转写轮询上限（默认 POLL_DEADLINE_MS；测试注入 0 触发超时分支）
+  // 每视频步进回调（成功/失败都回调；jobs worker 更新 progress_json + 广播用，CLI 装配不传）。
+  // 回调抛错不吞不兜——编排层（runner）统一 try/catch 归 failed。
+  onStep?: (info: { vid: string; ok: boolean; code?: string; done: number; total: number }) => void;
 }
 
 export interface BackfillSummary {
@@ -183,6 +187,35 @@ async function processDouyinVideo(deps: BackfillDeps, item: Record<string, unkno
 }
 
 // ── 编排主函数（纯依赖注入，可测）──
+
+// 逐视频处理圈定清单：wbi keys 跨视频缓存是循环局部状态（成败都回传——成功不更新缓存会重复拉 nav）；
+// 失败按分类码计数 + 样本归档 + 日志 + onStep 步进回调（成败都回调）。
+async function processCircle(
+  deps: BackfillDeps,
+  source: AsrSource,
+  page: Awaited<ReturnType<BackfillClient['listVideos']>>,
+  summary: BackfillSummary,
+  log: (msg: string) => void,
+): Promise<void> {
+  let wbiKeys: WbiKeys = null; // B 站侧 nav→wbi keys 跨视频缓存；douyin 不用（恒 null 透传）
+  let step = 0; // 已处理计数（含成败，onStep 步进用）
+  for (const it of page.items) {
+    const vid = String(it.source_vid);
+    const r: StepResult = source === 'douyin' ? await processDouyinVideo(deps, it) : await processBiliVideo(deps, it, wbiKeys);
+    if (r.wbiKeys) wbiKeys = r.wbiKeys;
+    step++;
+    if (r.ok) {
+      summary.done++;
+      deps.onStep?.({ vid, ok: true, done: step, total: page.items.length });
+      continue;
+    }
+    summary.failed[r.code] = (summary.failed[r.code] ?? 0) + 1;
+    (summary.samples[r.code] ??= []).push(vid);
+    log(`[fail] ${vid} ${r.code}: ${r.message}`);
+    deps.onStep?.({ vid, ok: false, code: r.code, done: step, total: page.items.length });
+  }
+}
+
 export async function runBackfill(
   deps: BackfillDeps,
   opts: { size: number; page: number; maxDuration?: number; dryRun?: boolean; source?: AsrSource },
@@ -204,15 +237,7 @@ export async function runBackfill(
     for (const it of page.items) log(`[circle] ${it.source_vid} 时长${it.duration ?? '?'}s 《${String(it.title ?? '').slice(0, 30)}》`);
     return summary;
   }
-  let wbiKeys: WbiKeys = null; // B 站侧 nav→wbi keys 跨视频缓存；douyin 不用（恒 null 透传）
-  for (const it of page.items) {
-    const r: StepResult = source === 'douyin' ? await processDouyinVideo(deps, it) : await processBiliVideo(deps, it, wbiKeys);
-    if (r.wbiKeys) wbiKeys = r.wbiKeys; // 成败都回传（成功不更新缓存会重复拉 nav）
-    if (r.ok) { summary.done++; continue; }
-    summary.failed[r.code] = (summary.failed[r.code] ?? 0) + 1;
-    (summary.samples[r.code] ??= []).push(String(it.source_vid));
-    log(`[fail] ${String(it.source_vid)} ${r.code}: ${r.message}`);
-  }
+  await processCircle(deps, source, page, summary, log);
   log(`[summary] 圈定 ${summary.circled}，成功 ${summary.done}，失败 ${JSON.stringify(summary.failed)}`);
   return summary;
 }

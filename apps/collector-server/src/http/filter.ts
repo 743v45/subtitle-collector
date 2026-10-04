@@ -19,6 +19,16 @@ export function parseBool(raw: string | null): boolean | undefined {
   return undefined;
 }
 
+// 严格版时间参数解析：缺省/空串 → { value: undefined }；非有限数 → { error }（调用方回 400）。
+// 与 toInt 的「非法静默忽略」口径并存、按端点语义选用：sub-search / translate pending 等新端点
+// 参数错了静默全量返回是暗坑（「以为筛了其实没筛」），故严格 400。
+export function parseTimeParam(raw: string | null, name: string): { value?: number; error?: string } {
+  if (raw === null || raw === '') return { value: undefined };
+  const n = Number(raw);
+  if (!Number.isFinite(n)) return { error: `${name} is not a number: ${raw}` };
+  return { value: n };
+}
+
 // 从 query string 解析 VideoFilter（q/creator/creator_id/creator_uid/source/tid/tname/tag/lang/track_type/
 // has_subtitle/since/until/min_duration/max_duration）。非法值忽略，绝不抛错。
 export function parseVideoFilter(p: URLSearchParams): VideoFilter {

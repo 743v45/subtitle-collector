@@ -54,8 +54,9 @@ export function parseSubmitBody(b: unknown):
   return { source: body.source as string, vid: body.vid as string, engine: body.engine as string, cues };
 }
 
-// 写入 + 同事务摘标（自 handler 抽出控复杂度：origin='asr' 走幂等去重——同引擎同内容重跑 skipped）
-function writeAsrVersion(db: Database.Database, videoId: number, parsed: { source: string; vid: string; engine: string; cues: AsrCue[] }): { inserted: number; skipped: number; unmarked: boolean } {
+// 写入 + 同事务摘标（自 handler 抽出控复杂度：origin='asr' 走幂等去重——同引擎同内容重跑 skipped）。
+// export 供 jobs/asr-worker 的 BackfillClient.asrSubmit 复用（与 HTTP handler 同一写入口径，零行为分叉）。
+export function writeAsrVersion(db: Database.Database, videoId: number, parsed: { source: string; vid: string; engine: string; cues: AsrCue[] }): { inserted: number; skipped: number; unmarked: boolean } {
   const payload = { type: 'AIsubtitle', lang: 'zh', body: parsed.cues.map((c) => ({ from: c.from, to: c.to, content: c.content })) };
   let inserted = 0;
   let skipped = 0;

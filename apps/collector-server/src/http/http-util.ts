@@ -56,6 +56,27 @@ export function parseSortParams(
   return { sort: raw ?? defaultKey, desc: parseBool(p.get('desc')) ?? true };
 }
 
+// RFC 5987 Content-Disposition：中文文件名两个都给——ascii 兜底 filename（老客户端/工具不乱码）
+// + filename*（现代浏览器按 UTF-8 取真名）。ascii 兜底：非可打印 ASCII 字符 → '_'，引号 → 单引号。
+export function contentDisposition(filename: string): string {
+  const ascii = filename.replace(/[^\x20-\x7e]/g, '_').replace(/"/g, "'");
+  return `attachment; filename="${ascii}"; filename*=UTF-8''${encodeURIComponent(filename)}`;
+}
+
+// 附件下载响应（200 + Content-Disposition attachment）。
+// 聚合内容场景（csv/ndjson/json/字幕文本/zip——当前量级数百 KB～数 MB，聚合内存安全；
+// 未来出现 GB 级导出再加流式变体）。额外响应头（X-Export-Count / X-Bundle-* 等）由调用方
+// 先 res.setHeader 再调本函数（writeHead 与 setHeader 合并，writeHead 同名键优先）。
+export function sendFile(res: ServerResponse, f: { filename: string; content: string | Buffer; mime: string }): void {
+  const body = typeof f.content === 'string' ? Buffer.from(f.content, 'utf8') : f.content;
+  res.writeHead(200, {
+    'Content-Type': f.mime,
+    'Content-Length': body.length,
+    'Content-Disposition': contentDisposition(f.filename),
+  });
+  res.end(body);
+}
+
 // handler 异常兜底：单个请求的失败（含非法 JSON）只影响该请求，
 // 不拖垮进程与其余 HTTP/WS 连接
 export async function runHandler(res: ServerResponse, fn: () => Promise<void> | void): Promise<void> {

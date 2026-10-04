@@ -93,28 +93,90 @@ function enrichItems(
   });
 }
 
+// GET /api/changes：变更时间线（抽出降 handleQueryHttp 圈复杂度——存量台账 queries.ts complexity=46 不得恶化，
+// 新增 check-exists 分支后靠既有分支抽函数对冲，对齐 translate.ts/clients.ts 先例）。
+function handleChanges(res: ServerResponse, url: URL, db: Database.Database): void {
+  const entity = url.searchParams.get('entity') ?? undefined;
+  const entityIdRaw = url.searchParams.get('entity_id');
+  const entity_id = entityIdRaw != null && /^\d+$/.test(entityIdRaw) ? Number(entityIdRaw) : undefined;
+  const field = url.searchParams.get('field') ?? undefined;
+  const source = url.searchParams.get('source') ?? undefined; // 平台过滤（经实体行 JOIN 判定，见 getChanges）
+  const filter: ChangeFilter = { entity, entity_id, field, source };
+  const sinceParam = url.searchParams.get('since');
+  if (sinceParam != null && Number.isFinite(Number(sinceParam))) filter.since = Number(sinceParam);
+  const untilParam = url.searchParams.get('until');
+  if (untilParam != null && Number.isFinite(Number(untilParam))) filter.until = Number(untilParam);
+  const page = Math.max(1, Math.floor(Number(url.searchParams.get('page') ?? '1')) || 1);
+  const size = Math.min(100, Math.max(1, Math.floor(Number(url.searchParams.get('size') ?? '20')) || 20));
+  // sort 仅 changed_at 一个键（实体/字段文本排序无意义），但参数形态与其他列表端点统一；非法 → 400
+  const sp = parseSortParams(url.searchParams, CHANGE_SORT_KEYS, 'changed_at');
+  if ('error' in sp) { json(res, 400, { ok: false, error: sp.error }); return; }
+  const data = getChanges(db, filter, page, size, sp.sort as ChangeSortKey, sp.desc);
+  json(res, 200, { ok: true, total: data.total, page: data.page, size: data.size, items: data.items });
+}
+
+// POST /api/videos/check-exists：批量判存在 + 有无字幕轨（web 采集入口防重复，CLI collect dedupe 的 web 形态）。
+// 判定口径对齐 collectDedupe（cli/commands/collect.ts）：videos 行存在即 exists（无字幕视频采过也入库）；
+// has_subtitle = EXISTS subtitle_tracks（轨存在即算——比 advanced.ts has_subtitle 过滤的「须有版本」宽一档，
+// 轨无版本属异常半成品，防重复场景宁宽勿漏）。
+// exists/has_subtitle 查询（check-exists 与采集编排 http/collect-proxy.ts 标注共用）：
+// source 平台 + vid 清单 → { source_vid → 是否有字幕轨 } Map。参数化 IN（动态占位符）：
+// vid 来自请求体/扩展回执，绝不拼接 SQL；Set 去重 + 分批 500 防 IN 占位符超限。
+export function querySubtitleExists(db: Database.Database, source: string, vids: string[]): Map<string, boolean> {
+  const byVid = new Map<string, boolean>();
+  const unique = [...new Set(vids.filter((v) => typeof v === 'string' && v.length > 0))];
+  for (let i = 0; i < unique.length; i += 500) {
+    const chunk = unique.slice(i, i + 500);
+    const placeholders = chunk.map(() => '?').join(',');
+    const rows = db.prepare(
+      `SELECT v.source_vid,
+              EXISTS (SELECT 1 FROM subtitle_tracks st WHERE st.video_id = v.id) AS has_subtitle
+       FROM videos v WHERE v.source = ? AND v.source_vid IN (${placeholders})`,
+    ).all(source, ...chunk) as Array<{ source_vid: string; has_subtitle: number }>;
+    for (const r of rows) byVid.set(r.source_vid, r.has_subtitle === 1);
+  }
+  return byVid;
+}
+
+// 抽出为独立函数：readJsonBody 需 await + 校验分支多，内联会推高 handleQueryHttp 圈复杂度破存量台账。
+async function handleCheckExists(res: ServerResponse, db: Database.Database, req: IncomingMessage): Promise<void> {
+  const CHECK_SOURCES = ['bilibili', 'youtube', 'douyin'];
+  const b = await readJsonBody(req) as { source?: unknown; vids?: unknown };
+  if (typeof b.source !== 'string' || !CHECK_SOURCES.includes(b.source)) {
+    json(res, 400, { ok: false, error: `source must be one of ${CHECK_SOURCES.join('|')}` });
+    return;
+  }
+  if (!Array.isArray(b.vids) || b.vids.length === 0) {
+    json(res, 400, { ok: false, error: 'vids: non-empty string[] required' });
+    return;
+  }
+  if (b.vids.length > 500) {
+    console.warn(`[http:check-exists] vids 超限被拒 count=${b.vids.length} max=500`);
+    json(res, 400, { ok: false, error: `vids too many: ${b.vids.length} > 500` });
+    return;
+  }
+  if (!b.vids.every((v): v is string => typeof v === 'string' && v.length > 0)) {
+    json(res, 400, { ok: false, error: 'vids must all be non-empty strings' });
+    return;
+  }
+  const vids = b.vids as string[];
+  const byVid = querySubtitleExists(db, b.source, vids);
+  // 按请求 vids 顺序回（web 逐条对位）；不存在的 vid exists=false
+  json(res, 200, {
+    ok: true,
+    items: vids.map((vid) => {
+      const has = byVid.get(vid);
+      return { vid, exists: has !== undefined, has_subtitle: has === true };
+    }),
+  });
+}
+
 export async function handleQueryHttp(req: IncomingMessage, res: ServerResponse, db: Database.Database): Promise<void> {
   const url = new URL(req.url ?? '/', 'http://localhost');
   const pathname = url.pathname;
 
   if (pathname === '/api/changes') {
-    const entity = url.searchParams.get('entity') ?? undefined;
-    const entityIdRaw = url.searchParams.get('entity_id');
-    const entity_id = entityIdRaw != null && /^\d+$/.test(entityIdRaw) ? Number(entityIdRaw) : undefined;
-    const field = url.searchParams.get('field') ?? undefined;
-    const source = url.searchParams.get('source') ?? undefined; // 平台过滤（经实体行 JOIN 判定，见 getChanges）
-    const filter: ChangeFilter = { entity, entity_id, field, source };
-    const sinceParam = url.searchParams.get('since');
-    if (sinceParam != null && Number.isFinite(Number(sinceParam))) filter.since = Number(sinceParam);
-    const untilParam = url.searchParams.get('until');
-    if (untilParam != null && Number.isFinite(Number(untilParam))) filter.until = Number(untilParam);
-    const page = Math.max(1, Math.floor(Number(url.searchParams.get('page') ?? '1')) || 1);
-    const size = Math.min(100, Math.max(1, Math.floor(Number(url.searchParams.get('size') ?? '20')) || 20));
-    // sort 仅 changed_at 一个键（实体/字段文本排序无意义），但参数形态与其他列表端点统一；非法 → 400
-    const sp = parseSortParams(url.searchParams, CHANGE_SORT_KEYS, 'changed_at');
-    if ('error' in sp) { json(res, 400, { ok: false, error: sp.error }); return; }
-    const data = getChanges(db, filter, page, size, sp.sort as ChangeSortKey, sp.desc);
-    json(res, 200, { ok: true, total: data.total, page: data.page, size: data.size, items: data.items });
+    handleChanges(res, url, db);
     return;
   }
   if (pathname === '/api/videos') {
@@ -130,6 +192,12 @@ export async function handleQueryHttp(req: IncomingMessage, res: ServerResponse,
 
     const data = listVideosFiltered(db, { ...filter, sort: sp.sort as VideoSortKey, desc: sp.desc, page, size });
     json(res, 200, { ok: true, total: data.total, page: data.page, size: data.size, items: enrichItems(db, data.items) });
+    return;
+  }
+
+  // POST /api/videos/check-exists：批量判存在 + 有无字幕轨（校验/查询逻辑见 handleCheckExists）
+  if (pathname === '/api/videos/check-exists' && req.method === 'POST') {
+    await handleCheckExists(res, db, req);
     return;
   }
 

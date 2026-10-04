@@ -173,3 +173,23 @@ CREATE TABLE IF NOT EXISTS clients (
   first_seen_at INTEGER NOT NULL, -- server 首次见到该 client_id（hello upsert 插入时）
   last_seen_at  INTEGER NOT NULL  -- 最近一次连接建立/断开时刻（hello upsert / close touch）
 );
+
+-- 通用任务台账（CLI 全功能 web 化 Phase 4，v20）：asr-backfill / collect-find 两类长任务
+-- 的 server 进程内串行队列持久层。status 状态机：pending → running → done | failed；
+-- pending/running 可取消 → cancelled。server 重启恢复：启动时 pending/running 置 cancelled
+-- （批任务不自动重跑）。行只增不改删：DELETE 语义 = cancel（台账保留，见 http/jobs.ts）。
+CREATE TABLE IF NOT EXISTS jobs (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  type          TEXT NOT NULL,              -- 'asr-backfill' | 'collect-find'
+  params_json   TEXT NOT NULL,              -- 提交入参（JSON）
+  status        TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','running','done','failed','cancelled')),
+  progress_json TEXT,                       -- 过程计数 JSON（asr: {done,total,failed}；find: 各阶段过滤计数）
+  result_json   TEXT,                       -- 终态产物 JSON（BackfillSummary / find 汇总）
+  error         TEXT,                       -- 失败归因（failed/cancelled 时非空）
+  created_at    INTEGER NOT NULL,
+  updated_at    INTEGER NOT NULL,
+  started_at    INTEGER,
+  finished_at   INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status);
+CREATE INDEX IF NOT EXISTS idx_jobs_created ON jobs(created_at);

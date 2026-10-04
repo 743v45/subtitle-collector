@@ -16,11 +16,17 @@ import { join } from 'node:path';
 import { openDb, migrate } from '../db/migrate.js';
 import { ingestVideo } from '../db/ingest.js';
 import { handleTagsHttp } from './tags.js';
-import { handleSettingsHttp } from './settings.js';
+import { handleSettingsHttp, type StatusContext } from './settings.js';
 import { handleQueryHttp } from './queries.js';
 import { handleStatsHttp } from './stats.js';
 
 // 起 handler 直挂的测试 server（不经 main.ts 的 Origin 守卫，聚焦 handler 逻辑）
+// STATUS：settings handler 第 4 参（/api/status 上下文）——tags 测试不触达该路由，给固定桩即可。
+const STATUS: StatusContext = {
+  host: '127.0.0.1', port: 21527, authRequired: false, tokenConfigured: false,
+  allowedHosts: [], dbPath: 'test.db', startedAt: Date.now(),
+};
+
 function setup(): Promise<{ port: number; cleanup: () => void }> {
   const dir = mkdtempSync(join(tmpdir(), 'collector-tags-http-'));
   const db = openDb(join(dir, 'test.db'));
@@ -33,7 +39,7 @@ function setup(): Promise<{ port: number; cleanup: () => void }> {
   const server = createServer((req: IncomingMessage, res: ServerResponse) => {
     const p = req.url ?? '';
     if (p.startsWith('/api/tags')) { void handleTagsHttp(req, res, db); return; }
-    if (p.startsWith('/api/settings')) { void handleSettingsHttp(req, res, db); return; }
+    if (p.startsWith('/api/settings')) { void handleSettingsHttp(req, res, db, STATUS); return; }
     void handleQueryHttp(req, res, db);
   });
   return new Promise((resolve) => {
@@ -194,7 +200,7 @@ function setupSeason(): Promise<{ port: number; cleanup: () => void }> {
   const server = createServer((req: IncomingMessage, res: ServerResponse) => {
     const p = req.url ?? '';
     if (p.startsWith('/api/tags')) { void handleTagsHttp(req, res, db); return; }
-    if (p.startsWith('/api/settings')) { void handleSettingsHttp(req, res, db); return; }
+    if (p.startsWith('/api/settings')) { void handleSettingsHttp(req, res, db, STATUS); return; }
     if (p.startsWith('/api/stats')) { void handleStatsHttp(req, res, db); return; }
     void handleQueryHttp(req, res, db);
   });
@@ -394,7 +400,7 @@ test('GET /api/tags：scope 非法 400；topN 非法回落 500、上限 500、�
     // scope 非法档 → 400
     let r = await call(port, 'GET', '/api/tags?scope=bogus');
     assert.equal(r.status, 400);
-    assert.equal(r.json.error, 'scope must be manual|batch|ai');
+    assert.equal(r.json.error, 'scope must be manual|batch|ai|system');
     // scope 合法（manual）→ 只列该档 >0 的标签
     r = await call(port, 'GET', '/api/tags?scope=manual');
     assert.equal(r.status, 200);

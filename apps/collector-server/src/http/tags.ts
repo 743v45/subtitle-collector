@@ -34,7 +34,8 @@ function parseApplyBody(b: unknown, needSource: boolean): { refs: VideoRef[]; na
 // GET /api/tags 标签库列表。抽出降 handleTagsHttp 圈复杂度（2026-08-25 排序分支并入后主函数超标恶化）。
 function handleListTagsHttp(res: ServerResponse, url: URL, db: Database.Database): void {
   const scope = url.searchParams.get('scope');
-  if (scope && !isTagSource(scope)) { json(res, 400, { ok: false, error: 'scope must be manual|batch|ai' }); return; }
+  // 文案与实际放行四档对齐（isTagSource = manual|batch|ai|system；2026-10-04 修正漏掉 system 档）
+  if (scope && !isTagSource(scope)) { json(res, 400, { ok: false, error: 'scope must be manual|batch|ai|system' }); return; }
   const source = url.searchParams.get('source') ?? undefined; // 平台：计数只算该平台视频的关系
   const q = url.searchParams.get('q') ?? undefined;
   const topN = Math.min(500, Math.max(1, Number(url.searchParams.get('topN') ?? '500') || 500));

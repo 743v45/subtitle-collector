@@ -9,6 +9,7 @@
 // | R1 | search/subtitle/dedupe/season/upper-info/upper-videos/yt-videos/new-videos/discover/find 全 action | 通过 | 长流程逐分支喂 mock 响应 |
 // | R4 | collect subtitle --source douyin（fetch-douyin-subtitle + awemeId + 打标 items source=douyin） | 通过 | 2026-08-29 S2 抖音平台化 |
 // | R5 | no-subtitle 打标 vid 取回执 awemeId 优先（M1：旧 ID 302 迁移后打标不落空） | 通过 | 2026-08-29 M1 审查修复，对齐 server markNoSubtitleForReceipt（c976995） |
+// | R6 | find --tid 透传 search body（Phase 4：tid 真正生效，help 文本纠偏） | 通过 | 2026-10-04 CLI 全功能 web 化 Phase 4 |
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -573,6 +574,22 @@ test('collect find：fans 走 creators 缓存 + --min-fans 过滤，退 0', asyn
     assert.equal(data.after_fans, 1); // 5000 ≥ 1000 留下，100 < 1000 滤掉
     assert.deepEqual(data.items.map((i: { bvid: string }) => i.bvid), ['BVHIT']);
     assert.equal(data.items[0].fans, 5000);
+  } finally { await srv.close(); db.close(); rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('collect find --tid：tid 随 search action 下发（body 带 tid，服务端分区过滤生效）', async () => {
+  const { db, dir, dbPath } = setup();
+  const nowSec = Math.floor(Date.now() / 1000);
+  const srv = await startMockServer((req) => (req.body?.action === 'search'
+    ? ok({ total: 1, items: [{ bvid: 'BVTID', mid: 1, pubdate: nowSec }] })
+    : req.body?.action === 'get-upper-info' ? ok({ fans: 100 })
+      : { status: 404 }));
+  try {
+    const r = await cli(args(dbPath, srv.url, ['collect', 'find', 'kw', '--tid', '171', '--client', 'ext-1', '--sleep', '1']));
+    assert.equal(r.code, 0);
+    const searchReq = srv.reqs.find((x) => x.body?.action === 'search');
+    assert.ok(searchReq, '应发出 search 请求');
+    assert.equal(searchReq.body!.tid, 171, 'search body 应透传 --tid');
   } finally { await srv.close(); db.close(); rmSync(dir, { recursive: true, force: true }); }
 });
 

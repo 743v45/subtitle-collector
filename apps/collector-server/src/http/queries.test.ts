@@ -7,6 +7,7 @@
 // |---|---|---|---|
 // | R1 | pot_limited 派生 / changes 全维 / 富化降级 / 详情 / 打标 400 | 通过 | 建表时既有 |
 // | R2 | tag_source 单独筛选存在性过滤（2026-08-29 修复静默忽略） | 通过 | 各档独立 + 多档 OR + 组合不回归 |
+// | R3 | POST /api/videos/check-exists：批量判存在/has_subtitle/顺序保持/400 族/GET 404 | 通过 | Phase 1 web 化（web 采集防重复） |
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -332,6 +333,61 @@ test('未知路径 / 方法不匹配 → 兜底 404（videos/:s/:v/tags 用 GET 
     assert.equal(r.json.error, 'not found');
     // 完全未知的路径
     r = await call(s.port, '/api/nonsense', 'GET');
+    assert.equal(r.status, 404);
+  } finally { s.cleanup(); }
+});
+
+test('POST /api/videos/check-exists：批量判存在 + has_subtitle + 请求顺序保持 + 跨平台隔离', async () => {
+  const s = await setup();
+  try {
+    // 请求含命中/无轨/未采三种形态，响应严格按请求顺序回（web 逐条对位）
+    const r = await call(s.port, '/api/videos/check-exists', 'POST', { source: 'bilibili', vids: ['BV1', 'BV-missing', 'BV2'] });
+    assert.equal(r.status, 200);
+    assert.equal(r.json.ok, true);
+    assert.deepEqual(r.json.items, [
+      { vid: 'BV1', exists: true, has_subtitle: true }, // BV1 有 zh-Hans 轨（EXISTS subtitle_tracks 口径）
+      { vid: 'BV-missing', exists: false, has_subtitle: false }, // 未采过
+      { vid: 'BV2', exists: true, has_subtitle: false }, // 采过但无轨（无字幕视频采过也入库，防重复同样要判）
+    ]);
+    // 跨平台隔离：同名 vid 换 source → 不存在（source 是过滤条件）
+    const r2 = await call(s.port, '/api/videos/check-exists', 'POST', { source: 'youtube', vids: ['BV1'] });
+    assert.equal(r2.status, 200);
+    assert.deepEqual(r2.json.items, [{ vid: 'BV1', exists: false, has_subtitle: false }]);
+    // 全部未采 → 200 空命中（不是错误）
+    const r3 = await call(s.port, '/api/videos/check-exists', 'POST', { source: 'bilibili', vids: ['x1', 'x2'] });
+    assert.equal(r3.status, 200);
+    assert.ok(r3.json.items.every((i: any) => i.exists === false && i.has_subtitle === false));
+  } finally { s.cleanup(); }
+});
+
+test('POST /api/videos/check-exists：source 非法 / vids 缺失空数组 / 非全非空串 / 超 500 → 400；GET → 404', async () => {
+  const s = await setup();
+  try {
+    // source 不在白名单（bilibili|youtube|douyin）
+    let r = await call(s.port, '/api/videos/check-exists', 'POST', { source: 'weibo', vids: ['BV1'] });
+    assert.equal(r.status, 400);
+    assert.match(r.json.error, /source must be one of/);
+    // 缺 source / 缺 vids / vids 空数组
+    r = await call(s.port, '/api/videos/check-exists', 'POST', { vids: ['BV1'] });
+    assert.equal(r.status, 400);
+    r = await call(s.port, '/api/videos/check-exists', 'POST', { source: 'bilibili' });
+    assert.equal(r.status, 400);
+    r = await call(s.port, '/api/videos/check-exists', 'POST', { source: 'bilibili', vids: [] });
+    assert.equal(r.status, 400);
+    // 元素含非串 / 空串
+    r = await call(s.port, '/api/videos/check-exists', 'POST', { source: 'bilibili', vids: ['BV1', 42] });
+    assert.equal(r.status, 400);
+    r = await call(s.port, '/api/videos/check-exists', 'POST', { source: 'bilibili', vids: ['BV1', ''] });
+    assert.equal(r.status, 400);
+    // 超 500 → 400（上限防滥用）；恰好 500 → 放行
+    r = await call(s.port, '/api/videos/check-exists', 'POST', { source: 'bilibili', vids: Array.from({ length: 501 }, (_, i) => `v${i}`) });
+    assert.equal(r.status, 400);
+    assert.match(r.json.error, /vids too many/);
+    r = await call(s.port, '/api/videos/check-exists', 'POST', { source: 'bilibili', vids: Array.from({ length: 500 }, (_, i) => `v${i}`) });
+    assert.equal(r.status, 200);
+    assert.equal(r.json.items.length, 500);
+    // GET 同路径 → 兜底 404（只认 POST）
+    r = await call(s.port, '/api/videos/check-exists', 'GET');
     assert.equal(r.status, 404);
   } finally { s.cleanup(); }
 });

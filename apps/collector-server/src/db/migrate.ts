@@ -300,6 +300,35 @@ export const MIGRATIONS: readonly MigrationStep[] = [
        COMMIT;`,
     ],
   },
+  {
+    // 通用任务台账（CLI 全功能 web 化 Phase 4）：asr-backfill（无字幕兜底 ASR 转写）与
+    // collect-find（条件检索博主发现）两类长任务从「会话内易失编排」沉淀为 server 进程内
+    // 串行队列，web 免经 CLI。jobs 行即台账：params_json 入参、progress_json 过程计数、
+    // result_json 终态产物、error 失败归因，物理不删（DELETE 语义 = cancel，见 http/jobs.ts）。
+    // status 状态机：pending → running → done | failed；pending/running 可取消 → cancelled。
+    // server 重启恢复：启动时把 pending/running 置 cancelled（批任务不自动重跑，由用户重新提交）。
+    // IF NOT EXISTS：runMigrations 只容忍 duplicate column/no such column/no such table，
+    // 「table already exists」会炸——新建表/索引一律 IF NOT EXISTS + 双写 schema.sql。
+    version: 20,
+    note: 'jobs 通用任务台账（asr-backfill | collect-find；status: pending|running|done|failed|cancelled）+ status/created_at 两索引。新建表/索引用 IF NOT EXISTS（重放安全）+ 双写 schema.sql',
+    statements: [
+      `CREATE TABLE IF NOT EXISTS jobs (
+         id            INTEGER PRIMARY KEY AUTOINCREMENT,
+         type          TEXT NOT NULL,
+         params_json   TEXT NOT NULL,
+         status        TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','running','done','failed','cancelled')),
+         progress_json TEXT,
+         result_json   TEXT,
+         error         TEXT,
+         created_at    INTEGER NOT NULL,
+         updated_at    INTEGER NOT NULL,
+         started_at    INTEGER,
+         finished_at   INTEGER
+       );
+       CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status);
+       CREATE INDEX IF NOT EXISTS idx_jobs_created ON jobs(created_at);`,
+    ],
+  },
 ];
 
 export function runMigrations(db: Database.Database): void {

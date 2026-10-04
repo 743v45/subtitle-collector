@@ -7,6 +7,7 @@
 
 import { Command } from 'commander';
 import { readFileSync, writeFileSync } from 'node:fs';
+import type Database from 'better-sqlite3';
 import { ServerClient, ServerUnreachableError, ServerResponseError } from '../http.js';
 import { emitResult, emitError, logInfo } from '../output.js';
 import { getCliContext } from '../context.js';
@@ -45,62 +46,71 @@ export interface TranslatePendingOpts {
 }
 
 /**
- * `translate pending`：有轨但无任何中文轨的视频清单。
- * 每项 langs 带各源轨默认版本行数（应用层 parse payload），供模型挑视频挑语言。
+ * `translate pending` 核心实现：接 db 句柄（CLI 薄包装开只读连接传入，HTTP handler 传 server 进程内 db——
+ * 一处实现两处受益，避免 readonly 二次打开与路径不一致，对齐「commander 薄包装+纯函数」架构）。
+ * 有轨但无任何中文轨的视频清单。每项 langs 带各源轨默认版本行数（应用层 parse payload），供模型挑视频挑语言。
  */
+export function translatePendingDb(
+  db: Database.Database,
+  opts: TranslatePendingOpts,
+): { total: number; page: number; size: number; items: PendingItem[] } {
+  const page = Math.max(1, opts.page ?? 1);
+  const size = Math.min(200, Math.max(1, opts.size ?? 20));
+  const params: unknown[] = [];
+  // 过滤条件：EXISTS 有轨 / NOT EXISTS 中文轨（精确集合 + asr-zh- 前缀——ASR 兜底轨按引擎派生无法穷举，
+  // LIKE 'asr-zh-%' 参数化对齐 isZhLan 前缀判定）/ 可选 --source 平台 / --from（有该源语言轨）/ --creator 模糊 / --since/--until 入库时间窗
+  const zhPlaceholders = ZH_LANS.map(() => '?').join(',');
+  let where = `WHERE EXISTS (SELECT 1 FROM subtitle_tracks t WHERE t.video_id = v.id)
+    AND NOT EXISTS (SELECT 1 FROM subtitle_tracks t WHERE t.video_id = v.id AND (t.lan IN (${zhPlaceholders}) OR t.lan LIKE ?))`;
+  params.push(...ZH_LANS, `${ASR_LAN_PREFIX}-%`);
+  if (opts.source) {
+    where += ' AND v.source = ?';
+    params.push(opts.source);
+  }
+  if (opts.from) {
+    where += ' AND EXISTS (SELECT 1 FROM subtitle_tracks t WHERE t.video_id = v.id AND t.lan = ?)';
+    params.push(opts.from);
+  }
+  if (opts.creator) {
+    where += ' AND c.name LIKE ?';
+    params.push(`%${opts.creator}%`);
+  }
+  if (opts.since !== undefined) { where += ' AND v.first_seen_at >= ?'; params.push(opts.since); }
+  if (opts.until !== undefined) { where += ' AND v.first_seen_at <= ?'; params.push(opts.until); }
+
+  const sortCol = opts.sort === 'published_at' ? 'v.published_at' : 'v.first_seen_at';
+  const dir = opts.asc ? 'ASC' : 'DESC';
+  const total = (db.prepare(
+    `SELECT COUNT(*) AS c FROM videos v LEFT JOIN creators c ON c.id = v.creator_id ${where}`,
+  ).get(...params) as { c: number }).c;
+  const rows = db.prepare(`
+    SELECT v.source, v.source_vid, v.title, c.name AS creator_name, v.duration, v.published_at, v.first_seen_at
+    FROM videos v LEFT JOIN creators c ON c.id = v.creator_id
+    ${where}
+    ORDER BY ${sortCol} ${dir}, v.id DESC
+    LIMIT ? OFFSET ?
+  `).all(...params, size, (page - 1) * size) as Array<Omit<PendingItem, 'langs'>>;
+
+  const items: PendingItem[] = rows.map((r) => ({ ...r, langs: sourceLangs(db, r.source, r.source_vid) }));
+  logInfo(`[translate:pending] 候选 ${total} 个（本页 ${items.length}），可用源语言已逐轨标注行数`);
+  return { total, page, size, items };
+}
+
+/** `translate pending` CLI 包装：openReadonlyDb(dbPath) → translatePendingDb（HTTP 侧不经过此函数）。 */
 export function translatePending(
   dbPath: string,
   opts: TranslatePendingOpts,
 ): { total: number; page: number; size: number; items: PendingItem[] } {
   const db = openReadonlyDb(dbPath);
   try {
-    const page = Math.max(1, opts.page ?? 1);
-    const size = Math.min(200, Math.max(1, opts.size ?? 20));
-    const params: unknown[] = [];
-    // 过滤条件：EXISTS 有轨 / NOT EXISTS 中文轨（精确集合 + asr-zh- 前缀——ASR 兜底轨按引擎派生无法穷举，
-    // LIKE 'asr-zh-%' 参数化对齐 isZhLan 前缀判定）/ 可选 --source 平台 / --from（有该源语言轨）/ --creator 模糊 / --since/--until 入库时间窗
-    const zhPlaceholders = ZH_LANS.map(() => '?').join(',');
-    let where = `WHERE EXISTS (SELECT 1 FROM subtitle_tracks t WHERE t.video_id = v.id)
-      AND NOT EXISTS (SELECT 1 FROM subtitle_tracks t WHERE t.video_id = v.id AND (t.lan IN (${zhPlaceholders}) OR t.lan LIKE ?))`;
-    params.push(...ZH_LANS, `${ASR_LAN_PREFIX}-%`);
-    if (opts.source) {
-      where += ' AND v.source = ?';
-      params.push(opts.source);
-    }
-    if (opts.from) {
-      where += ' AND EXISTS (SELECT 1 FROM subtitle_tracks t WHERE t.video_id = v.id AND t.lan = ?)';
-      params.push(opts.from);
-    }
-    if (opts.creator) {
-      where += ' AND c.name LIKE ?';
-      params.push(`%${opts.creator}%`);
-    }
-    if (opts.since !== undefined) { where += ' AND v.first_seen_at >= ?'; params.push(opts.since); }
-    if (opts.until !== undefined) { where += ' AND v.first_seen_at <= ?'; params.push(opts.until); }
-
-    const sortCol = opts.sort === 'published_at' ? 'v.published_at' : 'v.first_seen_at';
-    const dir = opts.asc ? 'ASC' : 'DESC';
-    const total = (db.prepare(
-      `SELECT COUNT(*) AS c FROM videos v LEFT JOIN creators c ON c.id = v.creator_id ${where}`,
-    ).get(...params) as { c: number }).c;
-    const rows = db.prepare(`
-      SELECT v.source, v.source_vid, v.title, c.name AS creator_name, v.duration, v.published_at, v.first_seen_at
-      FROM videos v LEFT JOIN creators c ON c.id = v.creator_id
-      ${where}
-      ORDER BY ${sortCol} ${dir}, v.id DESC
-      LIMIT ? OFFSET ?
-    `).all(...params, size, (page - 1) * size) as Array<Omit<PendingItem, 'langs'>>;
-
-    const items: PendingItem[] = rows.map((r) => ({ ...r, langs: sourceLangs(db, r.source, r.source_vid) }));
-    logInfo(`[translate:pending] 候选 ${total} 个（本页 ${items.length}），可用源语言已逐轨标注行数`);
-    return { total, page, size, items };
+    return translatePendingDb(db, opts);
   } finally {
     db.close();
   }
 }
 
 // 单视频源语言轨清单（pending 项内嵌复用）：每轨默认版本 body 行数；payload 解析失败 → lines:null（不崩整页）
-function sourceLangs(db: ReturnType<typeof openReadonlyDb>, source: string, sourceVid: string): PendingLangInfo[] {
+function sourceLangs(db: Database.Database, source: string, sourceVid: string): PendingLangInfo[] {
   const detail = getVideo(db, source, sourceVid);
   if (!detail) return [];
   return detail.tracks.map((t) => {
@@ -113,31 +123,50 @@ function sourceLangs(db: ReturnType<typeof openReadonlyDb>, source: string, sour
   });
 }
 
-/** `translate source`：源轨逐行 `行号\t原文`。content 内换行替换为空格——保证「一行=一条 body.content」契约。 */
+/** 源字幕结构化行（HTTP 形态：web 双栏直用；line 从 1 起，text 已剥换行）。 */
+export interface SourceLineRow { line: number; text: string }
+
+export interface TranslateSourceResult { text: string; lan: string; versionId: number; lines: number; rows: SourceLineRow[] }
+
+/**
+ * `translate source` 核心实现：接 db 句柄（同 translatePendingDb——CLI 开只读连接，HTTP 传 server 进程内 db）。
+ * 源轨逐行 `行号\t原文`；content 内换行替换为空格——保证「一行=一条 body.content」契约。
+ * rows 为结构化行（HTTP 双栏直用），text 为拼回的 tab 文本（CLI stdout 原契约，便于复制给模型）。
+ */
+export function translateSourceDb(
+  db: Database.Database,
+  source: string,
+  sourceVid: string,
+  fromLan?: string,
+): TranslateSourceResult {
+  const detail = getVideo(db, source, sourceVid);
+  if (!detail) throw new Error(`视频不存在: ${source}/${sourceVid}`);
+  // 源轨选择：显式 --from 精确匹配；缺省取优先级排序后首个轨（若它是中文轨——含 asr-zh-* 兜底轨——则报错：该视频不需要补翻）
+  const track = fromLan
+    ? detail.tracks.find((t) => t.lan === fromLan) ?? throwErr(`源轨不存在: lan=${fromLan}（可用: ${detail.tracks.map((t) => t.lan).join(', ')}）`)
+    : detail.tracks[0] ?? throwErr('该视频没有任何字幕轨');
+  if (!fromLan && isZhLan(track.lan)) {
+    throw new Error(`默认轨已是中文（${track.lan}），无需补翻；确需重翻请显式 --from <lan>`);
+  }
+  const ver = track.versions[0] ?? throwErr('源轨没有任何版本');
+  const payload = getVersionPayload(db, ver.id)?.payload;
+  const body = extractBody(payload); // 结构校验 + 提取
+  const rows: SourceLineRow[] = body
+    .map((b, i) => ({ line: i + 1, text: b.content.replace(/[\r\n]+/g, ' ').trim() }));
+  const text = rows.map((r) => `${r.line}\t${r.text}`).join('\n') + '\n';
+  return { text, lan: track.lan ?? '', versionId: ver.id, lines: body.length, rows };
+}
+
+/** `translate source` CLI 包装：openReadonlyDb(dbPath) → translateSourceDb（HTTP 侧不经过此函数）。 */
 export function translateSource(
   dbPath: string,
   source: string,
   sourceVid: string,
   fromLan?: string,
-): { text: string; lan: string; versionId: number; lines: number } {
+): TranslateSourceResult {
   const db = openReadonlyDb(dbPath);
   try {
-    const detail = getVideo(db, source, sourceVid);
-    if (!detail) throw new Error(`视频不存在: ${source}/${sourceVid}`);
-    // 源轨选择：显式 --from 精确匹配；缺省取优先级排序后首个轨（若它是中文轨——含 asr-zh-* 兜底轨——则报错：该视频不需要补翻）
-    const track = fromLan
-      ? detail.tracks.find((t) => t.lan === fromLan) ?? throwErr(`源轨不存在: lan=${fromLan}（可用: ${detail.tracks.map((t) => t.lan).join(', ')}）`)
-      : detail.tracks[0] ?? throwErr('该视频没有任何字幕轨');
-    if (!fromLan && isZhLan(track.lan)) {
-      throw new Error(`默认轨已是中文（${track.lan}），无需补翻；确需重翻请显式 --from <lan>`);
-    }
-    const ver = track.versions[0] ?? throwErr('源轨没有任何版本');
-    const payload = getVersionPayload(db, ver.id)?.payload;
-    const body = extractBody(payload); // 结构校验 + 提取
-    const text = body
-      .map((b, i) => `${i + 1}\t${b.content.replace(/[\r\n]+/g, ' ').trim()}`)
-      .join('\n') + '\n';
-    return { text, lan: track.lan ?? '', versionId: ver.id, lines: body.length };
+    return translateSourceDb(db, source, sourceVid, fromLan);
   } finally {
     db.close();
   }
