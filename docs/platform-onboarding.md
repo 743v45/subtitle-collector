@@ -52,7 +52,7 @@
 - [ ] **server 侧测试**：URL/标识解析（[douyin-url.test.ts](../apps/collector-server/src/tasks/douyin-url.test.ts)）、迁移两用例（[migrate.test.ts](../apps/collector-server/src/db/migrate.test.ts)）、派发映射/回执迁移（[tasks.test.ts](../apps/collector-server/src/tasks/tasks.test.ts)、[amend.test.ts](../apps/collector-server/src/tasks/amend.test.ts)）、ingest 幂等（ingest 路已有，加平台样本）；ASR 如接入则平台解析下载测试（[asr-douyin.test.ts](../apps/collector-server/src/cli/asr-douyin.test.ts) 先例）。
 - [ ] **真接线断言**（跨端契约）：server↔扩展↔web 三端的请求/回执形状至少一处集成测试固定同一 JSON（C1 教训：双端各自 mock 无一致断言 = 契约断裂盲区）。
 - [ ] **冒烟**：`pnpm test:ext`（puppeteer mock 扩展回归；douyin 接入时无新增专用冒烟用例，如实记录）；导航采集三入口手动冒烟（扩展载 Chrome 实跑）。
-- [ ] **静态门**：`pnpm qa` 全绿；新文件复杂度 ≤15 / ≤400 行（`upper-expand.ts` complexity 18 被台账拦下的教训）；涉扩展改动 bump [manifest.json](../apps/subtitle-collector/manifest.json) `version`（当前 0.1.30），涉 android bump `versionCode`。
+- [ ] **静态门**：`pnpm qa` 全绿；新文件复杂度 ≤15 / ≤400 行（`upper-expand.ts` complexity 18 被台账拦下的教训）；涉扩展改动 bump [manifest.json](../apps/subtitle-collector/manifest.json) `version`（版本以 manifest.json 为准），涉 android bump `versionCode`。
 - [ ] **文档同步**（qa 门 `verify-skill-sync.mjs` 拦漂移）：[docs/skills/collector/SKILL.md](skills/collector/SKILL.md)、[docs/help/](help/INDEX.md) 相关页、[README.md](../README.md) Feature 列表与架构表/数据流图、[docs/architecture.html](architecture.html)。
 
 ## 6. 决策记录（为什么这么接）

@@ -82,3 +82,24 @@
 | U-3 | ~~「提交已上生产重构」语义追认~~ | §0 | ✅（2026-10-04：原意从老记忆考得，核实 08-25/26 已补提交落地，已完成划销） |
 | U-4 | P3-1 / P3-4 拍板 | P3 | 不拍板 = 维持现状（冻结/静止） |
 | U-5 | 下一个分析主题实跑 | P3-3/P3-5、README 🚧 | 解锁「疼了再做」推迟项链（INDEX 台账 → README 分析条目转 ✅ 的互锁条件，[README.md:46](../../README.md#L46)） |
+| U-6 | ~~crontab 一行修复（本机终端粘贴）~~ | A1 | ✅（2026-10-05 用户终端粘贴，env-inventory 5/5 全绿：绝对路径 node + 每周一 11:23 healthcheck 巡检行均已生效） |
+| U-7 | 分支合并 + server 部署 + 扩展重载 | 补充批次 | 分支 `supplement-design-tree-e2e-acceptance`（14+ commits）待合并主检出；`docker compose up -d --build` 后跑 `verify-deployed --via-docker` 验收；扩展 0.1.33 chrome://extensions 重载；合并后再补每周 healthcheck cron 行（现在加会指向主检出尚不存在的脚本） |
+
+## 6. 补充树（2026-10-04 第二轮盘点，多镜头工作流产出）
+
+> 用户指令「再思考哪些要补充的（10 个点/设计树/端到端验收）」→ 27-agent 工作流（五路盘点 131 条事实 → 19 候选 → 去重 15 → 逐项对抗验证全存活 → 查漏补 3）。两条活事故先行实证：**异地备份链静默死 40 天**（[offsite.log](../../data/exports) 34 条 `node: command not found`，群晖最新副本停在 08-24；crontab 裸 node）与 **HTTP 同源放行路可被伪造 Host/Origin 整体绕过**（无 token 401、伪造头 200 实测）。当日实现 10 点中 9 点 + 落选 C6 顺做，全量 `pnpm qa` 绿。端到端验收=季度验收日一条龙：`backup-healthcheck` → `verify-deployed --via-docker` → `backup-restore --drill --pick random` → `env-inventory` → `verify-docs-sync` → `verify-full-chain`（需扩展在线），结果落 [acceptance-log.md](acceptance-log.md)。
+
+| # | 项 | 落地 | 状态 |
+|---|---|---|---|
+| A1 | 异地备份复活+healthcheck 巡检 | [backup-healthcheck.mjs](../../scripts/backup-healthcheck.mjs)（9c4d899，四项检查+飞书告警，19 测试）；手动出卷恢复时新性（群晖 20261004-043710.db，428MB）；crontab 修复+每周一巡检行已生效（U-6 ✅ 2026-10-05） | ✅ |
+| A2 | 备份产物落盘自检+主库日检 | 358c60e：快照 quick_check/每日首份全量 integrity_check/主库 24h 日检，non-ok 走 failStreak≥2 独立文案 | ✅ |
+| A3 | verify-deployed --via-docker | 6974f12：容器内只读 integrity_check+库/-wal 水位，生产实跑 ok（428MB）；文档六处同步（7eb9aa5） | ✅ |
+| A4 | backup-restore 硬化 | a42734a：卷名动态解析+--volume-name 覆盖/auto-create 防线/apply 校验前置/--pick 抽验/残留 sweep；六项实测过；顺手修 die() 跳 finally 老 bug（曾留 5 周残留容器）；[acceptance-log.md](acceptance-log.md) 起账 | ✅ |
+| A5 | 裸机重建 runbook+env-inventory | [灾难重建.md](../help/灾难重建.md)+[env-inventory.mjs](../../scripts/env-inventory.mjs) | ✅（收尾批） |
+| A6 | report 产物 git 化 | Code/report init 0438b9b（1123 文件，openresources 14G 排除）；拍板=只 init 本地，推远端待定 | ✅ |
+| B1 | 401 结构化日志+日志轮转+安全边界文档化 | 6b9bd50+7eb9aa5；拍板=**接受现状**（伪造 Host/Origin 绕过实证，三方案评估落 [Docker 部署.md](../help/Docker%20部署.md)；门只防浏览器侧，401 日志观测） | ✅ |
+| B2 | 启动闸拒占位符 token | 7f3c42d：空值/change-me 缺省一律 exit 1 | ✅ |
+| C1 | 台账三入口指针+AI 接手页+docs-sync 门 | 1a36a94+1f66ebf：六处漂移清零、[AI-接手.md](../help/AI-接手.md)、四断言门挂 qa | ✅ |
+| C2 | verify-full-chain 全链路真值冒烟 | c5e15b7：在线前置→重采任务→succeeded→快照出包断言；created:false 防误删在途任务；全链真跑待扩展在线（U-7 后） | ✅ |
+
+**落选候选处置**：C6 /command 双端白名单——已顺做落地（8fcb0ab + 8a2e6b4，14 action 白名单+navigate host 校验双端，manifest 0.1.33）；C8 扩展 token 与 URL 解耦（轮换成本，U-1 类操作减负）→ **P2**；C11 pre-commit 两门（§4 弹幕措辞门/§7 manifest bump 门，§7 已实测漏 5 次）→ **P2**；C13 冒烟 launchd 周轮+HEAD sha 落账（防 P0-2 式 5 周静默腐坏重演）→ **P2**；K3 构建 sha 锚（Dockerfile LABEL+/ping 回 sha+verify --expect-sha）→ **P3**。
