@@ -560,7 +560,10 @@ test('POST /api/clients/:id/command：扩展回执 ok=false → 502 + 扩展 err
       if (m.action === 'navigate') ws.send(JSON.stringify({ type: 'result', id: m.id, ok: false, error: 'need_login' }));
     });
     await new Promise(r => setTimeout(r, 50));
-    const r = await httpReq(ctx.port, 'POST', '/api/clients/ext-A/command', { action: 'navigate', url: 'x' });
+    const r = await httpReq(ctx.port, 'POST', '/api/clients/ext-A/command', {
+      action: 'navigate',
+      url: 'https://www.bilibili.com/video/BV1xxx411c7mD', // C6 后 navigate 目标须合法白名单族 URL
+    });
     // 502 = 下游执行体（扩展）失败：error 为扩展回执原文，CLI 经 HTTP 状态即可判失败
     assert.equal(r.status, 502);
     assert.equal(r.json.ok, false);
@@ -585,7 +588,8 @@ test('POST /api/clients/:id/command：action 缺失/空串 → 400', async () =>
 test('POST /api/clients/:id/command：离线 client → 404', async () => {
   const ctx = await setup();
   try {
-    const r = await httpReq(ctx.port, 'POST', '/api/clients/ext-NONE/command', { action: 'navigate', url: 'x' });
+    // C6 后 navigate 目标须合法白名单族 URL（校验先于在线判定,坏参数无论离线与否都 400,见白名单用例）
+    const r = await httpReq(ctx.port, 'POST', '/api/clients/ext-NONE/command', { action: 'navigate', url: 'https://www.bilibili.com/video/BV1xxx411c7mD' });
     assert.equal(r.status, 404);
     assert.equal(r.json.ok, false);
     assert.equal(r.json.error, 'client not online');
@@ -600,12 +604,81 @@ test('POST /api/clients/:id/command：扩展不回 result → 504（短 timeout 
     await new Promise(r => setTimeout(r, 50));
     const r = await httpReq(ctx.port, 'POST', '/api/clients/ext-A/command', {
       action: 'navigate',
-      url: 'x',
+      url: 'https://www.bilibili.com/video/BV1xxx411c7mD', // C6 后 navigate 目标须合法白名单族 URL
       timeout: 80,
     });
     assert.equal(r.status, 504);
     assert.equal(r.json.ok, false);
     assert.equal(r.json.error, 'extension result timeout');
+    ws.close();
+  } finally { ctx.cleanup(); }
+});
+
+// ── C6 /command 收紧：action 白名单 + navigate 目标 host 校验（非法参数 400,先于在线判定/透传）──
+
+test('POST /api/clients/:id/command：白名单外 action → 400（带 action 值与合法集合,不走 needs_update/透传）', async () => {
+  const ctx = await setup();
+  try {
+    const ws = await wsConnect(ctx.port, 'ext-A', true);
+    // 若被透传,扩展会对未知 action 回 needs_update result——记录收到的消息证明未透传
+    const received: string[] = [];
+    // 只记录真正下发的 command（hello-ack 等控制帧无 action,不计入）
+    ws.on('message', (d) => { const m = JSON.parse(d.toString()); if (m.action) received.push(m.action); });
+    await new Promise(r => setTimeout(r, 50));
+    const r = await httpReq(ctx.port, 'POST', '/api/clients/ext-A/command', { action: 'rm-rf', x: 1 });
+    assert.equal(r.status, 400);
+    assert.equal(r.json.ok, false);
+    assert.match(r.json.error, /action not allowed: rm-rf/, '错误带 action 值');
+    assert.match(r.json.error, /navigate/, '错误带合法集合提示');
+    await new Promise(r2 => setTimeout(r2, 80));
+    assert.deepEqual(received, [], '白名单外 action 不透传到扩展');
+    ws.close();
+  } finally { ctx.cleanup(); }
+});
+
+test('POST /api/clients/:id/command：navigate 非白名单 host / 非法 URL / 非法协议 / 缺 url → 400', async () => {
+  const ctx = await setup();
+  try {
+    const req = (body: unknown) => httpReq(ctx.port, 'POST', '/api/clients/ext-NONE/command', body);
+    // 外部域（离线 client 也 400：参数校验先于在线判定）
+    const r1 = await req({ action: 'navigate', url: 'https://evil.com/video/BV1xxx' });
+    assert.equal(r1.status, 400);
+    assert.match(r1.json.error, /host not allowed: evil\.com/);
+    // 伪装域（后缀拼接）：hostname 精确判定不匹配
+    const r2 = await req({ action: 'navigate', url: 'https://bilibili.com.evil.com/video/BV1xxx' });
+    assert.equal(r2.status, 400);
+    // 非法 URL（解析失败）
+    const r3 = await req({ action: 'navigate', url: '::not a url::' });
+    assert.equal(r3.status, 400);
+    // 非 http(s) 协议
+    const r4 = await req({ action: 'navigate', url: 'file:///etc/passwd' });
+    assert.equal(r4.status, 400);
+    assert.match(r4.json.error, /protocol must be http\(s\)/);
+    // 缺 url
+    const r5 = await req({ action: 'navigate' });
+    assert.equal(r5.status, 400);
+    assert.match(r5.json.error, /navigate requires url/);
+  } finally { ctx.cleanup(); }
+});
+
+test('POST /api/clients/:id/command：合法 navigate（三平台白名单族含子域）→ 原行为不变', async () => {
+  const ctx = await setup();
+  try {
+    const ws = await wsConnect(ctx.port, 'ext-A', true);
+    ws.on('message', (d) => {
+      const m = JSON.parse(d.toString());
+      if (m.action === 'navigate') ws.send(JSON.stringify({ type: 'result', id: m.id, ok: true, data: { opened: true } }));
+    });
+    await new Promise(r => setTimeout(r, 50));
+    // 裸域 + 子域（search/space 页同放行）
+    const r1 = await httpReq(ctx.port, 'POST', '/api/clients/ext-A/command', { action: 'navigate', url: 'https://search.bilibili.com/all?keyword=x' });
+    assert.equal(r1.status, 200);
+    assert.equal(r1.json.ok, true);
+    assert.equal(r1.json.result.opened, true);
+    const r2 = await httpReq(ctx.port, 'POST', '/api/clients/ext-A/command', { action: 'navigate', url: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ' });
+    assert.equal(r2.status, 200);
+    const r3 = await httpReq(ctx.port, 'POST', '/api/clients/ext-A/command', { action: 'navigate', url: 'https://www.douyin.com/video/7123456789012345678' });
+    assert.equal(r3.status, 200);
     ws.close();
   } finally { ctx.cleanup(); }
 });
@@ -649,7 +722,7 @@ test('POST /api/clients/:id/command：回执 ok=false 且无 error 字段 → 50
       if (m.action === 'navigate') ws.send(JSON.stringify({ type: 'result', id: m.id, ok: false })); // 不带 error
     });
     await new Promise(r => setTimeout(r, 50));
-    const r = await httpReq(ctx.port, 'POST', '/api/clients/ext-A/command', { action: 'navigate', url: 'x' });
+    const r = await httpReq(ctx.port, 'POST', '/api/clients/ext-A/command', { action: 'navigate', url: 'https://www.bilibili.com/video/BV1xxx411c7mD' });
     assert.equal(r.status, 502);
     assert.equal(r.json.ok, false);
     assert.equal(r.json.error, 'extension command failed', '回执无 error 时用兜底文案');

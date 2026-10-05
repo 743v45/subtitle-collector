@@ -43,7 +43,7 @@ docker exec collector-server node -e 'const db=require("better-sqlite3")("/data/
 
 历史教训(2026-08-24 两次 SQLITE_CORRUPT):旧 bind mount 走 virtiofs,宿主机进程直触挂载库(哪怕只读)会引发 mmap 一致性损坏;named volume 已根除此路径,但「宿主直读」习惯须保持禁用。
 
-**生产备份**(2026-08-25 grilling 定案的四层体系):① server 内置每 **15min** 容器内 `VACUUM INTO /data/backups/`(启动即备一次,分层滚动:最近 8 份 + 每日末份 × 14 天,RPO 15min 保人工资产);② 每日 10:23 cron 导最新 1 份到群晖同步盘(异地,`crontab -l` 可查);③ 恢复走 `node scripts/backup-restore.mjs --list / --drill / --apply <文件名>`(--drill 恢复演练不碰生产,**每季度跑一次**);④ 连续失败 ≥2 次推飞书 webhook(.env 配 `COLLECTOR_BACKUP_WEBHOOK_URL`,缺省只打日志)。导出到任意宿主目录:`node scripts/backup-export.mjs [目录] [--all|--keep N]`。
+**生产备份**(2026-08-25 grilling 定案的四层体系):① server 内置定时容器内 `VACUUM INTO /data/backups/`(启动即备一次,分层滚动;备份间隔/保留份数/保留天数等参数**单源见 [apps/collector-server/src/db/backup.ts](../../../apps/collector-server/src/db/backup.ts)**,此处不复述数字以防漂移);② 每日 10:23 cron 导最新 1 份到群晖同步盘(异地,`crontab -l` 可查);③ 恢复走 `node scripts/backup-restore.mjs --list / --drill / --apply <文件名>`(--drill 恢复演练不碰生产,按定案节奏定期跑);④ 连续失败 ≥2 次推飞书 webhook(.env 配 `COLLECTOR_BACKUP_WEBHOOK_URL`,缺省只打日志)。导出到任意宿主目录:`node scripts/backup-export.mjs [目录] [--all|--keep N]`。
 
 ## 命令组速查(细节靠 --help)
 
@@ -92,8 +92,11 @@ collect 子命令速记:`search <关键词>` 搜候选(不入库)/ `subtitle <vi
 | `scripts/launch-chrome.mjs` | 起 Chrome + cdpc 端口(扩展联调) |
 | `scripts/load-collector-extension.sh` | 装扩展到 Chrome |
 | `scripts/proxy-collector-server.mjs` | 127.0.0.1:21528 → 内网 21527 转发 |
-| `scripts/verify-deployed.mjs` | 部署后服务状态自检(`pnpm verify:deployed -- --token <t> [--server <url>] [--db <路径>]`;HTTP 核心接口 + `--db` 时 SQLite integrity_check,坏页损坏探活测不出——2026-08-24 事故教训;生产库迁 volume 后 `--db` 传导出的备份文件或省略) |
+| `scripts/verify-deployed.mjs` | 部署后服务状态自检(`pnpm verify:deployed -- --token <t> [--server <url>] [--via-docker [容器名]\|--db <路径>]`;HTTP 核心接口 + DB 层 SQLite integrity_check,坏页损坏探活测不出——2026-08-24 事故教训;生产库在 named volume 宿主无文件,DB 层走 `--via-docker`(docker exec 容器内校验,缺省容器名 collector-server),`--db` 只用于导出的备份文件) |
 | `scripts/backup-export.mjs` | 生产备份导出(docker cp volume → 宿主;`node scripts/backup-export.mjs [目录] [--all\|--keep N]`,默认最新 1 份到 `data/exports/`) |
+| `scripts/backup-healthcheck.mjs` | 备份体系巡检(只读,防链路静默死——2026-10-04 异地导出 cron 裸 node 死 40 天教训):卷内最新备份 <30min / 异地最新 .db <48h / 异地副本 `sqlite3 -readonly` quick_check+videos 行数 / 宿主 data/exports 快照盘点(仅日志);`node scripts/backup-healthcheck.mjs [--dry-run]`,任一失败 exit 1+推飞书(`COLLECTOR_BACKUP_WEBHOOK_URL`);与 backup-export 分工:export 搬副本出卷,healthcheck 只验链路活着,建议 cron 每周跑(node 绝对路径);恢复演练见 backup-restore --drill |
+| `scripts/verify-full-chain.mjs` | 生产全链路真值冒烟(2026-10-04 C2):前置在线检查→建已采视频重采任务→轮询 succeeded→快照出包断言→收场删任务;`node scripts/verify-full-chain.mjs --server <url> --token <t> [--bvid BV] [--timeout 秒]`;扩展离线即刻 exit 2 不空转;部署/扩展 bump 后跑——「派发→采集→入库→导出」闭环此前零覆盖,本工具补位 |
+| `scripts/env-inventory.mjs` | 外置配置只读盘点(A5,验收日与健康检查同轮):crontab backup-export 行(node 须绝对路径+行内脚本存在)/主检出 .env(token 非空非占位符+webhook,值绝不打印)/B 站 cookie mtime/异地最新 .db <48h/report 产物仓 git 干净;`node scripts/env-inventory.mjs`,任一 fail exit 1(纯巡检不告警,告警职责在 backup-healthcheck) |
 | `scripts/export-bundle.mjs` | 生产库→分析原料包一条命令(`node scripts/export-bundle.mjs --theme <主题> [过滤器...] [--out <dir>] [--max-age-hours <n>] [--force]`;容器内 VACUUM INTO 新快照 → docker cp → collector-cli `--db` 出包,`--max-age-hours` 内复用 mtime 最新快照;分析闭环第一步) |
 | `scripts/backup-restore.mjs` | 生产备份恢复(`--list` 列卷内备份 / `--drill` 演练(临时卷+容器 21599,不碰生产,季度跑) / `--apply <文件名>` 真恢复(停服换库,旧库改名留证);事故现场不再靠记忆) |
 | `scripts/sqlite-rescue.mjs` | 损坏库抢救重建(`node scripts/sqlite-rescue.mjs <主库> <完好备份> <新库输出>`;分段绕坏页 + 备份兜底 + JSON 列降级 + 孤儿引用登记,2026-08-24 SQLITE_CORRUPT 事故产物) |
