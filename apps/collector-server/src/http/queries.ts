@@ -6,7 +6,6 @@ import { CHANGE_SORT_KEYS, type ChangeSortKey } from '../db/sort.js';
 import { parseVideoFilter } from './filter.js';
 import { applyVideoTags, removeVideoTags, getVideoTagsByVideoIds, getVideoTagsForDetail, type TagSource } from '../db/tags.js';
 import { getTagPriority, type TagPrioritySource } from '../db/settings.js';
-import { handleCommentsTreeHttp } from './comments-tree.js';
 import { json, readJsonBody, parseTagScope, parseSortParams } from './http-util.js';
 
 // 合并 bili（extra.tags）+ season（extra.ugc_season.title）与关系三档，同名按 tag_priority 取优先档（winner）。
@@ -183,10 +182,6 @@ export async function handleQueryHttp(req: IncomingMessage, res: ServerResponse,
       return;
     }
   }
-
-  // 单视频评论树（web 详情页用，P2-5）：路由与处理整体在 http/comments-tree.ts
-  // （与 CLI comments tree 共享 db/comments-tree.ts shapeTree，§6.3 同语义）
-  if (await handleCommentsTreeHttp(req, res, db, url, pathname)) return;
 
   const detailMatch = pathname.match(/^\/api\/videos\/([^/]+)\/([^/]+)$/);
   if (detailMatch) {

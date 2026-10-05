@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-10-04T21:55:37.588Z",
+  "generatedAt": "2026-10-05T02:03:10.711Z",
   "rules": {
     "complexity": 15,
     "maxLines": 400
@@ -17,8 +17,7 @@
       "maxLines": 452
     },
     "apps/collector-server/src/db/advanced.ts": {
-      "complexity": 21,
-      "maxLines": 468
+      "complexity": 21
     },
     "apps/collector-server/src/db/ingest.ts": {
       "complexity": 40
@@ -26,17 +25,11 @@
     "apps/collector-server/src/http/categories.ts": {
       "complexity": 16
     },
-    "apps/collector-server/src/http/clients.ts": {
-      "complexity": 19
-    },
-    "apps/collector-server/src/http/creators.ts": {
-      "complexity": 16
-    },
     "apps/collector-server/src/http/filter.ts": {
       "complexity": 25
     },
     "apps/collector-server/src/http/queries.ts": {
-      "complexity": 39
+      "complexity": 38
     },
     "apps/collector-server/src/http/tags.ts": {
       "complexity": 21
@@ -46,20 +39,11 @@
     },
     "apps/collector-server/src/tasks/tasks.ts": {
       "complexity": 20,
-      "maxLines": 529
+      "maxLines": 503
     },
     "apps/collector-server/src/ws/server.ts": {
       "complexity": 32,
       "maxLines": 426
-    },
-    "apps/collector-web/src/api.ts": {
-      "maxLines": 432
-    },
-    "apps/collector-web/src/components/TaskCards.tsx": {
-      "complexity": 24
-    },
-    "apps/collector-web/src/pages/CategoriesPage.tsx": {
-      "complexity": 17
     },
     "apps/collector-web/src/pages/ChangesLog.tsx": {
       "complexity": 16
@@ -69,10 +53,7 @@
       "maxLines": 506
     },
     "apps/collector-web/src/pages/CreatorDetailPage.tsx": {
-      "complexity": 29
-    },
-    "apps/collector-web/src/pages/CreatorsPage.tsx": {
-      "complexity": 18
+      "complexity": 27
     },
     "apps/collector-web/src/pages/TagsPage.tsx": {
       "complexity": 21
@@ -86,7 +67,7 @@
     },
     "apps/collector-web/src/pages/VideoList.tsx": {
       "complexity": 52,
-      "maxLines": 533
+      "maxLines": 532
     },
     "apps/collector-web/src/taskHistoryFilterUrl.ts": {
       "complexity": 17
@@ -96,7 +77,7 @@
     },
     "apps/subtitle-collector/background.js": {
       "complexity": 161,
-      "maxLines": 1353
+      "maxLines": 1352
     },
     "apps/subtitle-collector/content-yt.js": {
       "complexity": 40,

@@ -8,6 +8,7 @@
 // | R2 | 任务派发开关（2026-08-23 仅上报状态）：badge 展示 + 切换 POST /api/clients/:id/task-dispatch | 通过 | |
 // | R3 | 客户端命名（2026-08-24）：client() helper 扩全量字段；新增名字/离线时长/离线无按钮断言；计数文案改「客户端 N · 在线 M」 | 通过 | |
 // | R4 | B 站登录态（2026-08-24 充电视频 no_subtitle 根因可观察化）：已登录徽章+账号+大会员 / 未登录红徽章 / null（旧扩展）不渲染 | 通过 | |
+// | R5 | Q8c 离线提示（2026-10-05）：离线卡渲染「离线中——远程操作按钮仅在线时可用」，在线卡不渲染（解释按钮消失原因） | 通过 | 4 张离线卡各 1 条 |
 import { test, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, cleanup, act, waitFor } from '@testing-library/react';
 import { ClientsPage } from './ClientsPage';
@@ -191,6 +192,8 @@ test('离线客户端：显示离线时长与最后在线；不渲染远程操�
   expect(screen.getByText(/离线 2 小时 ·/)).toBeInTheDocument();
   expect(screen.getByText(/离线 2 天 ·/)).toBeInTheDocument();
   expect(screen.getAllByText(/最后在线/).length).toBe(4);
+  // Q8c：每张离线卡渲染离线提示（解释远程操作按钮为何消失）；在线卡不渲染
+  expect(screen.getAllByText('离线中——远程操作按钮仅在线时可用').length).toBe(4);
   // 在线客户端有操作按钮，离线的没有
   expect(screen.getByRole('button', { name: /暂停自动上报/ })).toBeInTheDocument();
   expect(screen.queryByRole('button', { name: /恢复自动上报/ })).not.toBeInTheDocument(); // 离线卡不渲染

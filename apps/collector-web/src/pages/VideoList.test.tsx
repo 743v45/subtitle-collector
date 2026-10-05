@@ -12,7 +12,8 @@
 // | R4 | Radix Select 三下拉 + 排序/升降序切换 | 通过 | combobox 无可访问名（Radix 未设 aria-label），按显示文本定位 trigger；jsdom 需 scrollIntoView stub |
 // | R5 | 更多筛选：TagMultiSelect 开合/外点关闭/勾选与徽章移除/暂无标签；次要输入（lang/时长/播放/日期/仅含字幕） | 通过 | |
 // | R6 | URL 复合筛选 → listVideos 请求参数全量断言（分钟→秒、万→绝对值、日期→ms、非法数字容错）；外部 hash 变化同步输入框；重置 | 通过 | |
-// | R7 | douyin（2026-08-29）：平台第四项/URL 透传、档位文案「平台自带」、行降级渲染（黑系图标/外链/分区 —） | 通过 | |
+// | R7 | douyin（2026-08-29）：平台第四项/URL 透传、档位文案「平台自带」、行降级渲染（黑系图标/外链/话题标） | 通过 | |
+// | R8 | 标签单行收纳（2026-10-05 Q3）：默认前 2 + 「+N」展开/收起（行内瞬态不进 URL）；分区列移除（筛选控件保留） | 通过 | |
 import { test, expect, vi, afterEach } from 'vitest';
 import { render, screen, fireEvent, cleanup, waitFor } from '@testing-library/react';
 import { VideoList } from './VideoList';
@@ -118,15 +119,17 @@ test('默认加载：计数、两行渲染、各格式化分支、外链、http 
   // view：1.2万 / 10.0亿
   expect(screen.getByText('1.2万')).toBeInTheDocument();
   expect(screen.getByText('10.0亿')).toBeInTheDocument();
-  // duration：h 分支 1:01:01；null → —
+  // duration：h 分支 1:01:01；null → —（2026-10-05 分区列移除后 youtube 行空占位剩 3 处）
   expect(screen.getByText('1:01:01')).toBeInTheDocument();
-  expect(screen.getAllByText('—').length).toBeGreaterThanOrEqual(4); // creator/duration/published/tname 空占位
+  expect(screen.getAllByText('—')).toHaveLength(3); // creator/duration/published 空占位
   // 封面：http → https；无 pic → 无 img（回落 Film 图标）
   expect(document.querySelector('img[src="https://i0.hdslb.com/bfs/a.jpg"]')).not.toBe(null);
   expect(document.querySelectorAll('img').length).toBe(1);
-  // 标签：3 个 + 溢出 +1；旧 tags 回落无色徽章
+  // 标签单行收纳（Q3）：4 个标签默认只显前 2 + 「+2」展开钮；旧 tags 回落无色徽章
   expect(screen.getByText('标a')).toBeInTheDocument();
-  expect(screen.getByText('+1')).toBeInTheDocument();
+  expect(screen.getByText('标b')).toBeInTheDocument();
+  expect(screen.queryByText('标c')).toBe(null);
+  expect(screen.getByRole('button', { name: '+2' })).toBeInTheDocument();
   expect(screen.getByText('旧标')).toBeInTheDocument();
   // 外链
   expect(screen.getAllByLabelText('在原站打开视频').length).toBe(2);
@@ -154,6 +157,42 @@ test('行点击 → 带 query 进详情；分区下拉选项来自 tname 聚合�
   expect(await screen.findByRole('option', { name: /生活/ })).toBeInTheDocument();
   expect(screen.queryByRole('option', { name: /unknown/ })).toBe(null);
   expect(qp(calls).get('page')).toBe('1');
+});
+
+// ── R8：标签单行收纳 + 分区列移除（2026-10-05 Q3）──
+
+test('标签展开收起：默认前 2 个 + 「+2」钮；点击就地展开全量（不触发行点击进详情），再点收起', async () => {
+  setup();
+  await screen.findByText('B站完整字段视频');
+  // 默认收纳：只显 标a/标b，标c/标d 折叠；+2 钮 aria-expanded=false
+  expect(screen.getByText('标a')).toBeInTheDocument();
+  expect(screen.getByText('标b')).toBeInTheDocument();
+  expect(screen.queryByText('标c')).toBe(null);
+  expect(screen.queryByText('标d')).toBe(null);
+  const expandBtn = screen.getByRole('button', { name: '+2' });
+  expect(expandBtn.getAttribute('aria-expanded')).toBe('false');
+
+  // 展开：全量标签就地显示；stopPropagation → hash 不变（行点击进详情未被触发）
+  fireEvent.click(expandBtn);
+  expect(screen.getByText('标c')).toBeInTheDocument();
+  expect(screen.getByText('标d')).toBeInTheDocument();
+  expect(screen.getByRole('button', { name: '收起' }).getAttribute('aria-expanded')).toBe('true');
+  expect(window.location.hash).toBe('#/videos');
+
+  // 收起：回到前 2 个 + 「+2」
+  fireEvent.click(screen.getByRole('button', { name: '收起' }));
+  expect(screen.queryByText('标c')).toBe(null);
+  expect(screen.getByRole('button', { name: '+2' }).getAttribute('aria-expanded')).toBe('false');
+});
+
+test('分区列移除：表体不再渲染 tname；「更多筛选」里的分区下拉保留', async () => {
+  setup();
+  await screen.findByText('B站完整字段视频');
+  // 分区列已删：B 站行的 tname「生活」不再出现在表体
+  expect(screen.queryByText('生活')).toBe(null);
+  // 分区筛选控件仍在「更多筛选」折叠区（功能不受列移除影响）
+  fireEvent.click(screen.getByRole('button', { name: /更多筛选/ }));
+  expect(screen.getByText('全部分区')).toBeInTheDocument();
 });
 
 // ── R2：错误/空态 ──
@@ -263,8 +302,8 @@ test('档位文案：bili 档显示「平台自带」（抖音话题标签同入
   expect(screen.queryByRole('option', { name: 'B站' })).toBe(null);
 });
 
-test('douyin 行渲染：黑系图标 + 原站/主页外链 + 分区列降级 —', async () => {
-  // douyin 无 tid/tname（B 站专属），分区列降级占位；外链走 douyin 域名形态
+test('douyin 行渲染：黑系图标 + 原站/主页外链 + 话题标签', async () => {
+  // douyin 无 tid/tname（B 站专属；2026-10-05 起表体不再渲染分区列）；外链走 douyin 域名形态
   const rows = {
     total: 1,
     items: [{
@@ -281,7 +320,6 @@ test('douyin 行渲染：黑系图标 + 原站/主页外链 + 分区列降级 �
   expect(screen.getByText('2.1万')).toBeInTheDocument(); // view 格式化同构（21000）
   expect(screen.getByText('1:01')).toBeInTheDocument(); // 时长同构
   expect(screen.getByText('话题标')).toBeInTheDocument(); // douyin 话题标签入 bili 档渲染
-  expect(screen.getByText('—')).toBeInTheDocument(); // 分区列降级（douyin 无 tid/tname）
   // 图标类：douyin 黑系（行内 iconColor 与共享 platformIconClass 同源）
   const titleCell = screen.getByText('抖音视频标题').closest('td')!;
   const icon = titleCell.querySelector('svg');

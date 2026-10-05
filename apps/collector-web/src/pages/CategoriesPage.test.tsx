@@ -7,6 +7,7 @@
 // | R1 | scope 切换 + CRUD 流 + 错误/空态/骨架 | 通过 | confirm 用 spy；Dialog 内输入 fireEvent.change |
 // | R2 | 创作者数量列：count>0 点击跳 /creators 过滤（带 scope）、count=0 不可点 | 通过 | 断言 location.hash；human scope 同测 |
 // | R3 | 值域合一（2026-08-25）：去 scope 切换/参数；数量列跳转不带 scope（两槽位任一）；POST body 去 scope | 通过 | R1 的 scope 切换用例随 UI 删除 |
+// | R4 | Q8b 前缀分组（2026-10-05）：首个 - 前缀分组渲染（组头=前缀（N）、组内=后缀、title=全名）；无 - 归「其他」恒最后；数量列跳转仍用全名 | 通过 | 组头与后缀均断言；全名经 title 验证 |
 import { test, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, cleanup, waitFor } from '@testing-library/react';
 import { ToastProvider } from '@/components/ui/toast';
@@ -93,6 +94,32 @@ test('创作者数量列：count>0 点击跳 /creators 按分类名过滤（不�
   // 科技 count=3：点击 → hash 只带 cat（CreatorsPage 三态缺省=全部）+ URL 编码分类名
   fireEvent.click(screen.getByRole('button', { name: '3' }));
   expect(window.location.hash).toBe(`#/creators?cat=${encodeURIComponent('科技')}`);
+});
+
+// ── Q8b 前缀分组（2026-10-05）：「编程-前端」→ 组「编程」+ 展示名「前端」；无 - 归「其他」恒最后 ──
+
+test('Q8b 前缀分组：首个 - 前缀成组（组头=前缀（N）），组内显示去前缀后缀且 title 保留全名；数量列跳转仍用全名', async () => {
+  const GROUPED: Category[] = [
+    cat(1, '编程-前端', 1, 2), cat(2, '编程-后端', 2, 0),
+    cat(3, '股票-A股复盘', 3, 1), cat(4, '生活', 4, 0),
+  ];
+  fetchMock.mockImplementation((url: string) => Promise.resolve(ok({ items: GROUPED })));
+  render(<ToastProvider><CategoriesPage /></ToastProvider>);
+  // 组头：前缀 + 数量；「其他」组恒最后（生活 无 - 归组）
+  expect(await screen.findByText('编程（2）')).toBeInTheDocument();
+  expect(screen.getByText('股票（1）')).toBeInTheDocument();
+  expect(screen.getByText('其他（1）')).toBeInTheDocument();
+  // 组内行显示后缀名，全名进 title（悬停可见真名）
+  const qd = screen.getByText('前端');
+  expect(qd).toHaveAttribute('title', '编程-前端');
+  expect(screen.getByText('后端')).toHaveAttribute('title', '编程-后端');
+  expect(screen.getByText('A股复盘')).toHaveAttribute('title', '股票-A股复盘');
+  expect(screen.getByText('生活')).not.toHaveAttribute('title'); // 无 - 不切名
+  // 数量列跳转仍带完整分类名（存储名未变，纯展示分组）
+  fireEvent.click(screen.getByRole('button', { name: '2' }));
+  expect(window.location.hash).toBe(`#/creators?cat=${encodeURIComponent('编程-前端')}`);
+  // 总数仍是 4 条（分组不改变条目数）
+  expect(screen.getByText('共 4 条')).toBeInTheDocument();
 });
 
 test('新建：Dialog 输入保存 → POST + toast + 关闭 + reload', async () => {

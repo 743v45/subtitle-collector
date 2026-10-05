@@ -1,4 +1,7 @@
-import { useState } from 'react';
+// 创作者分类页：CRUD（新建/改名/删除）+ Q8b 前缀分组展示（2026-10-05）。
+// 分组：分类名形如「编程-前端」按第一个 - 前缀分组，组头=前缀、组内=去前缀后缀；无 - 归「其他」（恒最后）。
+// 纯展示层分组——存储/增删改/分类 id 引用不变（改名弹窗与分组部件见 CategoryParts.tsx）。
+import { Fragment, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -9,6 +12,7 @@ import { useToast } from '@/components/ui/toast';
 import { useAsync } from '@/lib/useAsync';
 import { navigate } from '../router';
 import { listCategories, createCategory, updateCategory, deleteCategory, type Category } from '@/api';
+import { CategoryRenameDialog, groupCategories } from './CategoryParts';
 
 function errMsg(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
@@ -85,6 +89,8 @@ export function CategoriesPage() {
     }
   }
 
+  const groups = items ? groupCategories(items) : [];
+
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
@@ -149,39 +155,50 @@ export function CategoriesPage() {
                 <TableCell className="text-right"><Skeleton className="ml-auto h-7 w-28" /></TableCell>
               </TableRow>
             ))}
-            {!loading && items?.map((c) => {
-              const rowBusy = deletingId === c.id || renameTarget?.id === c.id;
-              return (
-                <TableRow key={c.id}>
-                  <TableCell className="font-medium">{c.name}</TableCell>
-                  <TableCell className="text-right tabular-nums">
-                    {/* 数量即该分类下创作者数（两槽位任一指向）；点击跳创作者列表按本分类过滤（不带 scope——两槽位任一命中） */}
-                    {c.creator_count > 0 ? (
-                      <Button
-                        variant="link"
-                        size="sm"
-                        className="h-auto p-0"
-                        title={`查看「${c.name}」下的 ${c.creator_count} 个创作者`}
-                        onClick={() => navigate(`/creators?cat=${encodeURIComponent(c.name)}`)}
-                      >
-                        {c.creator_count}
-                      </Button>
-                    ) : (
-                      <span className="text-muted-foreground">0</span>
-                    )}
-                  </TableCell>
-                  <TableCell className="text-right tabular-nums text-muted-foreground">{c.sort_order}</TableCell>
-                  <TableCell className="space-x-2 text-right">
-                    <Button variant="outline" size="sm" disabled={rowBusy} onClick={() => openRename(c)}>
-                      改名
-                    </Button>
-                    <Button variant="destructive" size="sm" disabled={rowBusy} onClick={() => onDelete(c)}>
-                      {deletingId === c.id ? '删除中…' : '删除'}
-                    </Button>
+            {!loading && groups.map((g) => (
+              <Fragment key={g.prefix}>
+                {/* 组头行：前缀（「其他」组 = 无 - 前缀的分类） */}
+                <TableRow className="hover:bg-transparent bg-muted/50">
+                  <TableCell colSpan={4} className="py-1.5 text-xs font-semibold text-muted-foreground">
+                    {g.prefix}（{g.rows.length}）
                   </TableCell>
                 </TableRow>
-              );
-            })}
+                {g.rows.map(({ cat, suffix }) => {
+                  const rowBusy = deletingId === cat.id || renameTarget?.id === cat.id;
+                  return (
+                    <TableRow key={cat.id}>
+                      {/* 展示后缀、title 保留全名（悬停可见真名；无 - 后缀=全名不加 title） */}
+                      <TableCell className="font-medium" title={cat.name !== suffix ? cat.name : undefined}>{suffix}</TableCell>
+                      <TableCell className="text-right tabular-nums">
+                        {/* 数量即该分类下创作者数（两槽位任一指向）；点击跳创作者列表按本分类过滤（不带 scope——两槽位任一命中） */}
+                        {cat.creator_count > 0 ? (
+                          <Button
+                            variant="link"
+                            size="sm"
+                            className="h-auto p-0"
+                            title={`查看「${cat.name}」下的 ${cat.creator_count} 个创作者`}
+                            onClick={() => navigate(`/creators?cat=${encodeURIComponent(cat.name)}`)}
+                          >
+                            {cat.creator_count}
+                          </Button>
+                        ) : (
+                          <span className="text-muted-foreground">0</span>
+                        )}
+                      </TableCell>
+                      <TableCell className="text-right tabular-nums text-muted-foreground">{cat.sort_order}</TableCell>
+                      <TableCell className="space-x-2 text-right">
+                        <Button variant="outline" size="sm" disabled={rowBusy} onClick={() => openRename(cat)}>
+                          改名
+                        </Button>
+                        <Button variant="destructive" size="sm" disabled={rowBusy} onClick={() => onDelete(cat)}>
+                          {deletingId === cat.id ? '删除中…' : '删除'}
+                        </Button>
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
+              </Fragment>
+            ))}
             {!loading && !error && (items?.length ?? 0) === 0 && (
               <TableRow>
                 <TableCell colSpan={4} className="py-8 text-center">
@@ -193,39 +210,14 @@ export function CategoriesPage() {
         </Table>
       </div>
 
-      {/* 改名 Dialog（替代 window.prompt） */}
-      <Dialog
-        open={renameTarget !== null}
-        onOpenChange={(o) => { if (!o && !renaming) setRenameTarget(null); }}
-      >
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>改名</DialogTitle>
-          </DialogHeader>
-          <div className="space-y-2">
-            <Label htmlFor="rn">名称</Label>
-            <Input
-              id="rn"
-              value={renameName}
-              onChange={(e) => setRenameName(e.target.value)}
-              disabled={renaming}
-            />
-            <div className="flex justify-end gap-2">
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setRenameTarget(null)}
-                disabled={renaming}
-              >
-                取消
-              </Button>
-              <Button size="sm" onClick={onRename} disabled={renaming || !renameName.trim()}>
-                {renaming ? '保存中…' : '保存'}
-              </Button>
-            </div>
-          </div>
-        </DialogContent>
-      </Dialog>
+      <CategoryRenameDialog
+        target={renameTarget}
+        name={renameName}
+        onName={setRenameName}
+        renaming={renaming}
+        onClose={() => setRenameTarget(null)}
+        onSave={onRename}
+      />
     </div>
   );
 }

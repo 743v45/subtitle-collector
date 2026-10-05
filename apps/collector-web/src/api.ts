@@ -1,40 +1,18 @@
 import type {
   VideoListItem, VideoDetail, VideoFilter, ClientInfo,
-  StatsOverview, KeyValue, StatsGroupBy, CreatorDetail, ChangeRow,
+  StatsOverview, KeyValue, StatsGroupBy, ChangeRow,
   TagSource, CollectTask, CollectTaskStatus, UpperVideoItem, Category,
-  VideoComments,
 } from './types';
 import type { SubtitleLine } from '@/components/SubtitleView';
+import { BASE, ensureOk } from './apiCore';
+// UP 主区段（listCreators 等 5 函数 + CreatorListItem）2026-10-05 抽至 apiCreators.ts 偿还
+// maxLines 台账；此处转出保持 '@/api' 既有 import 路径与 api.test.ts 覆盖口径不变。
+export {
+  listCreators, getCreatorDetail, refreshCreatorProfile,
+  setCreatorCategory, setCreatorsCategoryBatch,
+} from './apiCreators';
+export type { CreatorListItem } from './apiCreators';
 export type { Category };
-
-const BASE = '';
-
-export interface CreatorListItem {
-  id: number;
-  source: string;
-  source_uid: string;
-  name: string | null;
-  avatar: string | null;
-  fans: number | null;
-  video_count: number;
-  category_agent_id: number | null;
-  category_agent_name: string | null;
-  category_human_id: number | null;
-  category_human_name: string | null;
-  first_seen_at: number;
-}
-
-async function ensureOk<T>(r: Response, parse: (json: any) => T): Promise<T> {
-  if (!r.ok) {
-    // 尽量带出 server 错误文案（如「扩展离线：…」），带不出回落裸状态码
-    let detail = `HTTP ${r.status}`;
-    try { const j = await r.json(); if (j?.error) detail += `：${j.error}`; } catch { /* 非 JSON 忽略 */ }
-    throw new Error(detail);
-  }
-  const json = await r.json();
-  if (json.ok === false) throw new Error(json.error ?? 'API error');
-  return parse(json);
-}
 
 // ── 视频 ──
 export async function listVideos(filter: VideoFilter = {}): Promise<{ total: number; items: VideoListItem[] }> {
@@ -73,11 +51,24 @@ export async function getVersion(versionId: number): Promise<{ version: { id: nu
   return ensureOk(r, (j) => j);
 }
 
-// 单视频评论树（P2-5 web；树组装与 CLI comments tree 共享 server db 层 shapeTree）。limit>0 → 只取点赞前 N 根，0/缺省省略参数=server 不限
-export async function getVideoComments(source: string, sourceVid: string, limit?: number): Promise<VideoComments> {
-  const q = limit ? `?limit=${limit}` : '';
-  const r = await fetch(`${BASE}/api/videos/${source}/${encodeURIComponent(sourceVid)}/comments${q}`);
-  return ensureOk(r, (j) => ({ counts: j.counts, roots: j.roots ?? [], orphans: j.orphans ?? [], truncated: j.truncated ?? false, limit: j.limit ?? 0 }));
+// ── 评论（B 站评论树，GET /api/comments/tree?bvid=...）──
+// 评论树节点（与服务端 comments 行对齐的 snake_case；楼中楼递归挂 replies）
+export interface CommentNode {
+  rpid_str: string;       // 评论唯一 ID（B 站 rpid 字符串形态，避免 JS 大数精度丢失）
+  uname: string | null;   // 评论者昵称（查不到 null）
+  mid_str: string | null; // 评论者 mid 字符串形态（查不到 null）
+  message: string | null; // 评论正文（DB 列可空，缺失 null——渲染处须短路）
+  like_count: number;     // 点赞数
+  ctime_s: number | null; // 评论时间 unix 秒（DB 列可空，缺失 null——勿当 0/1970 渲染）
+  pin_kind: string | null; // 置顶类型（null=非置顶）
+  replies: CommentNode[]; // 楼中楼（叶子为空数组）
+}
+
+// 评论树（对应 server GET /api/comments/tree）：响应 {ok, bvid, total_rows, total_roots, tree}
+export async function getVideoComments(bvid: string): Promise<{ totalRows: number; totalRoots: number; tree: CommentNode[] }> {
+  const u = new URLSearchParams({ bvid });
+  const r = await fetch(`${BASE}/api/comments/tree?${u}`);
+  return ensureOk(r, (j) => ({ totalRows: j.total_rows ?? 0, totalRoots: j.total_roots ?? 0, tree: j.tree ?? [] }));
 }
 
 // ── change_log（最近采集/变更流水）──
@@ -389,44 +380,4 @@ export async function videoRemoveTags(source: string, sourceVid: string, name: s
   return ensureOk(r, (j) => ({ removed: j.removed }));
 }
 
-// ── UP 主 ──
-export async function listCreators(params: {
-  q?: string;
-  category?: string;
-  scope?: 'agent' | 'human';
-  source?: string;   // 平台过滤（bilibili|youtube|douyin）
-  sort?: 'first_seen' | 'fans' | 'video_count';
-  page?: number;
-  size?: number;
-}): Promise<{ total: number; items: CreatorListItem[] }> {
-  const u = new URLSearchParams();
-  if (params.q) u.set('q', params.q);
-  if (params.category) u.set('category', params.category);
-  if (params.scope) u.set('scope', params.scope);
-  if (params.source) u.set('source', params.source);
-  if (params.sort) u.set('sort', params.sort);
-  u.set('page', String(params.page ?? 1));
-  u.set('size', String(params.size ?? 20));
-  const r = await fetch(`${BASE}/api/creators?${u}`);
-  return ensureOk(r, (j) => ({ total: j.total ?? 0, items: j.items ?? [] }));
-}
-
-export async function getCreatorDetail(id: number): Promise<CreatorDetail> {
-  const r = await fetch(`${BASE}/api/creators/${id}`);
-  return ensureOk(r, (j) => j.creator);
-}
-
-// 打分类：路径带平台段（2026-08-24）——uid 两平台命名空间独立，不带平台会写错行。
-export async function setCreatorCategory(
-  source: string,
-  source_uid: string,
-  scope: 'agent' | 'human',
-  name: string,
-): Promise<void> {
-  const r = await fetch(`${BASE}/api/creators/by-uid/${source}/${encodeURIComponent(source_uid)}/category`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ scope, name }),
-  });
-  await ensureOk(r, () => undefined); // await：否则失败被吞成 floating promise，调用方以为设置成功
-}
+// ── UP 主 ──（区段本体在 apiCreators.ts，见文件头转出说明）

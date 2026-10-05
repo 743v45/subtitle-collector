@@ -388,9 +388,11 @@ test('POST /api/collect-tasks/batch：可选 creator_uid 落任务行（未入�
     // 不传 creator_uid：靠查库/ingest 回填兜底，此处未入库 → null
     const r2 = await httpReq(ctx.port, 'POST', '/api/collect-tasks/batch', { vids: ['BV1zz411c7mD'], source: 'bilibili' });
     assert.equal(r2.json.tasks[0].creator_uid, null);
-    // 历史页按 mid 筛：未入库任务经冗余列命中
+    // 历史页按 mid 筛：未入库任务经冗余列命中。paged 模式 total 数单元（两任务同批 → 1 个
+    // 批次单元），items 带单元全体成员行（2 行，成员数口径不变）
     const list = await httpReq(ctx.port, 'GET', '/api/collect-tasks?page=1&page_size=50&creator_uid=296399504');
-    assert.equal(list.json.total, 2);
+    assert.equal(list.json.total, 1);
+    assert.equal(list.json.items.length, 2);
   } finally { ctx.cleanup(); }
 });
 
@@ -422,9 +424,11 @@ test('POST /api/collect-tasks/retry：failed/limited 原行重置回 pending（i
       assert.equal(t.error, null);
       assert.equal(t.finished_at, null);
     }
-    // 聚焦视图：批次成员数不变（旧「并入原批」方案重试一次 +1 行,进度分母虚增）
+    // 聚焦视图：批次成员数不变（旧「并入原批」方案重试一次 +1 行,进度分母虚增）。
+    // paged 模式 total 数单元（整批 → 1），成员数看 items.length
     const list = await httpReq(ctx.port, 'GET', `/api/collect-tasks?page=1&page_size=50&batch_id=${bid}`);
-    assert.equal(list.json.total, 2);
+    assert.equal(list.json.total, 1);
+    assert.equal(list.json.items.length, 2);
   } finally { ctx.cleanup(); }
 });
 
@@ -741,7 +745,8 @@ test('GET 多维筛选：source / since / until / batch_id 生效（t.* 列维�
     assert.equal(until.json.total, 1);                              // 只有 beta(2000)
 
     const batch = await httpReq(ctx.port, 'GET', `${base}&batch_id=batch-http-1`);
-    assert.equal(batch.json.total, 3);                              // 批成员数
+    assert.equal(batch.json.total, 1);                              // 整批 = 1 个展示单元（total 数单元不数行）
+    assert.equal(batch.json.items.length, 3);                       // 成员行全带（成员数口径不变）
     assert.ok(batch.json.items.every((i: any) => i.batch_id === 'batch-http-1'));
   } finally { ctx.cleanup(); }
 });
@@ -752,7 +757,8 @@ test('GET 多维筛选：非法参数忽略不抛错（等同未传）', async (
     seedMultiFilter(ctx);
     const bad = await httpReq(ctx.port, 'GET', '/api/collect-tasks?page=1&page_size=50&since=abc&until=xyz&source=bogus&creator_uid=&q=');
     assert.equal(bad.status, 200);
-    assert.equal(bad.json.total, 6);                                // 全部忽略 = 无筛选全量
+    assert.equal(bad.json.total, 4, '全部忽略 = 无筛选全量（6 行 4 单元：batch-http-1 三成员归并为 1 个单元）');
+    assert.equal(bad.json.items.length, 6, '单元全体成员行仍带出');
   } finally { ctx.cleanup(); }
 });
 

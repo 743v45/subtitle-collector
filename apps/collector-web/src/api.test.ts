@@ -8,7 +8,8 @@
 // | R2 | setTaskDispatch（2026-08-23 仅上报状态） | 通过 | 与 setReporting 同构 |
 // | R3 | listVideos desc=false 显式发送（2026-08-29 排序升序修复） | 通过 | 缺省发送会被 server 降序缺省吃掉 |
 // | R4 | expandUpperVideos douyin 档（channel 键承载 sec_uid） | 通过 | 2026-08-29 C1 修复：三平台请求体形状钉死，对齐 server tasks.test |
-// | R5 | getVideoComments URL 组装（limit 有/无两态，P2-5 web 评论展示） | 通过 | listVideos 表驱动化由 R1-R3 存量断言锁行为 |
+// | R5 | getVideoComments / refreshCreatorProfile / setCreatorsCategoryBatch（UI 改造批次契约三端点） | 通过 | snake_case 响应 → camelCase 解包；树/批量 body 形状钉死 |
+// | R6 | setCreatorsCategoryBatch 槽位三态契约（keep=undefined 丢键 / clear=null / id） | 通过 | server parseCategorySlot 三态对齐（2026-10-05 blocker 修复） |
 import { test, expect, vi, afterEach } from 'vitest';
 import * as api from './api';
 import type { VideoDetail } from './types';
@@ -132,19 +133,6 @@ test('getVideo：extra JSON 字符串 → 解析成对象；sourceVid 编码', a
   expect((d.video.extra as Record<string, unknown>)?.tname).toBe('科技');
 });
 
-// P2-5 web 评论展示：评论树端点 URL 组装——limit>0 进 query；0/缺省省略（server 缺省不限）
-test('getVideoComments：limit>0 → ?limit=N；0 → 无参数；响应解包 roots/orphans 缺省数组', async () => {
-  fetchMock.mockResolvedValueOnce(ok({ counts: { rows: 1, roots: 1, floors: 0 }, roots: [{ rpid_str: '101' }], truncated: true, limit: 20 }));
-  const r = await api.getVideoComments('bilibili', 'BV1test', 20);
-  expect(lastCall().url).toBe('/api/videos/bilibili/BV1test/comments?limit=20');
-  expect(r.counts).toEqual({ rows: 1, roots: 1, floors: 0 });
-  expect(r.roots).toEqual([{ rpid_str: '101' }]);
-  expect(r.orphans).toEqual([]); // 响应缺 orphans → 解包回落空数组
-  fetchMock.mockResolvedValueOnce(ok({ counts: { rows: 0, roots: 0, floors: 0 } }));
-  await api.getVideoComments('bilibili', 'BV1test', 0);
-  expect(lastCall().url).toBe('/api/videos/bilibili/BV1test/comments');
-});
-
 test('getVideo：extra 非法 JSON 字符串 → 落回空对象', async () => {
   fetchMock.mockResolvedValueOnce(ok({ video: { title: 't', extra: '{oops' }, tracks: [] }));
   const d = await api.getVideo('bilibili', 'BV1');
@@ -162,6 +150,21 @@ test('getVersion：透传 j', async () => {
   fetchMock.mockResolvedValueOnce(ok(payload));
   await expect(api.getVersion(5)).resolves.toEqual(payload);
   expect(lastCall().url).toBe('/api/versions/5');
+});
+
+// ── 评论树（GET /api/comments/tree）──
+
+test('getVideoComments：bvid 进 query，snake_case 统计量 → camelCase，树原样透传', async () => {
+  const tree = [{ rpid_str: '1', uname: 'U', mid_str: '42', message: 'm', like_count: 2, ctime_s: 1700000000, pin_kind: null, replies: [] }];
+  fetchMock.mockResolvedValueOnce(ok({ ok: true, bvid: 'BV1', total_rows: 9, total_roots: 3, tree }));
+  await expect(api.getVideoComments('BV1')).resolves.toEqual({ totalRows: 9, totalRoots: 3, tree });
+  expect(lastCall().url).toBe('/api/comments/tree?bvid=BV1');
+});
+
+test('getVideoComments：total_rows/total_roots/tree 缺失回落 0/0/[]', async () => {
+  fetchMock.mockResolvedValueOnce(ok({ ok: true }));
+  await expect(api.getVideoComments('BV2')).resolves.toEqual({ totalRows: 0, totalRoots: 0, tree: [] });
+  expect(lastCall().url).toBe('/api/comments/tree?bvid=BV2');
 });
 
 // ── change_log / 统计 ──
@@ -474,4 +477,41 @@ test('setCreatorCategory：平台段 + uid 编码 + body {scope,name}；失败�
   fetchMock.mockResolvedValueOnce(httpErr(400, { error: '分类不存在' }));
   await expect(api.setCreatorCategory('youtube', 'UC%20x', 'human', '无')).rejects.toThrow('HTTP 400：分类不存在');
   expect(lastCall().url).toBe('/api/creators/by-uid/youtube/UC%2520x/category');
+});
+
+test('refreshCreatorProfile：POST /refresh，解包 creator', async () => {
+  fetchMock.mockResolvedValueOnce(ok({ ok: true, creator: { id: 3, name: 'U' } }));
+  await expect(api.refreshCreatorProfile(3)).resolves.toEqual({ creator: { id: 3, name: 'U' } });
+  const { url, init } = lastCall();
+  expect(url).toBe('/api/creators/3/refresh');
+  expect(init?.method).toBe('POST');
+});
+
+test('setCreatorsCategoryBatch：ids + 双槽位（可 null）映射 snake_case body，updated 回落 0', async () => {
+  fetchMock.mockResolvedValueOnce(ok({ ok: true, updated: 2 }));
+  await expect(api.setCreatorsCategoryBatch([1, 2], 5, null)).resolves.toEqual({ updated: 2 });
+  const { url, init } = lastCall();
+  expect(url).toBe('/api/creators/batch-category');
+  expect(init?.method).toBe('POST');
+  expect(JSON.parse(String(init?.body))).toEqual({ ids: [1, 2], agent_category_id: 5, human_category_id: null });
+
+  fetchMock.mockResolvedValueOnce(ok({ ok: true }));
+  await expect(api.setCreatorsCategoryBatch([], null, null)).resolves.toEqual({ updated: 0 });
+});
+
+test('setCreatorsCategoryBatch 槽位三态：keep=undefined 键被 JSON.stringify 丢弃（server 保持原值）', async () => {
+  // 只改 human 槽、agent 留「不变」：线上载荷不得出现 agent_category_id 键
+  // （回归锚点：server 端曾把「键缺席」与「显式 null」同判清空，静默清掉未改槽位——2026-10-05 blocker）
+  fetchMock.mockResolvedValueOnce(ok({ ok: true, updated: 1 }));
+  await expect(api.setCreatorsCategoryBatch([7], undefined, 3)).resolves.toEqual({ updated: 1 });
+  const body = JSON.parse(String(lastCall().init?.body));
+  expect('agent_category_id' in body).toBe(false);
+  expect(body).toEqual({ ids: [7], human_category_id: 3 });
+
+  // 反方向：agent=写 id、human=keep 丢键
+  fetchMock.mockResolvedValueOnce(ok({ ok: true, updated: 1 }));
+  await expect(api.setCreatorsCategoryBatch([7], 5, undefined)).resolves.toEqual({ updated: 1 });
+  const body2 = JSON.parse(String(lastCall().init?.body));
+  expect('human_category_id' in body2).toBe(false);
+  expect(body2).toEqual({ ids: [7], agent_category_id: 5 });
 });

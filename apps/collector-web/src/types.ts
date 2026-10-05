@@ -70,6 +70,9 @@ export interface ChangeRow {
   new_value: string | null;
   changed_at: number;
   source?: string | null; // 派生列：实体行所属平台（bilibili|youtube|douyin；不可判 null）
+  ref_source?: string | null;   // entity=video 时的跳转定位（平台，与 ref_vid 配对；无定位 null）
+  ref_vid?: string | null;      // entity=video 时的跳转定位（平台内视频 ID）
+  ref_creator_id?: number | null; // entity=creator 时的跳转定位（creators.id；无定位 null）
 }
 
 // B 站登录态快照（扩展从 /x/web-interface/nav 抽取；hello / login-state 上报）。
@@ -119,6 +122,7 @@ export interface CollectTask {
   creator_source_uid?: string | null; // UP uid（入库取 creators、未入库回落任务行 creator_uid；任务卡跳空间）
   created_at: number;
   finished_at: number | null;
+  video_title?: string | null; // 任务对应视频标题（UI 改造批次新增；批量任务 null）
 }
 
 // ── UP 全部视频条目（/api/upper-videos/expand；arc/search 原样字段 + server 已采标注）──
@@ -183,34 +187,3 @@ export interface CreatorDetail {
 
 // ── B 站评论树（P2-5 web 评论展示；GET /api/videos/:source/:vid/comments）──
 // server 透传 comments 表全列（snake_case，见 server db/comments.ts CommentRecord）；
-// 前端只声明展示用到的子集字段，其余列在 JSON 里存在但此处不引（类型面不随表结构漂移）。
-export interface CommentBase {
-  rpid_str: string;
-  uname: string | null;
-  message: string | null;
-  like_count: number;
-  ctime_s: number | null;   // unix 秒
-  ip_location: string | null;
-  is_up: number;            // 1 = UP 主本人（server 按采集时 upper_mid 视角计算）
-  up_reply: number;         // 1 = UP 主在该根下回复过
-  state: number;            // 17 = 仅自己可见；其他非 0 = B 站原始状态码
-  folded: number;           // 1 = 已折叠
-  pin_kind: string | null;  // 置顶标记（如 top）
-}
-// 楼中楼节点：评论行 + server 组装派生列（depth ≤3 拍平/「回复 @」指向/对象已删）
-export interface CommentFloorNode extends CommentBase {
-  depth: number;
-  reply_to: string | null;
-  parent_missing: boolean;
-}
-// 根评论节点：评论行 + 所组楼中楼（组内 ctime 升序、根间 like 降序由 server 保证）
-export interface CommentRootNode extends CommentBase {
-  floors: CommentFloorNode[];
-}
-export interface VideoComments {
-  counts: { rows: number; roots: number; floors: number }; // rows=全树口径（根+楼中楼）
-  roots: CommentRootNode[];
-  orphans: CommentFloorNode[]; // 根已删除的楼层（不丢弃；depth 恒 1）
-  truncated: boolean;          // 发生截根（limit 只截根数）
-  limit: number;               // 0 = 不限
-}
