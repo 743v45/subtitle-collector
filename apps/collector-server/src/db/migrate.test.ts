@@ -7,7 +7,7 @@
 // | R1 | 版本账本/幂等/v5-v16 各步骤 | 通过 | |
 // | R2 | v18 collect_tasks.source CHECK 放行 douyin（旧库重建/新库重放） | 通过 | 2026-08-29 S2 抖音平台化 |
 // | R3 | v19 ASR 轨按引擎改名（有 engine 改名/无 engine 回落 unknown/幂等重放/新库重放） | 通过 | 2026-08-29 多引擎版本比对 |
-// | R4 | v20 jobs 表建表（v19 旧库升级/列清单/CHECK/索引/重放幂等/新库重放） | 通过 | 2026-10-04 CLI 全功能 web 化 Phase 4 |
+// | R4 | v21 jobs 表建表（v19 旧库升级/列清单/CHECK/索引/重放幂等/新库重放） | 通过 | 2026-10-04 CLI 全功能 web 化 Phase 4 |
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -522,13 +522,13 @@ test('v19 迁移：新库（无 asr-zh 存量）全量重放安全，不留脏�
   } finally { db.close(); }
 });
 
-// ── v20（2026-10-04 CLI 全功能 web 化 Phase 4）：jobs 通用任务台账（新建表/索引，IF NOT EXISTS 重放安全）──
-test('v20 迁移：v19 旧库升级建 jobs 表（列齐全 + status CHECK + 两索引），重放幂等', () => {
+// ── v21（2026-10-04 CLI 全功能 web 化 Phase 4；v20 编号让位 comments 迁移，2026-10-07 改号）：jobs 通用任务台账（新建表/索引，IF NOT EXISTS 重放安全）──
+test('v21 迁移：v19 旧库升级建 jobs 表（列齐全 + status CHECK + 两索引），重放幂等', () => {
   const db = new Database(':memory:');
   try {
     // 模拟 v19 形态旧库：全量 schema（尚无 jobs）+ 账本拨回 19
     migrate(db);
-    db.prepare('DROP TABLE jobs').run(); // schema.sql 已双写 v20 的 jobs——摘掉才等价 v19 时代的真实旧库
+    db.prepare('DROP TABLE jobs').run(); // schema.sql 已双写 v21 的 jobs——摘掉才等价 v19 时代的真实旧库
     db.pragma('user_version = 19');
     assert.equal(db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='jobs'").get(), undefined, '升级前无 jobs 表');
 
@@ -559,11 +559,11 @@ test('v20 迁移：v19 旧库升级建 jobs 表（列齐全 + status CHECK + 两
   } finally { db.close(); }
 });
 
-test('v20 迁移：新库（schema.sql 已带 jobs）全量重放安全，不留脏事务', () => {
+test('v21 迁移：新库（schema.sql 已带 jobs）全量重放安全，不留脏事务', () => {
   const db = new Database(':memory:');
   try {
     migrate(db);
-    assert.doesNotThrow(() => runMigrations(db), '新库重放 v20 建表应完整执行不报错');
+    assert.doesNotThrow(() => runMigrations(db), '新库重放 v21 建表应完整执行不报错');
     assert.equal(db.inTransaction, false, '不应残留打开的事务');
     assert.equal(db.pragma('user_version', { simple: true }), MIGRATIONS[MIGRATIONS.length - 1].version, '账本写到最新');
     assert.ok(db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='jobs'").get(), 'jobs 表在场');

@@ -174,7 +174,7 @@ CREATE TABLE IF NOT EXISTS clients (
   last_seen_at  INTEGER NOT NULL  -- 最近一次连接建立/断开时刻（hello upsert / close touch）
 );
 
--- 通用任务台账（CLI 全功能 web 化 Phase 4，v20）：asr-backfill / collect-find 两类长任务
+-- 通用任务台账（CLI 全功能 web 化 Phase 4，v21）：asr-backfill / collect-find 两类长任务
 -- 的 server 进程内串行队列持久层。status 状态机：pending → running → done | failed；
 -- pending/running 可取消 → cancelled。server 重启恢复：启动时 pending/running 置 cancelled
 -- （批任务不自动重跑）。行只增不改删：DELETE 语义 = cancel（台账保留，见 http/jobs.ts）。

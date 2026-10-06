@@ -309,8 +309,10 @@ export const MIGRATIONS: readonly MigrationStep[] = [
     // server 重启恢复：启动时把 pending/running 置 cancelled（批任务不自动重跑，由用户重新提交）。
     // IF NOT EXISTS：runMigrations 只容忍 duplicate column/no such column/no such table，
     // 「table already exists」会炸——新建表/索引一律 IF NOT EXISTS + 双写 schema.sql。
-    version: 20,
-    note: 'jobs 通用任务台账（asr-backfill | collect-find；status: pending|running|done|failed|cancelled）+ status/created_at 两索引。新建表/索引用 IF NOT EXISTS（重放安全）+ 双写 schema.sql',
+    // 编号 v21：本批最初开发为 v20，与 main 先合入的 comments 表迁移（评论采集 v20）撞号——
+    // 已应用 v20 的生产库会因版本账本短路永不建 jobs 表，合并前让位改 v21（2026-10-07）。
+    version: 21,
+    note: 'jobs 通用任务台账（asr-backfill | collect-find；status: pending|running|done|failed|cancelled）+ status/created_at 两索引。新建表/索引用 IF NOT EXISTS（重放安全）+ 双写 schema.sql。v20 编号让位 comments 迁移，本迁移由 v20 改号 v21（2026-10-07 合并前修）',
     statements: [
       `CREATE TABLE IF NOT EXISTS jobs (
          id            INTEGER PRIMARY KEY AUTOINCREMENT,
