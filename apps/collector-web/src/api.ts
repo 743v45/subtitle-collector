@@ -4,7 +4,7 @@ import type {
   TagSource, CollectTask, CollectTaskStatus, UpperVideoItem, Category,
 } from './types';
 import type { SubtitleLine } from '@/components/SubtitleView';
-import { BASE, ensureOk } from './apiCore';
+import { BASE, apiFetch, ensureOk } from './apiCore';
 // UP 主区段（listCreators 等 5 函数 + CreatorListItem）2026-10-05 抽至 apiCreators.ts 偿还
 // maxLines 台账；此处转出保持 '@/api' 既有 import 路径与 api.test.ts 覆盖口径不变。
 export {
@@ -29,12 +29,12 @@ export async function listVideos(filter: VideoFilter = {}): Promise<{ total: num
   if (filter.desc != null) u.set('desc', String(filter.desc));
   u.set('page', String(filter.page ?? 1));
   u.set('size', String(filter.size ?? 20));
-  const r = await fetch(`${BASE}/api/videos?${u}`);
+  const r = await apiFetch(`${BASE}/api/videos?${u}`);
   return ensureOk(r, (j) => ({ total: j.total, items: j.items }));
 }
 
 export async function getVideo(source: string, sourceVid: string): Promise<VideoDetail> {
-  const r = await fetch(`${BASE}/api/videos/${source}/${encodeURIComponent(sourceVid)}`);
+  const r = await apiFetch(`${BASE}/api/videos/${source}/${encodeURIComponent(sourceVid)}`);
   return ensureOk(r, (j) => {
     const video = j.video;
     // 服务端 videos.extra 是 TEXT(JSON 字符串)；这里解析成对象，让 VideoInfo.extra 可直接访问
@@ -47,7 +47,7 @@ export async function getVideo(source: string, sourceVid: string): Promise<Video
 }
 
 export async function getVersion(versionId: number): Promise<{ version: { id: number; origin: string; payload: { body: SubtitleLine[] }; captured_at: number } }> {
-  const r = await fetch(`${BASE}/api/versions/${versionId}`);
+  const r = await apiFetch(`${BASE}/api/versions/${versionId}`);
   return ensureOk(r, (j) => j);
 }
 
@@ -67,7 +67,7 @@ export interface CommentNode {
 // 评论树（对应 server GET /api/comments/tree）：响应 {ok, bvid, total_rows, total_roots, tree}
 export async function getVideoComments(bvid: string): Promise<{ totalRows: number; totalRoots: number; tree: CommentNode[] }> {
   const u = new URLSearchParams({ bvid });
-  const r = await fetch(`${BASE}/api/comments/tree?${u}`);
+  const r = await apiFetch(`${BASE}/api/comments/tree?${u}`);
   return ensureOk(r, (j) => ({ totalRows: j.total_rows ?? 0, totalRoots: j.total_roots ?? 0, tree: j.tree ?? [] }));
 }
 
@@ -83,14 +83,14 @@ export async function getChanges(params: {
   if (params.source) u.set('source', params.source);
   u.set('page', String(params.page ?? 1));
   u.set('size', String(params.size ?? 20));
-  const r = await fetch(`${BASE}/api/changes?${u}`);
+  const r = await apiFetch(`${BASE}/api/changes?${u}`);
   return ensureOk(r, (j) => ({ total: j.total, items: j.items ?? [] }));
 }
 
 // ── 统计看板 ──
 // overview 含分平台小节（2026-08-24）：total=全库、by_source[platform]=按平台收窄（轨/版本经视频溯源）。
 export async function getStatsOverview(): Promise<{ total: StatsOverview; by_source: Record<string, StatsOverview> }> {
-  const r = await fetch(`${BASE}/api/stats?type=overview`);
+  const r = await apiFetch(`${BASE}/api/stats?type=overview`);
   return ensureOk(r, (j) => ({ total: j.total, by_source: j.by_source ?? {} }));
 }
 export async function getStatsAggregate(groupBy: StatsGroupBy, filter: VideoFilter = {}, topN?: number): Promise<KeyValue[]> {
@@ -100,20 +100,20 @@ export async function getStatsAggregate(groupBy: StatsGroupBy, filter: VideoFilt
   if (filter.tname) u.set('tname', filter.tname);
   if (filter.source) u.set('source', filter.source); // 平台筛选联动聚合榜
   if (topN) u.set('topN', String(topN));
-  const r = await fetch(`${BASE}/api/stats?${u}`);
+  const r = await apiFetch(`${BASE}/api/stats?${u}`);
   return ensureOk(r, (j) => j.items ?? []);
 }
 
 // ── 客户端 ──
 export async function listClients(): Promise<ClientInfo[]> {
-  const r = await fetch(`${BASE}/api/clients`);
+  const r = await apiFetch(`${BASE}/api/clients`);
   return ensureOk(r, (j) => j.clients ?? []);
 }
 
 // ── 采集任务 ──
 // 提交采集（text 为手机粘贴的分享文本/链接,server 侧提取并解析 URL）
 export async function createCollectTask(text: string): Promise<CollectTask> {
-  const r = await fetch(`${BASE}/api/collect-tasks`, {
+  const r = await apiFetch(`${BASE}/api/collect-tasks`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ text }),
@@ -122,7 +122,7 @@ export async function createCollectTask(text: string): Promise<CollectTask> {
 }
 
 export async function listCollectTasks(limit = 20): Promise<{ total: number; items: CollectTask[] }> {
-  const r = await fetch(`${BASE}/api/collect-tasks?limit=${limit}`);
+  const r = await apiFetch(`${BASE}/api/collect-tasks?limit=${limit}`);
   return ensureOk(r, (j) => ({ total: j.total ?? 0, items: j.items ?? [] }));
 }
 
@@ -155,18 +155,18 @@ export async function listCollectTasksPage(
   if (filter.q) q.set('q', filter.q);
   if (filter.since != null) q.set('since', String(filter.since));
   if (filter.until != null) q.set('until', String(filter.until));
-  const r = await fetch(`${BASE}/api/collect-tasks?${q}`);
+  const r = await apiFetch(`${BASE}/api/collect-tasks?${q}`);
   return ensureOk(r, (j) => ({ total: j.total ?? 0, items: j.items ?? [] }));
 }
 
 export async function getCollectTask(id: number): Promise<CollectTask> {
-  const r = await fetch(`${BASE}/api/collect-tasks/${id}`);
+  const r = await apiFetch(`${BASE}/api/collect-tasks/${id}`);
   return ensureOk(r, (j) => j.task);
 }
 
 // 删除采集任务（任意状态可删;dispatched 删除后扩展回执为 no-op）
 export async function deleteCollectTask(id: number): Promise<void> {
-  const r = await fetch(`${BASE}/api/collect-tasks/${id}`, { method: 'DELETE' });
+  const r = await apiFetch(`${BASE}/api/collect-tasks/${id}`, { method: 'DELETE' });
   await ensureOk(r, () => undefined);
 }
 
@@ -179,7 +179,7 @@ export async function expandUpperVideos(
 ): Promise<{ total: number; items: UpperVideoItem[]; channel?: { id: string | null; name: string | null } }> {
   // youtube/douyin 的请求体同构 {source, channel}，分支只剩 B 站 mid 一档
   const body = opts.source === 'bilibili' ? { source: 'bilibili', mid: opts.mid } : { source: opts.source, channel: opts.channel };
-  const r = await fetch(`${BASE}/api/upper-videos/expand`, {
+  const r = await apiFetch(`${BASE}/api/upper-videos/expand`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
@@ -199,7 +199,7 @@ export async function createCollectTasksBatch(
   creatorUid?: string,
   force?: boolean,
 ): Promise<{ created: number; skipped: number; skippedCollected: number }> {
-  const r = await fetch(`${BASE}/api/collect-tasks/batch`, {
+  const r = await apiFetch(`${BASE}/api/collect-tasks/batch`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ vids, source, ...(creatorUid ? { creator_uid: creatorUid } : {}), ...(force ? { force: true } : {}) }),
@@ -212,7 +212,7 @@ export async function createCollectTasksBatch(
 // 永不更新，批次徽章永远停在「失败」）。库内已有字幕轨的（already_collected）server 直接
 // 置 succeeded 免重采；非可重试行（在途/succeeded/不存在）逐个跳过。
 export async function retryCollectTasks(ids: number[]): Promise<{ retried: number; tasks: CollectTask[] }> {
-  const r = await fetch(`${BASE}/api/collect-tasks/retry`, {
+  const r = await apiFetch(`${BASE}/api/collect-tasks/retry`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ ids }),
@@ -224,12 +224,12 @@ export async function retryCollectTasks(ids: number[]): Promise<{ retried: numbe
 // youtube=扩展无进展窗口（持续无新进展判超时,慢视频调大）;bilibili=server 等回执预算。
 // 毫秒存储,UI 用秒展示;范围 [15s, 600s]（server 校验,非法 400）。
 export async function getCollectTimeout(): Promise<{ bilibili: number; youtube: number; douyin: number }> {
-  const r = await fetch(`${BASE}/api/settings/collect-timeout`);
+  const r = await apiFetch(`${BASE}/api/settings/collect-timeout`);
   return ensureOk(r, (j) => ({ bilibili: j.bilibili, youtube: j.youtube, douyin: j.douyin }));
 }
 
 export async function setCollectTimeout(v: { bilibili: number; youtube: number; douyin: number }): Promise<{ bilibili: number; youtube: number; douyin: number }> {
-  const r = await fetch(`${BASE}/api/settings/collect-timeout`, {
+  const r = await apiFetch(`${BASE}/api/settings/collect-timeout`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(v),
@@ -238,7 +238,7 @@ export async function setCollectTimeout(v: { bilibili: number; youtube: number; 
 }
 
 export async function setReporting(clientId: string, enabled: boolean): Promise<boolean> {
-  const r = await fetch(`${BASE}/api/clients/${encodeURIComponent(clientId)}/reporting`, {
+  const r = await apiFetch(`${BASE}/api/clients/${encodeURIComponent(clientId)}/reporting`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ enabled }),
@@ -248,7 +248,7 @@ export async function setReporting(clientId: string, enabled: boolean): Promise<
 
 // 切任务派发开关（off = 仅上报状态：调度器不给该客户端派采集任务，保持连接上报）。
 export async function setTaskDispatch(clientId: string, enabled: boolean): Promise<boolean> {
-  const r = await fetch(`${BASE}/api/clients/${encodeURIComponent(clientId)}/task-dispatch`, {
+  const r = await apiFetch(`${BASE}/api/clients/${encodeURIComponent(clientId)}/task-dispatch`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ enabled }),
@@ -258,12 +258,12 @@ export async function setTaskDispatch(clientId: string, enabled: boolean): Promi
 
 // ── 分类（一套共享值域；agent/人工只体现在打标请求的 scope，列表本身无 scope）──
 export async function listCategories(): Promise<Category[]> {
-  const r = await fetch(`${BASE}/api/categories`);
+  const r = await apiFetch(`${BASE}/api/categories`);
   return ensureOk(r, (j) => j.items ?? []);
 }
 
 export async function createCategory(name: string): Promise<Category> {
-  const r = await fetch(`${BASE}/api/categories`, {
+  const r = await apiFetch(`${BASE}/api/categories`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ name }),
@@ -272,7 +272,7 @@ export async function createCategory(name: string): Promise<Category> {
 }
 
 export async function updateCategory(id: number, patch: { name?: string; sort_order?: number }): Promise<Category> {
-  const r = await fetch(`${BASE}/api/categories/${id}`, {
+  const r = await apiFetch(`${BASE}/api/categories/${id}`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(patch),
@@ -281,7 +281,7 @@ export async function updateCategory(id: number, patch: { name?: string; sort_or
 }
 
 export async function deleteCategory(id: number): Promise<void> {
-  const r = await fetch(`${BASE}/api/categories/${id}`, { method: 'DELETE' });
+  const r = await apiFetch(`${BASE}/api/categories/${id}`, { method: 'DELETE' });
   await ensureOk(r, () => undefined); // await：否则失败被吞成 floating promise，调用方以为删成功
 }
 
@@ -306,14 +306,14 @@ export async function listTags(params: { scope?: TagSource; source?: string; q?:
   if (params.source) u.set('source', params.source);
   if (params.q) u.set('q', params.q);
   u.set('topN', String(params.topN ?? 500));
-  const r = await fetch(`${BASE}/api/tags?${u}`);
+  const r = await apiFetch(`${BASE}/api/tags?${u}`);
   return ensureOk(r, (j) => j.items ?? []);
 }
 
 // 批量给一组视频打标；names 中不存在的标签会先落库（返回 inserted/missing 供提示）。
 // items[].source=平台；scope=档位（历史字段名 source 已改，与平台撞名）。
 export async function applyTags(body: { items: TagTarget[]; names: string[]; scope: TagWriteSource }): Promise<{ inserted: number; missing: number }> {
-  const r = await fetch(`${BASE}/api/tags/apply`, {
+  const r = await apiFetch(`${BASE}/api/tags/apply`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
@@ -323,7 +323,7 @@ export async function applyTags(body: { items: TagTarget[]; names: string[]; sco
 
 // 批量解除标签关联；scope 省略时删全档
 export async function removeTags(body: { items: TagTarget[]; names: string[]; scope?: TagSource }): Promise<{ removed: number; missing: number }> {
-  const r = await fetch(`${BASE}/api/tags/remove`, {
+  const r = await apiFetch(`${BASE}/api/tags/remove`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
@@ -333,7 +333,7 @@ export async function removeTags(body: { items: TagTarget[]; names: string[]; sc
 
 // 改名（撞已有名服务端 409）
 export async function renameTag(id: number, name: string): Promise<TagItem> {
-  const r = await fetch(`${BASE}/api/tags/${id}`, {
+  const r = await apiFetch(`${BASE}/api/tags/${id}`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ name }),
@@ -343,18 +343,18 @@ export async function renameTag(id: number, name: string): Promise<TagItem> {
 
 // 删除标签及其全部视频关联
 export async function deleteTag(id: number): Promise<void> {
-  const r = await fetch(`${BASE}/api/tags/${id}`, { method: 'DELETE' });
+  const r = await apiFetch(`${BASE}/api/tags/${id}`, { method: 'DELETE' });
   await ensureOk(r, () => undefined); // await：否则失败被吞成 floating promise，调用方以为删成功
 }
 
 // 标签展示优先级（四档精确排列，服务端校验非法 400）
 export async function getTagPriority(): Promise<TagSource[]> {
-  const r = await fetch(`${BASE}/api/settings/tag-priority`);
+  const r = await apiFetch(`${BASE}/api/settings/tag-priority`);
   return ensureOk(r, (j) => j.priority);
 }
 
 export async function putTagPriority(priority: TagSource[]): Promise<void> {
-  const r = await fetch(`${BASE}/api/settings/tag-priority`, {
+  const r = await apiFetch(`${BASE}/api/settings/tag-priority`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ priority }),
@@ -364,7 +364,7 @@ export async function putTagPriority(priority: TagSource[]): Promise<void> {
 
 // 单视频打标（bili 档 400；body scope=档位）
 export async function videoApplyTags(source: string, sourceVid: string, names: string[], tagScope: TagWriteSource): Promise<{ inserted: number }> {
-  const r = await fetch(`${BASE}/api/videos/${source}/${encodeURIComponent(sourceVid)}/tags`, {
+  const r = await apiFetch(`${BASE}/api/videos/${source}/${encodeURIComponent(sourceVid)}/tags`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ names, scope: tagScope }),
@@ -376,7 +376,7 @@ export async function videoApplyTags(source: string, sourceVid: string, names: s
 export async function videoRemoveTags(source: string, sourceVid: string, name: string, tagScope?: TagSource): Promise<{ removed: number }> {
   const u = new URLSearchParams({ name });
   if (tagScope) u.set('scope', tagScope);
-  const r = await fetch(`${BASE}/api/videos/${source}/${encodeURIComponent(sourceVid)}/tags?${u}`, { method: 'DELETE' });
+  const r = await apiFetch(`${BASE}/api/videos/${source}/${encodeURIComponent(sourceVid)}/tags?${u}`, { method: 'DELETE' });
   return ensureOk(r, (j) => ({ removed: j.removed }));
 }
 

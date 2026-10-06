@@ -16,6 +16,7 @@ import { SettingsPage } from './pages/SettingsPage';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { cn } from '@/lib/utils';
 import { navigate, useRoute, type Tab } from './router';
+import { AuthTokenBanner } from './components/AuthTokenBanner';
 import {
   BarChart3, Captions, Film, FolderTree, History, Inbox, Languages, MonitorSmartphone, MoreHorizontal, ScrollText, Search, Settings, Tags, Users,
   type LucideIcon,
@@ -121,6 +122,7 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-background">
+      <AuthTokenBanner />
       <div className="flex">
         {/* 桌面侧边栏：全高 sticky,分组导航;移动端藏,由顶部品牌行+底部 bar 接管 */}
         <aside className="sticky top-0 hidden h-screen w-56 shrink-0 flex-col border-r bg-card/60 md:flex">

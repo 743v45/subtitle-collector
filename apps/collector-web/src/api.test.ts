@@ -515,3 +515,23 @@ test('setCreatorsCategoryBatch 槽位三态：keep=undefined 键被 JSON.stringi
   expect('human_category_id' in body2).toBe(false);
   expect(body2).toEqual({ ids: [7], agent_category_id: 5 });
 });
+
+// ── 结构性防回退（2026-10-07 账本 U-1）：api 层禁止裸 fetch ──
+// api 层所有请求必须经 apiFetch（统一注入访问 token）——2026-10-07 生产 401 的教训：
+// 暴露部署下老 WebView 不发 Sec-Fetch-Site，同源豁免不生效，裸 fetch 绕过 token 注入整批 401。
+// 本测试静态扫描 api 层源码，任何人新加裸 fetch 直接红。
+
+test('api 层源码静态扫描：禁止裸 fetch(（必须经 apiFetch 走 token 注入）', async () => {
+  const { readFileSync } = await import('node:fs');
+  const files = [
+    'src/api.ts', 'src/api-extra.ts', 'src/api-export.ts', 'src/api-jobs.ts', 'src/apiCreators.ts',
+    'src/lib/download.ts',
+  ];
+  const offenders: string[] = [];
+  for (const f of files) {
+    const src = readFileSync(f, 'utf8');
+    // 裸 fetch( = 非 apiFetch 的 fetch 调用（去掉 apiFetch 后再找 fetch( 即为裸）
+    if (src.replaceAll('apiFetch', '').match(/\bfetch\(/)) offenders.push(f);
+  }
+  expect(offenders).toEqual([]);
+});

@@ -7,7 +7,7 @@
 //   DELETE /api/jobs/:id    → pending 取消 200；running 409 {error:'running 任务不可取消'}；终态 409
 // 存储形态：JobRow 的 params_json/progress_json/result_json 在 HTTP 响应里是 JSON 字符串
 // （runner.ts 直回 DB 行），本层统一 parse 归一为对象（坏 JSON try/catch 容错 → null），页面零感知。
-import { BASE, ensureOk } from './apiCore';
+import { BASE, apiFetch, ensureOk } from './apiCore';
 
 export type JobType = 'asr-backfill' | 'collect-find';
 export type JobStatus = 'pending' | 'running' | 'done' | 'failed' | 'cancelled';
@@ -108,7 +108,7 @@ function parseJobRow(j: any): JobRow {
 export interface CreateJobResult { job: JobRow; warning?: string }
 
 export async function createJob(type: JobType, params: AsrBackfillParams | CollectFindParams): Promise<CreateJobResult> {
-  const r = await fetch(`${BASE}/api/jobs`, {
+  const r = await apiFetch(`${BASE}/api/jobs`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ type, params }),
@@ -120,7 +120,7 @@ export async function createJob(type: JobType, params: AsrBackfillParams | Colle
 export interface AsrDryRunItem { source_vid: string; title: string | null; duration: number | null }
 
 export async function dryRunAsrCircle(params: AsrBackfillParams): Promise<AsrDryRunItem[]> {
-  const r = await fetch(`${BASE}/api/jobs`, {
+  const r = await apiFetch(`${BASE}/api/jobs`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ type: 'asr-backfill', params: { ...params, dry_run: true } }),
@@ -136,17 +136,17 @@ export async function listJobs(query: JobListQuery = {}): Promise<JobRow[]> {
   if (query.status) q.set('status', query.status);
   if (query.limit != null) q.set('limit', String(query.limit));
   const qs = q.toString();
-  const r = await fetch(`${BASE}/api/jobs${qs ? `?${qs}` : ''}`);
+  const r = await apiFetch(`${BASE}/api/jobs${qs ? `?${qs}` : ''}`);
   return ensureOk(r, (j) => (Array.isArray(j.items) ? j.items : []).map(parseJobRow));
 }
 
 export async function getJob(id: number): Promise<JobRow> {
-  const r = await fetch(`${BASE}/api/jobs/${id}`);
+  const r = await apiFetch(`${BASE}/api/jobs/${id}`);
   return ensureOk(r, (j) => parseJobRow(j.job));
 }
 
 // 取消：pending → 200 回 cancelled 行；running/终态 → 409（ensureOk 抛「HTTP 409：<server 文案>」）
 export async function cancelJob(id: number): Promise<JobRow> {
-  const r = await fetch(`${BASE}/api/jobs/${id}`, { method: 'DELETE' });
+  const r = await apiFetch(`${BASE}/api/jobs/${id}`, { method: 'DELETE' });
   return ensureOk(r, (j) => parseJobRow(j.job));
 }

@@ -1,7 +1,7 @@
 // Phase 1「CLI 全功能 web 化」新增端点封装（api.ts 撞 maxLines 台账线后拆出的兄弟模块）：
 // 字幕检索（CLI sub search）/ 补翻（CLI translate pending+source）/ server 状态。
 // 复用 api-core 的 BASE/ensureOk；类型内联本模块（自带契约，不进 types.ts）。
-import { BASE, ensureOk } from './apiCore';
+import { BASE, apiFetch, ensureOk } from './apiCore';
 
 // ── 字幕检索（CLI sub search 的 web 形态；snippet 形状以 cli/commands/sub.ts 的 Snippet 为准：
 //    context 是 ±ctxSec 邻段拼接字符串，非 before/after 数组）──
@@ -39,7 +39,7 @@ export async function subSearch(params: {
   if (params.maxSnippetsPerVideo != null) u.set('max_snippets_per_video', String(params.maxSnippetsPerVideo));
   if (params.maxSnippets != null) u.set('max_snippets', String(params.maxSnippets));
   if (params.maxVideos != null) u.set('max_videos', String(params.maxVideos));
-  const r = await fetch(`${BASE}/api/sub-search?${u}`);
+  const r = await apiFetch(`${BASE}/api/sub-search?${u}`);
   return ensureOk(r, (j) => ({
     keyword: j.keyword,
     regex: j.regex,
@@ -74,7 +74,7 @@ export async function translatePending(params: {
   u.set('size', String(params.size ?? 20));
   if (params.sort) u.set('sort', params.sort);
   if (params.asc) u.set('asc', '1');
-  const r = await fetch(`${BASE}/api/translate/pending?${u}`);
+  const r = await apiFetch(`${BASE}/api/translate/pending?${u}`);
   return ensureOk(r, (j) => ({ total: j.total ?? 0, page: j.page ?? 1, size: j.size ?? 20, items: j.items ?? [] }));
 }
 
@@ -88,7 +88,7 @@ export async function translateSource(source: string, vid: string, from?: string
   const u = new URLSearchParams();
   if (from) u.set('from', from);
   const qs = u.toString();
-  const r = await fetch(`${BASE}/api/translate/source/${source}/${encodeURIComponent(vid)}${qs ? `?${qs}` : ''}`);
+  const r = await apiFetch(`${BASE}/api/translate/source/${source}/${encodeURIComponent(vid)}${qs ? `?${qs}` : ''}`);
   return ensureOk(r, (j) => ({ source: j.source, source_vid: j.source_vid, lan: j.lan, version_id: j.version_id, lines: j.lines ?? [], text: j.text ?? '' }));
 }
 
@@ -103,7 +103,7 @@ export interface ServerStatus {
 }
 
 export async function getServerStatus(): Promise<ServerStatus> {
-  const r = await fetch(`${BASE}/api/status`);
+  const r = await apiFetch(`${BASE}/api/status`);
   return ensureOk(r, (j) => ({
     version: j.version,
     uptime_s: j.uptime_s,
@@ -126,7 +126,7 @@ export interface TranslateFillResult {
 }
 
 export async function translateFill(body: { source: string; source_vid: string; from_lan: string; lines: string[] }): Promise<TranslateFillResult> {
-  const r = await fetch(`${BASE}/api/translate/fill`, {
+  const r = await apiFetch(`${BASE}/api/translate/fill`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
@@ -167,7 +167,7 @@ export async function collectSearch(body: {
   sinceDays?: number; // youtube 1..365 → 请求体 since_days
   tid?: number;       // bilibili 分区 tid
 }): Promise<CollectSearchResult> {
-  const r = await fetch(`${BASE}/api/collect-search`, {
+  const r = await apiFetch(`${BASE}/api/collect-search`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -205,7 +205,7 @@ export async function seasonPreview(params: { arg: string }): Promise<{
   season: { id: number; mid: number | null };
   client_id: string; total: number; items: SeasonPreviewItem[];
 }> {
-  const r = await fetch(`${BASE}/api/season/preview`, {
+  const r = await apiFetch(`${BASE}/api/season/preview`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ arg: params.arg }),
@@ -224,7 +224,7 @@ export async function refreshUpperInfo(params: { mid: string }): Promise<{
   client_id: string;
   creator: { name?: string; mid?: number; fans?: number; sign?: string; [k: string]: unknown };
 }> {
-  const r = await fetch(`${BASE}/api/upper-info/refresh`, {
+  const r = await apiFetch(`${BASE}/api/upper-info/refresh`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ mid: params.mid }),

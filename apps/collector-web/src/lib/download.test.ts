@@ -5,6 +5,7 @@
 // 测试轮次记录表（对齐全局 8.2）：
 // | 轮次 | 范围 | 结果 | 备注 |
 // |---|---|---|---|
+// | R2 | apiFetch 改造后 fetch spy 断言补第二参 undefined（无 token 透传形态） | 通过 | 2026-10-07 U-1 token 注入 |
 // | R1 | parseContentDisposition（filename* UTF-8 中文 / 普通 filename / 引号 / 两者并存 / 空头） | 通过 | |
 // | R2 | readCountHeader（数字/空/非数字/null） | 通过 | |
 // | R3 | downloadUrl：成功下载（URL + 文件名 + count + 多头直读）；400 JSON 抛错带文案；非 JSON 错误体；无头回落 fallback | 通过 | mock fetch + createObjectURL + anchor click |
@@ -83,7 +84,8 @@ test('成功下载：请求 url、anchor.download 取 Content-Disposition 文件
   vi.stubGlobal('fetch', fetchSpy);
 
   const r = await downloadUrl('/api/export/videos?format=csv', 'videos-export.csv');
-  expect(fetchSpy).toHaveBeenCalledWith('/api/export/videos?format=csv');
+  // apiFetch 无 token 时透传 (url, undefined) 两参——行为等价裸 fetch
+  expect(fetchSpy).toHaveBeenCalledWith('/api/export/videos?format=csv', undefined);
   expect(r.filename).toBe('videos-export.csv');
   expect(r.count).toBe(137);
   // 多头场景（原料包三数）由调用方经 headers 直读

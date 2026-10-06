@@ -3,6 +3,8 @@
 // 错误统一抛 Error（尽量带出 server JSON 的 error 文案，对齐 api-core ensureOk 风格）。
 // 纯函数 parseContentDisposition / readCountHeader 可独立复用与单测。
 
+import { apiFetch } from '../apiCore';
+
 // Content-Disposition → 文件名（RFC 5987 filename*=UTF-8''xx 优先，回落普通 filename=；
 // 都解析不出 → null，调用方用 fallback 文件名）。value 可带引号，统一剥掉。
 export function parseContentDisposition(header: string | null): string | null {
@@ -34,7 +36,7 @@ export interface DownloadResult {
 
 // 下载 url 指向的文件：!ok 读 JSON 错误并抛；成功触发浏览器保存并返回结果。
 export async function downloadUrl(url: string, fallbackFilename: string): Promise<DownloadResult> {
-  const r = await fetch(url);
+  const r = await apiFetch(url);
   if (!r.ok) {
     let detail = `HTTP ${r.status}`;
     try {

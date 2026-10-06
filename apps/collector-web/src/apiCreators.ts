@@ -2,7 +2,7 @@
 // 先例做单向拆分）。api.ts 仍是对外唯一入口（'@/api'）：调用方不经本文件直接 import，
 // api.ts 以 re-export 保持既有 import 路径不变；本文件禁止反向 import api.ts（防依赖环）。
 import type { CreatorDetail } from './types';
-import { ensureOk, BASE } from './apiCore';
+import { apiFetch, ensureOk, BASE } from './apiCore';
 
 // UP 主列表行（server /api/creators items 元素）
 export interface CreatorListItem {
@@ -37,12 +37,12 @@ export async function listCreators(params: {
   if (params.sort) u.set('sort', params.sort);
   u.set('page', String(params.page ?? 1));
   u.set('size', String(params.size ?? 20));
-  const r = await fetch(`${BASE}/api/creators?${u}`);
+  const r = await apiFetch(`${BASE}/api/creators?${u}`);
   return ensureOk(r, (j) => ({ total: j.total ?? 0, items: j.items ?? [] }));
 }
 
 export async function getCreatorDetail(id: number): Promise<CreatorDetail> {
-  const r = await fetch(`${BASE}/api/creators/${id}`);
+  const r = await apiFetch(`${BASE}/api/creators/${id}`);
   return ensureOk(r, (j) => j.creator);
 }
 
@@ -50,7 +50,7 @@ export async function getCreatorDetail(id: number): Promise<CreatorDetail> {
 // creator 即服务端 creators 行（snake_case），复用 types.ts 已有 CreatorDetail（同域同形，
 // 无需另立 CreatorInfo 别名）。
 export async function refreshCreatorProfile(id: number): Promise<{ creator: CreatorDetail }> {
-  const r = await fetch(`${BASE}/api/creators/${id}/refresh`, { method: 'POST' });
+  const r = await apiFetch(`${BASE}/api/creators/${id}/refresh`, { method: 'POST' });
   return ensureOk(r, (j) => ({ creator: j.creator }));
 }
 
@@ -61,7 +61,7 @@ export async function setCreatorCategory(
   scope: 'agent' | 'human',
   name: string,
 ): Promise<void> {
-  const r = await fetch(`${BASE}/api/creators/by-uid/${source}/${encodeURIComponent(source_uid)}/category`, {
+  const r = await apiFetch(`${BASE}/api/creators/by-uid/${source}/${encodeURIComponent(source_uid)}/category`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ scope, name }),
@@ -78,7 +78,7 @@ export async function setCreatorsCategoryBatch(
   agentCategoryId?: number | null,
   humanCategoryId?: number | null,
 ): Promise<{ updated: number }> {
-  const r = await fetch(`${BASE}/api/creators/batch-category`, {
+  const r = await apiFetch(`${BASE}/api/creators/batch-category`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ ids, agent_category_id: agentCategoryId, human_category_id: humanCategoryId }),
