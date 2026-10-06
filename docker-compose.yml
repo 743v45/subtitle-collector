@@ -42,8 +42,15 @@ services:
       COLLECTOR_ALLOWED_HOSTS: ${COLLECTOR_ALLOWED_HOSTS:-}
       # 备份连续失败 ≥2 次推飞书自定义 bot（.env 里配 webhook URL；缺省只打日志不推）。
       COLLECTOR_BACKUP_WEBHOOK_URL: ${COLLECTOR_BACKUP_WEBHOOK_URL:-}
+      # web ASR 转写兜底（asr-backfill job）：宿主机 fireredasr-ui（~/Local/fireredasr-ui，:5079）。
+      # 容器内经 host.docker.internal 访问宿主 loopback 服务；fireredasr 未启动时 B 站转写按连接失败归因。
+      COLLECTOR_ASR_BASE_URL: ${COLLECTOR_ASR_BASE_URL:-http://host.docker.internal:5079}
+      # B 站音轨拉取登录态：宿主 cookie 文件只读挂进容器固定路径（600，bili-cookie-from-chrome.mjs 提取）。
+      # 未挂载/文件缺失时 B 站转写按 need_login 归因（douyin 不依赖 cookie，不受影响）。
+      COLLECTOR_BILI_COOKIE_FILE: /run/bili-cookie.txt
     volumes:
       - collector-data:/data
+      - ${COLLECTOR_BILI_COOKIE_HOST:-/Users/taevas/Local/collector-secrets/bili-cookie.txt}:/run/bili-cookie.txt:ro
     # B1：容器日志轮转——json-file 默认无界会吃满 Docker VM 磁盘,而「磁盘满」是 backup.ts 明列的备份失败模式。
     logging:
       driver: json-file
