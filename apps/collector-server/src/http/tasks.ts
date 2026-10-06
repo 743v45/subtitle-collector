@@ -5,6 +5,7 @@ import { parseDouyinSecUid } from '../tasks/douyin-url.js';
 import { TASK_SORT_KEYS, type TaskSortKey } from '../db/sort.js';
 import { json, readJsonBody, parseSortParams } from './http-util.js';
 import { toInt } from './filter.js';
+import { listTasksPaged } from '../tasks/tasks-page.js';
 
 // ── 采集任务 HTTP 接口（手机/网页提交入口）──
 // POST   /api/collect-tasks        { text } → 从粘贴文本提取 URL → 建 pending 任务并尝试派发
@@ -16,6 +17,10 @@ import { toInt } from './filter.js';
 //                                  （重试不建新行,批次视图/进度随原行更新;调用侧 kick 派发）
 // GET    /api/collect-tasks        任务列表:limit(默认20)或 page+page_size 分页 + 多维筛选
 //                                  (采集页 limit=30 最近列表;历史页 page/page_size+筛选全量分页)
+//                                  paged 模式按「展示单元」真分页（2026-10-05 修假分页）：单元=单条任务
+//                                  或整批（同 batch_id），total=单元数、整批必落同一页、items 含页面
+//                                  单元的全部成员行（可能 > page_size，批次卡完整性优先）；limit 模式
+//                                  行为不变（种子页+批次补全）。筛选/排序语义见 tasks-page.ts。
 //                                  筛选参数:status(CSV) / source / batch_id / batch(batch|single 批量/单点档) /
 //                                  creator(UP名模糊) / creator_uid(mid 精确) / q(库内标题) / since / until(毫秒,created_at)
 //                                  creator/q 只覆盖已入库视频的任务(join 元数据);非法值忽略不抛错;
@@ -66,7 +71,12 @@ function handleListTasksHttp(res: ServerResponse, url: URL, db: Database.Databas
   // sort：created_at（默认，≡ 旧 t.id DESC）/finished_at（NULLS LAST）/status；非法 → 400
   const sp = parseSortParams(url.searchParams, TASK_SORT_KEYS, 'created_at');
   if ('error' in sp) { json(res, 400, { ok: false, error: sp.error }); return; }
-  json(res, 200, { ok: true, ...(paged ? { page, page_size: limit } : {}), ...listTasks(db, limit, offset, filter, sp.sort as TaskSortKey, sp.desc) });
+  // paged（历史页）→ 展示单元真分页；limit（采集页最近列表）→ 旧行为（种子页+批次补全）。
+  // 两模式响应形态一致（{ ok, total, items }，paged 附 page/page_size），切换对消费方透明。
+  const body = paged
+    ? listTasksPaged(db, limit, offset, filter, sp.sort as TaskSortKey, sp.desc)
+    : listTasks(db, limit, offset, filter, sp.sort as TaskSortKey, sp.desc);
+  json(res, 200, { ok: true, ...(paged ? { page, page_size: limit } : {}), ...body });
 }
 
 // POST /api/upper-videos/expand：{ source: 'bilibili', mid } | { source: 'youtube', channel } |

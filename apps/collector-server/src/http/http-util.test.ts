@@ -94,7 +94,29 @@ test('HttpError：status 与 message 透传', () => {
 });
 
 // httpAuthOk：暴露部署的 /api/* 鉴权判定
-import { httpAuthOk, httpOriginAllowed } from './http-util.js';
+import { httpAuthOk, httpOriginAllowed, isPlaceholderToken } from './http-util.js';
+
+// B2 启动闸：占位符 token 判定（main.ts 暴露部署启动校验用）。
+// 分工：空串由调用方既有 !TOKEN 分支先拦，函数本身对空串返回 false（职责单一，不双判）。
+test('isPlaceholderToken：脚手架缺省值 change-me-collector-token → true', () => {
+  // 占位符命中：docker-compose ${COLLECTOR_TOKEN:-change-me-collector-token} 的缺省形态
+  assert.equal(isPlaceholderToken('change-me-collector-token'), true);
+});
+
+test('isPlaceholderToken：强随机 48 hex → false（正常生产 token 不误伤）', () => {
+  // 「node -e "crypto.randomBytes(24).toString('hex')"」产物形态
+  assert.equal(isPlaceholderToken('a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4'), false);
+});
+
+test('isPlaceholderToken：空串 → false（空值由 main.ts 既有 !TOKEN 分支拒，函数职责单一）', () => {
+  assert.equal(isPlaceholderToken(''), false);
+});
+
+// 精确匹配防误伤：大小写变体 / 前后缀拼接均不算占位符
+test('isPlaceholderToken：精确匹配——大小写变体与前后缀拼接不算命中', () => {
+  assert.equal(isPlaceholderToken('Change-Me-Collector-Token'), false);
+  assert.equal(isPlaceholderToken('change-me-collector-token-2'), false);
+});
 test('httpAuthOk：loopback 部署不鉴权；同源浏览器放行；其余必须 Bearer', () => {
   const base = { required: true, token: 'T0KEN' };
   // loopback（required=false）全放行

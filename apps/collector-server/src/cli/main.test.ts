@@ -10,10 +10,12 @@
 // |---|---|---|---|
 // | R1 | version 子命令 + --format 非法兜底 json + commander 未知命令退 1 + getCliContext 未初始化 | 通过 | |
 // | R2 | --server 缺省防呆提示：未指 server 提示 / 显式 --server、env 指定、-q 不提示 | 通过 | 2026-10-02 CLI 完整度批次 |
+// | R3 | 版本断言改读 package.json（PKG_VERSION），随 P1-11 VERSION 去硬编码 | 通过 | 同源锁定细节见 version.test.ts |
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
+import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join, resolve } from 'node:path';
 import { getCliContext } from './context.js';
@@ -21,6 +23,10 @@ import { getCliContext } from './context.js';
 const HERE = dirname(fileURLToPath(import.meta.url)); // .../src/cli
 const MAIN_TS = join(HERE, 'main.ts');
 const APP_ROOT = resolve(HERE, '../..');
+
+// 版本期望值改读 package.json（2026-10-05 P1-11 去硬编码）：VERSION 已与 package.json 同源，
+// 测试断言字面量 '0.1.0' 会在正常 bump 版本号时变成漂移噪声；同源锁定详见 version.test.ts。
+const PKG_VERSION = (JSON.parse(readFileSync(join(APP_ROOT, 'package.json'), 'utf8')) as { version: string }).version;
 
 // 跑真 CLI 子进程，收集退出码/stdout/stderr。退出码从 execFile 的 err.code 取（数字）。
 // env 注入（可选）：覆盖/追加 process.env——防呆提示用例借此固定 COLLECTOR_SERVER 缺省/指定两态。
@@ -75,13 +81,13 @@ test('version 子命令：注册全部命令组后输出 {name, version}，退 0
   const r = await cli(['version', '--db', '/tmp/none.db', '--server', 'http://127.0.0.1:1', '--token', 't']);
   assert.equal(r.code, 0);
   assert.equal(r.err, '');
-  assert.deepEqual(JSON.parse(r.out), { name: 'collector-cli', version: '0.1.0' });
+  assert.deepEqual(JSON.parse(r.out), { name: 'collector-cli', version: PKG_VERSION });
 });
 
 test('全局 --format 非法值 → normalizeFormat 兜底 json（pretty JSON 输出）', async () => {
   const r = await cli(['--format', 'bogus', 'version', '--db', '/tmp/none.db', '--server', 'http://127.0.0.1:1', '--token', 't']);
   assert.equal(r.code, 0);
-  assert.deepEqual(JSON.parse(r.out), { name: 'collector-cli', version: '0.1.0' });
+  assert.deepEqual(JSON.parse(r.out), { name: 'collector-cli', version: PKG_VERSION });
 });
 
 // ── commander 默认错误流（不走 main catch，直接退 1）──
@@ -114,7 +120,7 @@ test('未传 --server 且 env 未指定：stderr 防呆提示（本地 dev + 生
   assert.match(r.err, HINT);
   assert.match(r.err, /127\.0\.0\.1:21527/, '提示应含默认本地 dev 地址');
   assert.match(r.err, /collector\.local\.taevas\.host/, '提示应含生产库指路');
-  assert.deepEqual(JSON.parse(r.out), { name: 'collector-cli', version: '0.1.0' });
+  assert.deepEqual(JSON.parse(r.out), { name: 'collector-cli', version: PKG_VERSION });
 });
 
 test('显式 --server → 不提示', async () => {

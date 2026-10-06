@@ -19,6 +19,7 @@ import { join } from 'node:path';
 import type Database from 'better-sqlite3';
 import { openDb, migrate } from '../db/migrate.js';
 import { ingestVideo } from '../db/ingest.js';
+import { upsertComments, clearAndSetPins, type CommentUpsertRow } from '../db/comments.js';
 import { handleQueryHttp } from './queries.js';
 
 async function setup(): Promise<{ db: Database.Database; port: number; cleanup: () => void }> {

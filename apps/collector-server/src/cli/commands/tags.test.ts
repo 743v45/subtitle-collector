@@ -1,5 +1,5 @@
 // tags 命令组纯处理函数测试：tagsList 直读临时 DB（真实迁移+种子数据），
-// tagsApply/tagsRemove 用 fake ServerClient（同 clients.test.ts 范式）断言委托参数。
+// tagsApply/tagsRemove/tagsRename/tagsDelete 用 fake ServerClient（同 clients.test.ts 范式）断言委托参数。
 // commander 装配层（parseNames/isTagSource 校验）不在单测范围（需整 CLI 上下文）。
 //
 // 测试轮次记录表（对齐全局 8.2）：
@@ -7,6 +7,7 @@
 // |---|---|---|---|
 // | R1 | tagsList 计数/source 过滤/q/topN + DB 缺失抛错 + apply/remove 委托 | 通过 | |
 // | R2 | tagsApply --source douyin 委托（platform 透传） | 通过 | 2026-08-29 S2 抖音平台化 |
+// | R4 | tagsRename/tagsDelete 委托 + ServerResponseError 上抛 | 通过 | 2026-10-05 P1-8 标签库纠错；红灯轮 tagsRename 未导出 ERR_MODULE_NOT_FOUND 全红，实现后转绿 |
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -16,8 +17,8 @@ import { join } from 'node:path';
 import { openDb, migrate } from '../../db/migrate.js';
 import { ingestVideo } from '../../db/ingest.js';
 import { applyVideoTags } from '../../db/tags.js';
-import { tagsList, tagsApply, tagsRemove } from './tags.js';
-import type { ServerClient } from '../http.js';
+import { tagsList, tagsApply, tagsRemove, tagsRename, tagsDelete } from './tags.js';
+import { ServerResponseError, type ServerClient } from '../http.js';
 
 // 种子库：BV1/BV2 两视频；manual 档 ai+面试题 打 BV1，batch 档 ai 打 BV2；另插一个 0 使用标签。
 function setup(): { dbPath: string; dir: string } {
@@ -82,11 +83,13 @@ test('tagsList：DB 文件不存在 → 抛错（commander 层转 DB_UNREADABLE�
 // ── tagsApply / tagsRemove（委托 ServerClient）──
 
 // fake ServerClient（同 clients.test.ts 范式）：记录调用参数，返回固定体。
-function fakeClient(): { client: ServerClient; calls: { apply: unknown[][]; remove: unknown[][] } } {
-  const calls = { apply: [] as unknown[][], remove: [] as unknown[][] };
+function fakeClient(): { client: ServerClient; calls: { apply: unknown[][]; remove: unknown[][]; rename: unknown[][]; delete: unknown[][] } } {
+  const calls = { apply: [] as unknown[][], remove: [] as unknown[][], rename: [] as unknown[][], delete: [] as unknown[][] };
   const stub = {
     applyTags: async (...args: unknown[]) => { calls.apply.push(args); return { ok: true, inserted: 3 }; },
     removeTags: async (...args: unknown[]) => { calls.remove.push(args); return { ok: true, removed: 1 }; },
+    renameTag: async (...args: unknown[]) => { calls.rename.push(args); return { ok: true, tag: { id: 7, name: '面试真题', created_at: 1 } }; },
+    deleteTag: async (...args: unknown[]) => { calls.delete.push(args); return { ok: true }; },
   };
   return { client: stub as unknown as ServerClient, calls };
 }
@@ -114,4 +117,47 @@ test('tagsRemove：scope 可选透传（省略 = 删全档），platform 默认 
     [['BV1'], ['ai'], 'manual', 'bilibili'],
     [['ytvid00001'], ['ai'], 'manual', 'youtube'],
   ]);
+});
+
+// ── tagsRename / tagsDelete（2026-10-05 P1-8 标签库纠错：AI 打标改名/删标重建）──
+
+test('tagsRename：委托 client.renameTag(id, name) 并透传 server 回执', async () => {
+  const { client, calls } = fakeClient();
+  const out = await tagsRename(client, 7, '面试真题');
+  assert.deepEqual(calls.rename, [[7, '面试真题']]);
+  assert.deepEqual(out, { ok: true, tag: { id: 7, name: '面试真题', created_at: 1 } });
+});
+
+test('tagsRename：server 404（标签不存在）→ ServerResponseError 上抛（装配层归一 NOT_FOUND）', async () => {
+  const err = new ServerResponseError(404, '{"ok":false,"error":"not found"}', '/api/tags/999');
+  const stub = { renameTag: async () => { throw err; } };
+  await assert.rejects(
+    tagsRename(stub as unknown as ServerClient, 999, '任意名'),
+    (e: unknown) => e === err,
+  );
+});
+
+test('tagsRename：server 409（撞已有名）→ ServerResponseError 上抛（装配层归一 RUNTIME）', async () => {
+  const err = new ServerResponseError(409, '{"ok":false,"error":"tag name already exists"}', '/api/tags/7');
+  const stub = { renameTag: async () => { throw err; } };
+  await assert.rejects(
+    tagsRename(stub as unknown as ServerClient, 7, '已存在名'),
+    (e: unknown) => e === err,
+  );
+});
+
+test('tagsDelete：委托 client.deleteTag(id) 并透传 server 回执', async () => {
+  const { client, calls } = fakeClient();
+  const out = await tagsDelete(client, 7);
+  assert.deepEqual(calls.delete, [[7]]);
+  assert.deepEqual(out, { ok: true });
+});
+
+test('tagsDelete：server 404（标签不存在）→ ServerResponseError 上抛（装配层归一 NOT_FOUND）', async () => {
+  const err = new ServerResponseError(404, '{"ok":false,"error":"not found"}', '/api/tags/999');
+  const stub = { deleteTag: async () => { throw err; } };
+  await assert.rejects(
+    tagsDelete(stub as unknown as ServerClient, 999),
+    (e: unknown) => e === err,
+  );
 });

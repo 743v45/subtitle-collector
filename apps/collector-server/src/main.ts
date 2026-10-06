@@ -13,6 +13,7 @@ import { handleStatsHttp } from './http/stats.js';
 import { handleTagsHttp } from './http/tags.js';
 import { handleTranslateHttp } from './http/translate.js';
 import { handleAsrHttp } from './http/asr.js';
+import { handleCommentsHttp } from './http/comments.js';
 import { handleSettingsHttp, type StatusContext } from './http/settings.js';
 import { handleSubSearchHttp } from './http/sub-search.js';
 import { handleExportHttp } from './http/export.js';
@@ -20,7 +21,7 @@ import { handleTasksHttp } from './http/tasks.js';
 import { handleCollectProxyHttp } from './http/collect-proxy.js';
 import { handleJobsHttp } from './http/jobs.js';
 import { createStaticFileServer } from './http/static-files.js';
-import { runHandler, httpAuthOk, httpOriginAllowed } from './http/http-util.js';
+import { runHandler, httpAuthOk, httpOriginAllowed, isPlaceholderToken } from './http/http-util.js';
 import { attachTaskScheduler } from './tasks/tasks.js';
 import { attachJobsWorker } from './jobs/runner.js';
 
@@ -41,9 +42,17 @@ const ALLOWED_HOSTS = (process.env.COLLECTOR_ALLOWED_HOSTS ?? '')
 // HTTP /api/* 鉴权（此前 token 只护 WS hello，HTTP 控制面——含可驱动扩展 navigate 任意 URL 的
 // /api/clients/:id/command——完全裸奔）。仅暴露部署强制：同源浏览器免 token（web/手机零配置），
 // 其余（curl/CLI/扩展 Origin）必须 Bearer；loopback 部署保持免鉴权。
+// B2 启动闸（含占位符拒绝）：暴露部署必须配置非占位符 token——占位符（change-me-collector-token）
+// 等效未配置，查 README/compose 文档即可猜到，控制面（navigate 任意 URL）等于公开接口。
+// 拒绝路径位于 openDb 之前（保持现状）：不碰库、不监听端口，直接退出。
 const HTTP_AUTH_REQUIRED = HOST === '0.0.0.0' || ALLOWED_HOSTS.length > 0;
-if (HTTP_AUTH_REQUIRED && !process.env.COLLECTOR_TOKEN) {
-  console.error('[collector-server] 已暴露到非 loopback（COLLECTOR_HOST=0.0.0.0 / COLLECTOR_ALLOWED_HOSTS），必须设置 COLLECTOR_TOKEN（HTTP /api/* 强制 Bearer）');
+if (HTTP_AUTH_REQUIRED && (!TOKEN || isPlaceholderToken(TOKEN))) {
+  console.error(
+    TOKEN
+      ? `[collector-server] 已暴露到非 loopback，COLLECTOR_TOKEN 仍是占位符（${TOKEN}）——等效未配置，拒绝启动。`
+      : '[collector-server] 已暴露到非 loopback（COLLECTOR_HOST=0.0.0.0 / COLLECTOR_ALLOWED_HOSTS），必须设置 COLLECTOR_TOKEN（HTTP /api/* 强制 Bearer）',
+  );
+  console.error('[collector-server] 生成强随机 token：node -e "console.log(require(\'crypto\').randomBytes(24).toString(\'hex\'))"');
   process.exit(1);
 }
 
@@ -104,6 +113,7 @@ const API_ROUTES: Array<[prefix: string, handler: (req: IncomingMessage, res: Se
   ['/api/tags', (req, res, db) => handleTagsHttp(req, res, db)],
   ['/api/translate', (req, res, db) => handleTranslateHttp(req, res, db)],
   ['/api/asr', (req, res, db) => handleAsrHttp(req, res, db)],
+  ['/api/comments', (req, res, db) => handleCommentsHttp(req, res, db)],
   ['/api/settings', (req, res, db) => handleSettingsHttp(req, res, db, STATUS_CONTEXT)],
   // /api/status 也走 handleSettingsHttp（status 路由与其同文件），但前缀不同须单列一行（否则落 /api/ 兜底 404）
   ['/api/status', (req, res, db) => handleSettingsHttp(req, res, db, STATUS_CONTEXT)],
@@ -121,6 +131,22 @@ const API_ROUTES: Array<[prefix: string, handler: (req: IncomingMessage, res: Se
   ['/api/', (req, res, db) => handleQueryHttp(req, res, db)],
 ];
 
+// B1 401 结构化日志的配套净化：请求方可控的头（host/origin/url/sec-fetch-site）进日志前
+// 去端口、去控制字符、截断，防伪造头把换行等注入内容带进日志。
+// authorization 头任何情况下不落日志——只记 hasBearer 布尔（是否带 Bearer 形态头），防 token 入日志。
+const sanitizeForLog = (v: string | undefined, max = 64): string => {
+  if (!v) return '->';
+  const cleaned = String(v).replace(/[\x00-\x1f\x7f]/g, '').split(':')[0].trim().slice(0, max);
+  return cleaned || '->';
+};
+const originHostnameForLog = (v: string | undefined): string => {
+  if (!v) return '->';
+  try {
+    // URL hostname 本就不含端口；再截断 + 控制字符净化对齐 sanitizeForLog
+    return new URL(String(v)).hostname.replace(/[\x00-\x1f\x7f]/g, '').slice(0, 64) || '->';
+  } catch { return '->'; }
+};
+
 const httpServer = createServer((req, res) => {
   if (req.url === '/ping') { res.writeHead(200, { 'Content-Type': 'application/json' }); res.end('{"ok":true}'); return; }
   if (!originAllowed(req)) { res.writeHead(403, { 'Content-Type': 'application/json' }); res.end('{"ok":false,"error":"forbidden"}'); return; } // C2
@@ -133,6 +159,15 @@ const httpServer = createServer((req, res) => {
     authorization: req.headers['authorization'] as string | undefined,
     secFetchSite: req.headers['sec-fetch-site'] as string | undefined,
   })) {
+    // B1：401 此前零日志——暴露部署下鉴权失败不可观测。结构化一行供 docker logs grep '[http] 401'。
+    const authz = req.headers['authorization'];
+    console.warn(
+      `[http] 401 method=${req.method ?? '->'} url=${sanitizeForLog(req.url, 120)}`
+      + ` host=${sanitizeForLog(req.headers['host'] as string | undefined)}`
+      + ` originHostname=${originHostnameForLog(req.headers['origin'] as string | undefined)}`
+      + ` secFetchSite=${sanitizeForLog(req.headers['sec-fetch-site'] as string | undefined)}`
+      + ` hasBearer=${typeof authz === 'string' && authz.startsWith('Bearer ')}`,
+    );
     res.writeHead(401, { 'Content-Type': 'application/json; charset=utf-8' });
     res.end('{"ok":false,"error":"unauthorized"}');
     return;

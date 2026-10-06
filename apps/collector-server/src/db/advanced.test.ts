@@ -323,6 +323,42 @@ test('getChanges: source 平台过滤（经实体行 JOIN）+ items 派生 sourc
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
+// ── 跳转定位派生列（2026-10-05 web 契约）：ref_source/ref_vid（entity=video）、ref_creator_id（entity=creator）──
+test('getChanges: ref 定位列——video 行带 ref_source/ref_vid、creator 行带 ref_creator_id、其余 null；实体已删 → null', () => {
+  const { db, dir, ids } = setup();
+  try {
+    const r = getChanges(db, {}, 1, 20);
+    assert.equal(r.total, 3);
+    // entity=video：ref_source/ref_vid 从 videos 反查（source/source_vid）
+    const videoTitle = r.items.find((c) => c.entity === 'video' && c.field === 'title')!;
+    assert.equal(videoTitle.ref_source, 'bilibili');
+    assert.equal(videoTitle.ref_vid, 'BV1');
+    const videoDur = r.items.find((c) => c.entity === 'video' && c.field === 'duration')!;
+    assert.equal(videoDur.ref_source, 'bilibili');
+    assert.equal(videoDur.ref_vid, 'BV1');
+    // entity=creator：ref_creator_id = entity_id（web UP 详情路由）；ref_source/ref_vid 恒 null
+    const creatorName = r.items.find((c) => c.entity === 'creator')!;
+    assert.equal(creatorName.ref_creator_id, ids.alpha);
+    assert.equal(creatorName.ref_source ?? null, null);
+    assert.equal(creatorName.ref_vid ?? null, null);
+    // video 行的 ref_creator_id 恒 null（三列互斥按 entity 取）
+    assert.equal(videoTitle.ref_creator_id ?? null, null);
+
+    // 实体行已删的口径：videos 行被 subtitle_tracks 等外键钉住删不掉（测试库 FK 开启），
+    // 改用 change_log 无外键的特性直插一条指向不存在视频的记录（entity_id=999999）——
+    // 与「实体已删」在 JOIN 侧等价（LEFT JOIN 不中 → 定位列 null，行仍返回不抛错）。
+    db.prepare(
+      "INSERT INTO change_log (entity, entity_id, field, old_value, new_value, changed_at) VALUES ('video', 999999, 'title', '旧', '新', ?)",
+    ).run(Date.now());
+    const afterDel = getChanges(db, { entity: 'video', entity_id: 999999 }, 1, 20);
+    assert.equal(afterDel.total, 1, '指向不存在实体的 change_log 行仍返回');
+    for (const c of afterDel.items) {
+      assert.equal(c.ref_source ?? null, null, 'videos 行不存在 → ref_source null');
+      assert.equal(c.ref_vid ?? null, null, 'videos 行不存在 → ref_vid null');
+    }
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
 test('aggregateStats: by creator / tname / lang / track-type + topN', () => {
   const { db, dir } = setup();
   try {

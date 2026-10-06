@@ -1,50 +1,32 @@
 import type {
   VideoListItem, VideoDetail, VideoFilter, ClientInfo,
-  StatsOverview, KeyValue, StatsGroupBy, CreatorDetail, ChangeRow,
+  StatsOverview, KeyValue, StatsGroupBy, ChangeRow,
   TagSource, CollectTask, CollectTaskStatus, UpperVideoItem, Category,
 } from './types';
 import type { SubtitleLine } from '@/components/SubtitleView';
-import { BASE, ensureOk } from './api-core';
+import { BASE, ensureOk } from './apiCore';
+// UP 主区段（listCreators 等 5 函数 + CreatorListItem）2026-10-05 抽至 apiCreators.ts 偿还
+// maxLines 台账；此处转出保持 '@/api' 既有 import 路径与 api.test.ts 覆盖口径不变。
+export {
+  listCreators, getCreatorDetail, refreshCreatorProfile,
+  setCreatorCategory, setCreatorsCategoryBatch,
+} from './apiCreators';
+export type { CreatorListItem } from './apiCreators';
 export type { Category };
-
-export interface CreatorListItem {
-  id: number;
-  source: string;
-  source_uid: string;
-  name: string | null;
-  avatar: string | null;
-  fans: number | null;
-  video_count: number;
-  category_agent_id: number | null;
-  category_agent_name: string | null;
-  category_human_id: number | null;
-  category_human_name: string | null;
-  first_seen_at: number;
-}
 
 // ── 视频 ──
 export async function listVideos(filter: VideoFilter = {}): Promise<{ total: number; items: VideoListItem[] }> {
   const u = new URLSearchParams();
-  if (filter.q) u.set('q', filter.q);
-  if (filter.source) u.set('source', filter.source);
-  if (filter.tid != null) u.set('tid', String(filter.tid));
-  if (filter.tname) u.set('tname', filter.tname);
-  if (filter.tag) u.set('tag', filter.tag);
+  // 字符串参数真值才发；数字参数（since/min_view 等）0 合法 → != null 才发；
+  // desc 显式发：省略会被 server 缺省降序吃掉（P2-5 顺手表驱动化，偿还 maxLines 台账）
+  const strs = { q: filter.q, source: filter.source, tname: filter.tname, tag: filter.tag, subtitle_q: filter.subtitle_q, lang: filter.lang, date_field: filter.date_field, sort: filter.sort };
+  for (const [k, v] of Object.entries(strs)) if (v) u.set(k, v);
+  const nums = { tid: filter.tid, since: filter.since, until: filter.until, min_duration: filter.min_duration, max_duration: filter.max_duration, creator_id: filter.creator_id, min_view: filter.min_view, max_view: filter.max_view };
+  for (const [k, v] of Object.entries(nums)) if (v != null) u.set(k, String(v));
   if (filter.tags?.length) u.set('tags', filter.tags.join(','));
   if (filter.tag_source?.length) u.set('tag_source', filter.tag_source.join(','));
-  if (filter.subtitle_q) u.set('subtitle_q', filter.subtitle_q);
-  if (filter.lang) u.set('lang', filter.lang);
   if (filter.has_subtitle) u.set('has_subtitle', 'true');
-  if (filter.since != null) u.set('since', String(filter.since));
-  if (filter.until != null) u.set('until', String(filter.until));
-  if (filter.min_duration != null) u.set('min_duration', String(filter.min_duration));
-  if (filter.max_duration != null) u.set('max_duration', String(filter.max_duration));
-  if (filter.creator_id != null) u.set('creator_id', String(filter.creator_id));
-  if (filter.min_view != null) u.set('min_view', String(filter.min_view));
-  if (filter.max_view != null) u.set('max_view', String(filter.max_view));
-  if (filter.date_field) u.set('date_field', filter.date_field);
-  if (filter.sort) u.set('sort', filter.sort);
-  if (filter.desc != null) u.set('desc', String(filter.desc)); // false 显式发：省略会被 server 缺省降序吃掉
+  if (filter.desc != null) u.set('desc', String(filter.desc));
   u.set('page', String(filter.page ?? 1));
   u.set('size', String(filter.size ?? 20));
   const r = await fetch(`${BASE}/api/videos?${u}`);
@@ -67,6 +49,26 @@ export async function getVideo(source: string, sourceVid: string): Promise<Video
 export async function getVersion(versionId: number): Promise<{ version: { id: number; origin: string; payload: { body: SubtitleLine[] }; captured_at: number } }> {
   const r = await fetch(`${BASE}/api/versions/${versionId}`);
   return ensureOk(r, (j) => j);
+}
+
+// ── 评论（B 站评论树，GET /api/comments/tree?bvid=...）──
+// 评论树节点（与服务端 comments 行对齐的 snake_case；楼中楼递归挂 replies）
+export interface CommentNode {
+  rpid_str: string;       // 评论唯一 ID（B 站 rpid 字符串形态，避免 JS 大数精度丢失）
+  uname: string | null;   // 评论者昵称（查不到 null）
+  mid_str: string | null; // 评论者 mid 字符串形态（查不到 null）
+  message: string | null; // 评论正文（DB 列可空，缺失 null——渲染处须短路）
+  like_count: number;     // 点赞数
+  ctime_s: number | null; // 评论时间 unix 秒（DB 列可空，缺失 null——勿当 0/1970 渲染）
+  pin_kind: string | null; // 置顶类型（null=非置顶）
+  replies: CommentNode[]; // 楼中楼（叶子为空数组）
+}
+
+// 评论树（对应 server GET /api/comments/tree）：响应 {ok, bvid, total_rows, total_roots, tree}
+export async function getVideoComments(bvid: string): Promise<{ totalRows: number; totalRoots: number; tree: CommentNode[] }> {
+  const u = new URLSearchParams({ bvid });
+  const r = await fetch(`${BASE}/api/comments/tree?${u}`);
+  return ensureOk(r, (j) => ({ totalRows: j.total_rows ?? 0, totalRoots: j.total_roots ?? 0, tree: j.tree ?? [] }));
 }
 
 // ── change_log（最近采集/变更流水）──
@@ -378,44 +380,4 @@ export async function videoRemoveTags(source: string, sourceVid: string, name: s
   return ensureOk(r, (j) => ({ removed: j.removed }));
 }
 
-// ── UP 主 ──
-export async function listCreators(params: {
-  q?: string;
-  category?: string;
-  scope?: 'agent' | 'human';
-  source?: string;   // 平台过滤（bilibili|youtube|douyin）
-  sort?: 'first_seen' | 'fans' | 'video_count';
-  page?: number;
-  size?: number;
-}): Promise<{ total: number; items: CreatorListItem[] }> {
-  const u = new URLSearchParams();
-  if (params.q) u.set('q', params.q);
-  if (params.category) u.set('category', params.category);
-  if (params.scope) u.set('scope', params.scope);
-  if (params.source) u.set('source', params.source);
-  if (params.sort) u.set('sort', params.sort);
-  u.set('page', String(params.page ?? 1));
-  u.set('size', String(params.size ?? 20));
-  const r = await fetch(`${BASE}/api/creators?${u}`);
-  return ensureOk(r, (j) => ({ total: j.total ?? 0, items: j.items ?? [] }));
-}
-
-export async function getCreatorDetail(id: number): Promise<CreatorDetail> {
-  const r = await fetch(`${BASE}/api/creators/${id}`);
-  return ensureOk(r, (j) => j.creator);
-}
-
-// 打分类：路径带平台段（2026-08-24）——uid 两平台命名空间独立，不带平台会写错行。
-export async function setCreatorCategory(
-  source: string,
-  source_uid: string,
-  scope: 'agent' | 'human',
-  name: string,
-): Promise<void> {
-  const r = await fetch(`${BASE}/api/creators/by-uid/${source}/${encodeURIComponent(source_uid)}/category`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ scope, name }),
-  });
-  await ensureOk(r, () => undefined); // await：否则失败被吞成 floating promise，调用方以为设置成功
-}
+// ── UP 主 ──（区段本体在 apiCreators.ts，见文件头转出说明）

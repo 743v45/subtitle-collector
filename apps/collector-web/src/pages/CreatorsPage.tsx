@@ -1,45 +1,20 @@
-import { useEffect, useState } from 'react';
+// 创作者管理页（2026-10-05 表格/筛选条/批量条抽至 CreatorsTable / CreatorsFilterBar / CreatorsBatchBar）。
+// Q6a 批量分类：勾选行 → 批量操作条 → setCreatorsCategoryBatch（不变=丢键，清除=null，具体=id）。
+// Q6b 刷新资料：行内按钮（仅 bilibili）→ refreshCreatorProfile → 成功刷新列表。
+import { useState } from 'react';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Skeleton } from '@/components/ui/skeleton';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { useToast } from '@/components/ui/toast';
 import { useAsync } from '@/lib/useAsync';
 import { useQueryUpdater, useRoute } from '../router';
-import { listCategories, listCreators, setCreatorCategory, type Category, type CreatorListItem } from '@/api';
-import { creatorUrl } from '../lib/externalLinks';
-import { ExtLink } from '@/components/ExtLink';
-import { PlatformIcon, platformIconClass } from '@/components/PlatformIcon';
-import { PlatformSelect } from '@/components/PlatformSelect';
-import { parseSourceFilter } from '@/lib/platformSource';
-import { cn } from '@/lib/utils';
+import { listCategories, listCreators, setCreatorCategory, refreshCreatorProfile, setCreatorsCategoryBatch, type Category, type CreatorListItem } from '@/api';
+import { CreatorsBatchBar, batchArg, type BatchSlotChoice } from './CreatorsBatchBar';
+import { CreatorsFilterBar, parseRouteFilters, useDebouncedQ, type SlotScope } from './CreatorsFilterBar';
+import { CreatorsTable } from './CreatorsTable';
 
 const PAGE_SIZE = 20;
-type CreatorSort = 'first_seen' | 'fans' | 'video_count';
-const SORTS: readonly CreatorSort[] = ['first_seen', 'fans', 'video_count'];
-type SlotScope = 'agent' | 'human';
-// 槽位筛选三态按钮：null=全部（缺省，URL 不写）——同一套分类值，只是限定看哪个槽位打的标
-const SLOT_TABS: ReadonlyArray<{ value: SlotScope | null; label: string }> = [
-  { value: null, label: '全部' },
-  { value: 'agent', label: 'Agent 打标' },
-  { value: 'human', label: '人工打标' },
-];
 
-// URL query → 列表筛选/分页状态一次解析（非法值收敛到缺省），组件内不再逐项条件判断
-function parseRouteFilters(query: URLSearchParams) {
-  const scopeRaw = query.get('scope');
-  const sourceRaw = query.get('source');
-  const sortRaw = query.get('sort');
-  const pageRaw = Number(query.get('page'));
-  return {
-    q: query.get('q') ?? '',
-    catFilter: query.get('cat') ?? '',
-    scope: SLOT_TABS.find((t) => t.value === scopeRaw)?.value ?? null,
-    source: parseSourceFilter(sourceRaw),
-    sort: (SORTS as readonly string[]).includes(sortRaw ?? '') ? (sortRaw as CreatorSort) : 'first_seen',
-    page: Number.isInteger(pageRaw) && pageRaw > 1 ? pageRaw : 1,
-  };
+function errMsg(e: unknown): string {
+  return e instanceof Error ? e.message : String(e);
 }
 
 export function CreatorsPage({ onOpen }: { onOpen: (id: number) => void }) {
@@ -50,14 +25,11 @@ export function CreatorsPage({ onOpen }: { onOpen: (id: number) => void }) {
   const setFilter = (patch: Record<string, string | null | undefined>) => updateQuery(patch, { resetPage: true });
   const { q, catFilter, scope, source, sort, page } = parseRouteFilters(route.query);
   const [busyUid, setBusyUid] = useState<string | null>(null);
+  const [refreshingId, setRefreshingId] = useState<number | null>(null);
+  const [batchBusy, setBatchBusy] = useState(false);
 
-  // 搜索防抖（300ms）：本地回显,停止输入后写 URL
-  const [qInput, setQInput] = useState(q);
-  useEffect(() => { setQInput(q); }, [q]);
-  useEffect(() => {
-    const t = setTimeout(() => { if (qInput !== q) setFilter({ q: qInput || null }); }, 300);
-    return () => clearTimeout(t);
-  }, [qInput]);
+  // 搜索防抖（300ms）：本地回显，停止输入后写 URL
+  const [qInput, setQInput] = useDebouncedQ(q, (v) => setFilter({ q: v }));
 
   // 列表：useAsync 驱动，error 显式落到 UI（不再 .catch 静默吞）。
   // scope 独立于 catFilter（三态筛选）：有值时 server 按对应槽位筛（配合 cat=该槽位匹配列 / 单独=该槽位已打标），null=不限槽位
@@ -77,15 +49,51 @@ export function CreatorsPage({ onOpen }: { onOpen: (id: number) => void }) {
   const total = listResult?.total ?? 0;
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
 
-  // 一套共享分类值：筛选下拉与表格内 Agent/人工两个编辑下拉共用同一次拉取
+  // 一套共享分类值：筛选下拉、行内两个编辑下拉、批量条共用同一次拉取
   const { data: cats } = useAsync<Category[]>(() => listCategories(), []);
 
-  // 切槽位：分类值域共享，cat 对任何槽位都有意义，不清空
-  function switchScope(s: SlotScope | null) {
-    if (s === scope) return;
-    updateQuery({ scope: s }, { resetPage: true });
+  // ── Q6a 批量选择与应用 ──
+  const [selected, setSelected] = useState<Set<number>>(new Set());
+  const [agentChoice, setAgentChoice] = useState<BatchSlotChoice>('keep');
+  const [humanChoice, setHumanChoice] = useState<BatchSlotChoice>('keep');
+
+  function toggleRow(c: CreatorListItem) {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(c.id)) next.delete(c.id); else next.add(c.id);
+      return next;
+    });
   }
 
+  function toggleAll() {
+    setSelected((prev) => (prev.size === items.length && items.every((c) => prev.has(c.id))
+      ? new Set<number>()
+      : new Set(items.map((c) => c.id))));
+  }
+
+  const allSelected = items.length > 0 && items.every((c) => selected.has(c.id));
+
+  // 批量应用：keep=不传键（undefined 经 JSON.stringify 丢弃）、清除=null、分类=传 id；
+  // 成功清空勾选并刷新；失败 toast 带上下文（ids 数、两槽位参数），勾选保留便于重试
+  async function applyBatch() {
+    const ids = items.filter((c) => selected.has(c.id)).map((c) => c.id);
+    if (ids.length === 0) return;
+    setBatchBusy(true);
+    try {
+      const { updated } = await setCreatorsCategoryBatch(ids, batchArg(agentChoice), batchArg(humanChoice));
+      toast(`已更新 ${updated} 个创作者`, 'success');
+      setSelected(new Set());
+      setAgentChoice('keep');
+      setHumanChoice('keep');
+      reload();
+    } catch (e: unknown) {
+      toast(`批量分类失败：${errMsg(e)}（ids=${ids.length} 个，agent=${agentChoice} human=${humanChoice}）`, 'error');
+    } finally {
+      setBatchBusy(false);
+    }
+  }
+
+  // ── 行内单改分类（原有逻辑） ──
   async function changeCategory(c: CreatorListItem, catScope: 'agent' | 'human', name: string) {
     setBusyUid(c.source_uid);
     try {
@@ -94,11 +102,32 @@ export function CreatorsPage({ onOpen }: { onOpen: (id: number) => void }) {
       toast('已更新', 'success');
       reload();
     } catch (e: unknown) {
-      toast(`失败：${e instanceof Error ? e.message : String(e)}`, 'error');
+      toast(`失败：${errMsg(e)}`, 'error');
     } finally {
       setBusyUid(null);
     }
   }
+
+  // ── Q6b 刷新资料（仅 bilibili 行渲染入口） ──
+  async function refreshProfile(c: CreatorListItem) {
+    setRefreshingId(c.id);
+    try {
+      await refreshCreatorProfile(c.id);
+      toast(`资料已刷新：${c.name ?? c.source_uid}`, 'success');
+      reload();
+    } catch (e: unknown) {
+      toast(`刷新资料失败：${errMsg(e)}（id=${c.id} ${c.source_uid}）`, 'error');
+    } finally {
+      setRefreshingId(null);
+    }
+  }
+
+  function switchScope(s: SlotScope | null) {
+    if (s === scope) return;
+    updateQuery({ scope: s }, { resetPage: true });
+  }
+
+  const hasFilter = Boolean(q || catFilter || source);
 
   return (
     <div className="space-y-4">
@@ -107,148 +136,52 @@ export function CreatorsPage({ onOpen }: { onOpen: (id: number) => void }) {
         <span className="text-sm text-muted-foreground">共 {total} 条</span>
       </div>
 
-      <div className="flex flex-wrap items-center gap-2">
-        <Input
-          placeholder="搜索 创作者名/ID"
-          value={qInput}
-          onChange={(e) => setQInput(e.target.value)}
-          className="max-w-xs"
+      <CreatorsFilterBar
+        q={qInput}
+        onQInput={setQInput}
+        scope={scope}
+        onScope={switchScope}
+        catFilter={catFilter}
+        onCatFilter={(v) => setFilter({ cat: v })}
+        sort={sort}
+        onSort={(v) => setFilter({ sort: v === 'first_seen' ? null : v })}
+        source={source}
+        onSource={(v) => setFilter({ source: v })}
+        cats={cats}
+      />
+
+      {selected.size > 0 && (
+        <CreatorsBatchBar
+          count={selected.size}
+          cats={cats}
+          busy={batchBusy}
+          agentChoice={agentChoice}
+          humanChoice={humanChoice}
+          onAgentChoice={setAgentChoice}
+          onHumanChoice={setHumanChoice}
+          onApply={applyBatch}
+          onClearSelection={() => setSelected(new Set())}
         />
-        <div className="flex gap-1">
-          {SLOT_TABS.map((t) => (
-            <Button
-              key={t.label}
-              variant={t.value === scope ? 'default' : 'outline'}
-              size="sm"
-              onClick={() => switchScope(t.value)}
-            >
-              {t.label}
-            </Button>
-          ))}
-        </div>
-        <Select
-          value={catFilter || '__all'}
-          onValueChange={(v) => setFilter({ cat: v === '__all' ? null : v })}
-        >
-          <SelectTrigger className="w-48">
-            {/* 有槽位时占位符注明限定（该槽位匹配列），全部=两槽位任一 */}
-            <SelectValue placeholder={scope ? `按分类筛选（${scope === 'agent' ? 'Agent' : '人工'}槽位）` : '按分类筛选'} />
-          </SelectTrigger>
-          <SelectContent>
-            {/* 「全部」即清除入口——此前选了分类没有任何取消方式（无重置按钮，URL 还原也带着） */}
-            <SelectItem value="__all">全部分类</SelectItem>
-            {(cats ?? []).map((c) => (
-              <SelectItem key={c.id} value={c.name}>{c.name}</SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-        <Select
-          value={sort}
-          onValueChange={(v) => setFilter({ sort: v === 'first_seen' ? null : v })}
-        >
-          <SelectTrigger className="w-32">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="first_seen">首见时间</SelectItem>
-            <SelectItem value="fans">粉丝数</SelectItem>
-            <SelectItem value="video_count">视频数</SelectItem>
-          </SelectContent>
-        </Select>
-        <PlatformSelect value={source} onChange={(v) => setFilter({ source: v })} />
-      </div>
+      )}
 
       <div className="overflow-hidden rounded-md border" aria-busy={loading || undefined}>
-        <Table>
-          <TableHeader>
-            <TableRow className="hover:bg-transparent">
-              <TableHead>名称</TableHead>
-              <TableHead>ID</TableHead>
-              <TableHead>Agent 分类</TableHead>
-              <TableHead>人工分类</TableHead>
-              <TableHead className="text-right">粉丝</TableHead>
-              <TableHead className="text-right">视频数</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {error ? (
-              <TableRow className="hover:bg-transparent">
-                <TableCell colSpan={6} className="text-sm text-destructive">
-                  加载失败：{error}
-                  <Button variant="link" size="sm" onClick={reload}>重试</Button>
-                </TableCell>
-              </TableRow>
-            ) : loading && items.length === 0 ? (
-              Array.from({ length: 5 }).map((_, i) => (
-                <TableRow key={i}>
-                  <TableCell><Skeleton className="h-4 w-24" /></TableCell>
-                  <TableCell><Skeleton className="h-4 w-20" /></TableCell>
-                  <TableCell><Skeleton className="h-8 w-32" /></TableCell>
-                  <TableCell><Skeleton className="h-8 w-32" /></TableCell>
-                  <TableCell className="text-right"><Skeleton className="ml-auto h-4 w-10" /></TableCell>
-                  <TableCell className="text-right"><Skeleton className="ml-auto h-4 w-8" /></TableCell>
-                </TableRow>
-              ))
-            ) : items.length === 0 ? (
-              <TableRow className="hover:bg-transparent">
-                <TableCell colSpan={6} className="py-8 text-center">
-                  <div className="text-sm text-muted-foreground">
-                    {q || catFilter || source ? '没有匹配的创作者——试试放宽搜索或筛选' : '暂无创作者——采集视频后创作者会自动入库'}
-                  </div>
-                </TableCell>
-              </TableRow>
-            ) : (
-            items.map((c) => (
-              <TableRow key={c.id} className="cursor-pointer hover:bg-accent" onClick={() => onOpen(c.id)}>
-                <TableCell>
-                  <span className="inline-flex items-center gap-1">
-                    {/* 平台图标：同名创作者两平台各一条时靠它分辨（2026-08-24） */}
-                    <PlatformIcon source={c.source} className={cn('h-3.5 w-3.5', platformIconClass(c.source))} />
-                    {c.name ?? '(未知)'}
-                    <ExtLink href={creatorUrl(c.source, c.source_uid)} label={`在原站打开 ${c.name ?? c.source_uid} 的空间`} />
-                  </span>
-                </TableCell>
-                <TableCell className="font-mono text-muted-foreground">{c.source_uid}</TableCell>
-                {/* stopPropagation：点 Select 触发器不能冒泡到行触发行跳转。SelectContent 走 Portal 不会冒泡到行。 */}
-                <TableCell onClick={(e) => e.stopPropagation()}>
-                  <Select
-                    value={c.category_agent_name ?? undefined}
-                    onValueChange={(v) => changeCategory(c, 'agent', v)}
-                    disabled={busyUid === c.source_uid}
-                  >
-                    <SelectTrigger className="w-32">
-                      <SelectValue placeholder="未分类" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {(cats ?? []).map((h) => (
-                        <SelectItem key={h.id} value={h.name}>{h.name}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </TableCell>
-                <TableCell onClick={(e) => e.stopPropagation()}>
-                  <Select
-                    value={c.category_human_name ?? undefined}
-                    onValueChange={(v) => changeCategory(c, 'human', v)}
-                    disabled={busyUid === c.source_uid}
-                  >
-                    <SelectTrigger className="w-32">
-                      <SelectValue placeholder="未分类" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {(cats ?? []).map((h) => (
-                        <SelectItem key={h.id} value={h.name}>{h.name}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </TableCell>
-                <TableCell className="text-right tabular-nums">{c.fans != null ? c.fans.toLocaleString('zh-CN') : '—'}</TableCell>
-                <TableCell className="text-right tabular-nums">{c.video_count}</TableCell>
-              </TableRow>
-            ))
-          )}
-        </TableBody>
-      </Table>
+        <CreatorsTable
+          items={items}
+          cats={cats}
+          loading={loading}
+          error={error}
+          reload={reload}
+          busyUid={busyUid}
+          refreshingId={refreshingId}
+          selected={selected}
+          allSelected={allSelected}
+          onToggleRow={toggleRow}
+          onToggleAll={toggleAll}
+          onOpen={onOpen}
+          onCategoryChange={changeCategory}
+          onRefreshProfile={refreshProfile}
+          emptyHint={hasFilter ? '没有匹配的创作者——试试放宽搜索或筛选' : '暂无创作者——采集视频后创作者会自动入库'}
+        />
       </div>
 
       <div className="flex items-center justify-between rounded-md border bg-muted/40 px-4 py-2 text-sm text-muted-foreground">

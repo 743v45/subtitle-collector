@@ -4,7 +4,8 @@
  * 覆盖：
  *   1. inject.js 注入（fetch/XHR hook）
  *   2. PLAYER_META 抽取（bvid/aid/cid/title/up/subs[]）
- *   3. subtitle_url 四情况：正常 / 空数组(无字幕) / need_login_subtitle=true / code≠0 风控
+ *   3. subtitle_url 四情况：正常(上报 1 条含轨) / 空数组(上报 1 条 0 轨视频信息，d9dd40e 起) /
+ *      need_login_subtitle=true(同 0 轨上报，不打标) / code≠0 风控(零上报)
  *   4. content.js 组装 → background WS ingest（mock WS server 收到上报）
  *   5. navigate 命令：broadcastCommand → 扩展 chrome.tabs.create
  *   6. operate 命令：mock 字幕按钮 DOM，验证点击后 content.js 回传 subtitleObserved 真实结果
@@ -129,8 +130,25 @@ const diag = await page.evaluate(() => ({
 })).catch((e) => ({ err: e.message }));
 console.log('[diag] fetch hook 状态:', JSON.stringify(diag));
 console.log('[diag] 首个 ingest 内容:', JSON.stringify(received.ingests[0])?.slice(0, 500));
-const ok = received.ingests.length === 1 && received.ingests[0]?.video?.source_vid === 'BVnormal';
-console.log('\n[ingest 四情况]', ok ? '✅ 仅正常情况上报，其余三情况未上报' : '❌ subtitle_url 四情况处理异常');
+// 四情况断言（d9dd40e 2026-08-24 契约，content-no-subtitle-report.test.mjs 同源锁定）：
+// 正常→恰 1 条且含 1 轨；空数组/need_login→各恰 1 条 0 轨视频信息（元信息不是脏数据，zeroFlushed 防重）；
+// 风控 code≠0 →零上报。按 source_vid 分组校验条数与轨数，不依赖到达顺序；总数必须恰为 3。
+const ingestByVid = {};
+for (const p of received.ingests) {
+  const vid = p?.video?.source_vid ?? '(无 source_vid)';
+  (ingestByVid[vid] ??= []).push(p?.tracks?.length ?? -1);
+}
+console.log('[diag] ingest 分布(source_vid→[tracks…]):', JSON.stringify(ingestByVid));
+const count = (vid) => ingestByVid[vid]?.length ?? 0;
+const tracksOf = (vid) => ingestByVid[vid]?.[0] ?? -1;
+const ok =
+  count('BVnormal') === 1 && tracksOf('BVnormal') === 1 &&
+  count('BVempty') === 1 && tracksOf('BVempty') === 0 &&
+  count('BVlogin') === 1 && tracksOf('BVlogin') === 0 &&
+  received.ingests.length === 3;
+console.log('\n[ingest 四情况]', ok
+  ? '✅ 正常 1 条含轨 + 空数组/需登录各 1 条 0 轨视频信息 + 风控零上报'
+  : '❌ subtitle_url 四情况处理异常');
 console.log('  收到 ingest 数:', received.ingests.length, '| navigate:', !!navResult, '| operate:', !!opResult);
 
 await browser.close();

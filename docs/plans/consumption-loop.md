@@ -47,10 +47,11 @@
 ## 推迟项登记（不在本批）
 
 - tasks 命令组 → cli-completeness.md #3 加注「下一批首选」。
-- 抖音收口 → DOUYIN-PROGRESS.md 悬空指针（等 0.1.28）改「重测待约（当前 0.1.30）」，重测需用户真机配合。
+- 抖音收口 → DOUYIN-PROGRESS.md 悬空指针（等 0.1.28）改「重测待约」（版本以 [manifest.json](../../apps/subtitle-collector/manifest.json) 为准），重测需用户真机配合。
 - sub search --tags+池截断 / videos list 富化 / stats completeness / INDEX 台账 / --date-field / help 门禁 → 触发条件：下一分析主题实跑疼了再做。
 - headless 分析初稿（2026-10-02 CLI 完整度批次追加）：`export-bundle` 出包后接 `claude -p` 按 ANALYZE.md 模板无人值守出分析初稿，人工只复核定稿——触发条件：下个分析主题实跑时试跑定形（prompt 模板、输出落点、失败重试策略都要实跑才知道）。
 - server 端 bundle 导出端点（2026-10-02 CLI 完整度批次追加）：`/api/export/bundle` 在 server 内流式出包（zip/tar），免「VACUUM INTO 快照 → docker cp → CLI 出包」三跳——触发条件：库规模或出包频率上来、现有三跳真的疼了再做。
+- web 评论展示（2026-10-03 评论采集落地的显式范围排除，[docs/plans/comments/PLAN.md §1.3](comments/PLAN.md)）→ ✅ 已落地（2026-10-05 账本 P2-5，091e248 + web 侧 commit）：VideoDetail 懒展开评论树区块 + `GET /api/videos/:source/:vid/comments`（树组装与 CLI tree 共享 db 层 shapeTree）；不再等待触发条件。
 
 ## 执行纪律
 

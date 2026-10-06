@@ -1,5 +1,6 @@
 // VideoDetail 页面组件单测：加载/错误骨架、元信息（bilibili/youtube 分支）、标签增删、
-// 轨/版本选择（URL 唯一真相 ?track=&ver=）、字幕正文加载与失败重试。
+// 轨/版本选择（URL 唯一真相 ?track=&ver=）、字幕正文加载与失败重试、
+// Q4 复制/下载下拉合并 + 版本区多版本门控、Q5 评论区懒加载树（2026-10-05）。
 // 跑法：npx vitest run src/pages/VideoDetail.test.tsx
 //
 // 测试轮次记录表（对齐全局 8.2）：
@@ -10,12 +11,14 @@
 // | R3 | 标签增删（POST/DELETE 端点契约 + toast + reload） | 通过 | 包 ToastProvider 断言文案 |
 // | R4 | 轨/版本：URL 参数命中/非法回落默认、切换写回 query、正文/失败重试 | 通过 | hash 直改 + hashchange |
 // | R5 | douyin（2026-08-29）：B 站专属字段降级、stat 同构、douyin 外链、bili 档话题标签只读 | 通过 | |
+// | R6 | Q4/Q5（2026-10-05）：复制/下载下拉项齐全与行为、单版本不渲染「版本」区、评论区懒加载/空态/失败重试/youtube 无入口 | 通过 | 评论区 stub /api/comments/tree |
 // | R6 | 按轨导出条（CLI 全功能 web 化 Phase 2）：字幕正文区挂 TrackExportBar，轨选项来自 detail.tracks；URL 组装带 track+format | 通过 | 页面接线断言，组件内部见 TrackExportBar.test.tsx |
 // | R7 | 合集卡（Phase 3）：extra.ugc_season 直通渲染折叠头；无 season 不渲染 | 通过 | 组件行为见 CollectSeasonCard.test.tsx |
 import { test, expect, vi, afterEach } from 'vitest';
 import { render, screen, fireEvent, cleanup, waitFor } from '@testing-library/react';
 import { VideoDetail } from './VideoDetail';
 import { ToastProvider } from '@/components/ui/toast';
+import { toTxt } from '@/components/SubtitleView'; // Q4 期望值与实现同源（SubtitlePanel 复用的纯函数）
 
 afterEach(() => {
   cleanup();
@@ -388,8 +391,156 @@ test('无版本轨：selectedVersion=null → 不发 getVersion，正文空', as
   renderDetail();
   expect(await screen.findByText('空轨（默认）')).toBeInTheDocument();
   await waitFor(() => expect(versionCalls).toHaveLength(0));
-  // 版本区不渲染（单版本拦截在 VersionSwitcher 内部）
+  // 版本区不渲染（versions.length ≤ 1 门控在页面层，Q4）
   expect(screen.getByText('字幕正文')).toBeInTheDocument();
+});
+
+// ── R6：Q4 复制/下载下拉 + 版本区门控 + Q5 评论区懒加载（2026-10-05）──
+
+// 评论树 server 契约（snake_case，api.ts 转 camelCase）
+function commentNode(over: Record<string, unknown> = {}) {
+  return {
+    rpid_str: 'r1', uname: '用户A', mid_str: '1', message: '顶层评论',
+    like_count: 0, ctime_s: 1700000000, pin_kind: null, replies: [],
+    ...over,
+  };
+}
+
+const commentsPayload = (tree: unknown[], totalRows = tree.length) => ({
+  ok: true, bvid: 'BV1test', total_rows: totalRows, total_roots: tree.length, tree,
+});
+
+function detailFetchStub(over: { comments?: () => unknown } = {}) {
+  return (url: string) => {
+    if (url.includes('/api/videos/')) return detailPayload();
+    if (url.includes('/api/versions/')) return versionBody('正文内容行');
+    if (url.includes('/api/comments/tree')) return over.comments ? over.comments() : { ok: true };
+  };
+}
+
+test('Q4 复制下拉：菜单项齐全（SRT/VTT/TXT）；复制 TXT → clipboard 收到 toTxt 产物；旧平铺按钮不存在', async () => {
+  const writeText = vi.fn().mockResolvedValue(undefined);
+  Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
+  stubFetch(detailFetchStub());
+  renderDetail();
+  await screen.findByText('正文内容行');
+  // 六个平铺按钮合并成两个下拉触发器
+  expect(screen.queryByRole('button', { name: '复制 SRT' })).toBe(null);
+  fireEvent.click(screen.getByRole('button', { name: '复制' }));
+  expect(screen.getByRole('button', { name: '复制 SRT' })).toBeInTheDocument();
+  expect(screen.getByRole('button', { name: '复制 VTT' })).toBeInTheDocument();
+  expect(screen.getByRole('button', { name: '复制 TXT' })).toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: '复制 TXT' }));
+  await waitFor(() => expect(writeText).toHaveBeenCalledWith(toTxt([{ from: 1, to: 2, content: '正文内容行' }])));
+});
+
+test('Q4 下载下拉：下载 TXT → Blob 链路触发 a[download=BV1test.txt] 并 revoke', async () => {
+  Object.defineProperty(URL, 'createObjectURL', { value: vi.fn(() => 'blob:fake'), configurable: true });
+  const revokeObjectURL = vi.fn();
+  Object.defineProperty(URL, 'revokeObjectURL', { value: revokeObjectURL, configurable: true });
+  const clickSpy = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {});
+  stubFetch(detailFetchStub());
+  renderDetail();
+  await screen.findByText('正文内容行');
+  fireEvent.click(screen.getByRole('button', { name: '下载' }));
+  fireEvent.click(screen.getByRole('button', { name: '下载 TXT' }));
+  expect(clickSpy).toHaveBeenCalledTimes(1);
+  const a = clickSpy.mock.instances[0] as unknown as HTMLAnchorElement;
+  expect(a.download).toBe('BV1test.txt'); // 文件名 = sourceVid
+  expect(revokeObjectURL).toHaveBeenCalledWith('blob:fake');
+});
+
+test('Q4 版本区门控：单版本轨不渲染「版本」标题区；多版本轨渲染', async () => {
+  stubFetch((url) => {
+    if (url.includes('/api/videos/')) {
+      return detailPayload({
+        tracks: [{ id: 11, lan: 'zh-CN', lan_doc: '单版轨', track_type: 1, is_default: true, versions: [{ id: 111, origin: 'external', is_default: true }] }],
+      });
+    }
+    if (url.includes('/api/versions/')) return versionBody('单版正文');
+  });
+  renderDetail();
+  await screen.findByText('单版正文');
+  expect(screen.queryByText('版本')).toBe(null); // 单版本无切换意义，整区（含标题）不渲染
+  expect(screen.getByText('字幕正文')).toBeInTheDocument();
+
+  cleanup();
+  window.location.hash = '#/videos/bilibili/BV1test';
+  stubFetch(detailFetchStub());
+  renderDetail();
+  await screen.findByText('正文内容行');
+  expect(screen.getByText('版本')).toBeInTheDocument(); // 默认轨 2 版本 → 区块照常
+});
+
+test('Q5 评论区：bilibili「评论」徽标点击懒加载树（置顶/楼中楼/点赞/匿名）；徽标带总数；再点收起', async () => {
+  const fetchMock = vi.fn(async (input: any) => {
+    const url = typeof input === 'string' ? input : input.url;
+    if (url.includes('/api/videos/')) return jsonResponse(detailPayload());
+    if (url.includes('/api/versions/')) return jsonResponse(versionBody('正文内容行'));
+    if (url.includes('/api/comments/tree')) {
+      return jsonResponse(commentsPayload([
+        commentNode({ pin_kind: 'top', like_count: 42, replies: [commentNode({ rpid_str: 'r2', message: '楼中楼回复' })] }),
+        commentNode({ rpid_str: 'r3', uname: null, message: '匿名评论' }),
+      ]));
+    }
+    return jsonResponse({ ok: true });
+  });
+  vi.stubGlobal('fetch', fetchMock);
+  renderDetail();
+  await screen.findByText('正文内容行');
+  // 未加载：徽标只显示「评论」无数字，不发请求
+  const badge = screen.getByRole('button', { name: '评论' });
+  expect(badge.getAttribute('aria-expanded')).toBe('false');
+  expect(fetchMock.mock.calls.filter((c) => String(c[0]).includes('/api/comments/tree'))).toHaveLength(0);
+
+  fireEvent.click(badge);
+  expect(await screen.findByText('顶层评论')).toBeInTheDocument();
+  expect(fetchMock.mock.calls.at(-1)![0]).toBe('/api/comments/tree?bvid=BV1test');
+  expect(screen.getByText('置顶')).toBeInTheDocument();
+  expect(screen.getByText('楼中楼回复')).toBeInTheDocument();
+  expect(screen.getByText('👍 42')).toBeInTheDocument();
+  expect(screen.getByText('匿名')).toBeInTheDocument();
+  expect(screen.getByRole('button', { name: '评论 2' })).toBeInTheDocument();
+
+  // 再点收起：面板从 DOM 摘掉（数据缓存由 CommentsSection 单测覆盖）
+  fireEvent.click(screen.getByRole('button', { name: '评论 2' }));
+  expect(screen.queryByText('顶层评论')).toBe(null);
+});
+
+test('Q5 评论区空态：total_rows=0 → 「库内暂无评论（未采集）」+ 徽标「评论 0」', async () => {
+  stubFetch(detailFetchStub({ comments: () => commentsPayload([], 0) }));
+  renderDetail();
+  await screen.findByText('正文内容行');
+  fireEvent.click(screen.getByRole('button', { name: '评论' }));
+  expect(await screen.findByText('库内暂无评论（未采集）')).toBeInTheDocument();
+  expect(screen.getByRole('button', { name: '评论 0' })).toBeInTheDocument();
+});
+
+test('Q5 评论区失败：503 → 错误条 + 日志带 bvid；重试恢复树', async () => {
+  let fail = true;
+  const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+  stubFetch(detailFetchStub({
+    comments: () => (fail ? jsonResponse({ ok: false, error: '扩展离线' }, 503) : commentsPayload([commentNode()])),
+  }));
+  renderDetail();
+  await screen.findByText('正文内容行');
+  fireEvent.click(screen.getByRole('button', { name: '评论' }));
+  expect(await screen.findByText(/评论加载失败：HTTP 503：扩展离线/)).toBeInTheDocument();
+  // 日志规则：失败日志带 bvid 与错误详情
+  expect(errSpy).toHaveBeenCalledWith('[CommentsSection] 评论树加载失败', { bvid: 'BV1test', error: 'HTTP 503：扩展离线' });
+  fail = false;
+  fireEvent.click(screen.getByRole('button', { name: '重试' }));
+  expect(await screen.findByText('顶层评论')).toBeInTheDocument();
+});
+
+test('Q5 评论区：youtube 源不渲染评论入口', async () => {
+  stubFetch((url) => {
+    if (url.includes('/api/videos/')) return detailPayload({ tags: [] });
+    if (url.includes('/api/versions/')) return versionBody('yt line');
+  });
+  renderDetail('youtube', 'dQw4w9WgXcQ');
+  await screen.findByText('详情页视频');
+  expect(screen.queryByRole('button', { name: '评论' })).toBe(null);
 });
 
 // ── R6：按轨导出条（TrackExportBar 页面接线；组件内部行为见 TrackExportBar.test.tsx）──

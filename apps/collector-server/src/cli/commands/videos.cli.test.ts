@@ -6,6 +6,7 @@
 // |---|---|---|---|
 // | R1 | list/get/get-by-id 三 action 成功 + ARGS（tid/since/sort/id 非数字）+ DB_UNREADABLE + NOT_FOUND | 通过 | |
 // | R2 | 排序：缺省降序对齐 HTTP + --desc=false 升序 + --sort updated_at + 非法 --desc ARGS | 通过 | 2026-08-25 全端点排序；pnpm qa 全绿 |
+// | R3 | --creator-id/--creator-uid/--tag-source/--date-field 四参过滤生效 + 非法值 ARGS | 通过 | P1-6（cli-completeness #5 余量）；pnpm qa 全绿 |
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -45,14 +46,14 @@ function setup(): { db: Database.Database; dbPath: string; dir: string } {
       video: { source_vid: sourceVid, title, creator: { source_uid: uid, name }, extra, duration: dur, published_at: pub },
       tracks,
     });
-  ingest('BV1', '标题A', '1', 'Alpha UP', { tid: 17, tname: '单机游戏' }, 600, T + 1000, [
+  ingest('BV1', '标题A', '1', 'Alpha UP', { tid: 17, tname: '单机游戏', tags: [{ tag_id: 1, tag_name: '游戏' }, { tag_id: 2, tag_name: '实况' }] }, 600, T + 1000, [
     { lan: 'zh-Hans', track_type: 2, versions: [{ origin: 'external', payload: { body: [] } }] },
     { lan: 'en', track_type: 1, versions: [{ origin: 'external', payload: { body: [] } }] },
   ]);
-  ingest('BV2', '标题B', '1', 'Alpha UP', { tid: 122, tname: '科技' }, 300, T + 2000, [
+  ingest('BV2', '标题B', '1', 'Alpha UP', { tid: 122, tname: '科技', tags: [{ tag_id: 3, tag_name: '数码' }] }, 300, T + 2000, [
     { lan: 'zh-Hans', track_type: 1, versions: [{ origin: 'external', payload: { body: [] } }] },
   ]);
-  ingest('BV3', '标题C', '2', 'Beta UP', { tid: 17, tname: '单机游戏' }, 1200, T + 3000, [
+  ingest('BV3', '标题C', '2', 'Beta UP', { tid: 17, tname: '单机游戏', tags: [{ tag_id: 1, tag_name: '游戏' }] }, 1200, T + 3000, [
     { lan: 'en', track_type: 2, versions: [{ origin: 'external', payload: { body: [] } }] },
   ]);
   ingest('BV4', '标题D', '2', 'Beta UP', {}, 60, T + 4000, []);
@@ -217,4 +218,83 @@ test('videos list：缺省降序（D,C,B,A）；--desc=false 升序；--sort upd
     assert.equal(r.code, 2);
     assert.match(r.err, /非法 --desc: maybe/);
   } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+// ── P1-6：videos list 补 --creator-id / --creator-uid / --tag-source / --date-field（cli-completeness #5 余量）──
+// HTTP filter.ts 已暴露同名 query 参数，CLI 对齐语义；证据 = 真 CLI 子进程 + 结果集差异。
+
+test('videos list：--creator-id / --creator-uid 精确过滤生效（真 CLI 子进程）', async () => {
+  const { db, dir, dbPath } = setup();
+  try {
+    const creatorId = (db.prepare("SELECT creator_id FROM videos WHERE source_vid = 'BV1'").get() as { creator_id: number }).creator_id;
+    let r = await cli(args(dbPath, ['videos', 'list', '--creator-id', String(creatorId)]));
+    assert.equal(r.code, 0);
+    assert.deepEqual(JSON.parse(r.out).items.map((i: { title: string }) => i.title).sort(), ['标题A', '标题B']);
+    // creator_uid 精确：uid '2' → Beta UP 名下 BV3/BV4
+    r = await cli(args(dbPath, ['videos', 'list', '--creator-uid', '2']));
+    assert.equal(r.code, 0);
+    assert.deepEqual(JSON.parse(r.out).items.map((i: { title: string }) => i.title).sort(), ['标题C', '标题D']);
+    // 不存在的 uid → 0（参数确实进了 SQL WHERE）
+    r = await cli(args(dbPath, ['videos', 'list', '--creator-uid', 'no-such-uid']));
+    assert.equal(r.code, 0);
+    assert.equal(JSON.parse(r.out).total, 0);
+  } finally { db.close(); rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('videos list：--tag-source 档位过滤（manual 打标后与缺省六档并查差异）', async () => {
+  const { db, dir, dbPath } = setup();
+  try {
+    // manual 档给 BV2 打「游戏」（样本 extra.tags 全是 bili 档）
+    const tagId = (db.prepare("INSERT INTO tags (name, created_at) VALUES ('游戏', 1) RETURNING id").get() as { id: number }).id;
+    const vid2 = (db.prepare("SELECT id FROM videos WHERE source_vid = 'BV2'").get() as { id: number }).id;
+    db.prepare("INSERT INTO video_tags (video_id, tag_id, source, created_at) VALUES (?, ?, 'manual', 1)").run(vid2, tagId);
+    // 缺省：tag='游戏' 六档并查 → BV1/BV2/BV3
+    let r = await cli(args(dbPath, ['videos', 'list', '--tag', '游戏']));
+    assert.equal(r.code, 0);
+    assert.deepEqual(JSON.parse(r.out).items.map((i: { title: string }) => i.title).sort(), ['标题A', '标题B', '标题C']);
+    // --tag-source manual 收窄 → 只 BV2（档位切换结果集翻转）
+    r = await cli(args(dbPath, ['videos', 'list', '--tag', '游戏', '--tag-source', 'manual']));
+    assert.equal(r.code, 0);
+    assert.deepEqual(JSON.parse(r.out).items.map((i: { title: string }) => i.title), ['标题B']);
+    // 单独存在性（不带 tag）：manual 档只有 BV2 有标
+    r = await cli(args(dbPath, ['videos', 'list', '--tag-source', 'manual']));
+    assert.equal(r.code, 0);
+    assert.deepEqual(JSON.parse(r.out).items.map((i: { title: string }) => i.title), ['标题B']);
+  } finally { db.close(); rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('videos list：--date-field published_at 切换 --since 比对列（结果集差异）', async () => {
+  const { dir, dbPath } = setup();
+  try {
+    // since=1700000001500（ms）：比对 first_seen（最大 T+400=...000400）→ 0 条
+    let r = await cli(args(dbPath, ['videos', 'list', '--since', '1700000001500']));
+    assert.equal(r.code, 0);
+    assert.equal(JSON.parse(r.out).total, 0);
+    // --date-field published_at：published_at T+2000/T+3000/T+4000 ≥ 下界 → 3 条
+    r = await cli(args(dbPath, ['videos', 'list', '--since', '1700000001500', '--date-field', 'published_at']));
+    assert.equal(r.code, 0);
+    assert.equal(JSON.parse(r.out).total, 3);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('videos list：--tag-source 非法档位 → ARGS 退 2；--date-field 非法 → ARGS 退 2', async () => {
+  const { dir, dbPath } = setup();
+  try {
+    let r = await cli(args(dbPath, ['videos', 'list', '--tag-source', 'bogus']));
+    assert.equal(r.code, 2);
+    assert.equal(JSON.parse(r.out).code, 'ARGS');
+    assert.match(r.err, /非法 --tag-source: bogus/);
+    r = await cli(args(dbPath, ['videos', 'list', '--date-field', 'bogus']));
+    assert.equal(r.code, 2);
+    assert.equal(JSON.parse(r.out).code, 'ARGS');
+    assert.match(r.err, /非法 --date-field: bogus/);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('videos list --help：四个新参数均在文案中', async () => {
+  const r = await cli(args(NO_DB, ['videos', 'list', '--help']));
+  assert.equal(r.code, 0);
+  for (const flag of ['--creator-id', '--creator-uid', '--tag-source', '--date-field']) {
+    assert.ok(r.out.includes(flag), `help 应含 ${flag}`);
+  }
 });

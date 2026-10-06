@@ -1,8 +1,10 @@
-// api 封装层共享基建：BASE 前缀 + ensureOk 统一解包/报错。
-// 2026-10 自 api.ts 拆出（Phase 1 新端点入列后 api.ts 撞 maxLines ≤400 台账线），
-// api.ts 与 api-extra.ts 共用；不对外承诺稳定性，页面一律经由 api.ts / api-extra.ts 的端点函数访问。
+// fetch 基础设施（2026-10-05 自 api.ts 抽出，偿还 api.ts maxLines 台账；沿 db 层 changes-log.ts
+// 先例做单向拆分）：BASE 与 ensureOk。api.ts 仍是对外唯一入口（'@/api'），本文件只服务 api 区段模块，
+// 禁止反向 import api.ts（防依赖环）。
+
 export const BASE = '';
 
+// 非 2xx / {ok:false} 统一抛错；parse 负责从 json 取业务字段。
 export async function ensureOk<T>(r: Response, parse: (json: any) => T): Promise<T> {
   if (!r.ok) {
     // 尽量带出 server 错误文案（如「扩展离线：…」），带不出回落裸状态码

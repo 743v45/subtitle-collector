@@ -1,10 +1,12 @@
 // CreatorDetailPage 测试：资料卡字段（含 bilibili 独有）、分类 Select 变更、已采视频列表格式化与跳转、错误态。
+// Q6b（2026-10-05）刷新资料 + 头像防盗链：referrerpolicy=no-referrer；资料卡「刷新资料」按钮（仅 bilibili）
+// busy 禁点防连点、成功 toast+reload、失败 toast 带 id+uid、非 bilibili 源不渲染按钮。
 //
 // 测试轮次记录表（对齐全局 8.2）：
 // | 轮次 | 范围 | 结果 | 备注 |
 // |---|---|---|---|
 // | R1 | 字段渲染 + 分类变更成败 + 视频列表交互 + fmtView/fmtDur 分支 | 通过 | fmtDur 的 h 分支用 3661s 断言 |
-// | R2 | 刷新资料按钮：bilibili 渲染+POST+toast+reload、youtube 不渲染、503 失败文案 | 通过 | 2026-10 Phase 3 |
+// | R2 | Q6b 刷新资料 + 头像防盗链（2026-10-05）：referrerpolicy、刷新按钮 busy/成败/平台限定 | 通过 | busy 用 pending 不 resolve 的 deferred POST |
 import { test, expect, vi, beforeEach, afterEach, beforeAll } from 'vitest';
 import { render, screen, fireEvent, cleanup, waitFor } from '@testing-library/react';
 import { ToastProvider } from '@/components/ui/toast';
@@ -278,41 +280,25 @@ test('分类变更：Select 选择 → POST setCreatorCategory → toast + reloa
   expect(await screen.findByText(/失败：HTTP 400/)).toBeInTheDocument();
 });
 
-// ── 刷新 UP 资料（Phase 3）──
+// ── Q6b 刷新资料 + 头像防盗链（2026-10-05）──
 
-test('刷新资料：bilibili 渲染按钮 → POST /api/upper-info/refresh 带 {mid} → toast + reload', async () => {
-  fetchMock.mockImplementation((url: string, init?: RequestInit) => {
-    if (init?.method === 'POST' && url === '/api/upper-info/refresh') {
-      return Promise.resolve(ok({ ok: true, client_id: 'c1', creator: { name: '测试 UP', fans: 12345 } }));
-    }
-    const r = defaultRoutes()(url);
-    return r ? Promise.resolve(r) : Promise.reject(new Error(`unmatched: ${url}`));
-  });
+test('Q6b 头像 img 带 referrerpolicy=no-referrer（B 站 i.whgt / YouTube i.ytimg 反防盗链都会命中 Referer）', async () => {
   render(
     <ToastProvider>
       <CreatorDetailPage id={7} onBack={() => {}} onOpenVideo={() => {}} />
     </ToastProvider>,
   );
-  await screen.findByText('测试 UP');
-  fireEvent.click(screen.getByRole('button', { name: '刷新资料' }));
-  // 成功 toast 带扩展回传的最新名称/粉丝数（千分位）
-  expect(await screen.findByText(/已刷新：测试 UP（粉丝 12,345）/)).toBeInTheDocument();
-  const postCall = fetchMock.mock.calls.find((c) => (c[1] as RequestInit | undefined)?.method === 'POST')!;
-  expect(postCall[0]).toBe('/api/upper-info/refresh');
-  expect(JSON.parse(String(postCall[1].body))).toEqual({ mid: '42' });
-  // reload：资料卡重新拉取（初始 1 次 + 刷新后 1 次）
-  await waitFor(() => {
-    expect(fetchMock.mock.calls.filter((c) => c[0] === '/api/creators/7').length).toBeGreaterThanOrEqual(2);
-  });
+  expect(await screen.findByRole('img', { name: '测试 UP' })).toHaveAttribute('referrerpolicy', 'no-referrer');
 });
 
-test('刷新资料失败（503 扩展离线）：toast 统一文案，不 reload', async () => {
+test('Q6b 刷新资料：成功 → POST /api/creators/7/refresh + toast + reload；失败 → toast 带 id+uid', async () => {
+  let refreshFail = false;
   fetchMock.mockImplementation((url: string, init?: RequestInit) => {
-    if (init?.method === 'POST' && url === '/api/upper-info/refresh') {
-      return Promise.resolve(ok({ ok: false, error: 'no online client（扩展未连接）' }, 503));
+    if (init?.method === 'POST' && url === '/api/creators/7/refresh') {
+      return refreshFail ? Promise.resolve(new Response('', { status: 500 })) : Promise.resolve(ok({ creator: creator() }));
     }
     const r = defaultRoutes()(url);
-    return r ? Promise.resolve(r) : Promise.reject(new Error(`unmatched: ${url}`));
+    return r ? Promise.resolve(r) : Promise.reject(new Error('x'));
   });
   render(
     <ToastProvider>
@@ -321,8 +307,49 @@ test('刷新资料失败（503 扩展离线）：toast 统一文案，不 reload
   );
   await screen.findByText('测试 UP');
   fireEvent.click(screen.getByRole('button', { name: '刷新资料' }));
-  expect(await screen.findByText('刷新失败：扩展离线：请在浏览器扩展 popup 侧确认')).toBeInTheDocument();
+  expect(await screen.findByText('资料已刷新：测试 UP')).toBeInTheDocument();
+  const refreshPost = fetchMock.mock.calls.find((c) => (c[1] as RequestInit | undefined)?.method === 'POST' && String(c[0]) === '/api/creators/7/refresh');
+  expect(refreshPost).toBeTruthy();
+  // 成功 reload：detail GET 再来一次
   await waitFor(() => {
-    expect(fetchMock.mock.calls.filter((c) => c[0] === '/api/creators/7').length).toBe(1);
+    const gets = fetchMock.mock.calls.filter((c) => String(c[0]) === '/api/creators/7' && !(c[1] as RequestInit | undefined)?.method);
+    expect(gets.length).toBeGreaterThanOrEqual(2);
   });
+
+  // 失败分支：toast 带上下文（creators.id=7 与 source_uid=42）
+  refreshFail = true;
+  fireEvent.click(screen.getByRole('button', { name: '刷新资料' }));
+  expect(await screen.findByText(/刷新资料失败：HTTP 500（id=7 42）/)).toBeInTheDocument();
+});
+
+test('Q6b 刷新 busy：pending 期间按钮禁用防连点，文字「刷新中…」', async () => {
+  fetchMock.mockImplementation((url: string, init?: RequestInit) => {
+    if (init?.method === 'POST' && url === '/api/creators/7/refresh') return new Promise<Response>(() => {});
+    const r = defaultRoutes()(url);
+    return r ? Promise.resolve(r) : Promise.reject(new Error('x'));
+  });
+  render(
+    <ToastProvider>
+      <CreatorDetailPage id={7} onBack={() => {}} onOpenVideo={() => {}} />
+    </ToastProvider>,
+  );
+  await screen.findByText('测试 UP');
+  fireEvent.click(screen.getByRole('button', { name: '刷新资料' }));
+  // pending：disabled + 刷新中…（aria-label 恒定，name 不随文字变）
+  await waitFor(() => expect(screen.getByRole('button', { name: '刷新资料' })).toBeDisabled());
+  expect(screen.getByRole('button', { name: '刷新资料' })).toHaveTextContent('刷新中…');
+});
+
+test('Q6b 非 bilibili 源（youtube）不渲染刷新资料按钮', async () => {
+  fetchMock.mockImplementation((url: string) => {
+    const r = defaultRoutes(creator({ source: 'youtube', source_uid: 'UCxxx', level: null, sex: null, official_title: null }))(url);
+    return r ? Promise.resolve(r) : Promise.reject(new Error('x'));
+  });
+  render(
+    <ToastProvider>
+      <CreatorDetailPage id={7} onBack={() => {}} onOpenVideo={() => {}} />
+    </ToastProvider>,
+  );
+  await screen.findByText('测试 UP');
+  expect(screen.queryByRole('button', { name: '刷新资料' })).not.toBeInTheDocument();
 });

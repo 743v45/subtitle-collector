@@ -7,7 +7,7 @@
 //   DELETE /api/jobs/:id    → pending 取消 200；running 409 {error:'running 任务不可取消'}；终态 409
 // 存储形态：JobRow 的 params_json/progress_json/result_json 在 HTTP 响应里是 JSON 字符串
 // （runner.ts 直回 DB 行），本层统一 parse 归一为对象（坏 JSON try/catch 容错 → null），页面零感知。
-import { BASE, ensureOk } from './api-core';
+import { BASE, ensureOk } from './apiCore';
 
 export type JobType = 'asr-backfill' | 'collect-find';
 export type JobStatus = 'pending' | 'running' | 'done' | 'failed' | 'cancelled';

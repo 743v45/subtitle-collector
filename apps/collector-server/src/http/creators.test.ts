@@ -4,6 +4,8 @@
 // | 轮次 | 范围 | 结果 | 备注 |
 // |---|---|---|---|
 // | R1 | 列表（q/sort/分页/非法值回落）+ 详情 404 + 打分类（400/200/uid 编码/scope 过滤） | 通过 | |
+// | R2 | 批量打分类（ids/槽位校验 400 族 + 批量写/null 清槽/updated 计数）+ refresh（fetcher 注入 mock card：全字段回写/宽容映射/0 字段/404/400 非 bilibili/502 异常族） | 通过 | 2026-10-05 web 契约 |
+// | R3 | 批量打分类 keep 回归：省略键的槽位保持原值（对抗审查 blocker：undefined 曾与 null 同判清空）+ 双省略不落库 | 通过 | 槽位三态契约 |
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -209,4 +211,264 @@ test('creators 列表 ?source= 平台过滤', async () => {
     assert.equal(r.status, 200);
     assert.equal(r.json.total, 0);
   } finally { cleanup(); }
+});
+
+// ── 批量打分类 + UP 资料刷新（2026-10-05 web 契约）──
+// 独立 setup：需要 db 句柄（造 categories / 直改资料列）与 fetcher 注入（refresh 不打真网）。
+function setup2(fetcher: (url: string, init?: RequestInit) => Promise<Response>): Promise<{ port: number; db: import('better-sqlite3').Database; cleanup: () => void }> {
+  const dir = mkdtempSync(join(tmpdir(), 'collector-creators-http2-'));
+  const db = openDb(join(dir, 'test.db'));
+  migrate(db);
+  const ing = (sv: string, uid: string, name: string) => ingestVideo(db, {
+    source: 'bilibili',
+    video: { source_vid: sv, title: sv, creator: { source_uid: uid, name }, extra: {}, duration: 10, published_at: 1700000000000 },
+    tracks: [],
+  });
+  ing('BV1', '100', 'UP甲');
+  ing('BV3', '200', 'UP乙');
+  const server = createServer((req: IncomingMessage, res: ServerResponse) => {
+    void handleCreatorsHttp(req, res, db, fetcher);
+  });
+  return new Promise((resolve) => {
+    server.listen(0, '127.0.0.1', () => {
+      resolve({ port: (server.address() as AddressInfo).port, db, cleanup: () => { server.close(); db.close(); rmSync(dir, { recursive: true, force: true }); } });
+    });
+  });
+}
+
+/** 造两个存量分类，返回 [idA, idB] */
+function seedCategories(db: import('better-sqlite3').Database): [number, number] {
+  const now = Date.now();
+  const a = db.prepare('INSERT INTO categories (name, sort_order, created_at) VALUES (?, 0, ?)').run('财经', now);
+  const b = db.prepare('INSERT INTO categories (name, sort_order, created_at) VALUES (?, 0, ?)').run('科技', now);
+  return [Number(a.lastInsertRowid), Number(b.lastInsertRowid)];
+}
+
+test('creators batch-category：ids 校验 400 族（空/非整数/非数组）+ 分类槽位校验（非整数/幽灵 id 400）', async () => {
+  const { port, db, cleanup } = await setup2(async () => new Response('{}'));
+  try {
+    const [catA] = seedCategories(db);
+    const list = await call(port, 'GET', '/api/creators');
+    const id1 = list.json.items[0].id;
+    const id2 = list.json.items[1].id;
+
+    // ids 族
+    let r = await call(port, 'POST', '/api/creators/batch-category', { ids: [], agent_category_id: catA });
+    assert.equal(r.status, 400);
+    assert.match(r.json.error, /ids/);
+    r = await call(port, 'POST', '/api/creators/batch-category', { ids: [id1, 'x'], agent_category_id: catA });
+    assert.equal(r.status, 400);
+    r = await call(port, 'POST', '/api/creators/batch-category', { ids: id1, agent_category_id: catA });
+    assert.equal(r.status, 400);
+    // 分类槽位族
+    r = await call(port, 'POST', '/api/creators/batch-category', { ids: [id1], agent_category_id: 1.5 });
+    assert.equal(r.status, 400);
+    r = await call(port, 'POST', '/api/creators/batch-category', { ids: [id1], agent_category_id: 'a' });
+    assert.equal(r.status, 400);
+    r = await call(port, 'POST', '/api/creators/batch-category', { ids: [id1], agent_category_id: 99999 });
+    assert.equal(r.status, 400);
+    assert.match(r.json.error, /99999/);
+    r = await call(port, 'POST', '/api/creators/batch-category', { ids: [id1], human_category_id: 88888 });
+    assert.equal(r.status, 400);
+    // 校验失败的请求不落库
+    const c1 = await call(port, 'GET', `/api/creators/${id1}`);
+    assert.equal(c1.json.creator.category_agent_id, null, '400 请求不写库');
+  } finally { cleanup(); }
+});
+
+test('creators batch-category：200 批量写两槽位 + 省略键=槽位保持原值 + null 清槽 + updated 只数存在的 id + 详情回读', async () => {
+  const { port, db, cleanup } = await setup2(async () => new Response('{}'));
+  try {
+    const [catA, catB] = seedCategories(db);
+    const list = await call(port, 'GET', '/api/creators');
+    const id1 = list.json.items[0].id;
+    const id2 = list.json.items[1].id;
+
+    // 两 UP 批量打 agent=财经 / human=科技
+    let r = await call(port, 'POST', '/api/creators/batch-category', {
+      ids: [id1, id2], agent_category_id: catA, human_category_id: catB,
+    });
+    assert.equal(r.status, 200);
+    assert.equal(r.json.ok, true);
+    assert.equal(r.json.updated, 2);
+    for (const id of [id1, id2]) {
+      const c = await call(port, 'GET', `/api/creators/${id}`);
+      assert.equal(c.json.creator.category_agent_id, catA);
+      assert.equal(c.json.creator.category_agent_name, '财经');
+      assert.equal(c.json.creator.category_human_id, catB);
+      assert.equal(c.json.creator.category_human_name, '科技');
+    }
+
+    // keep 回归（2026-10-05 对抗审查 blocker）：省略 human 键 = 保持原值——只改 agent 槽，
+    // 已打的人槽分类不得被静默清空；混入的幽灵 id 不计入 updated（批量语义部分失效属正常，不 404）
+    r = await call(port, 'POST', '/api/creators/batch-category', { ids: [id1, 99999], agent_category_id: catB });
+    assert.equal(r.status, 200);
+    assert.equal(r.json.updated, 1);
+    const kept = await call(port, 'GET', `/api/creators/${id1}`);
+    assert.equal(kept.json.creator.category_agent_id, catB, '出现的槽位照写（agent=科技）');
+    assert.equal(kept.json.creator.category_human_id, catB, '省略键的槽位保持原值（human 仍=首轮打的科技）');
+    assert.equal(kept.json.creator.category_human_name, '科技');
+
+    // null = 显式清空该槽位（human 置 null → 科技清掉）；agent 键省略 → 保持原值（另一方向的 keep）
+    r = await call(port, 'POST', '/api/creators/batch-category', { ids: [id1], human_category_id: null });
+    assert.equal(r.status, 200);
+    const c1 = await call(port, 'GET', `/api/creators/${id1}`);
+    assert.equal(c1.json.creator.category_agent_id, catB, '未提的槽位不动（agent 保留）');
+    assert.equal(c1.json.creator.category_human_id, null, 'null 清空 human 槽');
+
+    // 两槽位都省略 = 无槽可写：不落库（updated=0，updated_at 也不动）
+    const beforeAt = (await call(port, 'GET', `/api/creators/${id1}`)).json.creator.updated_at as number;
+    r = await call(port, 'POST', '/api/creators/batch-category', { ids: [id1] });
+    assert.equal(r.status, 200);
+    assert.equal(r.json.updated, 0);
+    const after = await call(port, 'GET', `/api/creators/${id1}`);
+    assert.equal(after.json.creator.updated_at, beforeAt, '双省略不 bump updated_at');
+
+    // updated_at 有 bump（批量写后详情行的 updated_at 晚于分类创建时刻）
+    const bumped = await call(port, 'POST', '/api/creators/batch-category', { ids: [id1], agent_category_id: catA });
+    assert.equal(bumped.json.updated, 1);
+    const last = await call(port, 'GET', `/api/creators/${id1}`);
+    assert.ok(last.json.creator.updated_at >= Date.now() - 60_000, 'updated_at 已刷新');
+  } finally { cleanup(); }
+});
+
+// card 接口缺省成功响应（B 站 /x/web-interface/card 实测形态子集；follower 与 card.fans 并存）
+function cardPayload(over: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    code: 0,
+    message: '0',
+    ttl: 1,
+    data: {
+      card: {
+        mid: '100', name: 'UP甲新名', face: 'http://i0.hdslb.com/new-face.jpg', sign: '新签名',
+        level_info: { current_level: 6 }, sex: '男', attention: 31, fans: 12345,
+        official_verify: { type: 1, desc: '哔哩哔哩认证账号' },
+      },
+      follower: 54321,
+      ...over,
+    },
+  };
+}
+
+test('creators refresh：card 全字段回写（fans 取 data.follower）+ 返回完整详情行', async () => {
+  const seen: string[] = [];
+  const { port, cleanup } = await setup2(async (url) => {
+    seen.push(String(url));
+    return new Response(JSON.stringify(cardPayload()), { status: 200, headers: { 'Content-Type': 'application/json' } });
+  });
+  try {
+    const list = await call(port, 'GET', '/api/creators');
+    const id = list.json.items.find((i: any) => i.source_uid === '100').id;
+    const r = await call(port, 'POST', `/api/creators/${id}/refresh`);
+    assert.equal(r.status, 200);
+    assert.equal(r.json.ok, true);
+    const c = r.json.creator;
+    assert.equal(c.name, 'UP甲新名');
+    assert.equal(c.avatar, 'http://i0.hdslb.com/new-face.jpg');
+    assert.equal(c.sign, '新签名');
+    assert.equal(c.level, 6);
+    assert.equal(c.sex, '男');
+    assert.equal(c.official_type, 1);
+    assert.equal(c.official_title, '哔哩哔哩认证账号');
+    assert.equal(c.fans, 54321, 'fans 以 data.follower 为准（card.fans 兜底）');
+    assert.equal(c.following, 31, 'following ← card.attention');
+    // 请求带上了 UP 的 mid
+    assert.equal(seen.length, 1);
+    assert.match(seen[0], /mid=100$/);
+  } finally { cleanup(); }
+});
+
+test('creators refresh：宽容映射（部分字段缺失不清空既有值）+ updated_at bump + 0 字段只刷水位', async () => {
+  // 响应只有 name（card 骨架在但字段大面积缺）——验证刷新不清空既有资料
+  const { port, db, cleanup } = await setup2(async () =>
+    new Response(JSON.stringify(cardPayload({
+      card: { mid: '100', name: '只改名', sign: '', level_info: {}, official_verify: null },
+      follower: undefined,
+    })), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+  try {
+    const list = await call(port, 'GET', '/api/creators');
+    const id = list.json.items.find((i: any) => i.source_uid === '100').id;
+    // 预置既有资料（refresh 不应清掉）
+    db.prepare('UPDATE creators SET sign = ?, fans = ?, following = ? WHERE id = ?').run('旧签名', 5000, 7, id);
+
+    const r = await call(port, 'POST', `/api/creators/${id}/refresh`);
+    assert.equal(r.status, 200);
+    const c = r.json.creator;
+    assert.equal(c.name, '只改名', 'name 有新值照写');
+    assert.equal(c.sign, '旧签名', 'sign 空串按缺失跳过，不清空');
+    assert.equal(c.fans, 5000, 'follower/fans 都缺 → 保留原值');
+    assert.equal(c.following, 7, 'attention 缺 → 保留原值');
+    assert.equal(c.official_type, null, 'official_verify 缺 → 不写');
+    const after = db.prepare('SELECT updated_at FROM creators WHERE id = ?').get(id) as { updated_at: number };
+    assert.ok(after.updated_at > 0, 'updated_at 有值');
+
+    // 全字段缺失（code=0 但 card 映射不出任何列）→ 只 bump updated_at
+    const { port: port2, db: db2, cleanup: cleanup2 } = await setup2(async () =>
+      new Response(JSON.stringify({ code: 0, message: '0', data: { card: { mid: '100' } } }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+    try {
+      const list2 = await call(port2, 'GET', '/api/creators');
+      const id2 = list2.json.items.find((i: any) => i.source_uid === '100').id;
+      const before2 = db2.prepare('SELECT updated_at FROM creators WHERE id = ?').get(id2) as { updated_at: number };
+      await new Promise((r2) => setTimeout(r2, 5));
+      const r2 = await call(port2, 'POST', `/api/creators/${id2}/refresh`);
+      assert.equal(r2.status, 200);
+      const after2 = db2.prepare('SELECT updated_at, name FROM creators WHERE id = ?').get(id2) as { updated_at: number; name: string };
+      assert.ok(after2.updated_at > before2.updated_at, '0 字段也 bump updated_at（水位证明刷新发生过）');
+      assert.equal(after2.name, 'UP甲', '0 字段不改资料');
+    } finally { cleanup2(); }
+  } finally { cleanup(); }
+});
+
+test('creators refresh：404（UP 不存在）+ 400（非 bilibili 来源）', async () => {
+  let fetchCalled = 0;
+  const { port, cleanup } = await setup2(async () => { fetchCalled++; return new Response('{}'); });
+  try {
+    // 不存在的 UP → 404 且不发起外网请求
+    const r = await call(port, 'POST', '/api/creators/99999/refresh');
+    assert.equal(r.status, 404);
+    assert.equal(fetchCalled, 0, '404 不打外网');
+
+    // youtube UP → 400（refresh 语义只有 B 站有）
+    const yt = await call(port, 'POST', '/api/creators/by-uid/youtube/UCabc/category', { scope: 'agent', name: '外语' });
+    assert.equal(yt.status, 200);
+    const ytId = yt.json.creator.id;
+    const r2 = await call(port, 'POST', `/api/creators/${ytId}/refresh`);
+    assert.equal(r2.status, 400);
+    assert.match(r2.json.error, /bilibili/);
+    assert.equal(fetchCalled, 0, '400 不打外网');
+  } finally { cleanup(); }
+});
+
+test('creators refresh：上游异常族 → 502（非 200 / code!=0 / fetch 抛错）+ stderr 带观察字段', async () => {
+  // 非 200
+  const s1 = await setup2(async () => new Response('cf challenge', { status: 412 }));
+  try {
+    const list = await call(s1.port, 'GET', '/api/creators');
+    const id = list.json.items[0].id;
+    const r = await call(s1.port, 'POST', `/api/creators/${id}/refresh`);
+    assert.equal(r.status, 502);
+    assert.match(r.json.error, /412/);
+  } finally { s1.cleanup(); }
+
+  // code != 0（B 站风控/参数错误形态）：502 + 原始 message 透传
+  const s2 = await setup2(async () =>
+    new Response(JSON.stringify({ code: -404, message: '啥都木有' }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+  try {
+    const list = await call(s2.port, 'GET', '/api/creators');
+    const id = list.json.items[0].id;
+    const r = await call(s2.port, 'POST', `/api/creators/${id}/refresh`);
+    assert.equal(r.status, 502);
+    assert.match(r.json.error, /-404/);
+    assert.match(r.json.error, /啥都木有/);
+  } finally { s2.cleanup(); }
+
+  // fetch 抛错（网络层失败）：502 + message
+  const s3 = await setup2(async () => { throw new Error('ECONNREFUSED'); });
+  try {
+    const list = await call(s3.port, 'GET', '/api/creators');
+    const id = list.json.items[0].id;
+    const r = await call(s3.port, 'POST', `/api/creators/${id}/refresh`);
+    assert.equal(r.status, 502);
+    assert.match(r.json.error, /ECONNREFUSED/);
+  } finally { s3.cleanup(); }
 });

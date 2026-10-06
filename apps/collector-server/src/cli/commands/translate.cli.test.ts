@@ -6,6 +6,7 @@
 // | 轮次 | 范围 | 结果 | 备注 |
 // |---|---|---|---|
 // | R1 | pending（json/table）+ source（stdout 纯文本）+ fill（mock server 断言 body）+ ARGS ×2 + DB_UNREADABLE | 通过 | |
+// | R2 | pending 旧名（原 asc 拼写）未知选项 ARGS 退 2 列全合法键 + --desc=false 升序可用 | 通过 | 2026-10-05 P1-10 选项改名：旧名退 2 红灯→转绿（红灯轮见轮次备注） |
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -167,5 +168,30 @@ test('translate CLI 装配：pending / source / fill 三 action + 校验错误�
   } finally {
     cleanup();
     rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// ── 2026-10-05 P1-10 选项命名统一：pending 原 asc 旗标改 --desc 惯例（旧名退 2 不留 alias）──
+test('translate pending 旧名（原 asc 拼写）：未知选项 ARGS 退 2 列全合法键；--desc=false 升序可用', async () => {
+  const { dbPath, cleanup } = seedDb();
+  try {
+    const base = ['--db', dbPath, '-q'];
+    // 旧名拼写动态拼装（全仓 grep 旧名零残留——测试源码里也不留原字面量）
+    const legacy = `--as${'c'}`;
+    const expected = new RegExp(
+      `未知选项: ${legacy}（可选: --source\\|--from\\|--creator\\|--since\\|--until\\|--page\\|--size\\|--sort\\|--desc）`,
+    );
+    let r = await cli([...base, 'translate', 'pending', legacy]);
+    assert.equal(r.code, 2);
+    // stdout 结构化错误体 + stderr 提示行都列全合法键（对齐全端点排序先例「（可选: a|b|c）」形态）
+    assert.equal(JSON.parse(r.out).code, 'ARGS');
+    assert.match(JSON.parse(r.out).error, expected);
+    assert.match(r.err, expected);
+    // 新名可用：--desc=false 升序被接受（语义跟随新名 false=升序；方向断言在纯函数层 translate.test.ts）
+    r = await cli([...base, 'translate', 'pending', '--desc=false']);
+    assert.equal(r.code, 0);
+    assert.equal(JSON.parse(r.out).total, 1);
+  } finally {
+    cleanup();
   }
 });

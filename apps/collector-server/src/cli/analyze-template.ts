@@ -3,7 +3,7 @@
 
 export const ANALYZE_MD = `# 分析指引（bundle 自述）
 
-本目录是**分析原料包**：\`manifest.json\`（视频清单与导出条件）+ \`videos/*.txt\`（每视频字幕正文，行格式 \`[分:秒] 字幕\`）。
+本目录是**分析原料包**：\`manifest.json\`（视频清单与导出条件）+ \`videos/*.txt\`（每视频字幕正文，行格式 \`[分:秒] 字幕\`）+ \`comments/<BV号>.md\`（每视频评论区正文，采过评论才随包，manifest 对应 \`comments\` 摘要字段）。
 
 **本包应导出至 \`analysis/<主题>/bundle/\`，分析产物写到 \`analysis/<主题>/\` 根**（产物与原料分开存放，互不混杂；bundle 目录是可再生原料，重导出会整体覆盖——与 README「分析产物规范」一致）。按用途选模板，产物文件名固定：
 
@@ -15,11 +15,13 @@ export const ANALYZE_MD = `# 分析指引（bundle 自述）
 
 **硬性要求**：
 1. 每条观点/题目/金句必须附出处：\`> 来源: <视频标题> [分:秒]\`，时间戳取自 \`videos/\` 下该视频文件（默认命名 \`<ID>-<标题>.txt\`，\`--name-order\` 可调组件与顺序）行首，可回溯。
-2. 覆盖盲区三类在「覆盖盲区」如实列出，勿假装看过：
+2. 覆盖盲区四类在「覆盖盲区」如实列出，勿假装看过：
    - 真无字幕：\`manifest.json\` 中 \`subtitle: null\` 且 \`pot_limited: false\`，视频本身无字幕轨，不可挽回；
    - 受限待重采：\`subtitle: null\` 且 \`pot_limited: true\`，采集时字幕受限（如 YouTube pot 门槛），重试重采可能补回，不算永久盲区；
    - 字幕覆盖残缺：轨存在但只覆盖视频片头——看 manifest 的 \`subtitle.lines\` 与 \`subtitle.last_ts\`（健康视频 ≈16-40 行/分钟，\`last_ts\` 远小于视频时长即可疑）。此为描述性参照而非硬规则，判定留给分析会话。
-3. 结论只用原料支持的说法，区分「视频里明说」与「分析者推断」。
+   - 评论区盲区：\`manifest.json\` 中无 \`comments\` 字段 = 该视频未采评论（评论区关闭/未采集）；有 \`comments\` 但 \`coverage < 1\` = 部分楼中楼缺失，对账清单在 comments verify 可查。
+3. 评论区出处格式约定：引用评论时写 \`> 来源: <视频标题> 评论区 @<用户>\`（与字幕的时间戳出处并列，可回溯）。
+4. 结论只用原料支持的说法，区分「视频里明说」与「分析者推断」。
 
 ---
 
@@ -44,6 +46,10 @@ export const ANALYZE_MD = `# 分析指引（bundle 自述）
 ## 值得追的线索
 - <待验证 / 延伸阅读>
 
+## 评论区共识信号（可选：bundle 已导出评论时）
+- <高赞评论与 UP 观点的呼应/对立；注意评论区样本偏差（粉丝向/情绪向）>
+  > 来源: 视频A 评论区 @用户A
+
 ## 覆盖盲区
 ### 真无字幕（不可挽回）
 - <subtitle:null 且 pot_limited=false 的视频 / 主题未覆盖的流派>
@@ -51,6 +57,8 @@ export const ANALYZE_MD = `# 分析指引（bundle 自述）
 - <subtitle:null 且 pot_limited=true 的视频；重采成功后下次导出自动移出此栏>
 ### 字幕覆盖残缺（疑似，判定留给分析）
 - <轨存在但只覆盖片头：subtitle.last_ts 远小于视频时长、或行数对照分钟数明显偏少的视频>
+### 评论区盲区（未采/部分缺失）
+- <manifest 无 comments 字段的视频（评论区关闭/未采集）；有 comments 但 coverage<1 的，对账清单在 comments verify 查>
 \`\`\`
 
 ## 模板二：面试题库.md（面试内容整理）

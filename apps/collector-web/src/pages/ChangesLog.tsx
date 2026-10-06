@@ -1,3 +1,5 @@
+// 采集 / 变更日志页：类型/平台筛选 + 分页（URL 驱动）。
+// 2026-10-05 行渲染（含 Q8a 标识内链）抽至 ChangesLogRow.tsx 偿还行数台账。
 import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
@@ -6,28 +8,12 @@ import { Card, CardContent } from '@/components/ui/card';
 import { useAsync } from '@/lib/useAsync';
 import { useQueryUpdater, useRoute } from '../router';
 import { getChanges } from '@/api';
-import { PlatformIcon, platformIconClass } from '@/components/PlatformIcon';
 import { PlatformSelect } from '@/components/PlatformSelect';
 import { parseSourceFilter } from '@/lib/platformSource';
-import { cn } from '@/lib/utils';
+import { ChangesLogRow } from './ChangesLogRow';
 import type { ChangeRow } from '@/types';
 
 const PAGE_SIZE = 30;
-
-function fmtTime(ms: number): string {
-  return new Date(ms).toLocaleString('zh-CN');
-}
-
-// old/new 值可能很长（如 extra JSON），截断显示，hover title 看全
-function ValueCell({ v }: { v: string | null }) {
-  if (v == null || v === '') return <span className="text-muted-foreground">—</span>;
-  const display = v.length > 80 ? v.slice(0, 80) + '…' : v;
-  return (
-    <span className="break-all font-mono text-xs" title={v}>
-      {display}
-    </span>
-  );
-}
 
 export function ChangesLog() {
   // 类型 + 平台筛选 + 页码进 URL（#/changes?entity=video&source=bilibili&page=2），刷新/后退还原
@@ -107,27 +93,7 @@ export function ChangesLog() {
                 </TableCell>
               </TableRow>
             ) : (
-              items.map((c) => (
-                <TableRow key={c.id}>
-                  <TableCell className="whitespace-nowrap text-xs tabular-nums text-muted-foreground">{fmtTime(c.changed_at)}</TableCell>
-                  <TableCell className="text-xs">
-                    <span className="inline-flex items-center gap-1">
-                      {/* 派生 source 列：实体行所属平台（不可判时省略图标） */}
-                      {c.source && <PlatformIcon source={c.source} className={cn('h-3 w-3', platformIconClass(c.source))} />}
-                      {c.entity === 'video' ? '视频' : c.entity === 'creator' ? 'UP' : c.entity}
-                    </span>
-                  </TableCell>
-                  <TableCell className="font-mono text-xs text-muted-foreground">{c.entity_id}</TableCell>
-                  <TableCell className="text-xs">{c.field}</TableCell>
-                  <TableCell>
-                    <span className="inline-flex flex-wrap items-center gap-1">
-                      <ValueCell v={c.old_value} />
-                      <span className="text-muted-foreground">→</span>
-                      <ValueCell v={c.new_value} />
-                    </span>
-                  </TableCell>
-                </TableRow>
-              ))
+              items.map((c) => <ChangesLogRow key={c.id} c={c} />)
             )}
           </TableBody>
         </Table>

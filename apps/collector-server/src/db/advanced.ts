@@ -1,6 +1,7 @@
 import type Database from 'better-sqlite3';
 import type { VideoDetail, VideoListItem, VersionRow } from './queries.js';
-import { buildOrderBy, aggOrderBy, AGG_SORT_KEYS, CHANGE_SORT_KEYS, type AggregateSortKey, type ChangeSortKey } from './sort.js';
+import { buildOrderBy, aggOrderBy, AGG_SORT_KEYS, type AggregateSortKey } from './sort.js';
+import type { PageResult } from './changes-log.js';
 import { aggregateStatsByTag } from './aggregate-tag.js';
 import { buildTagConds } from './tag-match.js';
 
@@ -52,32 +53,14 @@ export interface VideoListItemAdvanced extends VideoListItem {
   creator_blocked: boolean;
 }
 
-export interface PageResult<T> {
-  total: number;
-  page: number;
-  size: number;
-  items: T[];
-}
+// 分页容器（videos 列表 / change_log 列表共用）：本体在 changes-log.ts，此处转出保持
+// cli/commands/{videos,export,changes}.ts 与 http/queries.ts 的既有 import 路径不变。
+export type { PageResult } from './changes-log.js';
 
-export interface ChangeRow {
-  id: number;
-  entity: string;
-  entity_id: number;
-  field: string;
-  old_value: string | null;
-  new_value: string | null;
-  changed_at: number;
-  source?: string | null; // 派生列：entity 行所属平台（video/creator 可判，其余 null），非表列
-}
-
-export interface ChangeFilter {
-  entity?: string;
-  entity_id?: number;
-  field?: string;
-  source?: string;   // 平台过滤（bilibili|youtube）：经 entity 行 JOIN 判定，change_log 表无 source 列
-  since?: number;   // 毫秒，比对 changed_at
-  until?: number;
-}
+// change_log 区段（ChangeRow/ChangeFilter/getChanges）自本文件抽出至 changes-log.ts（2026-10-05，
+// getChanges 增 ref_* 跳转定位派生列后行数再触 maxLines 台账，沿 tag-match.ts 先例收敛）。
+export { getChanges } from './changes-log.js';
+export type { ChangeRow, ChangeFilter } from './changes-log.js';
 
 export type StatsGroupBy = 'creator' | 'tname' | 'lang' | 'track-type' | 'tag' | 'source';
 
@@ -293,57 +276,6 @@ export function getVideoByDbId(db: Database.Database, id: number): VideoDetail |
     }
   });
   return result;
-}
-
-// change_log 列表（过滤 + 分页 + 排序，键仅 changed_at——单键但参数形态与其他端点统一；缺省 DESC）。
-export function getChanges(db: Database.Database, filter: ChangeFilter, page: number, size: number, sort: ChangeSortKey = 'changed_at', desc = true): PageResult<ChangeRow> {
-  const p = page > 0 ? page : 1;
-  const s = size > 0 ? size : 20;
-  const offset = (p - 1) * s;
-  const conds: string[] = [];
-  const params: unknown[] = [];
-  if (filter.entity) {
-    conds.push('entity = ?');
-    params.push(filter.entity);
-  }
-  if (filter.entity_id != null) {
-    conds.push('entity_id = ?');
-    params.push(filter.entity_id);
-  }
-  if (filter.field) {
-    conds.push('field = ?');
-    params.push(filter.field);
-  }
-  if (filter.source) {
-    // 平台过滤：change_log 无 source 列，经实体行判定（当前 entity 只写 video/creator 两类；
-    // 无法判平台的 entity 类型在平台过滤下不命中）
-    conds.push(
-      "((cl.entity = 'video' AND cl.entity_id IN (SELECT id FROM videos WHERE source = ?)) OR (cl.entity = 'creator' AND cl.entity_id IN (SELECT id FROM creators WHERE source = ?)))",
-    );
-    params.push(filter.source, filter.source);
-  }
-  if (filter.since != null) {
-    conds.push('changed_at >= ?');
-    params.push(filter.since);
-  }
-  if (filter.until != null) {
-    conds.push('changed_at <= ?');
-    params.push(filter.until);
-  }
-  const where = conds.length ? 'WHERE ' + conds.join(' AND ') : '';
-
-  const totalRow = db.prepare(`SELECT COUNT(*) as c FROM change_log cl ${where}`).get(...params) as { c: number };
-  // source 为派生列（CASE 子查询带出），供展示层标平台；无平台语义的 entity 为 null
-  const items = db.prepare(
-    `SELECT cl.*,
-       CASE
-         WHEN cl.entity = 'video' THEN (SELECT source FROM videos WHERE id = cl.entity_id)
-         WHEN cl.entity = 'creator' THEN (SELECT source FROM creators WHERE id = cl.entity_id)
-         ELSE NULL
-       END AS source
-     FROM change_log cl ${where} ${buildOrderBy('cl.changed_at', desc, { tieExpr: 'cl.id' })} LIMIT ? OFFSET ?`,
-  ).all(...params, s, offset) as ChangeRow[];
-  return { total: totalRow.c, page: p, size: s, items };
 }
 
 // 分组聚合计数（topN 截断，默认 20）。filter 同 list；sort 缺省 count DESC, key ASC（与旧硬编码一致）。

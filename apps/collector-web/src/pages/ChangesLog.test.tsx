@@ -1,10 +1,13 @@
 // ChangesLog 测试：行渲染（entity 标签/值截断）、entity 筛选 Select、分页 URL、错误/空态。
+// Q8a（2026-10-05）：标识列内链——video 带 ref_source/ref_vid → #/videos/{source}/{vid}、
+// creator 带 ref_creator_id → #/creators/{id}；ref 缺失保持纯文本（向后兼容）。
 //
 // 测试轮次记录表（对齐全局 8.2）：
 // | 轮次 | 范围 | 结果 | 备注 |
 // |---|---|---|---|
 // | R1 | 行渲染 + 截断 + 分页 + Select 切换 + 空态/错误 | 通过 | radix Select pointerDown 打开 |
 // | R2 | douyin 平台白名单（2026-08-29 接入）：URL source=douyin 透传 + 下拉第四项 | 通过 | |
+// | R3 | Q8a 内链（2026-10-05）：video/creator ref 齐全 → 标识变按钮点击跳详情；ref 缺失保持纯文本 | 通过 | hash 断言跳转目标 |
 import { test, expect, vi, beforeEach, afterEach, beforeAll } from 'vitest';
 import { render, screen, fireEvent, cleanup, waitFor } from '@testing-library/react';
 import { ChangesLog } from './ChangesLog';
@@ -160,4 +163,37 @@ test('douyin：URL source=douyin 直入 → 请求带 source=douyin；抖音选�
   await waitFor(() => expect(String(fetchMock.mock.calls.at(-1)![0])).toContain('source=douyin'));
   fireEvent.pointerDown(screen.getByRole('combobox', { name: '平台筛选' }), { button: 0, ctrlKey: false, pointerType: 'mouse' });
   expect(await screen.findByRole('option', { name: '抖音' })).toBeInTheDocument();
+});
+
+// ── Q8a 标识列内链（2026-10-05）──
+
+test('Q8a 内链：video 行带 ref_source/ref_vid → 标识渲染为链接，点击跳 #/videos/{source}/{vid}', async () => {
+  fetchMock.mockImplementation(() => Promise.resolve(ok({
+    total: 1,
+    items: [row({ id: 1, entity: 'video', ref_source: 'bilibili', ref_vid: 'BVxx' })],
+  })));
+  render(<ChangesLog />);
+  const link = await screen.findByRole('button', { name: '10' });
+  expect(link).toHaveAttribute('title', '打开视频详情');
+  fireEvent.click(link);
+  expect(window.location.hash).toBe('#/videos/bilibili/BVxx');
+});
+
+test('Q8a 内链：creator 行带 ref_creator_id → 点击跳 #/creators/{id}；ref 缺失行保持纯文本', async () => {
+  fetchMock.mockImplementation(() => Promise.resolve(ok({
+    total: 2,
+    items: [
+      row({ id: 1, entity: 'creator', ref_creator_id: 5 }),
+      row({ id: 2, entity: 'video' }), // 无 ref 字段（旧 server 响应形状）
+    ],
+  })));
+  render(<ChangesLog />);
+  // ref 齐全的 creator 行：标识变按钮，点击跳创作者详情
+  const link = await screen.findByRole('button', { name: '10' });
+  expect(link).toHaveAttribute('title', '打开创作者详情');
+  fireEvent.click(link);
+  expect(window.location.hash).toBe('#/creators/5');
+  // ref 缺失的 video 行：标识仍是纯文本（不在任何按钮里）
+  expect(screen.queryByRole('button', { name: '打开视频详情' })).not.toBeInTheDocument();
+  expect(screen.getAllByText('10').length).toBe(2);
 });

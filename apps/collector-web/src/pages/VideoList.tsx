@@ -33,16 +33,13 @@ const SORT_OPTIONS: { value: SortField; label: string }[] = [
 ];
 
 function formatTs(ts: number | null | undefined): string {
-  if (!ts) return '';
-  return new Date(ts).toLocaleString('zh-CN');
+  return ts ? new Date(ts).toLocaleString('zh-CN') : '';
 }
 
 // 秒 → m:ss / h:mm:ss
 function formatDuration(sec: number | null | undefined): string {
   if (sec == null || !Number.isFinite(sec) || sec < 0) return '';
-  const h = Math.floor(sec / 3600);
-  const m = Math.floor((sec % 3600) / 60);
-  const s = Math.floor(sec % 60);
+  const h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60), s = Math.floor(sec % 60);
   const pad = (n: number) => String(n).padStart(2, '0');
   return h > 0 ? `${h}:${pad(m)}:${pad(s)}` : `${m}:${pad(s)}`;
 }
@@ -51,8 +48,7 @@ function formatDuration(sec: number | null | undefined): string {
 function formatView(n: number | null | undefined): string {
   if (n == null || !Number.isFinite(n)) return '';
   if (n < 10000) return String(n);
-  if (n < 100000000) return `${(n / 10000).toFixed(1)}万`;
-  return `${(n / 100000000).toFixed(1)}亿`;
+  return n < 100000000 ? `${(n / 10000).toFixed(1)}万` : `${(n / 100000000).toFixed(1)}亿`;
 }
 
 export function VideoList() {
@@ -373,9 +369,9 @@ export function VideoList() {
           loading / error / 空态改造成行式；表头纯展示（排序仍走顶部筛选）。
           容器 rounded+shadow 出卡片质感；表头 muted 底与正文分层 */}
       <div className="overflow-hidden rounded-lg border shadow-sm" aria-busy={loading || undefined}>
-        {/* table-fixed：列宽由表头显式声明。标题 38%（1440 容器约 420px）优先保长标题；
-            标签列无显式宽吃剩余（~150px，badge 两行）；min-w-[240px] 保底：375px 窄屏只剩
-            标题+播放 两列时不至于被压没（240+64+padding < 375 视口，不横滚） */}
+      {/* table-fixed：列宽由表头显式声明。标题 38%（1440 容器约 420px）优先保长标题；
+          标签列无显式宽吃剩余（~150px，单行收纳：前 2 个 + 「+N」展开钮）；min-w-[240px] 保底：
+          375px 窄屏只剩标题+播放 两列时不至于被压没（240+64+padding < 375 视口，不横滚） */}
         <Table className="table-fixed">
           <TableHeader className="bg-muted/50">
             <TableRow className="hover:bg-transparent">
@@ -387,7 +383,6 @@ export function VideoList() {
               <TableHead className="hidden w-16 text-right sm:table-cell">时长</TableHead>
               <TableHead className="hidden w-14 text-right lg:table-cell">轨道</TableHead>
               <TableHead className="hidden w-32 xl:table-cell">发布时间</TableHead>
-              <TableHead className="hidden w-20 xl:table-cell">分区</TableHead>
               <TableHead className="hidden md:table-cell">标签</TableHead>
             </TableRow>
           </TableHeader>
@@ -402,7 +397,6 @@ export function VideoList() {
                   <TableCell className="hidden sm:table-cell"><Skeleton className="ml-auto h-4 w-10" /></TableCell>
                   <TableCell className="hidden lg:table-cell"><Skeleton className="ml-auto h-4 w-8" /></TableCell>
                   <TableCell className="hidden xl:table-cell"><Skeleton className="h-4 w-24" /></TableCell>
-                  <TableCell className="hidden xl:table-cell"><Skeleton className="h-4 w-14" /></TableCell>
                   <TableCell className="hidden md:table-cell"><Skeleton className="h-4 w-24" /></TableCell>
                 </TableRow>
               ))}
@@ -456,8 +450,9 @@ function VideoRow({ v, onOpen, sel, setSel }: { v: VideoListItem; onOpen: (sourc
   // tag_details（四档带色）优先；旧接口只回 tags 时退化为无色 outline Badge
   const tagDetails: { name: string; source?: TagSource }[] =
     v.tag_details ?? (v.tags ?? []).map((name) => ({ name }));
-  const shownTags = tagDetails.slice(0, 3);
-  const extraTags = Math.max(0, tagDetails.length - shownTags.length);
+  // 标签单行收纳（Q3）：默认只显前 2 个 + 「+N」展开钮；展开为本行瞬态（不进 URL），再点收起
+  const [expanded, setExpanded] = useState(false);
+  const shownTags = expanded ? tagDetails : tagDetails.slice(0, 2);
   // 行内图标色与共享 platformIconClass 同源（2026-08-29 收敛重复三元，douyin 黑系自动同步）
   const iconColor = platformIconClass(v.source);
 
@@ -502,24 +497,28 @@ function VideoRow({ v, onOpen, sel, setSel }: { v: VideoListItem; onOpen: (sourc
       <TableCell className="hidden whitespace-nowrap text-xs text-muted-foreground xl:table-cell">
         {v.published_at ? formatTs(v.published_at) : '—'}
       </TableCell>
-      <TableCell className="hidden xl:table-cell">
-        {v.tname ? <Badge variant="secondary">{v.tname}</Badge> : <span className="text-muted-foreground">—</span>}
-      </TableCell>
       <TableCell className="hidden md:table-cell">
         {tagDetails.length === 0 ? (
           <span className="text-muted-foreground">—</span>
         ) : (
           <div className="flex flex-wrap items-center gap-1">
             {shownTags.map((t, i) => (
-              <Badge
-                key={`${t.name}-${t.source ?? i}`}
-                variant="outline"
-                className={t.source ? TAG_SOURCE_CLASS[t.source] : undefined}
-              >
+              <Badge key={`${t.name}-${t.source ?? i}`} variant="outline" className={t.source ? TAG_SOURCE_CLASS[t.source] : undefined}>
                 {t.name}
               </Badge>
             ))}
-            {extraTags > 0 && <Badge variant="outline">+{extraTags}</Badge>}
+            {/* 展开钮（Q3）：默认「+N」，展开后「收起」；stopPropagation 防触发行点击进详情 */}
+            {tagDetails.length > 2 && (
+              <button
+                type="button"
+                aria-expanded={expanded}
+                title={expanded ? '收起标签' : `展开其余 ${tagDetails.length - 2} 个标签`}
+                onClick={(ev) => { ev.stopPropagation(); setExpanded((x) => !x); }}
+                className="cursor-pointer rounded-md border px-1.5 py-0.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-accent"
+              >
+                {expanded ? '收起' : `+${tagDetails.length - 2}`}
+              </button>
+            )}
           </div>
         )}
       </TableCell>

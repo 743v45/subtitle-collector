@@ -22,10 +22,10 @@ COLLECTOR_ALLOWED_HOSTS=192.168.1.5
 ## 部署后自检
 
 ```bash
-pnpm verify:deployed -- --token <t> [--server <url>] [--db <库路径>]
+pnpm verify:deployed -- --token <t> [--server <url>] [--via-docker [容器名] | --db <库路径>]
 ```
 
-跑 `/ping` + 核心只读 API + SQLite `integrity_check`。**坏页损坏 HTTP 探活测不出**,要测库完整性必须带 `--db`(2026-08-24 生产库 SQLITE_CORRUPT 事故的产物)。
+跑 `/ping` + 核心只读 API + SQLite `integrity_check`。**坏页损坏 HTTP 探活测不出**,要测库完整性必须带 DB 层检查(2026-08-24 生产库 SQLITE_CORRUPT 事故的产物):生产库在 named volume 里宿主机无文件,容器在跑用 `--via-docker`(经 docker exec 容器内校验,缺省容器名 collector-server);`--db` 只适用于导出的备份文件,两项同传报参数错。
 
 日常快速健康检查用 web 设置页的「服务状态」卡:版本 / 运行时长 / 在线客户端 / 库计数 / 鉴权徽章(只显是否启用,不回显 token)。
 
@@ -37,7 +37,7 @@ pnpm verify:deployed -- --token <t> [--server <url>] [--db <库路径>]
 
 | 层 | 机制 |
 |---|---|
-| 自动 | server 内置每 15 分钟容器内 `VACUUM INTO /data/backups/`,滚动清理:最近 8 份 ∪ 每日末份保 14 天(`COLLECTOR_BACKUP_INTERVAL_MS` 可调) |
+| 自动 | server 内置定时容器内 `VACUUM INTO /data/backups/`,分层滚动清理(备份间隔/保留份数/保留天数的**参数单源见 [backup.ts](../../apps/collector-server/src/db/backup.ts)**,此处不复述数字;`COLLECTOR_BACKUP_INTERVAL_MS` 可调) |
 | 导出宿主 | `node scripts/backup-export.mjs`(docker cp 拷出 volume) |
 | 告警 | 备份连续失败 ≥2 次推飞书自定义 bot(`COLLECTOR_BACKUP_WEBHOOK_URL`,缺省只打日志) |
 
@@ -50,3 +50,23 @@ server 上云/换机后,在扩展 popup 服务器配置里把 URL 改成新地�
 ```bash
 docker exec collector-server node dist/cli/main.js videos list --size 5
 ```
+
+## 控制面安全边界(2026-10-04 拍板:接受现状)
+
+鉴权门(暴露部署下 `HTTP_AUTH_REQUIRED`,Bearer)的设计目标是**防浏览器侧风险**(DNS rebinding、跨站误配),不是防局域网主动攻击者:
+
+- **实证**:同源放行路只比对 Origin 与 Host 的 hostname,而这两个头皆可伪造——无 token 请求会 401,但补上伪造头即整体绕过:
+
+  ```bash
+  curl -H 'Host: localhost:21527' -H 'Origin: http://localhost' http://<LAN-IP>:21527/api/clients   # → 200
+  ```
+
+  LAN 内主动攻击者可免 token 访问全部 `/api/*`(含 `/command` 驱动扩展)。
+- **已评估三个封堵方案**(绑 127.0.0.1 / 恒 Bearer + web 录 token / 接受现状):前两者破坏零配置,且 LAN 明文 HTTP 下主动攻击者本可嗅探 token,header 层不可修——**接受现状**。
+- **WS `/ext` 侧不受影响**:hello token 闸是独立校验,无同源放行路。
+- **异常观测**:401 结构化日志(不含 token,只记 hasBearer 布尔):
+
+  ```bash
+  docker logs collector-server 2>&1 | grep '\[http\] 401'
+  # [http] 401 method=GET url=/api/clients host=... originHostname=... secFetchSite=... hasBearer=false
+  ```

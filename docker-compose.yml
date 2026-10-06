@@ -6,7 +6,9 @@
 # named volume 数据落在 Docker VM 磁盘、容器直通，宿主机不存在该文件——误操作路径物理封死。
 # 查生产库一律走 server HTTP/CLI 或 docker exec collector-server node -e '...'。
 #
-# 备份：server 内置每小时容器内 VACUUM INTO /data/backups/（滚动 24 份）；
+# 备份：server 内置定时容器内 VACUUM INTO /data/backups/。频率与滚动保留口径
+# 单源见 apps/collector-server/src/db/backup.ts（人读版：docs/help/Docker 部署.md），
+# 本注释不复述数字，防多处落笔各自老化（2026-10-04 教训：本行曾停留在每小时/24 份旧口径）。
 # 导出到宿主：node scripts/backup-export.mjs（docker cp）。
 #
 # 一次性迁移（bind mount → volume，2026-08-24 已执行）：
@@ -32,7 +34,8 @@ services:
     environment:
       COLLECTOR_PORT: "21527"
       COLLECTOR_HOST: "0.0.0.0"
-      # ⚠️ 生产必改！生成：node -e "console.log(require('crypto').randomBytes(24).toString('hex'))"
+      # ⚠️ 硬门（B2）：暴露部署下 token 为空或占位符（change-me-collector-token）→ server 拒绝启动（exit 1）。
+      # 生成：node -e "console.log(require('crypto').randomBytes(24).toString('hex'))"
       # 设置后：扩展的 server URL 须带 ?token=xxx（popup 服务器配置里填完整 URL），CLI 须带 Bearer token。
       COLLECTOR_TOKEN: ${COLLECTOR_TOKEN:-change-me-collector-token}
       # 从宿主 localhost（经 -p 映射）访问无需填；从局域网 IP/主机名访问则填上，逗号分隔。
@@ -41,6 +44,12 @@ services:
       COLLECTOR_BACKUP_WEBHOOK_URL: ${COLLECTOR_BACKUP_WEBHOOK_URL:-}
     volumes:
       - collector-data:/data
+    # B1：容器日志轮转——json-file 默认无界会吃满 Docker VM 磁盘,而「磁盘满」是 backup.ts 明列的备份失败模式。
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
 
 volumes:
   collector-data:

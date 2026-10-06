@@ -29,14 +29,14 @@ B 站**字幕（subtitle）**相关浏览器扩展与配套服务的 monorepo（
 
 ### 查询与导出（✅）
 
-- ✅ web 后台：视频库**列表布局**（一行一视频：平台图标+标题 / 创作者 / 播放 / 时长 / 轨道数 / 发布时间 / 分区 / 标签列，窄屏自动折叠次要列）、多维筛选搜索（关键词、字幕正文、**多标签下拉多选**、标签档位、分区、时间、时长/播放区间等；全部 URL query 承载，刷新/分享还原，视频详情的轨/版本选择亦进 URL）、UP 主 / 创作者分类管理（一套共享分类值——Agent 与人工在 UP 主两个槽位分开打标，创作者页按槽位 全部/Agent/人工 筛选，数量列点击跳转创作者列表按分类过滤） / 采集日志；**原站外链跳转**（视频标题旁 ↗ 开 B 站/YouTube/抖音视频页、UP 名/创作者 ↗ 开空间页/频道页/博主主页，覆盖视频库/详情/创作者/任务卡各处，站内详情整行点击不受影响）
+- ✅ web 后台：视频库**列表布局**（一行一视频：平台图标+标题 / 创作者 / 播放 / 时长 / 轨道数 / 发布时间 / 标签列（默认收前 2 个「+N」展开），窄屏自动折叠次要列）、多维筛选搜索（关键词、字幕正文、**多标签下拉多选**、标签档位、分区、时间、时长/播放区间等；全部 URL query 承载，刷新/分享还原，视频详情的轨/版本选择亦进 URL）、UP 主 / 创作者分类管理（一套共享分类值——Agent 与人工在 UP 主两个槽位分开打标，创作者页按槽位 全部/Agent/人工 筛选，数量列点击跳转创作者列表按分类过滤；**批量分类**：勾选多行一次设 Agent/人工槽位，槽位三态 不变/清除/设为；**资料刷新**：B 站创作者一键重拉昵称/头像/粉丝数等空间资料；分类页按 `-` 前缀分组展示） / 采集日志；**原站外链跳转**（视频标题旁 ↗ 开 B 站/YouTube/抖音视频页、UP 名/创作者 ↗ 开空间页/频道页/博主主页，覆盖视频库/详情/创作者/任务卡各处，站内详情整行点击不受影响）
 - ✅ **CLI 全功能 web 化**（2026-10-04，进度见 [docs/plans/cli-web-parity-progress.md](docs/plans/cli-web-parity-progress.md)）：CLI 全部子命令有 server HTTP 形态，web 与 CLI `--server` 走同一套 API + 鉴权无旁路——新增「字幕检索」「补翻」两 tab（工作流组）与五大操作面（操作手册见 [docs/help/](docs/help/INDEX.md) 各 web 页）：
   - **web 字幕检索页**（`#/search`，`sub search` 的 web 形态）：关键词/正则模式/区分大小写/上下文秒/平台/创作者，命中片段 `[分:秒]` + 高亮 + 上下文折叠，标题跳视频详情
   - **web 补翻工作台**（`#/translate`，`translate` 三步的 web 形态）：pending 清单（平台/源语言筛选）→ 双栏工作台（左行号+原文只读，右译文逐行 + 实时行数校验 + 文件载入 → 写回 `zh-manual` 轨，替代 CLI 文件中转）
   - **web ASR 转写兜底卡**（`asr backfill` 的 web 形态）：预览圈定（dry_run 同步直答）→ 提交转写 → 进度卡轮询/取消/终态系统通知；cookie 未配置黄条警示不硬拦；服务装配走 `COLLECTOR_ASR_BASE_URL` / `COLLECTOR_BILI_COOKIE_FILE` / `COLLECTOR_ASR_ENGINE` 三 env（容器访问宿主机 fireredasr 用 `host.docker.internal`）
   - **web 导出三通道**（`export videos/subtitle/bundle` 的 web 形态）：视频库「导出」CSV/NDJSON/JSON（当前筛选透传）、「原料包」对话框（zip 直下：limit ≤1000 / 文件名组成 / 字幕轨，匹配/导出/错误三数回显 + 缺字幕黄警）、视频详情「按轨导出」条（选轨 + 格式即下）
   - **web 批量操作**：视频库多选批量打标/摘标（全档摘标二次确认）、视频详情合集卡（展开全集 → 未采默认勾选 → 建任务）、采集页搜索采集卡（B站/YouTube 关键词 → 候选已采标注 → 勾选建任务，503 提示扩展离线）与条件采集面板（`collect find` job 化：粉丝数/时间窗/分区）、创作者页「刷新资料」
-  - **server 配套**：`GET /api/status`（设置页服务状态卡：版本/运行时长/在线客户端/库计数/鉴权徽章）+ jobs 运行时（迁移 v20 jobs 表 + 串行 runner + asr-backfill/collect-find 两 worker + `POST/GET/DELETE /api/jobs`）+ sub-search / translate pending/source / check-exists / season/preview / collect-search / upper-info/refresh 等端点；顺带修静态托管目录路径 EISDIR 崩 server（目录一律 404）与 CLI `collect find --tid` 透传缺失
+  - **server 配套**：`GET /api/status`（设置页服务状态卡：版本/运行时长/在线客户端/库计数/鉴权徽章）+ jobs 运行时（迁移 v21 jobs 表 + 串行 runner + asr-backfill/collect-find 两 worker + `POST/GET/DELETE /api/jobs`）+ sub-search / translate pending/source / check-exists / season/preview / collect-search / upper-info/refresh 等端点；顺带修静态托管目录路径 EISDIR 崩 server（目录一律 404）与 CLI `collect find --tid` 透传缺失
 - ✅ 采集任务历史页多维查询：按 UP（名字模糊 / mid 精确；任务行 UP 归属冗余——批量提交/重采/ingest 回填，未入库/失败任务也命中）、时间范围（今天 / 近7天 / 近30天 / 自定义）、平台、采集方式（批量/单点）、标题/关键词（vid 段搜 BV 号）、批次聚焦筛选；URL query 承载，可刷新/分享还原；重试并入原批次（聚焦视图实时看重试行，不另开新批）、任务全部到终态时浏览器系统通知（提交/重试后切走标签页，跑完即被提醒）
 - ✅ 采集任务 CLI `tasks list/get/retry`（2026-10-02）：`list` 对齐 web 历史页的筛选/排序/分页参数（status/source/batch/creator/q/since/until/limit/page/page_size/sort），`get <id>` 单任务详情（失败原因/回执），`retry <id...>` 多 id 批量重试——server HTTP 通道，agent/脚本侧免开 web
 - ✅ 视频标签六档：manual/batch/ai/system（落表，system=系统状态标如 no-subtitle，采集链路自动打/摘）+ bili（视频自带）/ **season（合集，只读实时读 extra.ugc_season.title）**，tag_priority 可调 + 按档位过滤/聚合
@@ -55,7 +55,7 @@ B 站**字幕（subtitle）**相关浏览器扩展与配套服务的 monorepo（
   - **面试题库**：面试相关视频 → 题目 + 考点 + 参考答案
   - **理念整理**：某 UP 主系列视频 → 核心理念 / 方法论提炼
 - 📋 内置 AI pipeline（CLI 一条命令自动分析，需 API 集成）：远期，待手动流程跑顺后再评估
-- 📋 评论采集：远期（当前分析数据源 = 视频/字幕内容，不含评论区）
+- ✅ **B 站评论分析树**（2026-10-03，用户现场指令一次性解冻）：单视频全量采集（wbi 游标 + 楼中楼翻全，完整 root/parent/dialog 对话链）→ comments 表入库（增量重采：ctime_s 水位追新 + `--refresh-roots` like top-N 根重翻 + missing 两轮删除确认）→ CLI comments collect/tree/verify → web 视频详情「评论 N」只读树查看（2026-10-05：懒加载展开、置顶前置/点赞排序、楼中楼缩进，纯只读）→ bundle 导出评论原料（manifest 摘要 + comments/*.md）；专栏/动态评论区、评论写操作、其他平台评论不在本期范围
 
 ### 移动端（🚧 Android 原生 app，2026-08-26 立项）
 
@@ -138,9 +138,10 @@ server 端**可选**设置 `COLLECTOR_TOKEN`：设置后扩展的 server URL 必
 pnpm test        # turbo run test：三端单测（server c8 / web vitest / 扩展 c8，各带覆盖率锁定）
 pnpm qa          # 全量质量门：build + test + 静态质量台账 check + depcruise（细则见 docs/quality/RULES.md）
 pnpm test:ext    # puppeteer mock 扩展回归（scripts/verify-collector.mjs，按需手动，不进 qa）
-pnpm verify:deployed -- --token <t> [--server <url>] [--db <库路径>]
+pnpm verify:deployed -- --token <t> [--server <url>] [--via-docker [容器名] | --db <备份文件>]
                  # 部署后服务状态自检：/ping + 核心只读 API + SQLite integrity_check
-                 #（坏页损坏 HTTP 探活测不出，须带 --db；2026-08-24 生产库 SQLITE_CORRUPT 事故产物）
+                 #（坏页损坏 HTTP 探活测不出；生产库在容器 named volume 里宿主无文件，DB 层走 --via-docker
+                 #  容器内校验，--db 只适用于导出的备份文件；2026-08-24 生产库 SQLITE_CORRUPT 事故产物）
 ```
 
 - **单测**（`pnpm test`）：[apps/collector-server](apps/collector-server)（c8 + node:test）、[apps/collector-web](apps/collector-web)（vitest + jsdom + Testing Library）、[apps/subtitle-collector](apps/subtitle-collector)（c8 包裹 node --test，import 源码）；三端覆盖率按锁定线只升不降。Android app 单测另跑 `./gradlew :app:testDebugUnitTest :app:detekt`（原生链，不进 `pnpm qa`/CI node 流水线，见 RULES §10 豁免登记）。
@@ -161,5 +162,7 @@ pnpm verify:deployed -- --token <t> [--server <url>] [--db <库路径>]
 - 开发规范、样式政策、测试质量政策、字幕/弹幕措辞红线：见 [CLAUDE.md](CLAUDE.md)。
 - 翻阅式操作手册（按任务切页，可用 Obsidian 打开仓库根直接翻）：见 [docs/help/INDEX.md](docs/help/INDEX.md)。
 - 服务端运维手册：见 [MANUAL-collector.md](MANUAL-collector.md)。
-- 设计文档与实现计划：见 [docs/superpowers/specs/](docs/superpowers/specs) 与 [docs/superpowers/plans/](docs/superpowers/plans)。
-- 变更记录：见 [CHANGELOG.md](CHANGELOG.md)。
+- 历史设计文档与实现计划归档：见 [docs/superpowers/](docs/superpowers)。
+- 变更记录：见 [CHANGELOG.md](CHANGELOG.md)（止于 2026-08-19，此后以 [改造账本](docs/plans/improvement-backlog-2026-10.md) 划销 + git log 为准）。
+- 改造账本（唯一台账）：见 [docs/plans/improvement-backlog-2026-10.md](docs/plans/improvement-backlog-2026-10.md)——改善项登记/划销/优先级的唯一载体。
+- AI 接手页（新 AI 会话默认入口）：见 [docs/help/AI-接手.md](docs/help/AI-接手.md)。

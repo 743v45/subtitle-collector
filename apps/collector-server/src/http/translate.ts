@@ -154,7 +154,7 @@ function handleTranslatePending(res: ServerResponse, url: URL, db: Database.Data
     page,
     size,
     sort,
-    asc: parseBool(p.get('asc')) ?? false,
+    desc: parseBool(p.get('desc')), // 缺省 undefined → 核心层 ?? true 降序（对齐 CLI --desc 惯例）
   });
   json(res, 200, { ok: true, total: r.total, page: r.page, size: r.size, items: r.items });
 }

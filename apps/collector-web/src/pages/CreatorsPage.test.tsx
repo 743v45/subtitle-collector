@@ -1,4 +1,6 @@
 // CreatorsPage 测试：列表渲染 / 搜索防抖 300ms / 槽位三态筛选（全部/Agent/人工）/ 分类筛选 / 排序 / 分页 / 行内分类变更 / 空错态。
+// Q6a（2026-10-05）批量分类：勾选列（行内+表头全选）→ 批量操作条（两槽位三态：不变=丢键 / 清除=null / 分类=id）→ 应用。
+// Q6b（2026-10-05）刷新资料：行内按钮（仅 bilibili）→ POST /api/creators/{id}/refresh → 成功 reload / 失败 toast 带 id+uid。
 //
 // 测试轮次记录表（对齐全局 8.2）：
 // | 轮次 | 范围 | 结果 | 备注 |
@@ -7,6 +9,7 @@
 // | R2 | 值域合一（2026-08-25）：三态槽位筛选；分类下拉一套；cat 筛选请求不带 scope | 通过 | 缺省从 human 改「全部」 |
 // | R3 | 「全部分类」清除 cat（2026-08-29 修复选后无清除入口） | 通过 | cat Select 增加 __all 项 |
 // | R4 | douyin 平台白名单（2026-08-29 接入）：URL source=douyin 透传 + 下拉第四项 | 通过 | |
+// | R5 | Q6a 批量分类 + Q6b 刷新资料（2026-10-05）：勾选/全选/取消、批量条三态下拉与应用（不变=丢键、清除=null）、成败 toast；行内刷新 busy/成败/平台限定 | 通过 | 「不变」丢键用 Object.keys 键级断言（toEqual 只能区分 null 与缺省） |
 import { test, expect, vi, beforeEach, afterEach, beforeAll } from 'vitest';
 import { render, screen, fireEvent, cleanup, waitFor, act } from '@testing-library/react';
 import { ToastProvider } from '@/components/ui/toast';
@@ -256,4 +259,154 @@ test('cat 筛选 Select：选择后写 cat（缺省全部槽位，请求不带 s
     expect(last).toContain('category=' + encodeURIComponent('优质'));
     expect(last).not.toContain('scope=');
   });
+});
+
+// ── Q6a 批量分类（2026-10-05）：勾选列 → 批量条 → 两槽位三态应用 ──
+// 槽位语义（api 契约）：— 不变 — = 请求体丢键（undefined 经 JSON.stringify 丢弃）、— 清除 — = 传 null、分类 = 传 id。
+
+test('Q6a 勾选两行 → 批量条出现；Agent=清除、人工=优质 → POST body 精确（清除=null、分类=id）；成功清空勾选并 reload', async () => {
+  fetchMock.mockImplementation((url: string, init?: RequestInit) => {
+    if (init?.method === 'POST' && url === '/api/creators/batch-category') return Promise.resolve(ok({ updated: 2 }));
+    const r = defaultRoutes()(url);
+    return r ? Promise.resolve(r) : Promise.reject(new Error('x'));
+  });
+  render(<ToastProvider><CreatorsPage onOpen={() => {}} /></ToastProvider>);
+  await screen.findByText('UP1');
+  // 未勾选：批量条不渲染（避免占 combobox 序影响既有索引断言）
+  expect(screen.queryByText(/已选 \d+ 个/)).not.toBeInTheDocument();
+  fireEvent.click(screen.getByLabelText('选择 UP1'));
+  fireEvent.click(screen.getByLabelText('选择 UP2'));
+  expect(screen.getByText('已选 2 个')).toBeInTheDocument();
+  // Agent 槽 → 清除；人工槽 → 优质（id=3）
+  fireEvent.pointerDown(screen.getByRole('combobox', { name: '设为 Agent 分类' }), { button: 0, ctrlKey: false, pointerType: 'mouse' });
+  fireEvent.click(await screen.findByRole('option', { name: '— 清除 —' }));
+  fireEvent.pointerDown(screen.getByRole('combobox', { name: '设为人工分类' }), { button: 0, ctrlKey: false, pointerType: 'mouse' });
+  fireEvent.click(await screen.findByRole('option', { name: '优质' }));
+  fireEvent.click(screen.getByRole('button', { name: '应用' }));
+  expect(await screen.findByText('已更新 2 个创作者')).toBeInTheDocument();
+  const postCall = fetchMock.mock.calls.find((c) => (c[1] as RequestInit | undefined)?.method === 'POST')!;
+  expect(postCall[0]).toBe('/api/creators/batch-category');
+  // agent=null 清空 Agent 槽、human=3 指向优质；顺序无关的整 body 精确匹配
+  expect(JSON.parse(String(postCall[1].body))).toEqual({ ids: [1, 2], agent_category_id: null, human_category_id: 3 });
+  // 成功后：勾选清空（批量条消失）+ reload（GET 再来）
+  await waitFor(() => expect(screen.queryByText(/已选 \d+ 个/)).not.toBeInTheDocument());
+  await waitFor(() => expect(fetchMock.mock.calls.filter((c) => String(c[0]).startsWith('/api/creators?')).length).toBeGreaterThanOrEqual(2));
+});
+
+test('Q6a 「不变」= 请求体丢键（线上载荷无 agent_category_id 键）；仅人工槽改动可单槽生效', async () => {
+  fetchMock.mockImplementation((url: string, init?: RequestInit) => {
+    if (init?.method === 'POST' && url === '/api/creators/batch-category') return Promise.resolve(ok({ updated: 1 }));
+    const r = defaultRoutes()(url);
+    return r ? Promise.resolve(r) : Promise.reject(new Error('x'));
+  });
+  render(<ToastProvider><CreatorsPage onOpen={() => {}} /></ToastProvider>);
+  await screen.findByText('UP1');
+  fireEvent.click(screen.getByLabelText('选择 UP1'));
+  // Agent 槽留「不变」，只动人工槽
+  fireEvent.pointerDown(screen.getByRole('combobox', { name: '设为人工分类' }), { button: 0, ctrlKey: false, pointerType: 'mouse' });
+  fireEvent.click(await screen.findByRole('option', { name: '优质' }));
+  fireEvent.click(screen.getByRole('button', { name: '应用' }));
+  expect(await screen.findByText('已更新 1 个创作者')).toBeInTheDocument();
+  const postCall = fetchMock.mock.calls.find((c) => (c[1] as RequestInit | undefined)?.method === 'POST')!;
+  const body = JSON.parse(String(postCall[1].body));
+  // 键级断言：JSON.stringify 已丢 agent_category_id（等于没传 = server 不改该槽）
+  expect('agent_category_id' in body).toBe(false);
+  expect(Object.keys(body).sort()).toEqual(['human_category_id', 'ids']);
+  expect(body).toEqual({ ids: [1], human_category_id: 3 });
+});
+
+test('Q6a 表头全选本页：两行全勾 → 已选 2；再点取消全选批量条消失', async () => {
+  render(<ToastProvider><CreatorsPage onOpen={() => {}} /></ToastProvider>);
+  await screen.findByText('UP1');
+  fireEvent.click(screen.getByLabelText('全选本页'));
+  expect(screen.getByText('已选 2 个')).toBeInTheDocument();
+  expect(screen.getByLabelText('选择 UP1')).toBeChecked();
+  expect(screen.getByLabelText('选择 UP2')).toBeChecked();
+  fireEvent.click(screen.getByLabelText('全选本页'));
+  expect(screen.queryByText(/已选 \d+ 个/)).not.toBeInTheDocument();
+  expect(screen.getByLabelText('选择 UP1')).not.toBeChecked();
+});
+
+test('Q6a 两槽位均「不变」→ 应用禁用（防无意义请求）；取消选择清空勾选', async () => {
+  render(<ToastProvider><CreatorsPage onOpen={() => {}} /></ToastProvider>);
+  await screen.findByText('UP1');
+  fireEvent.click(screen.getByLabelText('选择 UP1'));
+  expect(screen.getByText('已选 1 个')).toBeInTheDocument();
+  expect(screen.getByRole('button', { name: '应用' })).toBeDisabled();
+  fireEvent.click(screen.getByRole('button', { name: '取消选择' }));
+  expect(screen.queryByText(/已选 \d+ 个/)).not.toBeInTheDocument();
+  expect(screen.getByLabelText('选择 UP1')).not.toBeChecked();
+});
+
+test('Q6a 批量失败：POST 500 → toast 带上下文（ids 数 + 槽位参数），勾选保留便于重试', async () => {
+  fetchMock.mockImplementation((url: string, init?: RequestInit) => {
+    if (init?.method === 'POST' && url === '/api/creators/batch-category') return Promise.resolve(new Response('', { status: 500 }));
+    const r = defaultRoutes()(url);
+    return r ? Promise.resolve(r) : Promise.reject(new Error('x'));
+  });
+  render(<ToastProvider><CreatorsPage onOpen={() => {}} /></ToastProvider>);
+  await screen.findByText('UP1');
+  fireEvent.click(screen.getByLabelText('选择 UP1'));
+  fireEvent.click(screen.getByLabelText('选择 UP2'));
+  fireEvent.pointerDown(screen.getByRole('combobox', { name: '设为 Agent 分类' }), { button: 0, ctrlKey: false, pointerType: 'mouse' });
+  fireEvent.click(await screen.findByRole('option', { name: '— 清除 —' }));
+  fireEvent.click(screen.getByRole('button', { name: '应用' }));
+  // 失败 toast：错误文案 + ids=2 + agent=clear（human 留 keep）
+  expect(await screen.findByText(/批量分类失败：HTTP 500/)).toBeInTheDocument();
+  expect(screen.getByText(/ids=2 个，agent=clear human=keep/)).toBeInTheDocument();
+  // 勾选保留、批量条仍在
+  expect(screen.getByText('已选 2 个')).toBeInTheDocument();
+  expect(screen.getByLabelText('选择 UP1')).toBeChecked();
+  expect(screen.getByLabelText('选择 UP2')).toBeChecked();
+});
+
+// ── Q6b 刷新资料（2026-10-05）：行内按钮（仅 bilibili）→ POST /api/creators/{id}/refresh ──
+
+test('Q6b 刷新资料：成功 → POST /api/creators/1/refresh + toast + reload；失败 → toast 带 id+uid', async () => {
+  let refreshFail = false;
+  fetchMock.mockImplementation((url: string, init?: RequestInit) => {
+    if (init?.method === 'POST' && url === '/api/creators/1/refresh') {
+      return refreshFail ? Promise.resolve(new Response('', { status: 500 })) : Promise.resolve(ok({ creator: {} }));
+    }
+    const r = defaultRoutes()(url);
+    return r ? Promise.resolve(r) : Promise.reject(new Error('x'));
+  });
+  render(<ToastProvider><CreatorsPage onOpen={() => {}} /></ToastProvider>);
+  await screen.findByText('UP1');
+  fireEvent.click(screen.getByRole('button', { name: '刷新 UP1 的资料' }));
+  expect(await screen.findByText('资料已刷新：UP1')).toBeInTheDocument();
+  // 成功 reload：列表 GET 再来一次
+  await waitFor(() => expect(fetchMock.mock.calls.filter((c) => String(c[0]).startsWith('/api/creators?')).length).toBeGreaterThanOrEqual(2));
+  const refreshPost = fetchMock.mock.calls.find((c) => (c[1] as RequestInit | undefined)?.method === 'POST' && String(c[0]) === '/api/creators/1/refresh');
+  expect(refreshPost).toBeTruthy();
+
+  // 失败分支：toast 带上下文（creators.id=1 与 source_uid=1001）
+  refreshFail = true;
+  fireEvent.click(screen.getByRole('button', { name: '刷新 UP1 的资料' }));
+  expect(await screen.findByText(/刷新资料失败：HTTP 500（id=1 1001）/)).toBeInTheDocument();
+});
+
+test('Q6b 刷新 busy：pending 期间按钮禁用防连点，文字「刷新中…」', async () => {
+  fetchMock.mockImplementation((url: string, init?: RequestInit) => {
+    if (init?.method === 'POST' && url === '/api/creators/1/refresh') return new Promise<Response>(() => {});
+    const r = defaultRoutes()(url);
+    return r ? Promise.resolve(r) : Promise.reject(new Error('x'));
+  });
+  render(<ToastProvider><CreatorsPage onOpen={() => {}} /></ToastProvider>);
+  await screen.findByText('UP1');
+  fireEvent.click(screen.getByRole('button', { name: '刷新 UP1 的资料' }));
+  // pending：disabled + 刷新中…（aria-label 不随文字变，name 恒定）
+  await waitFor(() => expect(screen.getByRole('button', { name: '刷新 UP1 的资料' })).toBeDisabled());
+  expect(screen.getByRole('button', { name: '刷新 UP1 的资料' })).toHaveTextContent('刷新中…');
+});
+
+test('Q6b 非 bilibili 行不渲染刷新按钮（youtube 无对应刷新链路）', async () => {
+  fetchMock.mockImplementation((url: string) => {
+    const r = defaultRoutes([creatorItem(1), creatorItem(2, { source: 'youtube', source_uid: 'UCy' })])(url);
+    return r ? Promise.resolve(r) : Promise.reject(new Error('x'));
+  });
+  render(<ToastProvider><CreatorsPage onOpen={() => {}} /></ToastProvider>);
+  await screen.findByText('UP1');
+  expect(screen.getByRole('button', { name: '刷新 UP1 的资料' })).toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: /刷新 UP2 的资料/ })).not.toBeInTheDocument();
 });

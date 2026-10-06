@@ -15,7 +15,8 @@ import { openReadonlyDb } from '../db.js';
 import { getVideo, getVersionPayload } from '../../db/queries.js';
 import { ASR_LAN_PREFIX } from '../../http/asr.js';
 import { extractBody } from '../subtitleFormat.js';
-import { normalizeTimestamp } from './videos.js';
+import { normalizeTimestamp, parseDesc } from './videos.js';
+import { installUnknownOptionGuard } from './unknown-option.js';
 
 // 「有中文」判定集合（pending 排除条件）：B 站原生/AI/自动翻译中文 + 补翻轨本身。
 // zh-Hant 繁体也算有中文——不强制补简体。精确列举（不用 LIKE 'zh%'），可测试、防误伤。
@@ -42,7 +43,10 @@ export interface PendingItem {
 export interface TranslatePendingOpts {
   source?: string; // 平台过滤（bilibili|youtube|douyin），缺省三平台混列
   from?: string; creator?: string; since?: number; until?: number;
-  page?: number; size?: number; sort?: 'first_seen' | 'published_at'; asc?: boolean;
+  page?: number; size?: number; sort?: 'first_seen' | 'published_at';
+  // 降序缺省 true（最新在前）。P1-10 选项命名统一：CLI 旗标 asc → --desc（语义跟随新名——
+  // 缺省与降序不变，升序由 --desc=false 表达，对齐 videos/tags/stats 的 --desc 惯例；旧 asc 旗标退 2）。
+  desc?: boolean;
 }
 
 /**
@@ -79,7 +83,7 @@ export function translatePendingDb(
   if (opts.until !== undefined) { where += ' AND v.first_seen_at <= ?'; params.push(opts.until); }
 
   const sortCol = opts.sort === 'published_at' ? 'v.published_at' : 'v.first_seen_at';
-  const dir = opts.asc ? 'ASC' : 'DESC';
+  const dir = (opts.desc ?? true) ? 'DESC' : 'ASC';
   const total = (db.prepare(
     `SELECT COUNT(*) AS c FROM videos v LEFT JOIN creators c ON c.id = v.creator_id ${where}`,
   ).get(...params) as { c: number }).c;
@@ -222,7 +226,7 @@ export function buildTranslateCommand(): Command {
   const cmd = new Command('translate')
     .description('补翻工作流（pending/source 直读 DB；fill 走 server HTTP 写入 zh-manual 轨）');
 
-  cmd.command('pending')
+  const pending = cmd.command('pending')
     .description('查缺口：有轨但无任何中文轨的视频清单（含各源语言行数）')
     .option('--source <src>', '视频来源平台（bilibili|youtube|douyin；缺省全平台混列）')
     .option('--from <lan>', '只看有该源语言轨的视频（如 ai-en）')
@@ -232,7 +236,12 @@ export function buildTranslateCommand(): Command {
     .option('--page <n>', '页码（默认 1）', '1')
     .option('--size <n>', '页大小（默认 20，上限 200）', '20')
     .option('--sort <key>', '排序键 first_seen|published_at（默认 first_seen）', 'first_seen')
-    .option('--asc', '升序（默认降序——最新入库在前）')
+    // --desc [value]：P1-10 选项命名统一（原 asc 旗标改 --desc 惯例，语义跟随新名：默认降序不变，
+    // 升序传 --desc=false；对齐 videos/tags/stats 的 --desc 口径，parseDesc 复用同一解析）
+    .option('--desc [value]', '降序（默认降序——最新入库在前；升序传 --desc=false）');
+  // 未知/旧名选项 → ARGS 退 2 且列全合法键（P1-10；装在叶子命令上，组根不生效）
+  installUnknownOptionGuard(pending);
+  pending
     .action((opts) => {
       const ctx = getCliContext();
       if (opts.sort !== 'first_seen' && opts.sort !== 'published_at') {
@@ -245,7 +254,7 @@ export function buildTranslateCommand(): Command {
         emitResult(translatePending(ctx.dbPath, {
           source: opts.source, from: opts.from, creator: opts.creator, since, until,
           page: parseNum(opts.page, '--page'), size: parseNum(opts.size, '--size'),
-          sort: opts.sort, asc: opts.asc,
+          sort: opts.sort, desc: parseDesc(opts.desc),
         }), ctx.format);
       } catch (err) {
         emitError(`查询待补翻清单失败: ${(err as Error).message}`, 'DB_UNREADABLE');

@@ -3,17 +3,16 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useAsync } from '@/lib/useAsync';
 import { useToast } from '@/components/ui/toast';
-import { getCreatorDetail, listCategories, setCreatorCategory, listVideos } from '@/api';
+import { getCreatorDetail, listCategories, setCreatorCategory, refreshCreatorProfile, listVideos } from '@/api';
 import { creatorUrl, videoUrl } from '../lib/externalLinks';
 import { PlatformIcon, platformIconClass } from '@/components/PlatformIcon';
 import { cn } from '@/lib/utils';
 import { ExtLink } from '@/components/ExtLink';
-import { ArrowLeft, Loader2, RefreshCw, UserRound } from 'lucide-react';
-import { refreshUpperInfo } from '../api-extra';
-import { collectErrorText } from '../lib/collectErrors';
+import { ArrowLeft, RefreshCw, UserRound } from 'lucide-react';
+import { CreatorCategoryCell } from './CreatorCategoryCell';
+import { CreatorDetailSkeleton } from './CreatorDetailSkeleton';
 import type { CreatorDetail, VideoListItem } from '@/types';
 
 function fmtTime(ms: number): string {
@@ -44,39 +43,6 @@ function Field({ label, value }: { label: string; value: string | null | undefin
   );
 }
 
-function DetailSkeleton() {
-  return (
-    <div className="space-y-4" aria-busy="true">
-      <Card>
-        <CardContent className="flex items-center gap-4 p-4">
-          <Skeleton className="h-16 w-16 rounded-full" />
-          <div className="space-y-2">
-            <Skeleton className="h-5 w-40" />
-            <Skeleton className="h-4 w-24" />
-          </div>
-        </CardContent>
-      </Card>
-      <div className="grid gap-4 md:grid-cols-2">
-        <Card>
-          <CardHeader><Skeleton className="h-4 w-16" /></CardHeader>
-          <CardContent className="space-y-3">
-            <Skeleton className="h-4 w-full" />
-            <Skeleton className="h-4 w-full" />
-            <Skeleton className="h-4 w-2/3" />
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader><Skeleton className="h-4 w-16" /></CardHeader>
-          <CardContent className="space-y-3">
-            <Skeleton className="h-9 w-52" />
-            <Skeleton className="h-9 w-52" />
-          </CardContent>
-        </Card>
-      </div>
-    </div>
-  );
-}
-
 export function CreatorDetailPage({
   id,
   onBack,
@@ -101,6 +67,7 @@ export function CreatorDetailPage({
   const videos: VideoListItem[] = videosData?.items ?? [];
   const videoTotal = videosData?.total ?? 0;
   const [busyScope, setBusyScope] = useState<'agent' | 'human' | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
 
   async function changeCategory(scope: 'agent' | 'human', name: string) {
     if (!creator) return;
@@ -114,6 +81,21 @@ export function CreatorDetailPage({
       toast(`失败：${e instanceof Error ? e.message : String(e)}`, 'error');
     } finally {
       setBusyScope(null);
+    }
+  }
+
+  // Q6b 刷新资料：重拉空间资料（昵称/头像/粉丝数等）；成功 reload，失败 toast 带上下文
+  async function refreshProfile() {
+    if (!creator) return;
+    setRefreshing(true);
+    try {
+      await refreshCreatorProfile(creator.id);
+      toast(`资料已刷新：${creator.name ?? creator.source_uid}`, 'success');
+      reload();
+    } catch (e: unknown) {
+      toast(`刷新资料失败：${e instanceof Error ? e.message : String(e)}（id=${creator.id} ${creator.source_uid}）`, 'error');
+    } finally {
+      setRefreshing(false);
     }
   }
 
@@ -132,7 +114,7 @@ export function CreatorDetailPage({
           </CardContent>
         </Card>
       ) : loading || !creator ? (
-        <DetailSkeleton />
+        <CreatorDetailSkeleton />
       ) : (
         <>
           {/* 概览：头像 / 名称 / mid / 当前分类 Badge（一眼可见当前归属） */}
@@ -143,6 +125,8 @@ export function CreatorDetailPage({
                   src={creator.avatar}
                   alt={creator.name ?? 'avatar'}
                   className="h-16 w-16 rounded-full object-cover"
+                  // 头像站会按 Referer 反防盗链（B 站 i.whgt/YouTube i.ytimg 均命中过），剥掉再加载
+                  referrerPolicy="no-referrer"
                 />
               ) : (
                 <div className="flex h-16 w-16 items-center justify-center rounded-full bg-muted text-muted-foreground">
@@ -172,10 +156,22 @@ export function CreatorDetailPage({
           <div className="grid gap-4 md:grid-cols-2">
             {/* 资料 */}
             <Card>
-              <CardHeader className="flex-row items-center justify-between space-y-0">
+              <CardHeader className="flex flex-row items-center justify-between space-y-0">
                 <CardTitle className="text-base">资料</CardTitle>
-                {/* 刷新 UP 资料（Phase 3）：非 bilibili 不渲染（douyin 无 upper-info 语义） */}
-                <RefreshInfoButton creator={creator} reload={reload} />
+                {/* Q6b 刷新资料：仅 bilibili 渲染（refreshCreatorProfile 只实现 B 站链路）；busy 禁点防连点 */}
+                {creator.source === 'bilibili' && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={refreshing}
+                    aria-label="刷新资料"
+                    title="重新拉取昵称/头像/粉丝数等空间资料"
+                    onClick={refreshProfile}
+                  >
+                    <RefreshCw className="mr-1 size-3.5" aria-hidden="true" />
+                    {refreshing ? '刷新中…' : '刷新资料'}
+                  </Button>
+                )}
               </CardHeader>
               <CardContent className="space-y-2">
                 <Field label="签名" value={creator.sign} />
@@ -194,37 +190,25 @@ export function CreatorDetailPage({
               <CardContent className="space-y-4">
                 <div className="space-y-1.5">
                   <div className="text-sm font-medium">Agent 分类</div>
-                  <Select
-                    value={creator.category_agent_name ?? undefined}
-                    onValueChange={(v) => changeCategory('agent', v)}
+                  <CreatorCategoryCell
+                    value={creator.category_agent_name}
+                    cats={cats}
                     disabled={busyScope === 'agent'}
-                  >
-                    <SelectTrigger className="w-52">
-                      <SelectValue placeholder="选择分类" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {(cats ?? []).map((c) => (
-                        <SelectItem key={c.id} value={c.name}>{c.name}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                    placeholder="选择分类"
+                    triggerClass="w-52"
+                    onPick={(name) => changeCategory('agent', name)}
+                  />
                 </div>
                 <div className="space-y-1.5">
                   <div className="text-sm font-medium">人工分类</div>
-                  <Select
-                    value={creator.category_human_name ?? undefined}
-                    onValueChange={(v) => changeCategory('human', v)}
+                  <CreatorCategoryCell
+                    value={creator.category_human_name}
+                    cats={cats}
                     disabled={busyScope === 'human'}
-                  >
-                    <SelectTrigger className="w-52">
-                      <SelectValue placeholder="选择分类" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {(cats ?? []).map((c) => (
-                        <SelectItem key={c.id} value={c.name}>{c.name}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                    placeholder="选择分类"
+                    triggerClass="w-52"
+                    onPick={(name) => changeCategory('human', name)}
+                  />
                 </div>
               </CardContent>
             </Card>
@@ -262,35 +246,5 @@ export function CreatorDetailPage({
         </>
       )}
     </div>
-  );
-}
-
-// 刷新 UP 资料（CLI upper-info refresh 的 web 入口）：经扩展重拉 B 站空间信息回写；
-// 成功 toast 带最新名称/粉丝数，并 reload 资料卡。仅 bilibili 渲染（组件自身 null，调用侧零分支）。
-function RefreshInfoButton({ creator, reload }: { creator: CreatorDetail; reload: () => void }) {
-  const toast = useToast();
-  const [busy, setBusy] = useState(false);
-  if (creator.source !== 'bilibili') return null;
-
-  const run = async () => {
-    if (busy) return;
-    setBusy(true);
-    try {
-      const r = await refreshUpperInfo({ mid: String(creator.source_uid) });
-      const name = r.creator.name ?? creator.name ?? creator.source_uid;
-      toast(`已刷新：${name}（粉丝 ${r.creator.fans?.toLocaleString('zh-CN') ?? '?'}）`, 'success');
-      reload();
-    } catch (e: unknown) {
-      toast(`刷新失败：${collectErrorText(e)}`, 'error');
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  return (
-    <Button variant="outline" size="sm" className="gap-1" disabled={busy} onClick={() => void run()}>
-      {busy ? <Loader2 className="size-3.5 animate-spin" aria-hidden="true" /> : <RefreshCw className="size-3.5" aria-hidden="true" />}
-      刷新资料
-    </Button>
   );
 }

@@ -2,6 +2,7 @@
 // 仅覆盖 CLI 需要的端点：探活、客户端列表、切上报、下发命令。
 // server 侧路由详见 [http/clients.ts](apps/collector-server/src/http/clients.ts)；POST /api/clients/:id/command 由同事阶段2 在 server 端补齐。
 import type { Source } from '../tasks/source.js';
+import type { TagPrioritySource } from '../db/settings.js';
 
 // server 连不上（DNS/TCP/ECONNREFUSED）专用错误类型：调用方捕获后 emitError SERVER_UNREACHABLE。
 export class ServerUnreachableError extends Error {
@@ -12,7 +13,7 @@ export class ServerUnreachableError extends Error {
 }
 
 interface RequestOptions {
-  method: 'GET' | 'POST' | 'PATCH' | 'DELETE';
+  method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
   body?: Record<string, unknown>;
 }
 
@@ -113,6 +114,19 @@ export class ServerClient {
     return this.requestJson('POST', '/api/tags/remove', body);
   }
 
+  // 标签改名：PATCH /api/tags/:id { name } → {ok, tag}（2026-10-05 P1-8 标签库纠错）。
+  // AI 打标打错标签改名：video_tags 走 tag_id 引用，已有打标关系自动跟随新名；
+  // 撞已有名 server 409（UNIQUE）。id = 标签库 id（`tags list` 输出的 id 列，非视频 id）。
+  async renameTag(id: number, name: string): Promise<unknown> {
+    return this.requestJson('PATCH', `/api/tags/${id}`, { name });
+  }
+
+  // 删标签：DELETE /api/tags/:id → {ok:true}。server 侧应用层级联（先删该标签全部档位关系
+  // 再删实体，无孤儿）；id 不存在 server 404 → ServerResponseError（调用方归一 NOT_FOUND）。
+  async deleteTag(id: number): Promise<unknown> {
+    return this.requestJson('DELETE', `/api/tags/${id}`);
+  }
+
   // 批量建采集任务：POST /api/collect-tasks/batch（任务系统调度执行,扩展串行;
   // creator_uid 可选——合集/UP 批量的归属,未入库失败任务也能按 UP 筛）。
   async createCollectTasksBatch(body: {
@@ -176,9 +190,89 @@ export class ServerClient {
     return this.requestJson('POST', '/api/collect-tasks/retry', { ids });
   }
 
+  // 创作者列表：GET /api/creators（creators CLI 组用）。query 透传，server 侧 http/creators.ts
+  // 解析：q/category/source/scope(agent|human) + page/size（端点钳 size 1..100，默认 20）+
+  // sort/desc（七键 first_seen|fans|video_count|following|level|updated_at|name，非法 400）。
+  // 返回 {ok,total,items} 原样（ok 外壳由调用方剥）。
+  async listCreators(params: Record<string, string | number | boolean> = {}): Promise<unknown> {
+    const qs = new URLSearchParams();
+    for (const [k, v] of Object.entries(params)) qs.set(k, String(v));
+    const suffix = qs.size > 0 ? `?${qs.toString()}` : '';
+    return this.requestJson('GET', `/api/creators${suffix}`);
+  }
+
+  // 创作者详情：GET /api/creators/:id → {ok, creator}（P2 字段 sign/level/... + 分类名 join）。
+  // 不存在 server 404 → ServerResponseError（调用方归一 NOT_FOUND）。
+  async getCreator(id: number): Promise<unknown> {
+    return this.requestJson('GET', `/api/creators/${id}`);
+  }
+
+  // ── 评论采集通路（C2 端点，PLAN §4.1/§5.2；CLI `comments collect` 消费，D4「CLI 永不写库」）──
+
+  // 评论水位查询：GET /api/comments/count?bvid= → {ok, rows, roots, max_ctime_s}（模式判定+增量水位）。
+  async commentsCount(bvid: string): Promise<Record<string, unknown>> {
+    return this.requestJson('GET', `/api/comments/count?bvid=${encodeURIComponent(bvid)}`) as Promise<Record<string, unknown>>;
+  }
+
+  // 评论写回：POST /api/comments/ingest（raw 条目子集，服务端解析归一+幂等 upsert；full_scan 对账+置顶清打）。
+  async commentsIngest(body: Record<string, unknown>): Promise<Record<string, unknown>> {
+    return this.requestJson('POST', '/api/comments/ingest', body) as Promise<Record<string, unknown>>;
+  }
+
+  // 评论树校验：GET /api/comments/verify?bvid= → {ok, bvid, ...verifyTree}（纯库内读，无副作用）。
+  async commentsVerify(bvid: string): Promise<Record<string, unknown>> {
+    return this.requestJson('GET', `/api/comments/verify?bvid=${encodeURIComponent(bvid)}`) as Promise<Record<string, unknown>>;
+  }
+
+  // ── categories / settings（categories & settings CLI 组用，2026-10-05 账本 P1-9 / cli-completeness #9）──
+
+  // 分类列表：GET /api/categories → {ok, items}（items 含 creator_count：agent/human 两槽位任一
+  // 引用计数）。分类已无 scope 属性（值域合一），CLI 不提供该参数（非空 scope server 400）。
+  async listCategories(): Promise<unknown> {
+    return this.requestJson('GET', '/api/categories');
+  }
+
+  // 新建分类：POST /api/categories {name} → {ok, category}。重名 server 409（UNIQUE）。
+  async createCategory(name: string): Promise<unknown> {
+    return this.requestJson('POST', '/api/categories', { name });
+  }
+
+  // 改分类：PATCH /api/categories/:id {name?, sort_order?}（patch 只含要改的键）→ {ok, category}。
+  // 不存在 server 404；改名撞已有名 server 409。
+  async updateCategory(id: number, patch: { name?: string; sort_order?: number }): Promise<unknown> {
+    return this.requestJson('PATCH', `/api/categories/${id}`, patch);
+  }
+
+  // 删分类：DELETE /api/categories/:id → {ok:true}。引用该分类的创作者两槽位自动置 NULL（server 应用层）。
+  async deleteCategory(id: number): Promise<unknown> {
+    return this.requestJson('DELETE', `/api/categories/${id}`);
+  }
+
+  // 读标签展示优先级：GET /api/settings/tag-priority → {ok, priority}（六档数组，高 → 低）。
+  async getTagPriority(): Promise<unknown> {
+    return this.requestJson('GET', '/api/settings/tag-priority');
+  }
+
+  // 写标签展示优先级：PUT /api/settings/tag-priority {priority} → {ok, priority}。
+  // 非六档精确排列 server 400（CLI 侧已前置同口径校验，此处为兜底）。
+  async setTagPriority(priority: TagPrioritySource[]): Promise<unknown> {
+    return this.requestJson('PUT', '/api/settings/tag-priority', { priority });
+  }
+
+  // 读采集超时：GET /api/settings/collect-timeout → {ok, bilibili, youtube, douyin}（毫秒）。
+  async getCollectTimeout(): Promise<unknown> {
+    return this.requestJson('GET', '/api/settings/collect-timeout');
+  }
+
+  // 写采集超时：PUT /api/settings/collect-timeout {bilibili, youtube, douyin}（毫秒，[15s, 600s]）
+  // → {ok, ...saved}。缺键/越界 server 400（CLI 侧已前置同口径校验，此处为兜底）。
+  async setCollectTimeout(timeout: { bilibili: number; youtube: number; douyin: number }): Promise<unknown> {
+    return this.requestJson('PUT', '/api/settings/collect-timeout', { ...timeout });
+  }
+
   // 统一请求：fetch + JSON 解析 + 错误归一化。
   // 连不上 → ServerUnreachableError；非 2xx → ServerResponseError；2xx → 解析后的 JSON（无 body 时返回 null）。
-  private async requestJson(method: 'GET' | 'POST' | 'PATCH' | 'DELETE', path: string, body?: Record<string, unknown>): Promise<unknown> {
+  private async requestJson(method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE', path: string, body?: Record<string, unknown>): Promise<unknown> {
     const res = await this.raw(method, path, body);
     const text = await res.text();
     if (!res.ok) {
@@ -193,7 +287,7 @@ export class ServerClient {
   }
 
   // 裸 fetch 包装：构造 URL（用 new URL 拼 path，自动处理 base 斜杠）+ Authorization header。
-  private async raw(method: 'GET' | 'POST' | 'PATCH' | 'DELETE', path: string, body?: Record<string, unknown>): Promise<Response> {
+  private async raw(method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE', path: string, body?: Record<string, unknown>): Promise<Response> {
     const url = new URL(path, this.baseUrl).toString();
     const init: RequestInit = {
       method,

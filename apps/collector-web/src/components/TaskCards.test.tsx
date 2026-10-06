@@ -11,6 +11,7 @@
 // | R3 | TaskRow 预览失败路径：getVideo 500、getVersion 500+重试 | 通过 | |
 // | R4 | BatchTaskCard：五类徽章派生、展开子行、重试/删除/聚焦回调 | 通过 | |
 // | R5 | resubmitTasks：无可重试不发请求；retry 端点 alreadyOk 拆分 | 通过 | |
+// | R6 | 展示单元改造（2026-10-05）：TaskRow video_title 优先/副行 code 小字、四图标 tooltip、BatchTaskCard creator_name 副行与 tooltip | 通过 | 拆分后经 TaskCards 统一出口导入 |
 // | R6 | skipped 语义（2026-10 Phase 3）：resubmitTasks 返回 skipped、retrySummary 附加「不可重试行已跳过」 | 通过 | skipped=0 不附加 |
 import { test, expect, vi, afterEach } from 'vitest';
 import { render, screen, fireEvent, cleanup, waitFor } from '@testing-library/react';
@@ -256,6 +257,53 @@ test('TaskRow 预览：字幕体为空', async () => {
   expect(await screen.findByText('（字幕体为空）')).toBeInTheDocument();
 });
 
+// ── 展示单元改造（2026-10-05）：video_title 优先 / 裸 ID 副行 / tooltip ──
+
+test('TaskRow：video_title 优先直出，裸 ID 降级为标题下 font-mono 副行', () => {
+  render(
+    <TaskRow
+      task={task({ id: 21, source: 'douyin', source_vid: '7300000000000000001', url: 'https://v.douyin.com/x/', video_title: '抖音新标题', title: '旧JOIN标题' })}
+      onDelete={() => {}}
+    />,
+  );
+  // video_title 优先于旧 title 字段
+  expect(screen.getByText('抖音新标题')).toBeInTheDocument();
+  expect(screen.queryByText('旧JOIN标题')).toBe(null);
+  // 裸 ID（抖音长数字）副行：font-mono code 小字,title 悬停可看全
+  const vid = screen.getByTitle('7300000000000000001');
+  expect(vid).toBeInTheDocument();
+  expect(vid.className).toContain('font-mono');
+  // 摘要行不再重复裸 ID（整卡仅副行一处）
+  expect(screen.getAllByText('7300000000000000001')).toHaveLength(1);
+});
+
+test('TaskRow：无 video_title 回落 title 旧字段（同样给副行）；title 也无 → 平台·ID 旧貌', () => {
+  const { unmount } = render(<TaskRow task={task({ id: 22, title: '旧JOIN标题' })} onDelete={() => {}} />);
+  expect(screen.getByText('旧JOIN标题')).toBeInTheDocument();
+  expect(screen.getByTitle('BV1xx4122')).toBeInTheDocument(); // 副行 code 小字
+  unmount();
+
+  // 双空：回落 平台·BV号 单行旧貌,无副行
+  render(<TaskRow task={task({ id: 23, title: null })} onDelete={() => {}} />);
+  expect(screen.getByText(`B站 · BV1xx4123`)).toBeInTheDocument();
+});
+
+test('TaskRow：行尾图标 title 中文提示（failed:重试+删除;succeeded:查看详情+展开预览+删除）', () => {
+  // 重试与详情/预览互斥（retryable=failed/limited,canOpen=succeeded）,分两个状态断言
+  const { unmount } = render(
+    <TaskRow task={task({ id: 24, status: 'failed', error: 'e' })} onDelete={() => {}} onRetry={() => {}} />,
+  );
+  expect(screen.getByTitle('重试采集：该行重置回排队中重跑（不新建任务记录）')).toBeInTheDocument();
+  expect(screen.getByTitle('删除任务：移除该条任务记录，不影响已入库视频与字幕')).toBeInTheDocument();
+  expect(screen.queryByTitle('查看视频详情：跳转详情页查看全部字幕轨与标签')).toBe(null);
+  unmount();
+
+  render(<TaskRow task={task({ id: 25, status: 'succeeded', video_title: '有标题' })} onDelete={() => {}} />);
+  expect(screen.getByTitle('查看视频详情：跳转详情页查看全部字幕轨与标签')).toBeInTheDocument();
+  expect(screen.getByTitle('展开预览：就地预览已入库字幕（前 8 行）')).toBeInTheDocument();
+  expect(screen.getByTitle('删除任务：移除该条任务记录，不影响已入库视频与字幕')).toBeInTheDocument();
+});
+
 // ── BatchTaskCard ──
 
 function batch(items: Array<Partial<CollectTask> & { id: number; status: CollectTaskStatus }>) {
@@ -352,4 +400,43 @@ test('BatchTaskCard：子行标题回落 title 属性（未入库）', () => {
   );
   fireEvent.click(screen.getByRole('button', { name: '展开子任务' }));
   expect(screen.getByTitle('B站 · BV1xx411')).toBeInTheDocument();
+});
+
+// ── 展示单元改造（2026-10-05）：UP/博主归属副文案 + 行尾四图标 tooltip ──
+
+test('BatchTaskCard：卡头副文案显示「UP/博主：{creator_name}」；全空成员不显示', () => {
+  const { unmount } = render(
+    <BatchTaskCard
+      items={batch([{ id: 1, status: 'succeeded', creator_name: '抖音博主甲' }, { id: 2, status: 'succeeded' }])}
+      onDelete={() => {}} onDeleteBatch={() => {}}
+    />,
+  );
+  // 取首个非空成员的 creator_name,与平台标签并排融入既有副文案风格
+  expect(screen.getByText('B站 · UP/博主：抖音博主甲')).toBeInTheDocument();
+  unmount();
+
+  render(
+    <BatchTaskCard items={batch([{ id: 1, status: 'succeeded' }, { id: 2, status: 'succeeded' }])} onDelete={() => {}} onDeleteBatch={() => {}} />,
+  );
+  expect(screen.queryByText(/UP\/博主：/)).toBe(null);
+});
+
+test('BatchTaskCard：行尾四图标 title 中文提示（聚焦/整批重试/展开/删除）+ 子行 tooltip', () => {
+  const items = batch([
+    { id: 1, status: 'succeeded' },
+    { id: 2, status: 'failed', error: 'e' },
+  ]);
+  render(
+    <BatchTaskCard items={items} onDelete={() => {}} onDeleteBatch={() => {}} onRetry={() => {}} onRetryTask={() => {}} />,
+  );
+  expect(screen.getByTitle('在历史页查看整批：按本批批次聚焦历史记录')).toBeInTheDocument();
+  expect(screen.getByTitle('重试 1 个未成功：失败/受限行重置回排队重跑（不新建任务记录）')).toBeInTheDocument();
+  expect(screen.getByTitle('展开子任务：查看本批成员状态，可单条重试/删除')).toBeInTheDocument();
+  expect(screen.getByTitle('删除整个批次：级联移除本批全部任务记录（含未完成），不影响已入库视频与字幕')).toBeInTheDocument();
+
+  // 展开后子行重试/删除带统一 tooltip 文案（卡头是整批动作,文案各自独立）
+  fireEvent.click(screen.getByRole('button', { name: '展开子任务' }));
+  expect(screen.getByTitle('收起子任务：折叠本批成员明细')).toBeInTheDocument();
+  expect(screen.getAllByTitle('重试采集：该行重置回排队中重跑（不新建任务记录）')).toHaveLength(1); // 仅失败子行
+  expect(screen.getAllByTitle('删除任务：移除该条任务记录，不影响已入库视频与字幕')).toHaveLength(2); // 2 个子行
 });

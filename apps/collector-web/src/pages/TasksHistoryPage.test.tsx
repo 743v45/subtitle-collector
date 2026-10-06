@@ -14,6 +14,7 @@
 // | R6 | 活跃任务轮询：2s 重拉 → 终态转移发系统通知、全终态即停 | 通过 | fake timers + Notification stub |
 // | R7 | 失败分支补口：单删失败 reload / 批次删除部分失败 toast / 多成员批次行单删 / 单行重试失败 | 通过 | 行覆盖收尾 |
 // | R8 | douyin（2026-08-29）：平台下拉第四项 + URL source=douyin 白名单透传 | 通过 | |
+// | R9 | 展示单元真分页（2026-10-05）：PAGE_SIZE=20、翻页文案「批/条」、totalPages=ceil(total/20)、批次完整成员分组（成员数>页大小不跨页）、删除后 reload 对齐单元口径 | 通过 | |
 import { test, expect, vi, afterEach } from 'vitest';
 import { render, screen, fireEvent, cleanup, waitFor, act } from '@testing-library/react';
 import { TasksHistoryPage } from './TasksHistoryPage';
@@ -104,8 +105,8 @@ test('初始加载：分页参数 + 总数 + 任务渲染（批次聚合）', as
   expect(screen.getByText('完成 1 失败 1')).toBeInTheDocument();
   const p = qp(calls);
   expect(p.get('page')).toBe('1');
-  expect(p.get('page_size')).toBe('50');
-  expect(screen.getByText('第 1 / 2 页 · 每页 50 条')).toBeInTheDocument();
+  expect(p.get('page_size')).toBe('20'); // 2026-10-05 展示单元口径:50 → 20
+  expect(screen.getByText('第 1 / 3 页 · 每页 20 批/条')).toBeInTheDocument(); // ceil(51/20)=3
 });
 
 test('错误态：500 → 加载失败文案', async () => {
@@ -231,13 +232,59 @@ test('批次聚焦 chip：截断展示 + 清除；creator/q 时显示入库维�
   await waitFor(() => expect(qp(calls).has('batch_id')).toBe(false));
 });
 
-test('分页：51 条 → 2 页；下一页写 page=2 重拉', async () => {
+test('分页：51 单元 → 3 页；下一页写 page=2 重拉', async () => {
   const calls = setup('#/history', () => ({ ok: true, total: 51, items: [task({ id: 1, title: '第一页任务' })] }));
   await screen.findByText('第一页任务');
   expect(screen.getByRole('button', { name: /上一页/ })).toBeDisabled();
   fireEvent.click(screen.getByRole('button', { name: /下一页/ }));
   await waitFor(() => expect(window.location.hash).toBe('#/history?page=2'));
   await waitFor(() => expect(qp(calls).get('page')).toBe('2'));
+});
+
+// ── R9：展示单元真分页（2026-10-05）──
+
+test('totalPages = ceil(total / 20)：整除不进位（20 → 1 页），余 1 进位（21 → 2 页）', async () => {
+  setup('#/history', () => ({ ok: true, total: 20, items: [] }));
+  await screen.findByText('还没有任务记录');
+  expect(screen.getByText('第 1 / 1 页 · 每页 20 批/条')).toBeInTheDocument();
+
+  cleanup();
+  vi.unstubAllGlobals();
+  setup('#/history', () => ({ ok: true, total: 21, items: [] }));
+  await screen.findByText('还没有任务记录');
+  expect(screen.getByText('第 1 / 2 页 · 每页 20 批/条')).toBeInTheDocument();
+});
+
+test('批次完整成员分组（单元口径）：25 成员批次 + 1 单任务同页,items 超页大小仍整卡聚合', async () => {
+  // server 展示单元分页保证批次不跨页——单批 25 个成员（>20）作为 1 个单元整批返回,
+  // 分组逻辑须聚成一张批次卡并渲染全部成员,而不是按 rows 截断
+  const members = Array.from({ length: 25 }, (_, i) =>
+    task({ id: i + 1, status: i === 0 ? 'failed' : 'succeeded', title: `成员${i + 1}`, batch_id: 'big', error: i === 0 ? 'e' : null }));
+  setup('#/history', () => ({ ok: true, total: 2, items: [...members, task({ id: 99, title: '独立单任务' })] }));
+  await screen.findByText('独立单任务');
+  // total=2 个展示单元（1 批 + 1 单任务）
+  expect(screen.getByText('2 条记录')).toBeInTheDocument();
+  expect(screen.getByText('第 1 / 1 页 · 每页 20 批/条')).toBeInTheDocument();
+  // 整批聚一张卡,全部 25 成员展开可见（含失败徽章派生）
+  expect(screen.getByText('完成 24 失败 1')).toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: '展开子任务' }));
+  expect(screen.getByText('成员1')).toBeInTheDocument();
+  expect(screen.getByText('成员25')).toBeInTheDocument();
+  // 单任务照常独立成行
+  expect(screen.getByText('独立单任务')).toBeInTheDocument();
+});
+
+test('删除与单元口径：删单任务/批次成员后重拉对齐（total 不再按成员数本地推算）', async () => {
+  const calls = setup('#/history', (url, init) => {
+    if (init?.method === 'DELETE') return { ok: true };
+    if (url.includes('/api/collect-tasks?')) return { ok: true, total: 1, items: [task({ id: 5, status: 'succeeded', title: '待删行' })] };
+    return { ok: true };
+  });
+  await screen.findByText('待删行');
+  fireEvent.click(screen.getByRole('button', { name: '删除任务' }));
+  expect(await screen.findByText('已删除任务')).toBeInTheDocument();
+  // 成功删除也重拉:total 语义改为展示单元后,前端不再本地增减,以 reload 取回真值
+  await waitFor(() => expect(calls.filter((c) => c.url.includes('/api/collect-tasks?')).length).toBeGreaterThanOrEqual(2));
 });
 
 // ── R5：重试 / 删除 ──

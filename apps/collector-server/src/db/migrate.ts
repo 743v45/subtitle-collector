@@ -301,16 +301,55 @@ export const MIGRATIONS: readonly MigrationStep[] = [
     ],
   },
   {
-    // 通用任务台账（CLI 全功能 web 化 Phase 4）：asr-backfill（无字幕兜底 ASR 转写）与
-    // collect-find（条件检索博主发现）两类长任务从「会话内易失编排」沉淀为 server 进程内
-    // 串行队列，web 免经 CLI。jobs 行即台账：params_json 入参、progress_json 过程计数、
-    // result_json 终态产物、error 失败归因，物理不删（DELETE 语义 = cancel，见 http/jobs.ts）。
-    // status 状态机：pending → running → done | failed；pending/running 可取消 → cancelled。
-    // server 重启恢复：启动时把 pending/running 置 cancelled（批任务不自动重跑，由用户重新提交）。
-    // IF NOT EXISTS：runMigrations 只容忍 duplicate column/no such column/no such table，
-    // 「table already exists」会炸——新建表/索引一律 IF NOT EXISTS + 双写 schema.sql。
-    // 编号 v21：本批最初开发为 v20，与 main 先合入的 comments 表迁移（评论采集 v20）撞号——
-    // 已应用 v20 的生产库会因版本账本短路永不建 jobs 表，合并前让位改 v21（2026-10-07）。
+    // 双写纪律（PLAN §3.2）：statements 与 schema.sql 的 comments DDL 逐字一致（含缩进/注释性空白，
+    // 不按 TS 嵌套重排缩进）——db/comments.test.ts 有 sqlite_master.sql 逐字比对测试守漂移。
+    version: 20,
+    note: 'comments 表新建(2026-10-03 评论采集解冻):B 站视频评论完整分析树,两层(根+楼中楼平铺),UNIQUE(rpid_str) 幂等 upsert,missing_since 单列删除确认语义。双写 schema.sql;新库全量重放安全(CREATE IF NOT EXISTS)',
+    statements: [
+      `CREATE TABLE IF NOT EXISTS comments (
+  id             INTEGER PRIMARY KEY AUTOINCREMENT,
+  rpid_str       TEXT NOT NULL,
+  video_id       INTEGER NOT NULL REFERENCES videos(id),
+  root_rpid      TEXT NOT NULL DEFAULT '0',
+  parent_rpid    TEXT NOT NULL DEFAULT '0',
+  dialog_rpid    TEXT NOT NULL DEFAULT '0',
+  is_root        INTEGER NOT NULL DEFAULT 1,  -- root_rpid='0' 冗余派生列(根列表索引前缀/统计免 CASE)
+  mid_str        TEXT,
+  uname          TEXT,                        -- member 快照冗余列(渲染免拆 JSON)
+  member         TEXT,                        -- member 对象 JSON 快照(重采整体替换)
+  message        TEXT,                        -- content.message 原文(检索列)
+  content        TEXT,                        -- content 对象 JSON(emote/jump_url/pictures/@)
+  like_count     INTEGER NOT NULL DEFAULT 0,  -- 点赞数(避 SQL 关键字 LIKE;重采更新)
+  rcount         INTEGER NOT NULL DEFAULT 0,  -- 当前可见楼中楼数(根评论;对账分母 fallback,实时分母=page.count §4.5)
+  reply_total    INTEGER NOT NULL DEFAULT 0,  -- B 站 count 字段:历史楼中楼总数(含已删,可>rcount)
+  ctime_s        INTEGER,                     -- 发布时间,B 站原值 unix 秒!(列名显式 _s 后缀,防当毫秒与 *_at 混算)
+  ip_location    TEXT,                        -- reply_control.location 解析(需登录态 cookie)
+  state          INTEGER NOT NULL DEFAULT 0,  -- 0 正常 / 17 阿瓦隆隐藏(仅自己可见)
+  invisible      INTEGER NOT NULL DEFAULT 0,
+  folded         INTEGER NOT NULL DEFAULT 0,  -- folder.is_folded(该评论自身被折叠;has_folded=「有折叠子回复」不并入)
+  up_like        INTEGER NOT NULL DEFAULT 0,  -- up_action.like(UP 觉得很赞)
+  up_reply       INTEGER NOT NULL DEFAULT 0,  -- up_action.reply(UP 已回复)
+  is_up          INTEGER NOT NULL DEFAULT 0,  -- 评论者==UP 主(String(upper_mid)==mid_str,服务端算)
+  pin_kind       TEXT,                        -- 置顶:'admin'|'upper'|'vote';NULL 非置顶(每轮先清后打)
+  first_seen_at  INTEGER NOT NULL,            -- 首采时刻(毫秒;upsert 保留)
+  last_seen_at   INTEGER NOT NULL,            -- 最近一次在响应中见到(毫秒;missing 判定基准)
+  first_page     INTEGER,                     -- 首采时主列表页序(仅根评论;诊断用)
+  first_sort     TEXT,                        -- 首采排序 'hot'|'time'|'floor'(诊断)
+  batch_id       TEXT,                        -- 首采批次 uuid(crypto.randomUUID(),node:crypto 零新增依赖;同轮所有行同值;重采不动)
+  missing_since  INTEGER                      -- 首次缺席完整全量轮的扫描起始时刻(毫秒;仅根评论参与、仅完整轮置值);NULL=在库正常
+)`,
+      'CREATE UNIQUE INDEX IF NOT EXISTS idx_comments_rpid ON comments(rpid_str)',
+      'CREATE INDEX IF NOT EXISTS idx_comments_video ON comments(video_id, is_root, like_count DESC)',
+      'CREATE INDEX IF NOT EXISTS idx_comments_root ON comments(root_rpid)',
+      'CREATE INDEX IF NOT EXISTS idx_comments_parent ON comments(parent_rpid)',
+    ],
+  },
+  {
+    // 通用任务台账（CLI 全功能 web 化 Phase 4）：asr-backfill / collect-find 两类长任务的
+    // server 进程内串行队列，web 免经 CLI。jobs 行即台账（params/progress/result/error），
+    // 物理不删（DELETE 语义 = cancel）；状态机 pending→running→done|failed，可取消→cancelled；
+    // 重启恢复把 pending/running 置 cancelled（批任务不自动重跑）。IF NOT EXISTS 重放安全。
+    // 编号 v21：初开发为 v20 与 main 先合入的 comments 迁移撞号（版本账本短路会永不建表），合并前让位。
     version: 21,
     note: 'jobs 通用任务台账（asr-backfill | collect-find；status: pending|running|done|failed|cancelled）+ status/created_at 两索引。新建表/索引用 IF NOT EXISTS（重放安全）+ 双写 schema.sql。v20 编号让位 comments 迁移，本迁移由 v20 改号 v21（2026-10-07 合并前修）',
     statements: [

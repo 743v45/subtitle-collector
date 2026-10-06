@@ -10,9 +10,10 @@ import { Command } from 'commander';
 import { resolveConfig } from './config.js';
 import { emitResult, setQuiet, EXIT_CODES, type Format } from './output.js';
 import { getCliContext, setCliContext, peekCliContext, type CliContext } from './context.js';
-
-// 与 [package.json](apps/collector-server/package.json) version 保持一致；硬编码避免 tsx 跑 JSON import attribute 的兼容性麻烦。
-const VERSION = '0.1.0';
+// 版本单源：读 [package.json](../../package.json) 的 version（2026-10-05 P1-11 去硬编码），
+// --version 旗标与 version 子命令共用；再导出供测试锁定同源（version.test.ts）。
+import { VERSION } from './version.js';
+export { VERSION };
 
 const program = new Command();
 
@@ -94,6 +95,9 @@ export async function main(): Promise<void> {
       { buildStatsCommand },
       { buildClientsCommand },
       { buildTasksCommand },
+      { buildCreatorsCommand },
+      { buildCategoriesCommand },
+      { buildSettingsCommand },
       { buildServerCommand },
       { buildCollectCommand },
       { buildYtSearchCommand },
@@ -101,6 +105,7 @@ export async function main(): Promise<void> {
       { buildTagsCommand },
       { buildTranslateCommand },
       { buildAsrCommand },
+      { buildCommentsCommand },
     ] = await Promise.all([
       import('./commands/videos.js'),
       import('./commands/versions.js'),
@@ -109,6 +114,9 @@ export async function main(): Promise<void> {
       import('./commands/stats.js'),
       import('./commands/clients.js'),
       import('./commands/tasks.js'),
+      import('./commands/creators.js'),
+      import('./commands/categories.js'),
+      import('./commands/settings.js'),
       import('./commands/server.js'),
       import('./commands/collect.js'),
       import('./commands/collect-yt-search.js'),
@@ -116,6 +124,7 @@ export async function main(): Promise<void> {
       import('./commands/tags.js'),
       import('./commands/translate.js'),
       import('./commands/asr.js'),
+      import('./commands/comments.js'),
     ]);
     program.addCommand(buildVideosCommand());   // videos list / get / get-by-id
     program.addCommand(buildVersionsCommand()); // versions get
@@ -124,6 +133,9 @@ export async function main(): Promise<void> {
     program.addCommand(buildStatsCommand());    // stats overview / stats count --by
     program.addCommand(buildClientsCommand());  // clients list / reporting / command
     program.addCommand(buildTasksCommand());    // tasks list / get / retry（采集任务查询与重试）
+    program.addCommand(buildCreatorsCommand()); // creators list / get（UP 主查询,2026-10 账本 P1-7）
+    program.addCommand(buildCategoriesCommand()); // categories list / add / update / delete（UP 主分类 CRUD,2026-10 账本 P1-9）
+    program.addCommand(buildSettingsCommand()); // settings get / set（tag-priority、collect-timeout,2026-10 账本 P1-9）
     program.addCommand(buildServerCommand());   // server ping / status / start / stop
     // collect search / subtitle / dedupe；yt-search 子命令在 collect 组装后挂载
     //（collect-yt-search.ts 复用 collect.ts 导出件，反向 import 会成环——在 main 组装层接线）
@@ -131,9 +143,10 @@ export async function main(): Promise<void> {
     collectCmd.addCommand(buildYtSearchCommand());
     program.addCommand(collectCmd);
     program.addCommand(buildSubCommand());   // sub search（字幕正文片段检索）
-    program.addCommand(buildTagsCommand());  // tags list / apply / remove（视频标签）
+    program.addCommand(buildTagsCommand());  // tags list / apply / remove / rename / delete（视频标签与标签库纠错）
     program.addCommand(buildTranslateCommand()); // translate pending / source / fill（补翻工作流）
     program.addCommand(buildAsrCommand());       // asr backfill（无字幕兜底转写编排）
+    program.addCommand(buildCommentsCommand());  // comments collect / tree / verify（评论采集与树查看,2026-10）
 
     await program.parseAsync(process.argv);
   } catch (err) {

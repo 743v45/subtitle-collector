@@ -8,6 +8,8 @@ import { videosList, type VideosListOpts } from './commands/videos.js';
 import { latestTaskStatusByVideoIds } from '../db/advanced.js';
 import { getVideoTagsByVideoIds } from '../db/tags.js';
 import { getTagPriority, type TagPrioritySource } from '../db/settings.js';
+import { treeByVideo } from '../db/comments.js';
+import { commentsMetaByVideoIds, renderCommentsMd, type BundleCommentsMeta } from './bundle-comments.js';
 
 // ── 时间格式化 ──
 
@@ -78,6 +80,9 @@ export interface BundleVideoEntry {
   tags: BundleTag[];
   // 播放量（extra.stat.view）；extra 缺 stat.view 时省略字段
   view?: number;
+  // 评论摘要（§6.2）：库内 0 评论（未采/评论区关闭）时省略字段，消费方以 'comments' in v 判别
+  // （对齐 view 哲学）；存量 bundle 不回填（历史原料忠实性）
+  comments?: BundleCommentsMeta;
   subtitle: BundleSubtitleMeta | null;  // null = 无字幕/轨缺失/payload 损坏
   // 受限标记：该视频最近一次 collect_tasks 任务 status='limited'（半入库：元信息在、0 轨，
   // 如 YouTube pot 门槛）。与「真无字幕」的区分字段——重采成功后最新任务不再是 limited，
@@ -273,6 +278,7 @@ export function buildBundle(db: Database.Database, opts: BuildBundleOpts): Bundl
   const latestStatus = latestTaskStatusByVideoIds(db, ids);
   const extras = videoExtrasByVideoIds(db, ids);
   const tagsById = mergeBundleTags(db, ids, extras);
+  const commentsMeta = commentsMetaByVideoIds(db, ids);  // 评论统计批量算齐（§6.2 防 N+1）
   const videos: BundleVideoEntry[] = [];
   const files: BundleFile[] = [{ path: 'ANALYZE.md', content: ANALYZE_MD }];
   const errors: Array<{ source_vid: string; message: string }> = [];
@@ -312,6 +318,13 @@ export function buildBundle(db: Database.Database, opts: BuildBundleOpts): Bundl
       }
     }
     videos.push(entry);
+    // 评论导出（§6.5：有则随视频导出，与 subtitle:null 哲学一致——数据在库就进原料；0 评论无文件无字段）
+    const cm = commentsMeta.get(v.id);
+    if (cm) {
+      const meta: BundleCommentsMeta = { file: `comments/${v.source_vid}.md`, ...cm };
+      entry.comments = meta;
+      files.push({ path: meta.file, content: renderCommentsMd(v, meta, treeByVideo(db, v.id)) });
+    }
   }
 
   const manifest: BundleManifest = {

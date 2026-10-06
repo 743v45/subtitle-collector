@@ -1,7 +1,7 @@
 // Phase 1「CLI 全功能 web 化」新增端点封装（api.ts 撞 maxLines 台账线后拆出的兄弟模块）：
 // 字幕检索（CLI sub search）/ 补翻（CLI translate pending+source）/ server 状态。
 // 复用 api-core 的 BASE/ensureOk；类型内联本模块（自带契约，不进 types.ts）。
-import { BASE, ensureOk } from './api-core';
+import { BASE, ensureOk } from './apiCore';
 
 // ── 字幕检索（CLI sub search 的 web 形态；snippet 形状以 cli/commands/sub.ts 的 Snippet 为准：
 //    context 是 ±ctxSec 邻段拼接字符串，非 before/after 数组）──

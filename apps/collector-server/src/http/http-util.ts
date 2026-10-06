@@ -93,6 +93,15 @@ export async function runHandler(res: ServerResponse, fn: () => Promise<void> | 
   }
 }
 
+// 占位符 token 清单（B2 启动闸）：命中即视为未配置——脚手架默认值等效裸奔（查文档即可猜到）。
+// 初始仅 docker-compose 的缺省值；发现新的占位符形态往数组追加即可（留扩展位）。
+const PLACEHOLDER_TOKENS: readonly string[] = ['change-me-collector-token'];
+
+/** 是否命中占位符 token（main.ts 暴露部署启动校验用）。空串不在此判：由调用方既有 !TOKEN 分支先拦，函数本身对空串返回 false。 */
+export function isPlaceholderToken(t: string): boolean {
+  return PLACEHOLDER_TOKENS.includes(t);
+}
+
 // HTTP /api/* 鉴权判定（此前 token 只护 WS hello，HTTP 控制面完全裸奔）。
 // required：仅暴露部署（0.0.0.0 / 放行外部 Host）为 true —— loopback 部署保持免鉴权。
 // 放行三条路（任一）：

@@ -22,34 +22,34 @@
 
 ## 2. 缺口台账
 
-状态：☐ 待办 / ✅ 完成。批次语义：**批次 1** 随 backlog P0 执行流；**批次 2** 落 P1 窗口（消费端配套）；**批次 3** 为 P2+ 治理。
+状态：☐ 待办 / ✅ 完成。批次语义（2026-10-04 起旧「改造清单/backlog」以 [improvement-backlog-2026-10.md](improvement-backlog-2026-10.md) 为唯一载体，原 2026-08 清单无文件载体已失传）：**批次 1** 随账本 P0/P1 执行流；**批次 2** 落 P1 窗口（消费端配套）；**批次 3** 为 P2+ 治理。
 
-### 批次 1（随 P0；执行序 = 漂移修复 → 死工具处置 → 任务生命周期 → P0-2 配套）
+### 批次 1（随账本 P0/P1；执行序 = 漂移修复 → 死工具处置 → 任务生命周期 → 存量回填配套）
 
 | # | 缺口 | 归类 | 状态 |
 |---|---|---|---|
-| 1 | **「运行即错」级文档漂移三处**：[playbooks.md:70-71](../skills/collector/references/playbooks.md#L70) `tags apply --source ai` 照文档跑必退 2（isPlatform 校验）＋「三档」/「删全部三档」文案 stale；[SKILL.md:63](../skills/collector/SKILL.md#L63) collect 子命令计数 12→实际 11；[SKILL.md:20](../skills/collector/SKILL.md#L20) 退出码表漏 EXT_UPDATE=6（[output.ts:8-16](../../apps/collector-server/src/cli/output.ts#L8) 有定义） | bug 级漂移 | ☐ |
-| 2 | **死工具双删**：`scripts/run-collector-server.mjs`（硬编码已迁移旧仓库路径必挂，功能被 CLI `server start` 覆盖；[playbooks.md](../skills/collector/references/playbooks.md) playbook 1 同步改指 CLI）＋ `scripts/body2subtitle.py`（零引用零登记，功能被 `export subtitle` 覆盖） | 处置 | ☐ |
+| 1 | **「运行即错」级文档漂移三处**：[playbooks.md:70-71](../skills/collector/references/playbooks.md#L70) `tags apply --source ai` 照文档跑必退 2（isPlatform 校验）＋「三档」/「删全部三档」文案 stale；[SKILL.md:63](../skills/collector/SKILL.md#L63) collect 子命令计数 12→实际 11；[SKILL.md:20](../skills/collector/SKILL.md#L20) 退出码表漏 EXT_UPDATE=6（[output.ts:8-16](../../apps/collector-server/src/cli/output.ts#L8) 有定义） | bug 级漂移 | ✅（2026-10-04 漂移修复批次：`tags apply --source ai` 命令本体已被 0fd6972 顺手修为 `--scope ai --source bilibili`，残留为「三档」stale ×2——playbooks tags 段改四档口径并显式标注 `--scope`=档位/`--source`=平台、「删全档」实义是 `--scope` 省略；SKILL.md collect 计数 12→11（collect.ts 注册 10 + yt-search 组装层 1）；退出码表补 6=扩展版本过旧；verify-skill-sync 全绿） |
+| 2 | **死工具双删**：`scripts/run-collector-server.mjs`（硬编码已迁移旧仓库路径必挂，功能被 CLI `server start` 覆盖；[playbooks.md](../skills/collector/references/playbooks.md) playbook 1 同步改指 CLI）＋ `scripts/body2subtitle.py`（零引用零登记，功能被 `export subtitle` 覆盖） | 处置 | ✅（2026-10-04 双删落地：两文件零引用核实后 `git rm`（-131 行）；SKILL.md scripts 表删行、playbook 1 改指 `collector-cli server start`；verify-skill-sync 全绿证清理完整） |
 | 3 | **采集任务生命周期 CLI**（批次 1 功能最高位）：`tasks list / get / retry` 为主（HTTP 端点已备：`GET /api/collect-tasks` 筛选排序、`GET /api/collect-tasks/:id`、`POST /api/collect-tasks/retry`），`delete` / batch 直暴露视需——**下一批首选**（2026-10-02 消费端闭环批次推迟项登记，见 [consumption-loop.md](consumption-loop.md)「推迟项」） | 闭环配套 | ✅（2026-10-02 CLI 完整度批次：`tasks list/get/retry` 落地（[tasks.ts](../../apps/collector-server/src/cli/commands/tasks.ts)，list 对齐 GET /api/collect-tasks 全部筛选参数、get 含失败原因/回执、retry 多 id）；顺带落同批次的「`--server` 缺省防呆提示」（[main.ts](../../apps/collector-server/src/cli/main.ts)）；SKILL.md 命令表+样例块、help 客户端页、README 查询导出段同步；`delete` / batch 直暴露维持视需不落） |
-| 4 | **按字段缺失筛选 → force 刷新代码化**（归属改造清单 P0-2 本体，对齐 no-subtitle 回填先例） | 闭环配套 | ☐ |
+| 4 | **按字段缺失筛选 → force 刷新代码化**（存量回填配套，对齐 no-subtitle 回填先例；随账本 [P1-5](improvement-backlog-2026-10.md) 执行时顺带） | 闭环配套 | ☐ |
 
 ### 批次 2（P1 窗口，消费端配套 + 查询补齐）
 
 | # | 缺口 | 归类 | 状态 |
 |---|---|---|---|
-| 5 | videos list 补 5 个过滤参数：`creator_id / creator_uid / tags（多标 AND）/ tag_source / date_field`（db 层 [advanced.ts:10-34](../../apps/collector-server/src/db/advanced.ts#L10) 已支持，纯包装；「按标签选料导 bundle」是消费端高频） | 闭环配套 | ☐ |
+| 5 | videos list 补 5 个过滤参数：`creator_id / creator_uid / tags（多标 AND）/ tag_source / date_field`（db 层 [advanced.ts:10-34](../../apps/collector-server/src/db/advanced.ts#L10) 已支持，纯包装；「按标签选料导 bundle」是消费端高频） | 闭环配套 | ✅（2026-10-05 全五子项落地：`tags（多标 AND）` 0fd6972 前此已落；余 4 参数随账本 [P1-6](improvement-backlog-2026-10.md) 落地 b90a514——`--creator-id/--creator-uid/--tag-source/--date-field` 对齐 HTTP filter.ts 同名参数语义，失败→通过用例×4（结果集差异）+非法值 ARGS×2+help 文案断言，SKILL.md/help 同步） |
 | 6 | `stats count --by tag`：[stats.ts:36](../../apps/collector-server/src/cli/commands/stats.ts#L36) STATS_GROUP_BY 补 tag（[http/stats.ts:12](../../apps/collector-server/src/http/stats.ts#L12) 已有） | 闭环配套 | ✅（2026-10-02 消费闭环第 6 项：白名单+帮助六值、失败→通过用例×3、SKILL.md 同步） |
-| 7 | creators 查询 CLI（列表/详情/打分类；`GET /api/creators` 七键排序已备）——与 P0-2 存量回填绑定（查缺资料 UP 清单） | 闭环配套 | ☐ |
+| 7 | creators 查询 CLI（列表/详情/打分类；`GET /api/creators` 七键排序已备）——与存量回填绑定（账本 [P1-5](improvement-backlog-2026-10.md)；查缺资料 UP 清单） | 闭环配套 | ✅（2026-10-05 随账本 [P1-7](improvement-backlog-2026-10.md) 落地 a73af9c——`creators list/get` 经 server HTTP 通道对齐 tasks 先例；打分类端点（POST by-uid category）属 web 写路径，CLI 只补只读查询，未收纳） |
 
 ### 批次 3（P2+ 治理）
 
 | # | 缺口 | 归类 | 状态 |
 |---|---|---|---|
-| 8 | tags 改名/删标（HTTP `PATCH/DELETE /api/tags/:id` 已备；AI 打标纠错场景） | 已有能力包装 | ☐ |
-| 9 | categories CRUD / settings 读写 CLI（tag-priority、collect-timeout） | 已有能力包装 | ☐ |
-| 10 | 选项命名统一：`tags list --topN`→`--top`、`translate pending --asc`→`--desc` 惯例；**直接 breaking 不留 alias**（对齐 2026-08-24 `--source` 语义统一先例），同步 SKILL.md | 治理 | ☐ |
-| 11 | CLI VERSION 硬编码（[main.ts:14](../../apps/collector-server/src/cli/main.ts#L14)）改为读 package.json | 治理 | ☐ |
-| 12 | scripts 层最小契约成文并统一：退出码 0/非 0、失败 stderr 带 `[tag]` 分步日志（§9 可观察性）、stdout 数据可 pipe；现有优质工具（`youtube-collect-videos.mjs`）即范本。**不推 CLI 的 0-6 语义** | 治理 | ☐ |
+| 8 | tags 改名/删标（HTTP `PATCH/DELETE /api/tags/:id` 已备；AI 打标纠错场景） | 已有能力包装 | ✅（2026-10-05 随账本 [P1-8](improvement-backlog-2026-10.md) 落地 336acf5——`tags rename <id> --name <新名>`/`tags delete <id>` 纯 server HTTP 包装（ServerClient 增两方法，handleHttpError 归一 404→5/409→1），16 用例失败→通过，SKILL.md/help 同步） |
+| 9 | categories CRUD / settings 读写 CLI（tag-priority、collect-timeout） | 已有能力包装 | ✅ 转挂账本 [P1-9](improvement-backlog-2026-10.md)（2026-10-05 落地，36c0bcb） |
+| 10 | 选项命名统一：`tags list --topN`→`--top`、`translate pending --asc`→`--desc` 惯例；**直接 breaking 不留 alias**（对齐 2026-08-24 `--source` 语义统一先例），同步 SKILL.md | 治理 | ✅ 转挂账本 [P1-10](improvement-backlog-2026-10.md)（2026-10-05 落地，e897ca2） |
+| 11 | CLI VERSION 硬编码（[main.ts:14](../../apps/collector-server/src/cli/main.ts#L14)）改为读 package.json | 治理 | ✅（2026-10-05 转挂账本 [P1-11](improvement-backlog-2026-10.md) 落地：version.ts 单源 readFileSync + 兜底日志，main.ts 再导出；红灯（未导出不可测）→8 用例转绿锁「CLI 输出 === package.json version」，SKILL.md 无版本示例无需同步，65cdb45） |
+| 12 | scripts 层最小契约成文并统一：退出码 0/非 0、失败 stderr 带 `[tag]` 分步日志（§9 可观察性）、stdout 数据可 pipe；现有优质工具（`youtube-collect-videos.mjs`）即范本。**不推 CLI 的 0-6 语义** | 治理 | ✅（2026-10-05，[SCRIPTS-CONTRACT.md](../quality/SCRIPTS-CONTRACT.md) 落盘 + 7 脚本顺手对齐 + 例外登记表，4b9f88b） |
 
 ## 3. 每项执行纪律 checklist
 

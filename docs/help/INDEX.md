@@ -5,9 +5,11 @@
 
 ## 上手
 
+- [[AI-接手]] — 新 AI 会话默认入口:载体分工 + 按任务必读 + 记忆晋升规约
 - [[开始使用]] — 三端装起来跑通第一条链路
 - [[环境变量]] — 部署五变量 + ASR 转写三变量,token / 暴露部署组合
 - [[Docker 部署]] — 生产部署、备份、数据卷红线
+- [[灾难重建]] — 裸机从零重建:仓库/.env/容器/群晖副本恢复/crontab/验收一条龙
 
 ## 采集
 
@@ -17,13 +19,14 @@
 - [[批量采集 UP 主视频]] — UP 全量 / 新视频发现 / 多 UP 巡检
 - [[采集 YouTube 频道]] — 频道批量 + 关键词搜索
 - [[采集合集与搜索]] — 合集展开、条件搜索、充电专属视频
-- [[客户端与任务派发]] — 多机管理、仅上报开关、客户端命名、双平台登录态判因、采集任务查询与重试(tasks)
+- [[客户端与任务派发]] — 多机管理、仅上报开关、客户端命名、双平台登录态判因、采集任务查询与重试(tasks);web 任务历史真分页(批次=1 单元)
 - [[无字幕视频处理]] — no-subtitle 标记圈定与 `asr backfill` 批量转写兜底
+- [[采集评论]] — B 站评论区采集入库(`comments collect`)、校验(`verify`)、树形查看(`tree`)与 web 详情页只读树
 - [[Web 批量操作]] — web 批量打标/摘标、合集卡、搜索采集卡、条件采集、创作者刷新资料
 
 ## 查询与导出
 
-- [[检索视频库]] — web 列表筛选 + `videos list` 全参数
+- [[检索视频库]] — web 列表筛选 + `videos list` 全参数 + `creators` UP 主查询;含视频详情、创作者批量分类/资料刷新、看板 Top10/覆盖率与变更日志内链
 - [[全文检索字幕]] — `sub search` 带时间戳定位
 - [[字幕检索页]] — web 搜字幕正文:正则 / 上下文 / 高亮跳详情
 - [[标签体系]] — 六档标签的打、摘、查
@@ -50,5 +53,12 @@
 | [CLAUDE](../../CLAUDE.md) | 开发纪律:样式 / 测试 / 措辞红线 / 路线 |
 | [MANUAL-collector](../../MANUAL-collector.md) | 真机验收清单 |
 | [docs/quality/RULES](../quality/RULES.md) | 测试质量细则 |
+| [docs/quality/SCRIPTS-CONTRACT](../quality/SCRIPTS-CONTRACT.md) | scripts 工具脚本输出契约:退出码 / stderr 分步日志 / stdout 数据可 pipe(含例外登记表) |
+| [改造账本](../plans/improvement-backlog-2026-10.md) | 改善项唯一台账:登记/划销/优先级 |
+| [CLI 完整度台账](../plans/cli-completeness.md) | CLI 缺口登记与划销(含反向登记) |
+| [消费端演进](../plans/consumption-loop.md) | 消费端闭环规划与推迟项登记 |
+| [DOUYIN-PROGRESS](../../DOUYIN-PROGRESS.md) | 抖音全量集成进度与决策记录 |
+| [docs/architecture.html](../architecture.html) | 架构总览静态页(数据流/红线/双库) |
+| [平台接入手册](../platform-onboarding.md) | 新平台接入的清单与决策记录模板 |
 | [docs/superpowers/](../superpowers/) | 历史设计文档与实现计划归档 |
 | [CHANGELOG](../../CHANGELOG.md) | 变更记录 |
