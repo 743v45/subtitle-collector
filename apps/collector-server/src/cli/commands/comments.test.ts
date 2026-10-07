@@ -11,6 +11,7 @@
 // | R1 | 纯函数 11 组 + I/O 适配 5 组 + 编排 20 组 + 装配 5 组（共 41）| 通过 | sleep 全注入；风控退避不真等；发现并回归 cursor 透传/pins 登记/floors 闸门/buffer 空转/loadWbi 空键 五 bug |
 // | R2 | +6 组（47）：定位三路 source 分支/批量抛错侧 -101 中止/楼中楼预算与页帽闸门/parseHitStats 饱和/selectRefreshRoots 逆序/logOf 缺省 | 通过 | 补齐 c8 分支覆盖盲区（2026-10-04）；全部 mock 注入无真网络 |
 // | R3 | +12 组（59）：全局分支门定向补盲（定位失败三态/-403 强刷再败/count·ingest 裸形态/ingest 缺省与硬停不冲/缺省 deps 默认路由/risk_control 归一/marker 批失败不拦轮/dry-run partial/抛错侧 run_error 兜底/中途 3 连败顶停/预览根去重/装配层负整数与 bvid-file 不可读） | 通过 | c8 全局分支 92.99→94.00 越过 93 门（2026-10-04）；全部 mock 注入无真网络 |
+// | R4 | renderTree reply_to 悬空兜底（悬空+parent_reply_name 快照 → 回复 @快照；与 bundle 同语义，1 组） | 通过 | 2026-10-07 媒体信息轻量增强 |
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -1115,7 +1116,7 @@ function seedDb(dir: string): { dbPath: string; videoId: number } {
   const up = (o: Partial<CommentUpsertRow> & { rpid_str: string }): CommentUpsertRow => ({
     root_rpid: '0', parent_rpid: '0', dialog_rpid: '0', mid_str: null, uname: null, member: null,
     message: null, content: null, like_count: 0, rcount: 0, reply_total: 0, ctime_s: null,
-    ip_location: null, state: 0, invisible: 0, folded: 0, up_like: 0, up_reply: 0, ...o,
+    ip_location: null, state: 0, invisible: 0, folded: 0, up_like: 0, up_reply: 0, parent_reply_name: null, ...o,
   });
   upsertComments(db, {
     videoId, upperMid: '9001', fetchedAt: 1_700_000_000_000, batchId: 'b1', page: 1, sort: 'time',
@@ -1139,7 +1140,7 @@ test('renderTree：§6.3 缩进文本全要素（UP主/IP/置顶/折叠/仅自�
     id: 0, video_id: 1, root_rpid: '0', parent_rpid: '0', dialog_rpid: '0', is_root: 1,
     mid_str: null, uname: null, member: null, message: null, content: null, like_count: 0,
     rcount: 0, reply_total: 0, ctime_s: null, ip_location: null, state: 0, invisible: 0,
-    folded: 0, up_like: 0, up_reply: 0, is_up: 0, pin_kind: null, first_seen_at: 0,
+    folded: 0, up_like: 0, up_reply: 0, is_up: 0, pin_kind: null, parent_reply_name: null, first_seen_at: 0,
     last_seen_at: 0, first_page: null, first_sort: null, batch_id: null, missing_since: null, ...o,
   });
   const rootUp = rec({ rpid_str: '101', uname: 'UP酱', is_up: 1, like_count: 20, ip_location: '上海', ctime_s: 1_700_000_000, up_reply: 1, message: '根正文', pin_kind: 'upper' });
@@ -1177,6 +1178,34 @@ test('renderTree：§6.3 缩进文本全要素（UP主/IP/置顶/折叠/仅自�
   assert.ok(limited.includes('根已删除的楼层'), '孤儿组不受 limit 影响');
   const empty = renderTree({ roots: [], floorsByRoot: new Map() }, {});
   assert.ok(empty.includes('(该视频暂无评论)'));
+});
+
+test('renderTree：reply_to 悬空兜底（悬空+parent_reply_name 快照 → 回复 @快照;与 bundle 导出同语义）', () => {
+  const rec = (o: Partial<CommentRecord> & { rpid_str: string }): CommentRecord => ({
+    id: 0, video_id: 1, root_rpid: '0', parent_rpid: '0', dialog_rpid: '0', is_root: 1,
+    mid_str: null, uname: null, parent_reply_name: null, member: null, message: null, content: null, like_count: 0,
+    rcount: 0, reply_total: 0, ctime_s: null, ip_location: null, state: 0, invisible: 0,
+    folded: 0, up_like: 0, up_reply: 0, is_up: 0, pin_kind: null, first_seen_at: 0,
+    last_seen_at: 0, first_page: null, first_sort: null, batch_id: null, missing_since: null, ...o,
+  });
+  const root = rec({ rpid_str: 'R', uname: '根作者', like_count: 5 });
+  // 悬空 dialog(888 不在树)+ 快照;parent==dialog → 不缀「(回复对象已删除)」
+  const ghost = rec({ rpid_str: 'g1', root_rpid: 'R', parent_rpid: '888', dialog_rpid: '888', is_root: 0, uname: '悬快照', parent_reply_name: '已删君', message: '带快照的楼', ctime_s: 1 });
+  // 悬空 + parent≠dialog → 快照前缀与「(回复对象已删除)」标注可叠加
+  const both = rec({ rpid_str: 'g2', root_rpid: 'R', parent_rpid: '999', dialog_rpid: '888', is_root: 0, uname: '双标注', parent_reply_name: '删者', message: '叠标注的楼', ctime_s: 2 });
+  // 悬空且无快照 → 维持省略前缀(现状)
+  const bare = rec({ rpid_str: 'g3', root_rpid: 'R', parent_rpid: 'gone', dialog_rpid: 'gone', is_root: 0, uname: '无摘要', parent_reply_name: null, message: '无快照的楼', ctime_s: 3 });
+  // dialog=自身(直回根)即使误带快照也恒省略
+  const self = rec({ rpid_str: 'g4', root_rpid: 'R', parent_rpid: 'R', dialog_rpid: 'g4', is_root: 0, uname: '直根', parent_reply_name: '不该出现', message: '直回根的楼', ctime_s: 4 });
+  const tree = { roots: [root], floorsByRoot: new Map([['R', [ghost, both, bare, self]]]) };
+  const text = renderTree(tree, {});
+  assert.ok(text.includes('- 【赞 0】@悬快照 回复 @已删君:带快照的楼'), '悬空 → parent_reply_name 快照兜底');
+  assert.ok(text.includes('- 【赞 0】@双标注 回复 @删者(回复对象已删除):叠标注的楼'), '快照前缀与已删标注可叠加');
+  assert.ok(text.includes('- 【赞 0】@无摘要:无快照的楼'), '悬空且快照缺失维持省略');
+  // dialog=自身(直回根)即使误带快照也无「回复 @」前缀;parent(R)≠dialog(g4) 缀的
+  // 「(回复对象已删除)」系 parent_missing 既有纯字段比较语义,与本兜底无关
+  assert.ok(text.includes('@直根(回复对象已删除):直回根的楼'), 'dialog=自身无回复前缀');
+  assert.ok(!text.includes('不该出现'), '直回根误带快照不泄入前缀');
 });
 
 test('buildCommentsCommand：tree/verify 缺 --bvid → ARGS；未知视频 → NOT_FOUND 退 5', async () => {

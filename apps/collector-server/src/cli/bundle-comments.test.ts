@@ -9,6 +9,7 @@
 // | 轮次 | 范围 | 结果 | 备注 |
 // |---|---|---|---|
 // | R1 | 批量统计/coverage 口径/md 渲染全形态/buildBundle 集成/模板增补 | 通过 | 2026-10-04 C6 |
+// | R2 | 图片行(0/1/2 图/缩进/编号兜底)/悬空回复前缀兜底(parent_reply_name) | 通过 | 2026-10-07 媒体信息轻量增强 |
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -31,7 +32,7 @@ function mkRow(over: Partial<CommentRecord> & Pick<CommentRecord, 'rpid_str'>): 
     id: seq,
     video_id: 1,
     root_rpid: '0', parent_rpid: '0', dialog_rpid: '0', is_root: 1,
-    mid_str: '100', uname: '用户A', member: null, message: '正文', content: null,
+    mid_str: '100', uname: '用户A', parent_reply_name: null, member: null, message: '正文', content: null,
     like_count: 0, rcount: 0, reply_total: 0, ctime_s: CT,
     ip_location: null, state: 0, invisible: 0, folded: 0,
     up_like: 0, up_reply: 0, is_up: 0, pin_kind: null,
@@ -225,6 +226,68 @@ test('parent 链成环按深度收口不挂死;parent=0 楼行/父悬空上提 2
   assert.ok(lines.includes('- 【赞 0】@:正文'), 'uname null 兜底空串');
   assert.ok(lines.includes('  - 【赞 0】@回无名:正文'), 'dialog 行在库但无名 → 3 层深度保留、前缀省略');
   assert.ok(lines.includes('- 【赞 0】@孤子:正文'), '父悬空上提挂楼根（2 层）');
+});
+
+// ── renderCommentsMd：图片行(content.pictures → ![图N](url),用户拍板图片本体不下载)──
+
+test('图片行:正文后逐图 ![图N](url)(2 图根/img_src 优先 url 兜底;1 图楼层缩进内容列;0 图/空数组/坏 JSON 不出行)', () => {
+  const root2 = mkRow({
+    rpid_str: 'r2p', like_count: 5, message: '带两图',
+    content: JSON.stringify({ pictures: [
+      { img_src: 'http://i0.hdslb.com/bfs/a.jpg', img_width: 880 }, // 实测形态:img_src 为权威键
+      { url: 'http://i0.hdslb.com/bfs/b.jpg' }, // img_src 缺失 → url 兜底
+    ] }),
+  });
+  const rEmpty = mkRow({ rpid_str: 'r0p', like_count: 4, message: '空图数组', content: JSON.stringify({ pictures: [] }) });
+  const rBad = mkRow({ rpid_str: 'rBad', like_count: 3, message: '坏json', content: 'not-json' });
+  const f1 = floorOf('f1p', 'r2p', {
+    uname: '楼层图', message: '一楼一图',
+    content: JSON.stringify({ pictures: [{ img_src: 'http://i0.hdslb.com/bfs/c.jpg' }] }),
+  });
+  const md = renderCommentsMd(V, STATS, tree([root2, rEmpty, rBad], [f1]));
+  const lines = md.split('\n');
+  assert.equal(lines[4], '## 【赞 5】@用户A · 2026-10-03');
+  assert.equal(lines[5], '带两图');
+  assert.equal(lines[6], '![图1](http://i0.hdslb.com/bfs/a.jpg)', '根正文后逐图一行,无缩进');
+  assert.equal(lines[7], '![图2](http://i0.hdslb.com/bfs/b.jpg)', 'N 从 1 连续计;img_src 缺 → url 兜底');
+  assert.equal(lines[9], '- 【赞 0】@楼层图:一楼一图');
+  assert.equal(lines[10], '  ![图1](http://i0.hdslb.com/bfs/c.jpg)', '楼层图片行缩进到内容列(2 层楼 2 空格,对齐多行正文续行)');
+  assert.equal(lines[13], '空图数组');
+  assert.equal(lines[14], '', '空 pictures 数组不出图片行(正文后直接空行)');
+  assert.ok(!lines.slice(15).some((l) => l.includes('![')), '坏 JSON 根不出图片行也不炸导出');
+});
+
+test('图片行:两键皆缺的单图跳过不占号(连续编号只数渲染行);孤儿楼层图片行同样缩进 2 空格', () => {
+  const o1 = mkRow({
+    rpid_str: 'o1', is_root: 0, root_rpid: 'X', parent_rpid: 'X', dialog_rpid: 'o1',
+    uname: '孤图', message: '孤楼带图',
+    content: JSON.stringify({ pictures: [{ img_width: 100 }, { img_src: 'http://i0.hdslb.com/bfs/ok.jpg' }] }),
+  });
+  const md = renderCommentsMd(V, STATS, tree([], [o1]));
+  const lines = md.split('\n');
+  assert.equal(lines[5], '- 【赞 0】@孤图:孤楼带图(父评论已删除)');
+  assert.equal(lines[6], '  ![图1](http://i0.hdslb.com/bfs/ok.jpg)', '无 URL 的图跳过,有 URL 的按渲染序计 图1(不跳号)');
+});
+
+// ── renderCommentsMd：「回复 @」悬空兜底(parent_reply_name 快照)──
+
+test('回复前缀兜底:dialog 在库用其 uname;悬空且 parent_reply_name 非空用快照;皆无维持省略;dialog=自身恒省略', () => {
+  const rootA = mkRow({ rpid_str: 'A', uname: '楼主A', like_count: 10 });
+  const inDb = floorOf('inDb', 'A', { uname: '在库者' });
+  const repDb = replyTo('repDb', 'A', 'inDb', { uname: '回库' }); // dialog 指向在库行 → 现状 uname
+  // dialog 悬空(指向行不在库)且带被回复者快照 → 快照兜底(B 站楼内互复 dialog==parent,快照即 dialog 对象名)
+  const ghost = mkRow({ rpid_str: 'ghost', is_root: 0, root_rpid: 'A', parent_rpid: 'gone', dialog_rpid: 'gone', uname: '悬快照', parent_reply_name: '已删君' });
+  // 悬空且无快照 → 维持现状省略前缀(§2.4 边界)
+  const bare = mkRow({ rpid_str: 'bare', is_root: 0, root_rpid: 'A', parent_rpid: 'gone2', dialog_rpid: 'gone2', uname: '无摘要', parent_reply_name: null });
+  // 直回根(dialog=自身)即使误带快照也省略(B 站免渲染「回复 @根作者」)
+  const self = mkRow({ rpid_str: 'self', is_root: 0, root_rpid: 'A', parent_rpid: 'A', dialog_rpid: 'self', uname: '直根', parent_reply_name: '不该出现' });
+  const lines = renderCommentsMd(V, STATS, tree([rootA], [inDb, repDb, ghost, bare, self])).split('\n');
+  assert.ok(lines.includes('- 【赞 0】@在库者:正文'));
+  assert.ok(lines.includes('  - 【赞 0】@回库 回复 @在库者:正文'), 'dialog 行在库 → 用其 uname(现状不变)');
+  assert.ok(lines.includes('- 【赞 0】@悬快照 回复 @已删君:正文'), '悬空 → parent_reply_name 快照兜底');
+  assert.ok(lines.includes('- 【赞 0】@无摘要:正文'), '悬空且快照缺失 → 维持省略(现状不变)');
+  assert.ok(lines.includes('- 【赞 0】@直根:正文'), 'dialog=自身恒省略前缀');
+  assert.ok(!lines.some((l) => l.includes('不该出现')), '直回根的快照不得泄入前缀');
 });
 
 // ── renderCommentsMd：多行 message / 孤儿虚拟分组 / missing 确认根 ──

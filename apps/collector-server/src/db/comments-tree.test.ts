@@ -8,6 +8,7 @@
 // | 轮次 | 范围 | 结果 | 备注 |
 // |---|---|---|---|
 // | R1 | 全要素组装 / 四层链拍平 / limit 截根 / 空树（4 组） | 通过 | 夹具与 cli renderTree 字节锁定测试同源（2026-10-05） |
+// | R2 | reply_to 悬空兜底（悬空+parent_reply_name 快照 → 快照；在库优先/皆无/自身·0 恒 null 维持） | 通过 | 2026-10-07 媒体信息轻量增强，语义对齐 bundle-comments.ts replyPrefix |
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -18,7 +19,7 @@ import type { CommentRecord, CommentTree } from './comments.js';
 function rec(o: Partial<CommentRecord> & { rpid_str: string }): CommentRecord {
   return {
     id: 0, video_id: 1, root_rpid: '0', parent_rpid: '0', dialog_rpid: '0', is_root: 1,
-    mid_str: null, uname: null, member: null, message: null, content: null, like_count: 0,
+    mid_str: null, uname: null, parent_reply_name: null, member: null, message: null, content: null, like_count: 0,
     rcount: 0, reply_total: 0, ctime_s: null, ip_location: null, state: 0, invisible: 0,
     folded: 0, up_like: 0, up_reply: 0, is_up: 0, pin_kind: null, first_seen_at: 0,
     last_seen_at: 0, first_page: null, first_sort: null, batch_id: null, missing_since: null, ...o,
@@ -105,6 +106,29 @@ test('shapeTree：四层 parent 链第 4 层拍平到 3；dialog=自身/0 → �
   assert.equal(byId.get('Z')!.reply_to, null, "dialog='0' → 无指向");
   assert.equal(byId.get('B')!.reply_to, '甲');
   assert.equal(byId.get('D')!.reply_to, '丙');
+});
+
+test('shapeTree reply_to 悬空兜底：dialog 悬空+parent_reply_name 快照 → 快照；在库优先 uname；皆无/自身·0 恒 null', () => {
+  const root = rec({ rpid_str: 'R', uname: '根作者', like_count: 5 });
+  const a = rec({ rpid_str: 'A', root_rpid: 'R', parent_rpid: 'R', dialog_rpid: 'A', is_root: 0, uname: '甲', ctime_s: 0 });
+  // dialog 指向在库行（A，uname 甲）→ 现状 uname 优先，快照不参与
+  const inDb = rec({ rpid_str: 'inDb', root_rpid: 'R', parent_rpid: 'A', dialog_rpid: 'A', is_root: 0, uname: '回库', parent_reply_name: '快照不该出现', ctime_s: 1 });
+  // dialog 悬空（888 不在树）+ 快照非空 → 快照兜底（B 站楼内互复 dialog==parent，快照即被回复者名）
+  const ghost = rec({ rpid_str: 'ghost', root_rpid: 'R', parent_rpid: '888', dialog_rpid: '888', is_root: 0, uname: '悬快照', parent_reply_name: '已删君', ctime_s: 2 });
+  // 悬空且无快照 → 维持现状 null（渲染省略「回复 @」）
+  const bare = rec({ rpid_str: 'bare', root_rpid: 'R', parent_rpid: 'gone', dialog_rpid: 'gone', is_root: 0, uname: '无摘要', parent_reply_name: null, ctime_s: 3 });
+  // dialog=自身即使误带快照也恒 null（B 站免渲染「回复 @根作者」）
+  const self = rec({ rpid_str: 'self', root_rpid: 'R', parent_rpid: 'R', dialog_rpid: 'self', is_root: 0, uname: '直根', parent_reply_name: '不该出现', ctime_s: 4 });
+  // 指向行在库但 uname null + 快照非空 → 快照兜底（与 bundle replyPrefix「uname 优先否则快照」同序）
+  const anonT = rec({ rpid_str: 'anonT', root_rpid: 'R', parent_rpid: 'R', dialog_rpid: 'anonT', is_root: 0, uname: null, ctime_s: 5 });
+  const anon = rec({ rpid_str: 'anon', root_rpid: 'R', parent_rpid: 'anonT', dialog_rpid: 'anonT', is_root: 0, uname: '回匿名', parent_reply_name: '匿名快照', ctime_s: 6 });
+  const s = shapeTree({ roots: [root], floorsByRoot: new Map([['R', [a, inDb, ghost, bare, self, anonT, anon]]]) });
+  const byId = new Map(s.roots[0].floors.map((f) => [f.rpid_str, f]));
+  assert.equal(byId.get('inDb')!.reply_to, '甲', '指向行在库 → 用其 uname（现状不变，快照不泄入）');
+  assert.equal(byId.get('ghost')!.reply_to, '已删君', '悬空 → parent_reply_name 快照兜底');
+  assert.equal(byId.get('bare')!.reply_to, null, '悬空且快照缺失 → 维持省略（现状不变）');
+  assert.equal(byId.get('self')!.reply_to, null, 'dialog=自身恒省略（快照不泄入）');
+  assert.equal(byId.get('anon')!.reply_to, '匿名快照', '在库但无名 → 快照兜底（uname 优先否则快照，与 bundle 同序）');
 });
 
 test('shapeTree：limit 截根——被截根组不进孤儿、counts 仍全树、truncated 置位', () => {

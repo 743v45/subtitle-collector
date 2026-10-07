@@ -397,6 +397,7 @@ test('comments verify：纯库内校验 200（dangling 夹具回执字段 + R4 r
     assert.deepEqual(r.json.counts, {
       roots: 1, floors: 2, total: 3, pins: 0,
       missing_candidates: 0, missing_confirmed: 0,
+      with_pictures: 0,
     });
     assert.equal(r.json.integrity.orphan_floor, 0);
     assert.equal(r.json.integrity.triple_inconsistent, 0);

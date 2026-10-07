@@ -214,7 +214,9 @@ CREATE TABLE IF NOT EXISTS comments (
   first_page     INTEGER,                     -- 首采时主列表页序(仅根评论;诊断用)
   first_sort     TEXT,                        -- 首采排序 'hot'|'time'|'floor'(诊断)
   batch_id       TEXT,                        -- 首采批次 uuid(crypto.randomUUID(),node:crypto 零新增依赖;同轮所有行同值;重采不动)
-  missing_since  INTEGER                      -- 首次缺席完整全量轮的扫描起始时刻(毫秒;仅根评论参与、仅完整轮置值);NULL=在库正常
+  missing_since  INTEGER,                      -- 首次缺席完整全量轮的扫描起始时刻(毫秒;仅根评论参与、仅完整轮置值);NULL=在库正常
+  parent_reply_name TEXT                       -- 被回复者昵称快照(parent_reply_member.name 提级,仅「回复楼内非根条目」出现);NULL=未知/未出现。
+                                               -- 列位刻意殿后:与 v21 ALTER TABLE ADD COLUMN 的追加位次一致(新旧两路建库 PRAGMA table_info 同序,双写纪律见 migrate.ts v21)
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_comments_rpid ON comments(rpid_str);
 CREATE INDEX IF NOT EXISTS idx_comments_video ON comments(video_id, is_root, like_count DESC);

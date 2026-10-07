@@ -101,11 +101,13 @@ function stateTags(r: CommentRecord): string {
 }
 
 /** 「回复 @dialog 行 uname」前缀（§2.4 对话还原规则）：直回根（dialog==自身，B 站免渲染「回复 @根作者」）
- *  与 dialog 悬空/无名（指向条目不在库）都省略前缀。 */
+ *  与 dialog='0' 省略前缀；指向行在库→用其 uname；悬空/无名→本行 parent_reply_name 兜底
+ *  （被回复者昵称快照，B 站楼内互复 dialog==parent，快照即 dialog 对象名；两者皆缺省略，§2.4 边界）。 */
 function replyPrefix(f: CommentRecord, byRpid: Map<string, CommentRecord>): string {
   if (f.dialog_rpid === f.rpid_str || f.dialog_rpid === '0') return '';
   const d = byRpid.get(f.dialog_rpid);
-  return d?.uname ? ` 回复 @${d.uname}` : '';
+  if (d?.uname) return ` 回复 @${d.uname}`;
+  return f.parent_reply_name ? ` 回复 @${f.parent_reply_name}` : '';
 }
 
 /** 根评论组标题行：`## 【赞 N】@uname(UP主) · IP属地:X · YYYY-MM-DD · UP主已回复/UP觉得很赞`
@@ -145,9 +147,36 @@ function depthOf(
   return d;
 }
 
+/** 楼中楼缩进前缀（深度缩进;floorLine 与图片行的内容列共以此基准,+2 空格对齐正文续行）。 */
+const floorIndent = (depth: number): string => '  '.repeat(Math.max(0, depth - 2));
+
+/** content JSON 的 pictures[] → markdown 图片行(用户拍板 2026-10:图片本体不下载,URL 够了)。
+ *  每图一行 `![图N](url)`,N 从 1 连续计(只数渲染出的行);URL img_src 优先、url 兜底
+ *  (验收快照实测形态:元素含 img_src/img_width/...,无 url 键,兜底防形态漂移)。
+ *  content 缺失/坏 JSON/pictures 非数组/单图两键皆缺 → 不出图片行,不炸导出。缩进随所在楼层内容列。 */
+function pictureLines(contentJson: string | null, indent: string): string[] {
+  if (!contentJson) return [];
+  let pics: unknown;
+  try {
+    pics = (JSON.parse(contentJson) as { pictures?: unknown }).pictures;
+  } catch {
+    return []; // 坏 JSON 不应发生(content 由 jsonSnapshot 产出),防御:跳过不出行
+  }
+  if (!Array.isArray(pics)) return [];
+  const out: string[] = [];
+  for (const p of pics) {
+    if (p == null || typeof p !== 'object') continue;
+    const pic = p as { img_src?: unknown; url?: unknown };
+    const url = typeof pic.img_src === 'string' && pic.img_src !== '' ? pic.img_src
+      : (typeof pic.url === 'string' && pic.url !== '' ? pic.url : null);
+    if (url) out.push(`${indent}![图${out.length + 1}](${url})`);
+  }
+  return out;
+}
+
 /** 楼中楼行：`- 【赞 N】@uname(UP主)[回复 @X][ · IP属地:Y]:内容[状态标注]`；多行 message 续行按内容列缩进成块。 */
 function floorLine(f: CommentRecord, depth: number, byRpid: Map<string, CommentRecord>): string {
-  const indent = '  '.repeat(Math.max(0, depth - 2));
+  const indent = floorIndent(depth);
   const ip = f.ip_location ? ` · IP属地:${f.ip_location}` : '';
   const msg = (f.message ?? '').replace(/\n/g, `\n${indent}  `);
   return `${indent}- 【赞 ${f.like_count}】@${f.uname ?? ''}${upTag(f)}${replyPrefix(f, byRpid)}${ip}:${msg}`
@@ -180,6 +209,8 @@ function orphanFloorLine(f: CommentRecord, byRpid: Map<string, CommentRecord>): 
  * - 其健在楼层与根行整体不在库的孤儿楼层，平铺归「## 根已删除的楼层(N 条)」虚拟分组，
  *   父悬空条目缀「(父评论已删除)」；
  * - 缩进 ≤3 层，更深拍平到第 3 层并保留「回复 @」前缀（前缀规则见 replyPrefix）。
+ * - 正文块（根/楼）后附 content.pictures 的 markdown 图片行 `![图N](url)`（pictureLines;
+ *   用户拍板图片本体不下载,URL 够了）；「回复 @」悬空兜底用 parent_reply_name 快照（replyPrefix）。
  */
 export function renderCommentsMd(
   video: { title: string; source_vid: string },
@@ -209,10 +240,14 @@ export function renderCommentsMd(
   for (const root of tree.roots) {
     if (confirmedMissing(root)) continue;
     lines.push(rootHeader(root));
-    if (root.message) lines.push(root.message, '');  // 根正文原样（多行原样保留）
+    const pics = pictureLines(root.content, ''); // 根正文后逐图一行(§6.3 图片行扩展)
+    if (root.message) lines.push(root.message);  // 根正文原样（多行原样保留）
+    lines.push(...pics);
+    if (root.message || pics.length > 0) lines.push(''); // 正文块与楼层之间的空行分隔(有正文块才出)
     for (const f of tree.floorsByRoot.get(root.rpid_str) ?? []) {
       const depth = Math.min(depthOf(f, byRpid, memo, inProgress), 3); // ≤3 层，更深拍平
       lines.push(floorLine(f, depth, byRpid));
+      lines.push(...pictureLines(f.content, `${floorIndent(depth)}  `)); // 楼层图片行缩进到内容列
     }
     lines.push('');
   }
@@ -220,7 +255,10 @@ export function renderCommentsMd(
   const orphans = orphanFloorsOf(tree, rootByRpid, confirmedMissing);
   if (orphans.length > 0) {
     lines.push(`## 根已删除的楼层(${orphans.length} 条)`);
-    for (const f of orphans) lines.push(orphanFloorLine(f, byRpid));
+    for (const f of orphans) {
+      lines.push(orphanFloorLine(f, byRpid));
+      lines.push(...pictureLines(f.content, '  ')); // 孤儿平铺恒 2 层 → 内容列 2 空格
+    }
     lines.push('');
   }
 

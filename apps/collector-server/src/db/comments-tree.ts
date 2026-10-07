@@ -4,7 +4,9 @@
 // cli 与 http 都可 import db（depcruise 禁反向），共享逻辑按任务口径下沉本模块。
 // 语义逐条对齐 CLI tree 渲染：
 // - depth：parent 链逐层上溯，父为根/缺失即停，≤3 拍平（更深保留「回复 @」前缀，§6.3）
-// - reply_to：dialog≠'0' 且 ≠自身 且作者在树 → 作者名，否则 null（渲染省略「回复 @」，§2.4）
+// - reply_to：dialog≠'0' 且 ≠自身 → 指向行在库用其 uname，悬空/无名 fallback 本行
+//   parent_reply_name 快照，皆无 → null（渲染省略「回复 @」，§2.4；兜底语义对齐
+//   bundle-comments.ts replyPrefix，2026-10-07）
 // - parent_missing：parent_rpid≠'0' 且 ≠dialog_rpid（纯字段比较，不查存在性——「回复对象已
 //   删除」标注，与 CLI floorLine 判定一致）
 // - 孤儿组：root_rpid 组的根不在树内（根已删，§3.4 不丢弃）→ 全组收 orphans，depth 恒 1、
@@ -15,7 +17,7 @@ import type { CommentRecord, CommentTree } from './comments.js';
 /** 楼中楼节点：评论行 + 组装派生列（depth/reply_to/parent_missing）。 */
 export interface CommentFloorNode extends CommentRecord {
   depth: number;            // 楼层深度（parent 链 ≤3 拍平）
-  reply_to: string | null;  // 「回复 @」指向作者名（dialog 定位；'0'/自身/悬空 → null）
+  reply_to: string | null;  // 「回复 @」指向作者名（dialog 定位；'0'/自身 → null；悬空/无名 → parent_reply_name 快照兜底，皆无 null）
   parent_missing: boolean;  // 回复对象已删除（parent≠'0' 且 ≠dialog，纯字段比较）
 }
 
@@ -55,10 +57,15 @@ function indexByRpid(tree: CommentTree): Map<string, CommentRecord> {
   return byRpid;
 }
 
-/** 「回复 @」对话指向作者名（dialog 定位；'0'/自身/悬空 → null；自 CLI dialogAuthorOf 搬迁）。 */
+/** 「回复 @」对话指向作者名（dialog 定位；'0'/自身 → null。指向行在库→用其 uname；
+ *  悬空/无名→本行 parent_reply_name 快照兜底——与 bundle-comments.ts replyPrefix 同语义
+ *  （2026-10-07 媒体信息轻量增强，B 站楼内互复 dialog==parent，快照即 dialog 对象名）；
+ *  皆无 → null 维持省略，§2.4 边界。自 CLI dialogAuthorOf 搬迁。）。 */
 function replyToOf(f: CommentRecord, byRpid: Map<string, CommentRecord>): string | null {
   if (f.dialog_rpid === '0' || f.dialog_rpid === f.rpid_str) return null;
-  return byRpid.get(f.dialog_rpid)?.uname ?? null;
+  const uname = byRpid.get(f.dialog_rpid)?.uname;
+  if (uname) return uname;
+  return f.parent_reply_name; // 悬空/无名兜底；null 维持现状（渲染省略「回复 @」）
 }
 
 /** 回复对象是否已删（parent≠'0' 且 ≠dialog；纯字段比较，同 CLI floorLine 判定）。 */

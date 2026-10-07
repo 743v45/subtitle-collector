@@ -181,8 +181,8 @@ function floorLine(f: CommentFloorNode): string {
   const seg = [`【赞 ${f.like_count}】@${f.uname ?? '(未知用户)'}${f.is_up === 1 ? '(UP主)' : ''}`];
   if (f.ip_location) seg.push(`IP属地:${f.ip_location}`);
   let line = `${indent}- ${seg.join(' · ')}`;
-  // 「回复 @」对话指向(§2.4:直回根 dialog=自身 rpid 省略;悬空省略前缀——verify R3 软警告;
-  // 指向作者名由 shapeTree 的 reply_to 派生,'0'/自身/悬空 → null)
+  // 「回复 @」对话指向(§2.4:直回根 dialog=自身 rpid 省略;指向行在库用其 uname,
+  // 悬空/无名由 shapeTree 用本行 parent_reply_name 快照兜底,皆无省略前缀——verify R3 软警告)
   if (f.reply_to != null) line += ` 回复 @${f.reply_to}`;
   if (f.parent_missing) line += '(回复对象已删除)';
   line += `:${f.message ?? '(无正文)'}${statusTags(f)}`;

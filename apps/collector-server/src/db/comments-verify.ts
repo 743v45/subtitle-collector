@@ -88,6 +88,7 @@ export interface VerifyTreeResult {
     pins: number;
     missing_candidates: number;
     missing_confirmed: number;
+    with_pictures: number; // content JSON $.pictures 非空数组的行数(带图评论;存量行即生效,JS 侧算)
   };
   integrity: {
     triple_inconsistent: number;      // R0 error
@@ -107,6 +108,23 @@ export interface VerifyTreeResult {
   coverage: { floor_covered: number; floor_expected: number; ratio: number };
   up: { up_replied: number; up_liked: number; is_up_rows: number };
   ip: { known_pct: number; top: Array<[string, number]> };
+}
+
+// ── with_pictures 计数(content JSON $.pictures 非空数组;JS 侧算,存量行即生效)──
+
+/** 带图评论行数。坏 JSON(不应发生,content 由 jsonSnapshot 产出)/pictures 缺失或非数组/空数组均不计。 */
+function countWithPictures(rows: CommentRecord[]): number {
+  let n = 0;
+  for (const r of rows) {
+    if (!r.content) continue;
+    try {
+      const pics = (JSON.parse(r.content) as { pictures?: unknown }).pictures;
+      if (Array.isArray(pics) && pics.length > 0) n++;
+    } catch {
+      console.error(`[verify] with_pictures: content JSON 解析失败 rpid_str=${r.rpid_str} content=${r.content.slice(0, 120)}`);
+    }
+  }
+  return n;
 }
 
 /**
@@ -180,6 +198,7 @@ export function verifyTree(
       pins: rows.filter((r) => r.pin_kind != null).length,
       missing_candidates: missingCandidates,
       missing_confirmed: missingConfirmed,
+      with_pictures: countWithPictures(rows),
     },
     integrity: {
       triple_inconsistent: tripleInconsistent,

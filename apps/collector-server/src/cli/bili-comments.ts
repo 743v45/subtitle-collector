@@ -74,6 +74,8 @@ export interface ParsedCommentRow {
   is_root: 0 | 1; // 冗余派生列:root_rpid==='0'(DDL 同款语义)
   mid_str: string | null;
   uname: string | null; // member.uname 提级(列表/正文渲染免拆包)
+  parent_reply_name: string | null; // parent_reply_member.name 提级(被回复者昵称快照,仅「回复楼内非根条目」形态出现;
+  //                            实测 {mid:"479021152",name:"拾月晨光"};悬空兜底渲染用,缺失 null)
   member: string | null; // member 对象整体 JSON 快照(重采整体替换)
   message: string | null; // content.message 原文(检索列)
   content: string | null; // content 对象整体 JSON(emote/jump_url/pictures/@)
@@ -109,6 +111,9 @@ export function parseReplyRow(
   const rootRpid = idStr(raw.root_str, raw.root) ?? '0';
   const midStr = idStr(raw.mid_str, raw.mid);
   const member = raw.member as Record<string, unknown> | undefined;
+  // parent_reply_member:仅「回复楼内非根条目」时出现的被回复者快照(实测 {mid,name} 两键);
+  // 布尔/字符串/数组混形防御与 member 同款——非对象整体按缺失处理,name 非空字符串才提级。
+  const parentMember = raw.parent_reply_member as Record<string, unknown> | undefined;
   const content = raw.content as Record<string, unknown> | undefined;
   const control = raw.reply_control as { location?: unknown } | undefined;
   const upAction = raw.up_action as { like?: unknown; reply?: unknown } | undefined;
@@ -120,6 +125,7 @@ export function parseReplyRow(
     is_root: rootRpid === '0' ? 1 : 0,
     mid_str: midStr,
     uname: strOf(member?.uname), // member.uname 提级供列表/正文渲染免拆包
+    parent_reply_name: strOf(parentMember?.name), // 被回复者昵称提级(悬空兜底渲染用;缺失 null)
     member: jsonSnapshot(member),
     message: strOf(content?.message), // content.message 原文(检索列)
     content: jsonSnapshot(content),

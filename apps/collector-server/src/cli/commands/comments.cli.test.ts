@@ -373,7 +373,7 @@ function seedDb(dir: string): { dbPath: string } {
   const up = (o: Partial<CommentUpsertRow> & { rpid_str: string }): CommentUpsertRow => ({
     root_rpid: '0', parent_rpid: '0', dialog_rpid: '0', mid_str: null, uname: null, member: null,
     message: null, content: null, like_count: 0, rcount: 0, reply_total: 0, ctime_s: null,
-    ip_location: null, state: 0, invisible: 0, folded: 0, up_like: 0, up_reply: 0, ...o,
+    ip_location: null, state: 0, invisible: 0, folded: 0, up_like: 0, up_reply: 0, parent_reply_name: null, ...o,
   });
   upsertComments(db, {
     videoId, upperMid: '9001', fetchedAt: 1_700_000_000_000, batchId: 'b1', page: 1, sort: 'time',

@@ -18,6 +18,7 @@ export interface CommentRecord {
   is_root: number;
   mid_str: string | null;
   uname: string | null;
+  parent_reply_name: string | null;
   member: string | null;
   message: string | null;
   content: string | null;
@@ -52,6 +53,7 @@ export interface CommentUpsertRow {
   dialog_rpid: string;
   mid_str: string | null;
   uname: string | null;
+  parent_reply_name: string | null;
   member: string | null;
   message: string | null;
   content: string | null;
@@ -92,7 +94,7 @@ const nowUpFlag = (upperMid: string | number | null | undefined, midStr: string 
 /**
  * 幂等批量 upsert（单事务，PLAN §3.3）。已存在（UNIQUE rpid_str 命中）→ UPDATE 观测列
  * （like/rcount/reply_total/state/invisible/folded/up_like/up_reply/is_up（按本请求 upper_mid
- * 重算）/mid_str/uname/member/message/content/ip_location/ctime_s，last_seen_at=fetchedAt）；
+ * 重算）/mid_str/uname/parent_reply_name/member/message/content/ip_location/ctime_s，last_seen_at=fetchedAt）；
  * 保留列：id/video_id/first_seen_at/first_page/first_sort/batch_id/missing_since。
  * 关联三元组防御性保留（首采值不改写，防上游异常形态污染已还原的树）；例外——库内现值违反
  * R0 而本轮新值自洽 → 以新值修正并打 [store] 修正日志；新值同样不自洽 → 不修正。
@@ -111,24 +113,24 @@ export function upsertComments(
   const ins = db.prepare(`
     INSERT INTO comments (
       rpid_str, video_id, root_rpid, parent_rpid, dialog_rpid, is_root,
-      mid_str, uname, member, message, content,
+      mid_str, uname, parent_reply_name, member, message, content,
       like_count, rcount, reply_total, ctime_s, ip_location,
       state, invisible, folded, up_like, up_reply, is_up,
       first_seen_at, last_seen_at, first_page, first_sort, batch_id
-    ) VALUES (${Array.from({ length: 27 }, () => '?').join(', ')})
+    ) VALUES (${Array.from({ length: 28 }, () => '?').join(', ')})
   `);
   // upperMid 可判定时重算 is_up；不可判定（null）时保留库内值
   const upd = upperMid == null
     ? db.prepare(`
         UPDATE comments SET
           like_count = ?, rcount = ?, reply_total = ?, state = ?, invisible = ?, folded = ?,
-          up_like = ?, up_reply = ?, mid_str = ?, uname = ?, member = ?, message = ?, content = ?,
+          up_like = ?, up_reply = ?, mid_str = ?, uname = ?, parent_reply_name = ?, member = ?, message = ?, content = ?,
           ip_location = ?, ctime_s = ?, last_seen_at = ?
         WHERE rpid_str = ?`)
     : db.prepare(`
         UPDATE comments SET
           like_count = ?, rcount = ?, reply_total = ?, state = ?, invisible = ?, folded = ?,
-          up_like = ?, up_reply = ?, is_up = ?, mid_str = ?, uname = ?, member = ?, message = ?,
+          up_like = ?, up_reply = ?, is_up = ?, mid_str = ?, uname = ?, parent_reply_name = ?, member = ?, message = ?,
           content = ?, ip_location = ?, ctime_s = ?, last_seen_at = ?
         WHERE rpid_str = ?`);
   const fixTriple = db.prepare(
@@ -147,13 +149,13 @@ export function upsertComments(
         if (upperMid == null) {
           upd.run(
             r.like_count, r.rcount, r.reply_total, r.state, r.invisible, r.folded,
-            r.up_like, r.up_reply, r.mid_str, r.uname, r.member, r.message, r.content,
+            r.up_like, r.up_reply, r.mid_str, r.uname, r.parent_reply_name, r.member, r.message, r.content,
             r.ip_location, r.ctime_s, fetchedAt, r.rpid_str,
           );
         } else {
           upd.run(
             r.like_count, r.rcount, r.reply_total, r.state, r.invisible, r.folded,
-            r.up_like, r.up_reply, upFlag, r.mid_str, r.uname, r.member, r.message,
+            r.up_like, r.up_reply, upFlag, r.mid_str, r.uname, r.parent_reply_name, r.member, r.message,
             r.content, r.ip_location, r.ctime_s, fetchedAt, r.rpid_str,
           );
         }
@@ -171,7 +173,7 @@ export function upsertComments(
       } else {
         ins.run(
           r.rpid_str, videoId, r.root_rpid, r.parent_rpid, r.dialog_rpid, r.root_rpid === '0' ? 1 : 0,
-          r.mid_str, r.uname, r.member, r.message, r.content,
+          r.mid_str, r.uname, r.parent_reply_name, r.member, r.message, r.content,
           r.like_count, r.rcount, r.reply_total, r.ctime_s, r.ip_location,
           r.state, r.invisible, r.folded, r.up_like, r.up_reply, nowUpFlag(upperMid, r.mid_str),
           fetchedAt, fetchedAt, page ?? null, sort ?? null, batchId,

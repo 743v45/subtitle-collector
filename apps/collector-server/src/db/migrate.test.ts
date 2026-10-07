@@ -8,6 +8,7 @@
 // | R2 | v18 collect_tasks.source CHECK 放行 douyin（旧库重建/新库重放） | 通过 | 2026-08-29 S2 抖音平台化 |
 // | R3 | v19 ASR 轨按引擎改名（有 engine 改名/无 engine 回落 unknown/幂等重放/新库重放） | 通过 | 2026-08-29 多引擎版本比对 |
 // | R4 | v21 jobs 表建表（v19 旧库升级/列清单/CHECK/索引/重放幂等/新库重放） | 通过 | 2026-10-04 CLI 全功能 web 化 Phase 4 |
+// | R5 | v23 comments 补 parent_reply_name（新库 duplicate 容忍/旧库 ALTER 补列/结构化双写比对）——专项在 comments.test.ts | 通过 | 2026-10-08 媒体信息轻量增强(合并重排) |
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';

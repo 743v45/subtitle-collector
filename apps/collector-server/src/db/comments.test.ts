@@ -7,6 +7,7 @@
 // | 轮次 | 范围 | 结果 | 备注 |
 // |---|---|---|---|
 // | R1 | v20 迁移/双写/upsert/pins/missing 四态/R0-R9/count/索引/树查询 | 通过 | 2026-10-04 C1 |
+// | R2 | v21 parent_reply_name 迁移(新旧库重放/双写结构化比对)/upsert 回填/with_pictures 计数 | 通过 | 2026-10-07 媒体信息轻量增强 |
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -49,6 +50,7 @@ function row(over: Partial<CommentUpsertRow> = {}): CommentUpsertRow {
     dialog_rpid: '0',
     mid_str: '100',
     uname: '用户A',
+    parent_reply_name: null,
     member: '{"name":"用户A"}',
     message: '正文',
     content: '{}',
@@ -74,13 +76,13 @@ function replyToRoot(rpid: string, root: string, over: Partial<CommentUpsertRow>
 const getRow = (db: Database.Database, rpid: string): CommentRecord =>
   db.prepare('SELECT * FROM comments WHERE rpid_str = ?').get(rpid) as CommentRecord;
 
-// ── v20 迁移与双写 ──
+// ── v20/v21 迁移与双写 ──
 
 test('v20 迁移：新库建 comments 表 + user_version 写到最新 + 重放幂等', () => {
   const db = freshDb();
   try {
-    assert.equal(LATEST, 22, 'MIGRATIONS 尾元素应为最新迁移（v22 danmaku；comments 为 v20）');
-    assert.equal(db.pragma('user_version', { simple: true }), LATEST, '新库账本应写到 20');
+    assert.equal(LATEST, 23, 'MIGRATIONS 尾元素应为最新迁移（主线 v21 jobs/v22 danmaku + v23 comments 补列）');
+    assert.equal(db.pragma('user_version', { simple: true }), LATEST, '新库账本应写到最新');
     const tables = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='comments'").all();
     assert.equal(tables.length, 1, 'comments 表应存在');
     // 重放幂等
@@ -89,13 +91,36 @@ test('v20 迁移：新库建 comments 表 + user_version 写到最新 + 重放�
   } finally { db.close(); }
 });
 
-test('v20 迁移：旧库（账本 v19、无 comments 表）补建且可写；重放幂等', () => {
+test('v23 迁移：新库（schema.sql 直建已带列）重放 ALTER 撞 duplicate 被容忍，列在且数据不丢', () => {
+  // 新库逐版重放路径（v23 双写策略的另一半）：schema.sql 的 CREATE 已含 parent_reply_name（列位殿后），
+  // 把账本拨回 v20 模拟「逐版重放到 v20 刚建完表」的中间态 → v23 ALTER 报 duplicate column name
+  // → 账本双保险容忍（migrate.ts 账本规则），账本记到最新，列不重复。
+  const db = new Database(':memory:');
+  migrate(db); // 仅 schema.sql，账本还是 0
+  try {
+    const videoId = insertVideo(db);
+    db.prepare(`INSERT INTO comments (rpid_str, video_id, parent_reply_name, first_seen_at, last_seen_at)
+                VALUES ('legacy1', ?, '拾月晨光', 1, 1)`).run(videoId);
+    db.pragma('user_version = 20');
+    assert.doesNotThrow(() => runMigrations(db), '新库重放 v21 的 duplicate column 应被容忍');
+    assert.equal(db.pragma('user_version', { simple: true }), LATEST, '账本应记到最新');
+    const cols = (db.prepare('PRAGMA table_info(comments)').all() as Array<{ name: string }>).map((c) => c.name);
+    assert.equal(cols.filter((n) => n === 'parent_reply_name').length, 1, '列恰好一个（ADD 未重复执行）');
+    assert.equal(cols[cols.length - 1], 'parent_reply_name', '列位殿后（与 v23 ALTER 追加序一致，双路 table_info 同序的前提）');
+    assert.equal((getRow(db, 'legacy1') as { parent_reply_name: string | null }).parent_reply_name, '拾月晨光', '重放不丢数据');
+    assert.doesNotThrow(() => runMigrations(db), '再跑一遍幂等');
+  } finally { db.close(); }
+});
+
+test('v20 迁移：旧库（账本 v19、无 comments 表）逐版重放 v20+v21 补建且可写；重放幂等', () => {
   const db = freshDb();
   try {
     db.exec('DROP TABLE comments');
     db.pragma('user_version = 19');
     runMigrations(db);
-    assert.equal(db.pragma('user_version', { simple: true }), LATEST, '账本应补到最新（v20 comments + v21 jobs + v22 danmaku，均 IF NOT EXISTS 幂等）');
+    assert.equal(db.pragma('user_version', { simple: true }), LATEST, '账本应补到最新（v20 comments + v21 jobs + v22 danmaku + v23 comments 补列，均幂等）');
+    const cols = (db.prepare('PRAGMA table_info(comments)').all() as Array<{ name: string }>).map((c) => c.name);
+    assert.ok(cols.includes('parent_reply_name'), 'v20 建表（无该列）→ v23 ALTER 追加，终态带列');
     const videoId = insertVideo(db);
     const r = upsertComments(db, {
       videoId, upperMid: '1', fetchedAt: 1000, batchId: 'b1',
@@ -106,19 +131,53 @@ test('v20 迁移：旧库（账本 v19、无 comments 表）补建且可写；�
   } finally { db.close(); }
 });
 
-test('双写一致性：schema.sql 与 v20 statements 产出的 sqlite_master DDL 逐字一致', () => {
+test('v21 迁移：旧库（账本 v20、无该列）ALTER 补列且存量行 NULL；重放幂等', () => {
   const db = freshDb();
   try {
-    const capture = () =>
-      db.prepare("SELECT name, sql FROM sqlite_master WHERE tbl_name = 'comments' ORDER BY name").all();
+    const videoId = insertVideo(db);
+    // 先落一行再模拟旧库：DROP 列后账本拨回 v20（v20 生产库的真实形态：有表无列）
+    upsertComments(db, {
+      videoId, upperMid: '1', fetchedAt: 1000, batchId: 'b1',
+      replies: [row({ rpid_str: 'oldv21', parent_reply_name: '会被删掉的值' })],
+    });
+    db.exec('ALTER TABLE comments DROP COLUMN parent_reply_name');
+    db.pragma('user_version = 20');
+    runMigrations(db);
+    assert.equal(db.pragma('user_version', { simple: true }), LATEST, '账本应补到最新');
+    const r = getRow(db, 'oldv21') as { parent_reply_name: string | null };
+    assert.equal(r.parent_reply_name, null, '存量行补列后为 NULL（等重采回填）');
+    assert.doesNotThrow(() => runMigrations(db), '重放不报错（ALTER 幂等容忍）');
+    // 补列后写入通路完好（parent_reply_name 走 INSERT/UPDATE 全链）
+    upsertComments(db, {
+      videoId, upperMid: '1', fetchedAt: 2000, batchId: 'b1',
+      replies: [row({ rpid_str: 'oldv21', parent_reply_name: '回填者' })],
+    });
+    assert.equal((getRow(db, 'oldv21') as { parent_reply_name: string | null }).parent_reply_name, '回填者', '补列后 upsert 可写该列');
+  } finally { db.close(); }
+});
+
+test('双写一致性：schema.sql 与 v20+v23 statements 产出的 comments 结构一致（列结构 table_info + 索引 DDL）', () => {
+  // ALTER 加列步骤（主线编号 v23；原 v21）起双写比对从 sqlite_master.sql 逐字退化为结构化：
+  // ALTER 加列后 SQLite 会重写 CREATE 原文（实测把 ", parent_reply_name TEXT)" 拼接在末列行后），
+  // 与 schema.sql 直建的行内格式（含行尾注释）不可逐字重合——故 CREATE TABLE 文本只比结构
+  // （PRAGMA table_info 五元组），索引仍可逐字（CREATE INDEX 语句 ALTER 不触碰）。
+  // 双写策略结论登记于 migrate.ts v23 注释。
+  const db = freshDb();
+  try {
+    const capture = () => ({
+      columns: db.prepare('PRAGMA table_info(comments)').all() as Array<{ cid: number; name: string; type: string; notnull: number; dflt_value: unknown; pk: number }>,
+      indexes: db.prepare("SELECT name, sql FROM sqlite_master WHERE type='index' AND tbl_name='comments' ORDER BY name").all(),
+    });
     const before = capture();
-    assert.equal(before.length, 5, '应为 表 + 4 索引 共 5 个对象');
+    assert.equal(before.indexes.length, 4, '应为 4 个索引');
+    assert.equal(before.columns.at(-1)!.name, 'parent_reply_name', '新列殿后');
     db.exec('DROP TABLE comments'); // 表级索引随表删
-    const v20 = MIGRATIONS.find((m) => m.version === 20)!;
-    for (const s of v20.statements) db.exec(s);
-    // sqlite_master.sql 保存建表/建索引原文：两路（schema.sql exec / v20 statements exec）
-    // 文本不一致会在此暴露（防双写漂移）
-    assert.deepEqual(capture(), before);
+    for (const s of MIGRATIONS.filter((m) => m.version === 20 || m.version === 23)) {
+      for (const stmt of s.statements) db.exec(stmt);
+    }
+    const after = capture();
+    assert.deepEqual(after.columns, before.columns, '两路建库的列结构（cid/name/type/notnull/dflt/pk）逐项一致');
+    assert.deepEqual(after.indexes, before.indexes, '两路建库的索引 DDL 逐字一致');
   } finally { db.close(); }
 });
 
@@ -154,6 +213,37 @@ test('upsert 幂等：同 rpid 二次入库更新观测列、保留首采列，�
     assert.equal(got.first_sort, 'time', 'first_sort 保留首采排序');
     assert.equal(got.video_id, videoId, 'video_id 不改写');
     assert.equal((db.prepare('SELECT COUNT(*) AS n FROM comments').get() as { n: number }).n, 1, '不产生新行');
+  } finally { db.close(); }
+});
+
+test('upsert：parent_reply_name 首采落值、重采回填/改写（存量行 NULL → 有值 → 换值全链）', () => {
+  const db = freshDb();
+  try {
+    const videoId = insertVideo(db);
+    // 首采缺 parent_reply_member（如楼中楼专翻前的旧形态/直回根）→ NULL
+    upsertComments(db, {
+      videoId, upperMid: '1', fetchedAt: 1000, batchId: 'b1',
+      replies: [row({ rpid_str: 'prn', parent_reply_name: null })],
+    });
+    assert.equal(getRow(db, 'prn').parent_reply_name, null, '缺失首采落 NULL');
+    // 重采带快照 → 回填（零重采政策的例外入口：upsert 更新列含该列）
+    upsertComments(db, {
+      videoId, upperMid: '1', fetchedAt: 2000, batchId: 'b1',
+      replies: [row({ rpid_str: 'prn', parent_reply_name: '拾月晨光' })],
+    });
+    assert.equal(getRow(db, 'prn').parent_reply_name, '拾月晨光', '重采回填非 NULL 值');
+    // 再采对方改名 → 整体替换（与 uname/member 快照同语义）
+    upsertComments(db, {
+      videoId, upperMid: '1', fetchedAt: 3000, batchId: 'b1',
+      replies: [row({ rpid_str: 'prn', parent_reply_name: '拾月新名' })],
+    });
+    assert.equal(getRow(db, 'prn').parent_reply_name, '拾月新名', '重采改写为新快照值');
+    // upperMid 缺省分支（楼中楼批）同样更新该列
+    upsertComments(db, {
+      videoId, fetchedAt: 4000, batchId: 'b1',
+      replies: [row({ rpid_str: 'prn', parent_reply_name: '无名批也可回填' })],
+    });
+    assert.equal(getRow(db, 'prn').parent_reply_name, '无名批也可回填', 'upperMid=null 的 UPDATE 分支含该列');
   } finally { db.close(); }
 });
 
@@ -595,12 +685,34 @@ test('verifyTree 统计段：depth 按 parent 链（互复链 >2）、like 分�
     const v = verifyTree(db, videoId);
     assert.deepEqual(v.counts, {
       roots: 2, floors: 2, total: 4, pins: 0, missing_candidates: 0, missing_confirmed: 0,
+      with_pictures: 0, // 夹具 content='{}' 全无 pictures 键 → 0
     });
     assert.deepEqual(v.depth, { max: 3, histogram: { '1': 2, '2': 1, '3': 1 } }, '深度按 parent 链：t3 挂在 t2 下');
     // like 升序 [0,0,12,917]：p50=nearest-rank ceil(0.5×4)=第2个=0；p90=ceil(3.6)=第4个=917
     assert.deepEqual(v.like, { p50: 0, p90: 917, p99: 917, max: 917, zero_pct: 0.5 });
     assert.deepEqual(v.up, { up_replied: 1, up_liked: 1, is_up_rows: 0 });
     assert.deepEqual(v.ip, { known_pct: 0.75, top: [['上海', 2], ['北京', 1]] });
+  } finally { db.close(); }
+});
+
+test('verifyTree counts.with_pictures：content.pictures 非空数组计数（存量行即生效；空数组/坏 JSON/无 content 不计）', () => {
+  const db = freshDb();
+  try {
+    const videoId = insertVideo(db);
+    const pics2 = JSON.stringify({ pictures: [{ img_src: 'https://a/1.jpg' }, { img_src: 'https://a/2.jpg' }] });
+    upsertComments(db, {
+      videoId, upperMid: '1', fetchedAt: 1000, batchId: 'b',
+      replies: [
+        row({ rpid_str: 'p1', content: JSON.stringify({ pictures: [{ img_src: 'https://a/0.jpg' }] }) }), // 1 图 → 计
+        row({ rpid_str: 'p2', content: pics2 }), // 2 图 → 计 1 行（按行计数不按图数）
+        row({ rpid_str: 'p3', content: JSON.stringify({ pictures: [] }) }), // 空数组 → 不计
+        row({ rpid_str: 'p4', content: JSON.stringify({ emote: {} }) }), // 无 pictures 键 → 不计
+        row({ rpid_str: 'p5', content: null }), // 无 content → 不计
+        row({ rpid_str: 'p6', content: 'not-json' }), // 坏 JSON（防御形态）→ 不计且打 [verify] 日志
+      ],
+    });
+    const v = verifyTree(db, videoId);
+    assert.equal(v.counts.with_pictures, 2, 'p1+p2 两行带图（按行计数）');
   } finally { db.close(); }
 });
 

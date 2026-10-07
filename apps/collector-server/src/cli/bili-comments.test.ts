@@ -9,6 +9,7 @@
 // | 轮次 | 范围 | 结果 | 备注 |
 // |---|---|---|---|
 // | R1 | parseReplyRow×4 + parseIpLocation×1 + parseTop×1 + parseMain×3 + 形态判定×1 + nextMainPageArgs×1 + parseFloorPage×1 + replyDiag×1 | 通过 | 2026-10-04 C3;本地 node --test + tsc --noEmit;游标夹具随 spike 附录 A 实测形态校准 |
+// | R2 | parseReplyRow parent_reply_member 提级(有/无/混形防御) | 通过 | 2026-10-07 媒体信息轻量增强;实测形态 {mid:"479021152",name:"拾月晨光"} |
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -119,6 +120,24 @@ test('parseReplyRow:is_up 用 String 直读比较(upper.mid 数值形态防御);
   assert.equal(upActed.up_reply, 1);
   assert.equal(parseReplyRow(rawRow({ like: NaN })).like_count, 0, 'NaN like → 0(非有限数兜底)');
   assert.equal(parseReplyRow(rawRow({ state: 17 })).state, 17, '阿瓦隆隐藏原值保留(§2.4 照常入库)');
+});
+
+test('parseReplyRow:parent_reply_member.name 提级(仅回复楼内非根条目形态出现);缺失/混形防御 null', () => {
+  // 实测形态:{mid:"479021152",name:"拾月晨光"} 两键,仅「回复楼内非根条目」响应条目携带
+  const replied = parseReplyRow(rawRow({
+    parent: 315853861041, parent_str: '315853861041',
+    parent_reply_member: { mid: '479021152', name: '拾月晨光' },
+  }));
+  assert.equal(replied.parent_reply_name, '拾月晨光', 'name 非空字符串提级');
+  // 根评论/直回根条目无该键 → null(渲染兜底依赖 null 判别)
+  assert.equal(parseReplyRow(rawRow()).parent_reply_name, null, '键缺失 → null');
+  assert.equal(parseReplyRow(rawRow({ parent_reply_member: undefined })).parent_reply_name, null);
+  // 混形防御与 member 同款:非对象整体按缺失;name 非字符串/空串不提级
+  assert.equal(parseReplyRow(rawRow({ parent_reply_member: 'garbage' })).parent_reply_name, null, '字符串混形 → null');
+  assert.equal(parseReplyRow(rawRow({ parent_reply_member: ['x'] })).parent_reply_name, null, '数组混形 → null');
+  assert.equal(parseReplyRow(rawRow({ parent_reply_member: { mid: '1', name: 42 } })).parent_reply_name, null, 'name 数值形态 → null');
+  assert.equal(parseReplyRow(rawRow({ parent_reply_member: { mid: '1', name: '' } })).parent_reply_name, null, 'name 空串 → null');
+  assert.equal(parseReplyRow(rawRow({ parent_reply_member: { mid: '1' } })).parent_reply_name, null, 'name 键缺失 → null');
 });
 
 test('parseTop:admin/upper/vote 三类解析,source 标 pin:<kind>;null/非对象条目跳过', () => {

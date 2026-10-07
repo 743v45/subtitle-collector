@@ -65,8 +65,8 @@ const countAll = (db: Database.Database): number =>
 test('v22 迁移：新库建 danmaku 表 + user_version 写到最新 + 重放幂等', () => {
   const db = freshDb();
   try {
-    assert.equal(LATEST, 22, 'MIGRATIONS 尾元素应为最新迁移（v22 danmaku）');
-    assert.equal(db.pragma('user_version', { simple: true }), LATEST, '新库账本应写到 22');
+    assert.ok(LATEST >= 22, 'MIGRATIONS 尾元素 ≥ v22 danmaku（账本只增不改，v23 起持续追加）');
+    assert.equal(db.pragma('user_version', { simple: true }), LATEST, '新库账本应写到最新');
     const tables = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='danmaku'").all();
     assert.equal(tables.length, 1, 'danmaku 表应存在');
     // 重放幂等（CREATE IF NOT EXISTS 全量重放安全，PLAN §3.2）
@@ -81,7 +81,7 @@ test('v22 迁移：旧库（账本 v21、无 danmaku 表）补建且可写；重
     db.exec('DROP TABLE danmaku');
     db.pragma('user_version = 21');
     runMigrations(db);
-    assert.equal(db.pragma('user_version', { simple: true }), 22, '账本应补到 v22');
+    assert.ok((db.pragma('user_version', { simple: true }) as number) >= 22, '账本应补到 ≥ v22(danmaku 表已在)');
     const videoId = insertVideo(db);
     const r = upsertDanmaku(db, videoId, [row({ id_str: 'old1' })], { fetchedAt: 1000, batchId: 'b1' });
     assert.deepEqual(r, { inserted: 1, updated: 0 }, '补建后的表应可正常写入');
