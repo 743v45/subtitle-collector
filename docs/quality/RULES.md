@@ -37,6 +37,16 @@
 - **下调 = 豁免**：走 `--allow-degrade` 同款通道——改配置 + commit message 注明原因（见 §3 豁免流程），是留痕的例外不是后门。
 - 扩展已换 c8 包裹（`--experimental-test-coverage` 退役）；web 的 `test` 只含 `vitest run --coverage`，`vite build` 归 build task。
 
+### 2.1 UI 形态快照（vitest，2026-10-07 弹幕卡先例立规）
+
+React 组件的「长什么样」用 vitest + @testing-library snapshot 锁定进 git（先例：[DanmakuCard.test.tsx](../../apps/subtitle-collector/src/popup/DanmakuCard.test.tsx) 六形态 + [vitest.config.ts](../../apps/subtitle-collector/vitest.config.ts) 独立配置不碰 crxjs 的 vite.config）。防的是 UI 静默漂移——类名/结构/文案改动在 `pnpm qa` 的 snapshot diff 里精确可见。
+
+1. **触发条件**：popup / web 新 UI 组件落地时必带形态测试；改动存量 UI 行为时必须 `vitest run -u` 更新 snapshot，且 **commit message 注明「快照更新」**——快照更新 = UI 意图变更的显式声明，不带声明的 snapshot 变更视为漂移。
+2. **硬锚点**：关键布局类名显式 `toHaveClass` 断言（先例：`max-h-80 overflow-y-auto`），不靠 snapshot 独扛——snapshot 报「变了」，锚点报「变到哪根筋」。
+3. **逐字节比对**：复制/导出类功能的产出断言与格式化纯函数输出逐字节一致，且 fixture 期望值硬编码（不引实现函数），防实现与测试双漂移（先例：弹幕卡剪贴板收文 == `formatDanmakuCopy` 同口径锚点）。
+4. **快照卫生**：归一动态 id（Radix `radix-:rN:`）与时间戳后再序列化；开合往返后 React 重排属性序，结构比对用「tag+排序属性+递归子树」序列化而非 innerHTML 逐字节（先例踩坑记录在测试文件头注）。
+5. **口径与门**：组件 tsx 不进 c8 口径（c8 只管根目录运行时 .mjs/.js）；形态测试由 `test` script 的 `vitest run` 段承载，`verify-test-parity.mjs` 守「双 runner 并存」（node --test 与 vitest run 任一被摘即 qa 红）。
+
 ## 3. 静态质量门（complexity ≤15 / max-lines ≤400）
 
 两条规则，ESLint warn 级（[eslint.config.mjs](../../eslint.config.mjs)），**守门靠台账不靠编辑器**：

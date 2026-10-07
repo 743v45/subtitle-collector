@@ -1,1 +1,7 @@
 node scripts/pre-commit-check.mjs
+
+# UI 形态快照提醒（RULES §2.1，软提示不拦截——重门在 qa 的 vitest run + verify-test-parity）：
+# popup 组件 tsx 改动 → 确认形态 snapshot 是否需要更新；更新 = UI 意图变更，commit message 注明「快照更新」。
+if git diff --cached --name-only --diff-filter=ACM | grep -q '^apps/subtitle-collector/src/popup/.*\.tsx$'; then
+  echo "[pre-commit] ⚠ popup UI 改动：若组件形态有变，请 'npx vitest run -u' 更新 snapshot 并在 commit message 注明「快照更新」（RULES §2.1）"
+fi

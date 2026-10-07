@@ -24,7 +24,7 @@
 1. [CLAUDE.md](../../CLAUDE.md) 全文——样式政策、测试质量、措辞红线(字幕非弹幕)、路线纪律(不绕路,外部方案先问)。
 2. [改造账本](../plans/improvement-backlog-2026-10.md)——要做的改善是否已登记/已划销/是否在冻结政策内;绕过须先确认并反向登记 CLI 完整度缺口。
 3. [docs/quality/RULES.md](../quality/RULES.md)——测试怎么写、覆盖率锁定、提交前 `pnpm qa`。
-4. 涉扩展改动 → bump [manifest.json](../../apps/subtitle-collector/manifest.json) `version`;涉 CLI/scripts 改动 → 同步 [SKILL.md](../skills/collector/SKILL.md)(qa 门拦漂移)。
+4. 涉扩展改动 → bump [manifest.json](../../apps/subtitle-collector/manifest.json) `version`;涉 popup UI 改动 → vitest snapshot 同步(快照更新=意图变更,commit 注明,见 RULES §2.1);涉 CLI/scripts 改动 → 同步 [SKILL.md](../skills/collector/SKILL.md)(qa 门拦漂移)。
 
 **查生产数据前**:
 
