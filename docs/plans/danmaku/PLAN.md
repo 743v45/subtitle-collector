@@ -604,12 +604,13 @@ apps/collector-server/src/main.ts                      (路由表 /api/danmaku �
 
 ---
 
-## 附录 B:验收实录(待 C8 回填)
+## 附录 B:验收实录(2026-10-07)
 
 | 环节 | 结果 |
 |---|---|
-| 部署 | 待回填 |
-| 采集闭环 | 待回填 |
-| verify | 待回填 |
-| bundle | 待回填 |
-| 质量门 | 待回填 |
+| 部署 | collector-server 镜像 rebuild + 容器 recreate(named volume 数据不动);`user_version` 21→22 自动迁移,danmaku 表就位;四端点探活:ingest 无鉴权 401 / 空体 400 / count·verify·list 不在库 404,全部符合预期 |
+| 本地全链路(临时库) | BV1GJ411x7h7(Rick Astley,213s 单段):`--dry-run` 1406 条全命中(未识别字段分布日志在位)→ 首采 `inserted=1408` → 幂等重采 `inserted=3 / updated=1405`(**2 分钟内真实新增 3 条被增量吸收**,1408→1411)→ verify 峰值分钟 421 条 → bundle `danmaku/<BV>.md` 57KB |
+| 生产采集闭环 | BV1A5T76GEGG(907s,3 段):211+247+118=**576 条 inserted,2.5s 完成**;verify rows=576 / dup_id=0 / negative_progress=0 / 峰值分钟 09:00(44 条)/ weight p50=10 / ctime 2026-07-02→10-05;dm 哨兵口径实证:extra.stat.danmaku=8009 vs 池内 576(历史累计 vs 当前池,§2.4 软对账定性成立) |
+| 消费端 | `/api/danmaku/list`(popup 通路)576 行白名单四字段;快照通道(容器内 VACUUM INTO + CLI `--db`)export bundle:manifest `danmaku` meta(file/rows/pages/peak_minute_rows/last_collected_at)+ `danmaku/BV1A5T76GEGG.md` 614 行——`[MM:SS]` 时间轴、`[M5]` 顶部弹幕标注、**progress=-1 条目归「无时间点」组**(§2.4 边界真实样本命中) |
+| 质量门 | `pnpm qa` 全绿:server 1446 tests(c8 98/94.02/99/93+ 全过)、扩展 397 tests(c8 99/98.19/100/98,popup-danmaku.mjs 100%)、web vitest(100/93.68 门过);台账 34/34 PASS;depcruise 420 modules 0 违反;skill-sync 44 条;docs-sync 全过 |
+| popup 真机 | 构建产物 dist 0.1.34 就绪(clipboardWrite 权限 + DanmakuCard);真机验证待用户 chrome://extensions 刷新后在 B 站视频页 popup 核对弹幕卡与复制(manifest version 对照 0.1.34) |
