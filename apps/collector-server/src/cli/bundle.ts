@@ -1,6 +1,6 @@
-// export bundle 原料包：ANALYZE.md 模板 + 字幕行格式化 + buildBundle 组装。
+// export bundle 原料包：ANALYZE.md 模板 + 字幕行格式化 + 评论/弹幕导出聚合 + buildBundle 组装。
 // 设计：[export bundle 设计文档](../../../docs/superpowers/specs/2026-08-19-export-bundle-design.md)。
-// 措辞：字幕（subtitle），非弹幕。分析在 Claude Code 会话完成，本模块只产原料。
+// 措辞：字幕（subtitle）/评论（comment）/弹幕（danmaku）三类分离（CLAUDE.md §4）。分析在 Claude Code 会话完成，本模块只产原料。
 
 import { extractBody, resolveSubtitle } from './subtitleFormat.js';
 import type Database from 'better-sqlite3';
@@ -9,7 +9,9 @@ import { latestTaskStatusByVideoIds } from '../db/advanced.js';
 import { getVideoTagsByVideoIds } from '../db/tags.js';
 import { getTagPriority, type TagPrioritySource } from '../db/settings.js';
 import { treeByVideo } from '../db/comments.js';
+import { danmakuTimeline } from '../db/danmaku.js';
 import { commentsMetaByVideoIds, renderCommentsMd, type BundleCommentsMeta } from './bundle-comments.js';
+import { danmakuMetaByVideoIds, renderDanmakuMd, type BundleDanmakuMeta } from './bundle-danmaku.js';
 
 // ── 时间格式化 ──
 
@@ -83,6 +85,9 @@ export interface BundleVideoEntry {
   // 评论摘要（§6.2）：库内 0 评论（未采/评论区关闭）时省略字段，消费方以 'comments' in v 判别
   // （对齐 view 哲学）；存量 bundle 不回填（历史原料忠实性）
   comments?: BundleCommentsMeta;
+  // 弹幕摘要（PLAN docs/plans/danmaku/PLAN.md §6.2）：库内 0 弹幕（未采/弹幕区关闭）时省略字段，
+  // 消费方以 'danmaku' in v 判别（对齐 view/comments 哲学）；存量 bundle 不回填（历史原料忠实性）
+  danmaku?: BundleDanmakuMeta;
   subtitle: BundleSubtitleMeta | null;  // null = 无字幕/轨缺失/payload 损坏
   // 受限标记：该视频最近一次 collect_tasks 任务 status='limited'（半入库：元信息在、0 轨，
   // 如 YouTube pot 门槛）。与「真无字幕」的区分字段——重采成功后最新任务不再是 limited，
@@ -279,6 +284,7 @@ export function buildBundle(db: Database.Database, opts: BuildBundleOpts): Bundl
   const extras = videoExtrasByVideoIds(db, ids);
   const tagsById = mergeBundleTags(db, ids, extras);
   const commentsMeta = commentsMetaByVideoIds(db, ids);  // 评论统计批量算齐（§6.2 防 N+1）
+  const danmakuMeta = danmakuMetaByVideoIds(db, ids);    // 弹幕统计批量算齐（PLAN docs/plans/danmaku/PLAN.md §6.2 防 N+1）
   const videos: BundleVideoEntry[] = [];
   const files: BundleFile[] = [{ path: 'ANALYZE.md', content: ANALYZE_MD }];
   const errors: Array<{ source_vid: string; message: string }> = [];
@@ -324,6 +330,13 @@ export function buildBundle(db: Database.Database, opts: BuildBundleOpts): Bundl
       const meta: BundleCommentsMeta = { file: `comments/${v.source_vid}.md`, ...cm };
       entry.comments = meta;
       files.push({ path: meta.file, content: renderCommentsMd(v, meta, treeByVideo(db, v.id)) });
+    }
+    // 弹幕导出（PLAN docs/plans/danmaku/PLAN.md §6.1：有则随视频导出，同 comments 哲学——数据在库就进原料；0 弹幕无文件无字段）
+    const dm = danmakuMeta.get(v.id);
+    if (dm) {
+      const meta: BundleDanmakuMeta = { file: `danmaku/${v.source_vid}.md`, ...dm };
+      entry.danmaku = meta;
+      files.push({ path: meta.file, content: renderDanmakuMd(v, meta, danmakuTimeline(db, v.id)) });
     }
   }
 

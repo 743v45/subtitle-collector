@@ -1,6 +1,6 @@
 // collector-cli 导出命令组：export subtitle / export videos。
 // 设计参考 [设计文档 §3.2](docs/superpowers/specs/2026-07-05-collector-cli-design.md)。
-// 架构同 videos.ts：commander 薄包装 + 纯处理函数。措辞：字幕（subtitle），非弹幕。
+// 架构同 videos.ts：commander 薄包装 + 纯处理函数。措辞：字幕（subtitle）/评论（comment）/弹幕（danmaku）三类分离。
 //
 // 命名注意（避坑）：export subtitle 的字幕格式用 `--sub-format` 而非 `--format`，
 // 因为 commander 的 program 级 `--format`（全局输出格式 json|ndjson|csv|table）会吞掉
@@ -297,6 +297,10 @@ export function buildExportCommand(): Command {
       // 评论正文（comments/<BV>.md，C6）有导出才建目录，避免无评论包出现空目录
       if (built.files.some((f) => f.path.startsWith('comments/'))) {
         mkdirSync(join(raw.out, 'comments'), { recursive: true });
+      }
+      // 弹幕正文（danmaku/<BV>.md，PLAN docs/plans/danmaku/PLAN.md §6.1）有导出才建目录，避免无弹幕包出现空目录
+      if (built.files.some((f) => f.path.startsWith('danmaku/'))) {
+        mkdirSync(join(raw.out, 'danmaku'), { recursive: true });
       }
       for (const f of built.files) writeFileSync(join(raw.out, f.path), f.content);
       emitResult({

@@ -303,7 +303,7 @@ test('buildBundle:有评论视频出 comments/<BV>.md + manifest comments 摘要
 // ── ANALYZE.md 模板增补（§6.4）──
 
 test('ANALYZE_MD:盲区第四类「评论区盲区」+ 评论区共识信号可选段 + 评论出处格式', () => {
-  for (const anchor of ['覆盖盲区四类', '评论区盲区', 'coverage < 1', 'comments verify',
+  for (const anchor of ['覆盖盲区五类', '评论区盲区', 'coverage < 1', 'comments verify',
     '评论区共识信号', '粉丝向/情绪向', '评论区 @', 'comments/<BV号>.md']) {
     assert.ok(ANALYZE_MD.includes(anchor), `ANALYZE_MD 缺 C6 增补锚点: ${anchor}`);
   }
