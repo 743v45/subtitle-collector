@@ -9,7 +9,7 @@
 // | R1 | 401 显形/保存落库/不再提醒/空输入禁存 四例 | 通过 | 2026-10-07 账本 U-1 |
 import { test, expect, vi, afterEach } from 'vitest';
 import { render, screen, fireEvent, cleanup, act } from '@testing-library/react';
-import { AuthTokenBanner } from './AuthTokenBanner';
+import { AuthTokenBanner, hasToken } from './AuthTokenBanner';
 import { AUTH_REQUIRED_EVENT, getToken } from '../authToken';
 
 afterEach(() => {
@@ -59,4 +59,12 @@ test('不再提醒：本会话关闭横幅（sessionStorage 记忆），后续 4
   fire401();
   expect(screen.queryByRole('alert')).toBe(null);
   expect(window.sessionStorage.getItem('collector-auth-banner-dismissed')).toBe('1');
+});
+
+test('hasToken：已配置 token → true；未配置 → false（横幅显形前的先行判断依据）', () => {
+  // 无 token：hasToken 必须为 false（getToken() 空串长度 0 分支）
+  expect(hasToken()).toBe(false);
+  // 有 token：落库后为 true（length > 0 分支）；KEY='collector-token' 与 authToken.ts 同源
+  window.localStorage.setItem('collector-token', 't-ok');
+  expect(hasToken()).toBe(true);
 });

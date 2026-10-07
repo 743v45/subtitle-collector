@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-10-05T02:03:10.711Z",
+  "generatedAt": "2026-10-07T10:01:22.006Z",
   "rules": {
     "complexity": 15,
     "maxLines": 400
@@ -22,6 +22,9 @@
     "apps/collector-server/src/db/ingest.ts": {
       "complexity": 40
     },
+    "apps/collector-server/src/db/migrate.ts": {
+      "maxLines": 430
+    },
     "apps/collector-server/src/http/categories.ts": {
       "complexity": 16
     },
@@ -29,7 +32,7 @@
       "complexity": 25
     },
     "apps/collector-server/src/http/queries.ts": {
-      "complexity": 38
+      "complexity": 26
     },
     "apps/collector-server/src/http/tags.ts": {
       "complexity": 21
@@ -50,7 +53,7 @@
     },
     "apps/collector-web/src/pages/CollectPage.tsx": {
       "complexity": 18,
-      "maxLines": 506
+      "maxLines": 484
     },
     "apps/collector-web/src/pages/CreatorDetailPage.tsx": {
       "complexity": 27
@@ -66,8 +69,8 @@
       "complexity": 27
     },
     "apps/collector-web/src/pages/VideoList.tsx": {
-      "complexity": 52,
-      "maxLines": 532
+      "complexity": 42,
+      "maxLines": 527
     },
     "apps/collector-web/src/taskHistoryFilterUrl.ts": {
       "complexity": 17
@@ -104,7 +107,7 @@
     },
     "apps/subtitle-collector/src/popup/Popup.tsx": {
       "complexity": 34,
-      "maxLines": 1786
+      "maxLines": 1756
     },
     "apps/subtitle-collector/src/popup/hooks.ts": {
       "maxLines": 658

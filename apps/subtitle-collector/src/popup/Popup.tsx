@@ -26,6 +26,11 @@ import {
   type SeasonAllState, type UpperAllState, type YtChannelIdent, type YtChannelState,
 } from './hooks-upper';
 import { useCreatorCollected } from './hooks-collected';
+// 弹幕卡独立成文件（2026-10-07 弹幕采集树进 popup，用户现场指令「popup 也要同步支持复制」；
+// 本文件是静态台账在册超标文件，新组件按 ClientIdFoot 先例拆出）
+import { DanmakuCard } from './DanmakuCard';
+// 视频信息卡元信息行图标（2026-10-07 从本文件拆出偿还行数台账）
+import { CalendarIcon, CategoryIcon, ClockIcon, PagesIcon } from './icons-meta';
 // 客户端标识栏（改名入口）与 copyText 已拆至 ClientIdFoot.tsx（2026-08-24 偿还行数台账）
 import { ClientIdFoot, copyText } from './ClientIdFoot';
 import { LOGOS, type Platform, type StatIconName } from './platforms';
@@ -235,6 +240,9 @@ export function Popup() {
           {/* 字幕独立卡（2026-08-22 从视频信息卡内拆出）：视频信息卡正下方；
               无字幕→极简卡、无可复制轨→不渲染（态分支见组件内注释） */}
           <SubtitleCard local={local} />
+          {/* 弹幕卡（2026-10-07）：仅 bilibili 源（danmaku 表以 bvid 为键）；standalone 无 server 不拉，
+              server 不可达/未采集分支见 DanmakuCard 内注释 */}
+          {isBili && <DanmakuCard bvid={currentVid} httpBase={serverCfg.httpBase} enabled={!standalone} />}
           {/* CreatorCard 依赖 server API：纯扩展下隐藏；
               YouTube server 态为 not-collected（无 creator_id）→ CreatorCard 自然返回 null，不展示 */}
           {!standalone && <CreatorCard creator={creatorState} />}
@@ -1715,44 +1723,6 @@ function DanmakuIcon({ className }: { className?: string }) {
     <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className} aria-hidden="true">
       <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
       <path d="M8 9h8" />
-    </svg>
-  );
-}
-
-function PagesIcon({ className }: { className?: string }) {
-  return (
-    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className} aria-hidden="true">
-      <path d="M12 2 2 7l10 5 10-5-10-5Z" />
-      <path d="m2 17 10 5 10-5" />
-      <path d="m2 12 10 5 10-5" />
-    </svg>
-  );
-}
-
-function CategoryIcon({ className }: { className?: string }) {
-  return (
-    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className} aria-hidden="true">
-      <path d="M4 4h6l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2Z" />
-    </svg>
-  );
-}
-
-function ClockIcon({ className }: { className?: string }) {
-  return (
-    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className} aria-hidden="true">
-      <circle cx="12" cy="12" r="10" />
-      <polyline points="12 6 12 12 16 14" />
-    </svg>
-  );
-}
-
-function CalendarIcon({ className }: { className?: string }) {
-  return (
-    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className} aria-hidden="true">
-      <rect x="3" y="4" width="18" height="18" rx="2" />
-      <line x1="16" y1="2" x2="16" y2="6" />
-      <line x1="8" y1="2" x2="8" y2="6" />
-      <line x1="3" y1="10" x2="21" y2="10" />
     </svg>
   );
 }

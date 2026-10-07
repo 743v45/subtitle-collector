@@ -116,3 +116,18 @@ collector-cli comments tree --bvid <BV> --limit 20        # 树形速览(点赞 
 - 批量:`--bvid-file <文件>`(每行一个 BV,串行 5s 间隔,失败不阻断,per-video 回执)。
 - `tree`/`verify` 是 DB 只读:显式 `--server` 被忽略并警告,查生产先快照再 `--db <快照绝对路径>`。
 - 消费:库内有评论的视频,`export bundle` 自动出 `comments/<BV>.md` 正文 + manifest `comments` 摘要(roots/total/coverage/like_top/last_collected_at);操作手册见 docs/help/采集评论.md。
+
+## 8. 弹幕采集 → bundle 消费
+
+B 站视频弹幕池(seg.so 360s 分段)时间轴全量采集入库;`export bundle` 自动携带弹幕原料,无新参数。
+
+```collector-cli
+collector-cli danmaku collect --bvid <BV> --dry-run   # 试跑:拉取解析计数,不写库
+collector-cli danmaku collect --bvid <BV>             # 全量(多 P 默认 all;匿名即可,cookie 可选降风控)
+collector-cli danmaku verify --bvid <BV>              # 校验统计(R1-R5;纯 --db 只读)
+```
+
+- cookie 可选(与评论必配不同):`--cookie-file <path>` 或 `$COLLECTOR_BILI_COOKIE_FILE`,有则带、无则匿名跑(匿名实测可用);来源刷新仍走 `node scripts/bili-cookie-from-chrome.mjs --refresh`。
+- 重采语义:全量重拉 + `UNIQUE(id_str)` 幂等 upsert,重复采集安全,无水位/missing 机制(弹幕请求量小,全拉比水位便宜)。
+- `verify` 是 DB 只读:显式 `--server` 被忽略并警告,查生产先快照再 `--db <快照绝对路径>`。
+- 消费:库内有弹幕的视频,`export bundle` 自动出 `danmaku/<BV>.md` 时间轴正文(按分钟分桶)+ manifest `danmaku` 摘要(rows/pages/peak_minute_rows/last_collected_at);popup(扩展 0.1.34+)也可查看/一键复制;操作手册见 docs/help/采集弹幕.md。

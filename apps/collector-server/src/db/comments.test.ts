@@ -22,7 +22,7 @@ import {
 import type { CommentUpsertRow, CommentRecord } from './comments.js';
 import { verifyTree, coverageOfRoots } from './comments-verify.js';
 
-/** 最新迁移步骤版本号（MIGRATIONS 尾元素）。comments 是 v20；2026-10-07 起 jobs 迁移（v21）在其后——LATEST 随最新迁移走，不再恒等于 comments 版本号 */
+/** 最新迁移步骤版本号（MIGRATIONS 尾元素）。comments 是 v20；其后有 v21 jobs、v22 danmaku——LATEST 随最新迁移走，不再恒等于 comments 版本号 */
 const LATEST = MIGRATIONS[MIGRATIONS.length - 1].version;
 
 function freshDb(): Database.Database {
@@ -79,7 +79,7 @@ const getRow = (db: Database.Database, rpid: string): CommentRecord =>
 test('v20 迁移：新库建 comments 表 + user_version 写到最新 + 重放幂等', () => {
   const db = freshDb();
   try {
-    assert.equal(LATEST, 21, 'MIGRATIONS 尾元素应为最新迁移（v21 jobs；comments 为 v20）');
+    assert.equal(LATEST, 22, 'MIGRATIONS 尾元素应为最新迁移（v22 danmaku；comments 为 v20）');
     assert.equal(db.pragma('user_version', { simple: true }), LATEST, '新库账本应写到 20');
     const tables = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='comments'").all();
     assert.equal(tables.length, 1, 'comments 表应存在');
@@ -95,7 +95,7 @@ test('v20 迁移：旧库（账本 v19、无 comments 表）补建且可写；�
     db.exec('DROP TABLE comments');
     db.pragma('user_version = 19');
     runMigrations(db);
-    assert.equal(db.pragma('user_version', { simple: true }), 21, '账本应补到最新（v20 comments + v21 jobs，jobs 表 IF NOT EXISTS 幂等）');
+    assert.equal(db.pragma('user_version', { simple: true }), LATEST, '账本应补到最新（v20 comments + v21 jobs + v22 danmaku，均 IF NOT EXISTS 幂等）');
     const videoId = insertVideo(db);
     const r = upsertComments(db, {
       videoId, upperMid: '1', fetchedAt: 1000, batchId: 'b1',

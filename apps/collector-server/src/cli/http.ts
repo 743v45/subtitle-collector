@@ -224,6 +224,24 @@ export class ServerClient {
     return this.requestJson('GET', `/api/comments/verify?bvid=${encodeURIComponent(bvid)}`) as Promise<Record<string, unknown>>;
   }
 
+  // ── 弹幕采集通路（C3 端点，PLAN docs/plans/danmaku/PLAN.md §4.1；CLI `danmaku collect` 消费，
+  // D4「CLI 永不写库」；签名口径对齐上方 comments 三件套）──
+
+  // 弹幕水位查询：GET /api/danmaku/count?bvid= → {ok, rows, pages, ...}（回执 before/after 哨兵）。
+  async danmakuCount(bvid: string): Promise<Record<string, unknown>> {
+    return this.requestJson('GET', `/api/danmaku/count?bvid=${encodeURIComponent(bvid)}`) as Promise<Record<string, unknown>>;
+  }
+
+  // 弹幕写回：POST /api/danmaku/ingest {bvid,cid,page,fetched_at,batch_id,danmakus}（幂等 upsert）。
+  async danmakuIngest(body: Record<string, unknown>): Promise<Record<string, unknown>> {
+    return this.requestJson('POST', '/api/danmaku/ingest', body) as Promise<Record<string, unknown>>;
+  }
+
+  // 弹幕校验：GET /api/danmaku/verify?bvid= → {ok, bvid, ...verifyDanmaku}（纯库内读，无副作用）。
+  async danmakuVerify(bvid: string): Promise<Record<string, unknown>> {
+    return this.requestJson('GET', `/api/danmaku/verify?bvid=${encodeURIComponent(bvid)}`) as Promise<Record<string, unknown>>;
+  }
+
   // ── categories / settings（categories & settings CLI 组用，2026-10-05 账本 P1-9 / cli-completeness #9）──
 
   // 分类列表：GET /api/categories → {ok, items}（items 含 creator_count：agent/human 两槽位任一

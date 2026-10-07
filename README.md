@@ -2,7 +2,7 @@
 
 B 站**字幕（subtitle）**相关浏览器扩展与配套服务的 monorepo（pnpm + turbo）。
 
-> 措辞红线：本项目是**字幕**系统，**不是弹幕（danmaku）**。详见 [CLAUDE.md](CLAUDE.md) 第 4 节。
+> 措辞红线：本项目是**字幕**系统，**不是弹幕（danmaku）**。评论（comment）与弹幕（danmaku）为已登记数据类型（2026-10-03/2026-10-07 解冻），三类措辞分离——详见 [CLAUDE.md](CLAUDE.md) 第 4 节。
 
 ## 目标与功能（Feature 列表）
 
@@ -56,6 +56,7 @@ B 站**字幕（subtitle）**相关浏览器扩展与配套服务的 monorepo（
   - **理念整理**：某 UP 主系列视频 → 核心理念 / 方法论提炼
 - 📋 内置 AI pipeline（CLI 一条命令自动分析，需 API 集成）：远期，待手动流程跑顺后再评估
 - ✅ **B 站评论分析树**（2026-10-03，用户现场指令一次性解冻）：单视频全量采集（wbi 游标 + 楼中楼翻全，完整 root/parent/dialog 对话链）→ comments 表入库（增量重采：ctime_s 水位追新 + `--refresh-roots` like top-N 根重翻 + missing 两轮删除确认）→ CLI comments collect/tree/verify → web 视频详情「评论 N」只读树查看（2026-10-05：懒加载展开、置顶前置/点赞排序、楼中楼缩进，纯只读）→ bundle 导出评论原料（manifest 摘要 + comments/*.md）；专栏/动态评论区、评论写操作、其他平台评论不在本期范围
+- ✅ **B 站弹幕采集**（2026-10-07，用户现场指令一次性解冻）：单视频多 P 弹幕池全量（seg.so protobuf 分段，手写 wire-format 解析零依赖，304 越界判停）→ danmaku 表入库（UNIQUE(id_str) 幂等 upsert，全量重拉即增量，无水位机制）→ CLI danmaku collect/verify → bundle 导出（manifest 摘要 + danmaku/*.md 时间轴正文）→ 扩展 popup 弹幕查看与一键复制（0.1.34+，server /api/danmaku/list）；直播弹幕、历史按天回补、web 弹幕展示、其他平台不在本期范围
 
 ### 移动端（🚧 Android 原生 app，2026-08-26 立项）
 

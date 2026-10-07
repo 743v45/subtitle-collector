@@ -52,6 +52,7 @@
 - headless 分析初稿（2026-10-02 CLI 完整度批次追加）：`export-bundle` 出包后接 `claude -p` 按 ANALYZE.md 模板无人值守出分析初稿，人工只复核定稿——触发条件：下个分析主题实跑时试跑定形（prompt 模板、输出落点、失败重试策略都要实跑才知道）。
 - server 端 bundle 导出端点（2026-10-02 CLI 完整度批次追加）：`/api/export/bundle` 在 server 内流式出包（zip/tar），免「VACUUM INTO 快照 → docker cp → CLI 出包」三跳——触发条件：库规模或出包频率上来、现有三跳真的疼了再做。
 - web 评论展示（2026-10-03 评论采集落地的显式范围排除，[docs/plans/comments/PLAN.md §1.3](comments/PLAN.md)）→ ✅ 已落地（2026-10-05 账本 P2-5，091e248 + web 侧 commit）：VideoDetail 懒展开评论树区块 + `GET /api/videos/:source/:vid/comments`（树组装与 CLI tree 共享 db 层 shapeTree）；不再等待触发条件。
+- web 弹幕展示（2026-10-07 弹幕采集落地的显式范围排除，[docs/plans/danmaku/PLAN.md §1.3](danmaku/PLAN.md)）：VideoDetail 弹幕时间轴热力图/列表渲染（挂点同评论树先例）；popup 已先行支持查看/一键复制（扩展 0.1.34+，`/api/danmaku/list`）——触发条件：分析会话疼了（需要看时间轴热力分布）再做。
 
 ## 执行纪律
 

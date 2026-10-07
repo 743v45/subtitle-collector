@@ -14,6 +14,7 @@ import { handleTagsHttp } from './http/tags.js';
 import { handleTranslateHttp } from './http/translate.js';
 import { handleAsrHttp } from './http/asr.js';
 import { handleCommentsHttp } from './http/comments.js';
+import { handleDanmakuHttp } from './http/danmaku.js';
 import { handleSettingsHttp, type StatusContext } from './http/settings.js';
 import { handleSubSearchHttp } from './http/sub-search.js';
 import { handleExportHttp } from './http/export.js';
@@ -114,6 +115,8 @@ const API_ROUTES: Array<[prefix: string, handler: (req: IncomingMessage, res: Se
   ['/api/translate', (req, res, db) => handleTranslateHttp(req, res, db)],
   ['/api/asr', (req, res, db) => handleAsrHttp(req, res, db)],
   ['/api/comments', (req, res, db) => handleCommentsHttp(req, res, db)],
+  // 弹幕采集通路（2026-10-07 解冻，PLAN docs/plans/danmaku/PLAN.md §4.1）：ingest 写库 + count/verify 读
+  ['/api/danmaku', (req, res, db) => handleDanmakuHttp(req, res, db)],
   ['/api/settings', (req, res, db) => handleSettingsHttp(req, res, db, STATUS_CONTEXT)],
   // /api/status 也走 handleSettingsHttp（status 路由与其同文件），但前缀不同须单列一行（否则落 /api/ 兜底 404）
   ['/api/status', (req, res, db) => handleSettingsHttp(req, res, db, STATUS_CONTEXT)],
