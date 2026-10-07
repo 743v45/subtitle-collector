@@ -239,3 +239,35 @@ CREATE TABLE IF NOT EXISTS jobs (
 );
 CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status);
 CREATE INDEX IF NOT EXISTS idx_jobs_created ON jobs(created_at);
+
+-- B 站弹幕(2026-10-07 用户现场指令一次性解冻,与 2026-10-03 评论解冻同类;措辞:弹幕 danmaku,与字幕 subtitle/评论 comment 三类分离)。
+-- 数据形态:时间轴平铺列表(无树),seg.so 按段返回当前弹幕池快照;
+-- 唯一键 id_str = protobuf field12 字符串(field1 int64 在 JS Number 下尾数漂移,实测 37828425933127683→…80,严禁作键);
+-- mid_hash 是发送者 CRC32 hex(B 站侧匿名化,无 mid 明文)。
+-- 幂等 upsert:UNIQUE(id_str);重采刷新观测列,保留首采列(first_seen_at/batch_id)。
+-- 删除不物理删、无 missing 机制(全量重拉成本低,评论式水位是负收益,PLAN §0 D7)。
+-- 时间口径:ctime_s 是 B 站原值 unix 秒(列名 _s 后缀防与毫秒 *_at 列混算);其余 *_at 列毫秒 epoch(全库惯例)。
+-- (相对 PLAN §3.1 的偏差)末列 batch_id 为补入:§3.1 DDL 原文漏列,但 §3.3 upsert 语义要求 INSERT 带 batch_id
+-- 且保留首采 batch_id——列注释对齐 comments.batch_id(v20 先例);v22 statements 与本块逐字双写(含此偏差)。
+CREATE TABLE IF NOT EXISTS danmaku (
+  id             INTEGER PRIMARY KEY AUTOINCREMENT,
+  id_str         TEXT NOT NULL,               -- field12 字符串唯一键
+  video_id       INTEGER NOT NULL REFERENCES videos(id),
+  cid            INTEGER NOT NULL,            -- 分 P 的 cid(oid)
+  page           INTEGER NOT NULL DEFAULT 1,  -- 分 P 页码(extra.pages[].page;单 P = 1)
+  progress_ms    INTEGER,                     -- 显示时间毫秒;高级弹幕可 -1(无时间点,原值保留)
+  mode           INTEGER,                     -- 1-3 滚动 4 底 5 顶 6 逆向 7 高级 8 代码 9 BAS
+  fontsize       INTEGER,
+  color          INTEGER,                     -- 十进制 RGB(16777215=白色)
+  mid_hash       TEXT,                        -- 发送者 CRC32 hex(匿名)
+  content        TEXT,                        -- 弹幕正文(检索列)
+  ctime_s        INTEGER,                     -- 发送时间,B 站原值 unix 秒!(显式 _s 后缀)
+  weight         INTEGER,                     -- 智能屏蔽权重 0-10(低权重被云屏蔽)
+  pool           INTEGER,                     -- 0 普通 1 字幕 2 特殊
+  action         TEXT,                        -- UP 醒目等动作标记(实测样本未见,缺省 NULL)
+  first_seen_at  INTEGER NOT NULL,            -- 首采时刻(毫秒;upsert 保留)
+  last_seen_at   INTEGER NOT NULL,            -- 最近一次在响应中见到(毫秒;重采刷新)
+  batch_id       TEXT                         -- 首采批次 uuid(crypto.randomUUID(),node:crypto 零新增依赖;同轮所有行同值;重采不动;§3.1 原文漏列,按 §3.3 语义补)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_danmaku_id ON danmaku(id_str);
+CREATE INDEX IF NOT EXISTS idx_danmaku_video ON danmaku(video_id, cid, progress_ms);

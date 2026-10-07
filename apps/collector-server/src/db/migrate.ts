@@ -370,6 +370,38 @@ export const MIGRATIONS: readonly MigrationStep[] = [
        CREATE INDEX IF NOT EXISTS idx_jobs_created ON jobs(created_at);`,
     ],
   },
+  {
+    // 双写纪律（PLAN §3.2）：statements 与 schema.sql 的 danmaku DDL 逐字一致（含缩进/注释性空白，
+    // 不按 TS 嵌套重排缩进）——db/danmaku.test.ts 有 sqlite_master.sql 逐字比对测试守漂移。
+    // 相对 PLAN §3.1 的偏差：末列 batch_id 为补入（§3.1 DDL 原文漏列，§3.3 upsert 语义要求
+    // INSERT 带值且重采保留首采 batch_id，学 v20 comments.batch_id），schema.sql 已同步。
+    version: 22,
+    note: 'danmaku 表新建(2026-10-07 弹幕采集解冻):B 站视频弹幕池时间轴快照,seg.so protobuf 分段采集,UNIQUE(id_str) 幂等 upsert,无水位/missing 机制(全量重拉成本低)。双写 schema.sql;新库全量重放安全(CREATE IF NOT EXISTS)',
+    statements: [
+      `CREATE TABLE IF NOT EXISTS danmaku (
+  id             INTEGER PRIMARY KEY AUTOINCREMENT,
+  id_str         TEXT NOT NULL,               -- field12 字符串唯一键
+  video_id       INTEGER NOT NULL REFERENCES videos(id),
+  cid            INTEGER NOT NULL,            -- 分 P 的 cid(oid)
+  page           INTEGER NOT NULL DEFAULT 1,  -- 分 P 页码(extra.pages[].page;单 P = 1)
+  progress_ms    INTEGER,                     -- 显示时间毫秒;高级弹幕可 -1(无时间点,原值保留)
+  mode           INTEGER,                     -- 1-3 滚动 4 底 5 顶 6 逆向 7 高级 8 代码 9 BAS
+  fontsize       INTEGER,
+  color          INTEGER,                     -- 十进制 RGB(16777215=白色)
+  mid_hash       TEXT,                        -- 发送者 CRC32 hex(匿名)
+  content        TEXT,                        -- 弹幕正文(检索列)
+  ctime_s        INTEGER,                     -- 发送时间,B 站原值 unix 秒!(显式 _s 后缀)
+  weight         INTEGER,                     -- 智能屏蔽权重 0-10(低权重被云屏蔽)
+  pool           INTEGER,                     -- 0 普通 1 字幕 2 特殊
+  action         TEXT,                        -- UP 醒目等动作标记(实测样本未见,缺省 NULL)
+  first_seen_at  INTEGER NOT NULL,            -- 首采时刻(毫秒;upsert 保留)
+  last_seen_at   INTEGER NOT NULL,            -- 最近一次在响应中见到(毫秒;重采刷新)
+  batch_id       TEXT                         -- 首采批次 uuid(crypto.randomUUID(),node:crypto 零新增依赖;同轮所有行同值;重采不动;§3.1 原文漏列,按 §3.3 语义补)
+)`,
+      'CREATE UNIQUE INDEX IF NOT EXISTS idx_danmaku_id ON danmaku(id_str)',
+      'CREATE INDEX IF NOT EXISTS idx_danmaku_video ON danmaku(video_id, cid, progress_ms)',
+    ],
+  },
 ];
 
 export function runMigrations(db: Database.Database): void {
