@@ -22,23 +22,38 @@ export function formatClock(ms) {
   return h > 0 ? `${h}:${String(m).padStart(2, '0')}:${ss}` : `${String(m).padStart(2, '0')}:${ss}`;
 }
 
-// 弹幕数组 → 复制文本：每条一行 "[MM:SS] 内容"，行间 \n、无尾随换行。
-// content null / undefined / 空串跳过（不产空行）；progress_ms null/负值行时间戳为 [--:--]
-//（归一在 formatClock 内）。入参非数组（null/undefined）→ 空串。
+// 弹幕数组 → 展开列表渲染条目 [{ clock: "MM:SS"|"H:MM:SS"|"--:--", content }, ...]（2026-10-07
+// 弹幕卡展开列表拆出的纯函数，用户现场指令「popup 可以展开，定高可滚动」）。
+// 顺序=入参顺序（server 已按 cid,page,progress_ms 升序摊平，即时间轴序，不重排）；
+// content null / undefined / 空串跳过（与复制文本同一口径，不产空行）；
+// 时间戳归一在 formatClock 内（null/非有限数/负值 → "--:--"）。入参非数组（null/undefined）→ 空数组。
 /**
  * @param {Array<{ progress_ms?: number | null, content?: string | null } | null | undefined>} [danmakus]
- * @returns {string}
+ * @returns {Array<{ clock: string, content: string }>}
  */
-export function formatDanmakuCopy(danmakus) {
+export function formatDanmakuLines(danmakus) {
   const lines = [];
   if (Array.isArray(danmakus)) {
     for (const d of danmakus) {
       const content = d?.content;
       if (typeof content !== 'string' || content.length === 0) continue;
-      lines.push(`[${formatClock(d?.progress_ms)}] ${content}`);
+      lines.push({ clock: formatClock(d?.progress_ms), content });
     }
   }
-  return lines.join('\n');
+  return lines;
+}
+
+// 弹幕数组 → 复制文本：每条一行 "[MM:SS] 内容"，行间 \n、无尾随换行。
+// 条目口径单点维护在 formatDanmakuLines（与展开列表逐条渲染完全一致，2026-10-07 重构复用）；
+// 入参非数组（null/undefined）→ 空串。
+/**
+ * @param {Array<{ progress_ms?: number | null, content?: string | null } | null | undefined>} [danmakus]
+ * @returns {string}
+ */
+export function formatDanmakuCopy(danmakus) {
+  return formatDanmakuLines(danmakus)
+    .map((l) => `[${l.clock}] ${l.content}`)
+    .join('\n');
 }
 
 // 复制成功反馈条数（按行数算：formatDanmakuCopy 一条弹幕一行）。非字符串/空串 → 0。
