@@ -1,0 +1,336 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`server 不可达(fetch reject):静默不渲染,snapshot 为空容器 > S6 server 不可达（空容器） 1`] = `null`;
+
+exports[`再点收起:列表消失、aria-expanded=false、结构与折叠态同构,snapshot 锁收起后形态 > S3 收起后（与折叠态同构） 1`] = `
+<div
+  class="rounded-lg border bg-card text-card-foreground shadow-sm"
+>
+  <div
+    class="space-y-2 p-3 text-xs"
+  >
+    <div
+      data-state="closed"
+    >
+      <div
+        class="flex items-center gap-1"
+      >
+        <button
+          aria-expanded="false"
+          class="flex min-w-0 flex-1 items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground"
+          data-state="closed"
+          type="button"
+        >
+          <svg
+            aria-hidden="true"
+            class="h-3 w-3 shrink-0 transition-transform"
+            fill="none"
+            stroke="currentColor"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            stroke-width="2"
+            viewBox="0 0 24 24"
+            xmlns="http://www.w3.org/2000/svg"
+          >
+            <path
+              d="m9 18 6-6-6-6"
+            />
+          </svg>
+          <span
+            class="shrink-0 font-medium text-foreground"
+          >
+            弹幕
+          </span>
+          <span
+            class="shrink-0 tabular-nums"
+          >
+            5
+             条
+          </span>
+        </button>
+        <button
+          class="shrink-0 rounded px-2 py-0.5 transition-colors bg-brand text-brand-foreground hover:bg-brand/90"
+          type="button"
+        >
+          复制
+        </button>
+      </div>
+      <div
+        class="pt-2"
+        data-state="closed"
+        hidden=""
+        id="radix-:r2:"
+        style=""
+      />
+    </div>
+  </div>
+</div>
+`;
+
+exports[`复制成功:writeText 收到与 formatDanmakuCopy 逐字节一致文本 →「已复制 4 条」→ 2s 后复原「复制」 > S4 复制成功反馈态（secondary 配色瞬态） 1`] = `
+<div
+  class="rounded-lg border bg-card text-card-foreground shadow-sm"
+>
+  <div
+    class="space-y-2 p-3 text-xs"
+  >
+    <div
+      data-state="closed"
+    >
+      <div
+        class="flex items-center gap-1"
+      >
+        <button
+          aria-expanded="false"
+          class="flex min-w-0 flex-1 items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground"
+          data-state="closed"
+          type="button"
+        >
+          <svg
+            aria-hidden="true"
+            class="h-3 w-3 shrink-0 transition-transform"
+            fill="none"
+            stroke="currentColor"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            stroke-width="2"
+            viewBox="0 0 24 24"
+            xmlns="http://www.w3.org/2000/svg"
+          >
+            <path
+              d="m9 18 6-6-6-6"
+            />
+          </svg>
+          <span
+            class="shrink-0 font-medium text-foreground"
+          >
+            弹幕
+          </span>
+          <span
+            class="shrink-0 tabular-nums"
+          >
+            5
+             条
+          </span>
+        </button>
+        <button
+          class="shrink-0 rounded px-2 py-0.5 transition-colors bg-secondary text-secondary-foreground"
+          type="button"
+        >
+          已复制 4 条
+        </button>
+      </div>
+      <div
+        class="pt-2"
+        data-state="closed"
+        hidden=""
+        id="radix-:r3:"
+        style=""
+      />
+    </div>
+  </div>
+</div>
+`;
+
+exports[`折叠态默认渲染:「弹幕 5 条 + 复制」头行,snapshot 锁整卡结构,展开内容不存在 > S1 折叠态默认整卡结构 1`] = `
+<div
+  class="rounded-lg border bg-card text-card-foreground shadow-sm"
+>
+  <div
+    class="space-y-2 p-3 text-xs"
+  >
+    <div
+      data-state="closed"
+    >
+      <div
+        class="flex items-center gap-1"
+      >
+        <button
+          aria-expanded="false"
+          class="flex min-w-0 flex-1 items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground"
+          data-state="closed"
+          type="button"
+        >
+          <svg
+            aria-hidden="true"
+            class="h-3 w-3 shrink-0 transition-transform"
+            fill="none"
+            stroke="currentColor"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            stroke-width="2"
+            viewBox="0 0 24 24"
+            xmlns="http://www.w3.org/2000/svg"
+          >
+            <path
+              d="m9 18 6-6-6-6"
+            />
+          </svg>
+          <span
+            class="shrink-0 font-medium text-foreground"
+          >
+            弹幕
+          </span>
+          <span
+            class="shrink-0 tabular-nums"
+          >
+            5
+             条
+          </span>
+        </button>
+        <button
+          class="shrink-0 rounded px-2 py-0.5 transition-colors bg-brand text-brand-foreground hover:bg-brand/90"
+          type="button"
+        >
+          复制
+        </button>
+      </div>
+      <div
+        class="pt-2"
+        data-state="closed"
+        hidden=""
+        id="radix-:r0:"
+        style=""
+      />
+    </div>
+  </div>
+</div>
+`;
+
+exports[`未采集(rows=0):灰字「弹幕未采集」snapshot,无复制按钮、无展开行 > S5 未采集（灰字提示） 1`] = `
+<div
+  class="rounded-lg border bg-card text-card-foreground shadow-sm"
+>
+  <div
+    class="p-3 text-xs text-muted-foreground"
+  >
+    弹幕未采集
+  </div>
+</div>
+`;
+
+exports[`点击 chevron 行展开:aria-expanded=true + 定高滚动容器类名显式锁定 + 逐条 [MM:SS] 内容,snapshot 锁展开态 > S2 展开态（定高滚动列表） 1`] = `
+<div
+  class="rounded-lg border bg-card text-card-foreground shadow-sm"
+>
+  <div
+    class="space-y-2 p-3 text-xs"
+  >
+    <div
+      data-state="open"
+    >
+      <div
+        class="flex items-center gap-1"
+      >
+        <button
+          aria-controls="radix-:r1:"
+          aria-expanded="true"
+          class="flex min-w-0 flex-1 items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground"
+          data-state="open"
+          type="button"
+        >
+          <svg
+            aria-hidden="true"
+            class="h-3 w-3 shrink-0 transition-transform rotate-90"
+            fill="none"
+            stroke="currentColor"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            stroke-width="2"
+            viewBox="0 0 24 24"
+            xmlns="http://www.w3.org/2000/svg"
+          >
+            <path
+              d="m9 18 6-6-6-6"
+            />
+          </svg>
+          <span
+            class="shrink-0 font-medium text-foreground"
+          >
+            弹幕
+          </span>
+          <span
+            class="shrink-0 tabular-nums"
+          >
+            5
+             条
+          </span>
+        </button>
+        <button
+          class="shrink-0 rounded px-2 py-0.5 transition-colors bg-brand text-brand-foreground hover:bg-brand/90"
+          type="button"
+        >
+          复制
+        </button>
+      </div>
+      <div
+        class="pt-2"
+        data-state="open"
+        id="radix-:r1:"
+        style=""
+      >
+        <div
+          class="max-h-80 space-y-0.5 overflow-y-auto pr-0.5"
+        >
+          <div
+            class="flex items-start gap-1.5 text-xs"
+          >
+            <span
+              class="shrink-0 tabular-nums text-[10px] text-muted-foreground/70"
+            >
+              00:00
+            </span>
+            <span
+              class="min-w-0 break-all"
+            >
+              前排
+            </span>
+          </div>
+          <div
+            class="flex items-start gap-1.5 text-xs"
+          >
+            <span
+              class="shrink-0 tabular-nums text-[10px] text-muted-foreground/70"
+            >
+              00:59
+            </span>
+            <span
+              class="min-w-0 break-all"
+            >
+              名场面打卡
+            </span>
+          </div>
+          <div
+            class="flex items-start gap-1.5 text-xs"
+          >
+            <span
+              class="shrink-0 tabular-nums text-[10px] text-muted-foreground/70"
+            >
+              1:00:00
+            </span>
+            <span
+              class="min-w-0 break-all"
+            >
+              一小时整的彩蛋
+            </span>
+          </div>
+          <div
+            class="flex items-start gap-1.5 text-xs"
+          >
+            <span
+              class="shrink-0 tabular-nums text-[10px] text-muted-foreground/70"
+            >
+              --:--
+            </span>
+            <span
+              class="min-w-0 break-all"
+            >
+              未定位弹幕
+            </span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+`;
