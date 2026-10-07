@@ -106,6 +106,7 @@ export async function main(): Promise<void> {
       { buildTranslateCommand },
       { buildAsrCommand },
       { buildCommentsCommand },
+      { buildDanmakuCommand },
     ] = await Promise.all([
       import('./commands/videos.js'),
       import('./commands/versions.js'),
@@ -125,6 +126,7 @@ export async function main(): Promise<void> {
       import('./commands/translate.js'),
       import('./commands/asr.js'),
       import('./commands/comments.js'),
+      import('./commands/danmaku.js'),
     ]);
     program.addCommand(buildVideosCommand());   // videos list / get / get-by-id
     program.addCommand(buildVersionsCommand()); // versions get
@@ -147,6 +149,7 @@ export async function main(): Promise<void> {
     program.addCommand(buildTranslateCommand()); // translate pending / source / fill（补翻工作流）
     program.addCommand(buildAsrCommand());       // asr backfill（无字幕兜底转写编排）
     program.addCommand(buildCommentsCommand());  // comments collect / tree / verify（评论采集与树查看,2026-10）
+    program.addCommand(buildDanmakuCommand());   // danmaku collect / verify（弹幕采集与校验,2026-10-07）
 
     await program.parseAsync(process.argv);
   } catch (err) {
