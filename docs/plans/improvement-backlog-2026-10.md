@@ -61,6 +61,7 @@
 | P2-3 | 采集执行体单点缓解 | 三入口写 collect_tasks，唯一执行者 = 一台桌面 Chrome 的扩展 SW，扩展不在线任务全停；方案候选：dispatched 超时改派 / 多客户端派发（状态机已备，缺 policy） | ☐ |
 | P2-4 | douyin 遗留三件 | popup 抖音卡、popup「上报」哑按钮（[DOUYIN-PROGRESS.md:161](../../DOUYIN-PROGRESS.md#L161)）、博主批量 CLI 入口；**前置 = U-2 真机验证通过** | ☐ 前置未满足 |
 | P2-5 | web 评论展示 | VideoDetail 评论树渲染 + server 评论查询子路由（挂点已探明：统计卡 `stat.reply` 计数处 + `/api/videos/:source/:vid/*` 子资源先例，[comments/PLAN.md §1.3](comments/PLAN.md) 显式排除项）；2026-10-05 用户指令提级执行（消费侧非冻结截留） | ✅（2026-10-05，web 评论树上线；实现收敛 main C8 形态——`GET /api/comments/tree?bvid=` + CommentsSection 懒加载徽标按钮（05c79de/d361c04 先行入 main），本分支平行实现（/api/videos/:s/:v/comments + CommentTreePanel）于合并 7974e94 收敛删除，CLI 侧 shapeTree 下沉保留；已随 docker rebuild 上生产） |
+| P2-6 | migrate.ts 拆分偿还 | [migrate.ts](../../apps/collector-server/src/db/migrate.ts) 430 行超 400 静态门（静态台账已登记）——`MIGRATIONS` 账本数组拆独立文件的结构性偿还；**触发条件：v23+ 新迁移落地时顺手做**（反正要动该文件，不专项大爆炸；拆完 `baseline update --write` 固化） | ☐ 触发未到 |
 
 ## 4. P3（观察 / 待拍板）
 

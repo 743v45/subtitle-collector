@@ -5,7 +5,7 @@ description: Use when 在本仓库需要调度字幕采集链路或消费字幕�
 
 # collector-cli 与 scripts 调度参考
 
-B 站**字幕(subtitle,非弹幕)**采集项目的 agent 友好 CLI 调度入口。多步任务编排见 [references/playbooks.md](references/playbooks.md)。
+B 站**字幕(subtitle)/评论(comment)/弹幕(danmaku)**采集项目的 agent 友好 CLI 调度入口(三类数据措辞分离,见 CLAUDE.md §4)。多步任务编排见 [references/playbooks.md](references/playbooks.md)。
 
 ## 调用形态(唯一正确姿势)
 
@@ -14,6 +14,7 @@ B 站**字幕(subtitle,非弹幕)**采集项目的 agent 友好 CLI 调度入口
 ```collector-cli
 collector-cli stats overview
 collector-cli comments collect --bvid <BV> --dry-run
+collector-cli danmaku collect --bvid <BV> --dry-run
 ```
 
 - **禁 `pnpm cli`**:pnpm run 回显 banner 混入 stdout,`| jq` 直接解析失败。
@@ -61,6 +62,8 @@ docker exec collector-server node -e 'const db=require("better-sqlite3")("/data/
 | `asr backfill` | server HTTP + B 站/抖音直链 + 本机 fireredasr | 无字幕视频兜底转写(no-subtitle 圈定,`--source bilibili\|douyin` 定平台,2026-08-29 抖音接入):`--size <n>`(默认 5,先小样本实测速度,RTF≈0.2)/ `--page` / `--max-duration <秒>` / `--dry-run`(只圈定,先行预检口径)/ `--cookie-file`(仅 bilibili 必配——nav 取 wbi keys 即需登录态,匿名 -101,或 $COLLECTOR_BILI_COOKIE_FILE)/ `--asr-url`(默认 127.0.0.1:5079)。bilibili:圈定→wbi playurl 拉音轨;douyin:详情取 extra.play_uri 直构 snssdk 直链下载 mp4(零 cookie,mp4 整段上传由 fireredasr 抽音轨;500MB 上限,超限跳过 video_too_large 不重试)→FireRedASR 转写→写回 `asr-zh-<引擎>` 轨(如 `asr-zh-fireredasr-aed-l`;`--engine` 兼定轨名,不同引擎各自成轨,web 详情页轨选择器可切换比对),成功自动摘标(重跑跳过已完成);失败分类计数不中断批次(douyin 新分类 missing_play_uri/video_too_large/detail_fetch_error) |
 | `comments collect` | server HTTP + B 站直连 | 评论分析树采集(宿主 CLI 直连 B 站 wbi 游标遍历+楼中楼翻全,写库经 server ingest 端点;2026-10 评论采集):`--bvid/--aid/--bvid-file --mode auto\|full\|incremental --sort hot\|time --max-pages --max-floor-pages --refresh-roots --max-requests --page-interval-ms --batch-size --dry-run --cookie-file`(cookie 必配——wbi 签名前置 nav 需登录态,匿名 -101;取 cookie 见 `scripts/bili-cookie-from-chrome.mjs`) |
 | `comments tree/verify` | DB 只读 | 评论树查看与完整性校验(R0-R9):`tree --bvid --limit`(点赞前 N 根)/ `verify --bvid --stat-reply <n>`(外部总量哨兵,给了才启 R9 规模对账);建议全局 `--format json`;显式 `--server` 出「只读本地 --db」警告(videos/sub/export/stats/changes/comments 同组) |
+| `danmaku collect` | server HTTP + B 站直连 | 弹幕池时间轴采集(seg.so 分段,cookie 可选;宿主 CLI 直连 B 站 360s 分段拉取,写库经 server ingest 端点;2026-10 弹幕采集):`--bvid/--aid --page all\|n --max-segments --max-requests --segment-interval-ms --batch-size --dry-run --cookie-file`(cookie **可选**——匿名实测可用,缺省 `$COLLECTOR_BILI_COOKIE_FILE`,都没有匿名跑;与评论必配不同) |
+| `danmaku verify` | DB 只读 | 弹幕校验统计(R1-R5):`verify --bvid`(必填)——段外时间轴值域/重复 id/分布分位/60s 直方图峰值/ctime 范围;建议全局 `--format json`;显式 `--server` 出「只读本地 --db」警告(videos/sub/export/stats/changes/comments/danmaku 同组) |
 | `tags list/apply/remove/rename/delete` | list 读 DB;apply/remove/rename/delete 走 server | `tags list --sort count\|name\|created_at --desc --top <n>`(count 语义跟随 `--scope` 档;`--top` 条数上限默认 500——2026-10-05 P1-10 命名统一,原 topN 拼写退 2)/ `tags apply <vid...> --names <csv> --scope manual\|batch\|ai\|system --source <平台>`(打标即建标;scope=档位,source=平台默认 bilibili——YouTube 11 位 ID 用 `--source youtube`,抖音 19 位 aweme_id 用 `--source douyin`;system=系统状态档如 no-subtitle,采集链路自动打/摘)/ `tags rename <标签id> --name <新名>`(标签库纠错:改名,已有打标关系自动跟随新名;撞已有名 409→RUNTIME 退 1)/ `tags delete <标签id>`(删标签含全部档位关系;不存在 404→NOT_FOUND 退 5)——标签 id 取 `tags list` 输出的 id 列(2026-10-05) |
 | `clients list/reporting/task-dispatch/command` | server HTTP | 扩展客户端管控;`list --sort last_seen\|first_seen\|name --desc` 含离线客户端(DB 注册表合并在线态,带 popup 改的名字、在线/离线时长、扩展版本与双平台登录态 `bili_login`/`yt_login`——B 站未登录会让充电视频 AI 字幕接口返回空、YouTube 未登录时年龄限制视频播不了且 pot 受限加重,批量采集整批 no_subtitle/pot_limited 的判因依据);`reporting <id> <on\|off>` 切上报 / `task-dispatch <id> <on\|off>` 切任务派发(off=仅上报状态,调度器不派任务);`command <id> <action> --timeout <ms>` |
 | `tasks list/get/retry` | server HTTP | 采集任务查询与重试(2026-10-02):`list` 筛选/排序/分页(`--status failed,limited` 逗号多值 / `--source <平台>` / `--batch-id <id>` / `--batch <名>` / `--creator` / `--creator-uid` / `--q` / `--since --until` / `--limit <n>`(最近 N)或 `--page --page-size`(翻页,输出带 page/page_size;**展示单元口径** 2026-10-05:单条任务/整批各算 1 单元,整批必落同一页——items 可超 page_size,total=单元数,写翻页脚本按单元算) / `--sort created_at\|finished_at\|status`);`get <id>` 单任务详情(失败原因 `error` 与回执摘要 `result` 在 task 内);`retry <id...>` 多 id 批量重试(非可重试行 server 侧静默跳过,看回执 `retried` 计数) |
@@ -139,5 +142,5 @@ collect 子命令速记:`search <关键词>` 搜候选(不入库)/ `subtitle <vi
 ## 纪律
 
 - **批量采集/验证/诊断前,先确认工具失败路径日志足以定位根因**(HTTP 特征/解析命中/每步计数),详见 CLAUDE.md §9;日志不够先修日志再跑。
-- 措辞红线:字幕(subtitle),非弹幕(danmaku),严禁混用。
+- 措辞红线:字幕(subtitle)/评论(comment)/弹幕(danmaku)三类数据措辞分离,严禁混用(评论/弹幕 2026-10-03/2026-10-07 先后解冻入库;字幕≠弹幕原红线语义维持,CLAUDE.md §4)。
 - **维护契约**:改 CLI 命令/选项或 scripts 工具后必须同步本文件与 playbooks——`node scripts/verify-skill-sync.mjs`(进 `pnpm qa`)会拦截漂移。
