@@ -1,0 +1,320 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`server 不可达(fetch reject):静默不渲染,snapshot 为空容器 > S6 server 不可达（空容器） 1`] = `null`;
+
+exports[`截断(truncated=true):展开后列表尾灰字「仅显示前 200 根评论(共 N 根)」+ 头行计数为库内总数,snapshot 锁提示形态 > S7 截断提示（列表尾灰字） 1`] = `
+<div
+  class="rounded-lg border bg-card text-card-foreground shadow-sm"
+>
+  <div
+    class="space-y-2 p-3 text-xs"
+  >
+    <div
+      data-state="open"
+    >
+      <button
+        aria-controls="radix-:r2:"
+        aria-expanded="true"
+        class="flex min-w-0 flex-1 items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground"
+        data-state="open"
+        type="button"
+      >
+        <svg
+          aria-hidden="true"
+          class="h-3 w-3 shrink-0 transition-transform rotate-90"
+          fill="none"
+          stroke="currentColor"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          stroke-width="2"
+          viewBox="0 0 24 24"
+          xmlns="http://www.w3.org/2000/svg"
+        >
+          <path
+            d="m9 18 6-6-6-6"
+          />
+        </svg>
+        <span
+          class="shrink-0 font-medium text-foreground"
+        >
+          评论
+        </span>
+        <span
+          class="shrink-0 tabular-nums"
+        >
+          520
+           条
+        </span>
+      </button>
+      <div
+        class="pt-2"
+        data-state="open"
+        id="radix-:r2:"
+        style=""
+      >
+        <div
+          class="max-h-80 space-y-0.5 overflow-y-auto pr-0.5"
+        >
+          <div
+            class="flex items-start gap-1.5 text-xs"
+          >
+            <span
+              class="shrink-0 tabular-nums text-[10px] text-muted-foreground/70"
+            >
+              【赞 1】
+            </span>
+            <span
+              class="min-w-0 break-all"
+            >
+              [置顶]@置顶用户:置顶说明
+            </span>
+          </div>
+          <div
+            class="flex items-start gap-1.5 text-xs"
+          >
+            <span
+              class="shrink-0 tabular-nums text-[10px] text-muted-foreground/70"
+            >
+              【赞 10】
+            </span>
+            <span
+              class="min-w-0 break-all"
+            >
+              @UP主本人(UP主):感谢支持
+            </span>
+          </div>
+          <div
+            class="flex items-start gap-1.5 text-xs"
+          >
+            <span
+              class="shrink-0 tabular-nums text-[10px] text-muted-foreground/70"
+            >
+              【赞 5】
+            </span>
+            <span
+              class="min-w-0 break-all"
+            >
+              @用户B:看图 [图] [已折叠]
+            </span>
+          </div>
+          <div
+            class="flex items-start gap-1.5 text-xs pl-4"
+          >
+            <span
+              class="shrink-0 tabular-nums text-[10px] text-muted-foreground/70"
+            >
+              【赞 2】
+            </span>
+            <span
+              class="min-w-0 break-all"
+            >
+              @用户C 回复 @用户B:回复内容 [仅自己可见]
+            </span>
+          </div>
+          <div
+            class="pt-1 text-[10px] text-muted-foreground/70"
+          >
+            仅显示前 200 根评论（共 173 根）
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+`;
+
+exports[`折叠态默认渲染:「评论 4 条」头行,snapshot 锁整卡结构,展开内容不存在、无复制按钮 > S1 折叠态默认整卡结构 1`] = `
+<div
+  class="rounded-lg border bg-card text-card-foreground shadow-sm"
+>
+  <div
+    class="space-y-2 p-3 text-xs"
+  >
+    <div
+      data-state="closed"
+    >
+      <button
+        aria-expanded="false"
+        class="flex min-w-0 flex-1 items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground"
+        data-state="closed"
+        type="button"
+      >
+        <svg
+          aria-hidden="true"
+          class="h-3 w-3 shrink-0 transition-transform"
+          fill="none"
+          stroke="currentColor"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          stroke-width="2"
+          viewBox="0 0 24 24"
+          xmlns="http://www.w3.org/2000/svg"
+        >
+          <path
+            d="m9 18 6-6-6-6"
+          />
+        </svg>
+        <span
+          class="shrink-0 font-medium text-foreground"
+        >
+          评论
+        </span>
+        <span
+          class="shrink-0 tabular-nums"
+        >
+          4
+           条
+        </span>
+      </button>
+      <div
+        class="pt-2"
+        data-state="closed"
+        hidden=""
+        id="radix-:r0:"
+        style=""
+      />
+    </div>
+  </div>
+</div>
+`;
+
+exports[`未采集(total_rows=0):主行「评论未采集」+ 副行采集命令(含真实 bvid),无头行,snapshot 锁两段式 > S5 未采集（灰字提示 + 采集命令指引） 1`] = `
+<div
+  class="rounded-lg border bg-card text-card-foreground shadow-sm"
+>
+  <div
+    class="space-y-1 p-3 text-xs text-muted-foreground"
+  >
+    <div>
+      评论未采集
+    </div>
+    <div
+      class="text-[10px] text-muted-foreground/70"
+    >
+      可执行 
+      <code
+        class="break-all font-mono"
+      >
+        collector-cli comments collect --bvid BV1xx411c7mD
+      </code>
+       采集
+    </div>
+  </div>
+</div>
+`;
+
+exports[`点击头行展开:aria-expanded=true + 定高滚动容器类名显式锁定 + 标注全集与楼缩进,snapshot 锁展开态 > S2 展开态（定高滚动列表 + 标注全集 + 楼缩进） 1`] = `
+<div
+  class="rounded-lg border bg-card text-card-foreground shadow-sm"
+>
+  <div
+    class="space-y-2 p-3 text-xs"
+  >
+    <div
+      data-state="open"
+    >
+      <button
+        aria-controls="radix-:r1:"
+        aria-expanded="true"
+        class="flex min-w-0 flex-1 items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground"
+        data-state="open"
+        type="button"
+      >
+        <svg
+          aria-hidden="true"
+          class="h-3 w-3 shrink-0 transition-transform rotate-90"
+          fill="none"
+          stroke="currentColor"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          stroke-width="2"
+          viewBox="0 0 24 24"
+          xmlns="http://www.w3.org/2000/svg"
+        >
+          <path
+            d="m9 18 6-6-6-6"
+          />
+        </svg>
+        <span
+          class="shrink-0 font-medium text-foreground"
+        >
+          评论
+        </span>
+        <span
+          class="shrink-0 tabular-nums"
+        >
+          4
+           条
+        </span>
+      </button>
+      <div
+        class="pt-2"
+        data-state="open"
+        id="radix-:r1:"
+        style=""
+      >
+        <div
+          class="max-h-80 space-y-0.5 overflow-y-auto pr-0.5"
+        >
+          <div
+            class="flex items-start gap-1.5 text-xs"
+          >
+            <span
+              class="shrink-0 tabular-nums text-[10px] text-muted-foreground/70"
+            >
+              【赞 1】
+            </span>
+            <span
+              class="min-w-0 break-all"
+            >
+              [置顶]@置顶用户:置顶说明
+            </span>
+          </div>
+          <div
+            class="flex items-start gap-1.5 text-xs"
+          >
+            <span
+              class="shrink-0 tabular-nums text-[10px] text-muted-foreground/70"
+            >
+              【赞 10】
+            </span>
+            <span
+              class="min-w-0 break-all"
+            >
+              @UP主本人(UP主):感谢支持
+            </span>
+          </div>
+          <div
+            class="flex items-start gap-1.5 text-xs"
+          >
+            <span
+              class="shrink-0 tabular-nums text-[10px] text-muted-foreground/70"
+            >
+              【赞 5】
+            </span>
+            <span
+              class="min-w-0 break-all"
+            >
+              @用户B:看图 [图] [已折叠]
+            </span>
+          </div>
+          <div
+            class="flex items-start gap-1.5 text-xs pl-4"
+          >
+            <span
+              class="shrink-0 tabular-nums text-[10px] text-muted-foreground/70"
+            >
+              【赞 2】
+            </span>
+            <span
+              class="min-w-0 break-all"
+            >
+              @用户C 回复 @用户B:回复内容 [仅自己可见]
+            </span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+`;

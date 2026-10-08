@@ -107,7 +107,7 @@
     },
     "apps/subtitle-collector/src/popup/Popup.tsx": {
       "complexity": 34,
-      "maxLines": 1756
+      "maxLines": 1760
     },
     "apps/subtitle-collector/src/popup/hooks.ts": {
       "maxLines": 658

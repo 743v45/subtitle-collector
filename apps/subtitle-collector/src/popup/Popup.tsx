@@ -29,6 +29,7 @@ import { useCreatorCollected } from './hooks-collected';
 // 弹幕卡独立成文件（2026-10-07 弹幕采集树进 popup，用户现场指令「popup 也要同步支持复制」；
 // 本文件是静态台账在册超标文件，新组件按 ClientIdFoot 先例拆出）
 import { DanmakuCard } from './DanmakuCard';
+import { CommentsCard } from './CommentsCard';
 // 视频信息卡元信息行图标（2026-10-07 从本文件拆出偿还行数台账）
 import { CalendarIcon, CategoryIcon, ClockIcon, PagesIcon } from './icons-meta';
 // 客户端标识栏（改名入口）与 copyText 已拆至 ClientIdFoot.tsx（2026-08-24 偿还行数台账）
@@ -243,6 +244,9 @@ export function Popup() {
           {/* 弹幕卡（2026-10-07）：仅 bilibili 源（danmaku 表以 bvid 为键）；standalone 无 server 不拉，
               server 不可达/未采集分支见 DanmakuCard 内注释 */}
           {isBili && <DanmakuCard bvid={currentVid} httpBase={serverCfg.httpBase} enabled={!standalone} />}
+          {/* 评论卡（2026-10-08，照抄弹幕卡先例）：仅 bilibili 源（comments 表以 bvid 为键）；
+              standalone 无 server 不拉，server 不可达/未采集分支见 CommentsCard 内注释 */}
+          {isBili && <CommentsCard bvid={currentVid} httpBase={serverCfg.httpBase} enabled={!standalone} />}
           {/* CreatorCard 依赖 server API：纯扩展下隐藏；
               YouTube server 态为 not-collected（无 creator_id）→ CreatorCard 自然返回 null，不展示 */}
           {!standalone && <CreatorCard creator={creatorState} />}
