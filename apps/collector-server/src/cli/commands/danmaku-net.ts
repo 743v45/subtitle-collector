@@ -1,11 +1,14 @@
 // danmaku collect 编排层·I/O 适配（2026-10-07，规格 docs/plans/danmaku/PLAN.md §4.1/§4.5/§4.7）。
-// 职责：B 站侧（view 回查 / seg.so 二进制 protobuf 拉取——响应非 JSON，禁走 fetchBiliJson）
+// 职责：B 站侧（view 回查 / seg.so 拉取——成功体是二进制 protobuf，禁走 fetchBiliJson 的 JSON 归一；
+// 2026-10-08 生产实测补漏：风控会对 seg.so 返 HTTP 200 + JSON 错误体，故 200 需先做体形态判别，
+// 命中 JSON 错误体按 code 归一，非 JSON 体零行为变化走原 arrayBuffer 通路）
 // 与 server 侧（count/ingest/verify 客户端调用）的取数与失败归一；纯判定在 danmaku-run.ts，
 // 编排循环在 danmaku-collect.ts，CLI 装配在 danmaku.ts。写库只走 server HTTP（D4）。
 // cookie 可选（D9 匿名可用）；弹幕接口无 wbi 签名（-403 出现即协议变化，不退避）。
 import { readFileSync } from 'node:fs';
 import {
-  BILI_API_DEFAULT, isRiskNum, logOf, nowOf, rowsOf, titleOf, extraAidOf,
+  BILI_API_DEFAULT, isRiskNum, isJsonErrBody, classifyJsonErrCode, decodeJsonErrBody,
+  logOf, nowOf, rowsOf, titleOf, extraAidOf,
   viewMetaFromData, extraPagesOf,
   type DanmakuClient, type DanmakuDeps, type DanmakuOpts,
   type DmCtx, type DmState, type PageMeta,
@@ -56,16 +59,90 @@ const bodyHeadHex = (bytes: Uint8Array): string =>
   Array.from(bytes.slice(0, 32)).map((b) => b.toString(16).padStart(2, '0')).join('');
 
 /**
- * 单段拉取（§2.2/§4.5）：GET /x/v2/dm/web/seg.so?type=1&oid={cid}&pid={aid}&segment_index={seg}。
- * 响应体是二进制 protobuf（parseSeg 吃 Uint8Array）——必须 arrayBuffer,禁 JSON.parse。
- * 归一：
- * - 200/304 → ok:true（304=越界正常终态,非错误）
- * - HTTP 412 或 bili-status-code ∈ 风控码 → kind:'risk_abort'（编排层计 riskAbort;三档退避已由本函数内 withRiskRetry 走完）
- * - bili-status-code -403 → kind:'code'（wbi 特有码,弹幕无 wbi,协议变化不退避）
- * - bili-status-code -101 → kind:'code'（需登录;cookie 可选语境下提示补 cookie）
- * - 其他非 200/304 → kind:'http'
- * - fetch 网络异常 → kind:'network'
- * 每条失败路径必带 segDiag 观察串（CLAUDE.md §9:失败必带响应特征）。
+ * HTTP 200 + JSON 错误体 → 失败归一（§4.5,2026-10-08 生产实测补漏;解码见 danmaku-run.decodeJsonErrBody）。
+ * 返回 null = 不是 JSON 错误体（二进制/空体/JSON 误判）→ 调用方走原 arrayBuffer + parseSeg 通路。
+ * 命中则按 classifyJsonErrCode 归一:risk（风控四码）→ kind:'risk_abort' + risk:true（外层 withRiskRetry
+ * 走三档退避）;-403/-101/其他码/协议异常 → kind:'code'（不退避,由 segFailStop 判停）。每条路径带 code + segDiag。
+ */
+function jsonErrSegFail(
+  deps: DanmakuDeps, cid: number, seg: number, buf: Uint8Array, res: Response, biliStatusCode: string | null,
+): (SegFetch & { risk?: boolean }) | null {
+  if (!isJsonErrBody(buf, res.headers.get('content-type'))) return null;
+  const log = logOf(deps);
+  const diag = segDiag({ status: 200, bytes: buf.length, biliStatusCode, bodyHeadHex: bodyHeadHex(buf) });
+  const decoded = decodeJsonErrBody(buf);
+  if (decoded == null) {
+    log(`[fetch] seg cid=${cid} index=${seg} http=200 体疑似 JSON 但解析失败/非对象 → 回落二进制通路 ${diag}`);
+    return null;
+  }
+  const code = decoded.code;
+  const cls = classifyJsonErrCode(code);
+  const at = `[fetch] seg cid=${cid} index=${seg} http=200 body=json code=${code ?? '-'}`;
+  if (cls === 'risk') {
+    log(`${at} → 风控,退避重试 ${diag}`);
+    return { ok: false, kind: 'risk_abort', httpStatus: 200, biliCode: code, message: `seg 200+JSON 风控(code=${code}): ${diag}`, risk: true };
+  }
+  if (cls === 'need_login') {
+    log(`${at} bili_status=-101 需登录(匿名实测可用,出现即异常;${deps.cookie ? 'cookie 已带,疑似失效→重取' : '未带 cookie→补 cookie 重跑'}) ${diag}`);
+    return { ok: false, kind: 'code', httpStatus: 200, biliCode: code, message: `seg -101 需登录: ${diag}` };
+  }
+  // 其余（-403 协议变化 / code=0·缺失 协议异常 / bili_<code> 失败）统一 code 归一:不退避,计连击
+  const msg = cls === 'protocol_403'
+    ? `seg -403 协议变化(wbi 特有码,弹幕无 wbi): ${diag}`
+    : cls === 'invalid'
+      ? `seg 200+JSON 协议异常(code=${code ?? '-'};成功体应为二进制 protobuf): ${diag}`
+      : `seg bili_${code} 失败: ${diag}`;
+  log(`${at} → ${msg}`);
+  return { ok: false, kind: 'code', httpStatus: 200, biliCode: code, message: msg };
+}
+
+/**
+ * 响应 → SegFetch 归一（§4.5 单点收口,自 attempt 下沉以控圈复杂度）:
+ * - 304 → ok:true（越界正常终态;体为空,不做 JSON 判别）
+ * - 200 且体形态命中 JSON 错误体 → jsonErrSegFail 按 code 归一（2026-10-08 生产实测补漏）
+ * - 200 二进制/空体 → ok:true（原 arrayBuffer 通路,零行为变化）
+ * - 其余（HTTP 412 / bili-status-code 码 / 非 2xx）→ nonOkSegFail
+ */
+function segResultOf(
+  deps: DanmakuDeps, cid: number, seg: number, res: Response, buf: Uint8Array, biliStatusCode: string | null,
+): SegFetch & { risk?: boolean } {
+  const status = res.status;
+  if (status === 200 || status === 304) {
+    // §4.5 体形态判别:风控会以 200 + JSON 错误体返回（2026-10-08 生产实测补漏;304 体空不判别）
+    const jf = status === 200 ? jsonErrSegFail(deps, cid, seg, buf, res, biliStatusCode) : null;
+    if (jf !== null) return jf;
+    return { ok: true, status, bytes: buf, biliStatusCode };
+  }
+  return nonOkSegFail(deps, cid, seg, status, buf, biliStatusCode);
+}
+
+/** 非 200/304 响应失败归一（§4.5;bili-status-code 头码 / HTTP 状态路径,文案与重构前逐字一致）。 */
+function nonOkSegFail(
+  deps: DanmakuDeps, cid: number, seg: number, status: number, buf: Uint8Array, biliStatusCode: string | null,
+): SegFetch & { risk?: boolean } {
+  const headNum = biliStatusCode != null && /^-?\d+$/.test(biliStatusCode) ? Number(biliStatusCode) : null;
+  const log = logOf(deps);
+  const diag = segDiag({ status, bytes: buf.length, biliStatusCode, bodyHeadHex: bodyHeadHex(buf) });
+  const at = `[fetch] seg cid=${cid} index=${seg}`;
+  if (status === 412 || isRiskNum(headNum)) {
+    log(`${at} 风控拦截(${status === 412 ? 'HTTP 412' : `bili_status=${biliStatusCode}`})${diag}`);
+    return { ok: false, kind: 'risk_abort', httpStatus: status, biliCode: headNum, message: `seg 风控拦截: ${diag}`, risk: true };
+  }
+  if (headNum === -403) {
+    log(`${at} bili_status=-403:弹幕接口无 wbi 签名,出现即协议变化(不退避) ${diag}`);
+    return { ok: false, kind: 'code', httpStatus: status, biliCode: headNum, message: `seg -403 协议变化: ${diag}` };
+  }
+  if (headNum === -101) {
+    log(`${at} bili_status=-101 需登录(匿名实测可用,出现即异常;${deps.cookie ? 'cookie 已带,疑似失效→重取' : '未带 cookie→补 cookie 重跑'}) ${diag}`);
+    return { ok: false, kind: 'code', httpStatus: status, biliCode: headNum, message: `seg -101 需登录: ${diag}` };
+  }
+  log(`${at} 失败 http=${status} bili_status=${biliStatusCode ?? '-'} ${diag}`);
+  return { ok: false, kind: 'http', httpStatus: status, biliCode: biliStatusCode, message: `seg HTTP ${status}: ${diag}` };
+}
+
+/**
+ * 单段拉取（§2.2/§4.5）：GET seg.so（成功体为二进制 protobuf）→ 响应归一收口 segResultOf;
+ * 内经 withRiskRetry 走风控三档退避;每条失败路径必带 segDiag 观察串（CLAUDE.md §9）。
  */
 export async function fetchSeg(
   deps: DanmakuDeps, st: DmState, aid: string, cid: number, seg: number,
@@ -80,28 +157,8 @@ export async function fetchSeg(
     const fetchImpl = deps.fetchImpl ?? fetch;
     try {
       const res = await fetchImpl(url, { headers: biliHeaders(deps.cookie ?? undefined) });
-      const status = res.status;
       const buf = new Uint8Array(await res.arrayBuffer());
-      const biliStatusCode = biliStatusCodeHeader(res);
-      if (status === 200 || status === 304) {
-        return { ok: true, status: status as 200 | 304, bytes: buf, biliStatusCode };
-      }
-      const headNum = biliStatusCode != null && /^-?\d+$/.test(biliStatusCode) ? Number(biliStatusCode) : null;
-      const diag = segDiag({ status, bytes: buf.length, biliStatusCode, bodyHeadHex: bodyHeadHex(buf) });
-      if (status === 412 || isRiskNum(headNum)) {
-        log(`[fetch] seg cid=${cid} index=${seg} 风控拦截(${status === 412 ? 'HTTP 412' : `bili_status=${biliStatusCode}`})${diag}`);
-        return { ok: false, kind: 'risk_abort', httpStatus: status, biliCode: headNum, message: `seg 风控拦截: ${diag}`, risk: true };
-      }
-      if (headNum === -403) {
-        log(`[fetch] seg cid=${cid} index=${seg} bili_status=-403:弹幕接口无 wbi 签名,出现即协议变化(不退避) ${diag}`);
-        return { ok: false, kind: 'code', httpStatus: status, biliCode: headNum, message: `seg -403 协议变化: ${diag}` };
-      }
-      if (headNum === -101) {
-        log(`[fetch] seg cid=${cid} index=${seg} bili_status=-101 需登录(匿名实测可用,出现即异常;${deps.cookie ? 'cookie 已带,疑似失效→重取' : '未带 cookie→补 cookie 重跑'}) ${diag}`);
-        return { ok: false, kind: 'code', httpStatus: status, biliCode: headNum, message: `seg -101 需登录: ${diag}` };
-      }
-      log(`[fetch] seg cid=${cid} index=${seg} 失败 http=${status} bili_status=${biliStatusCode ?? '-'} ${diag}`);
-      return { ok: false, kind: 'http', httpStatus: status, biliCode: biliStatusCode, message: `seg HTTP ${status}: ${diag}` };
+      return segResultOf(deps, cid, seg, res, buf, biliStatusCodeHeader(res));
     } catch (e) {
       const msg = (e as Error).message;
       log(`[fetch] seg cid=${cid} index=${seg} 网络异常: ${msg}(无响应特征可取)`);

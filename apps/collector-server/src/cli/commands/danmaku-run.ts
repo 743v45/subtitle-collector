@@ -55,6 +55,47 @@ export function isRiskNum(n: number | null): boolean {
   return n != null && (n === -412 || RISK_CODES.includes(n));
 }
 
+/** 类名:isJsonErrBody 判定为 JSON 错误体后,按 code 归一的处置类别（§4.5,见 classifyJsonErrCode）。 */
+export type JsonErrClass = 'risk' | 'protocol_403' | 'need_login' | 'invalid' | 'other';
+
+/**
+ * 200 + JSON 错误体形态判别（§4.5,2026-10-08 生产实测补漏:B 站风控对 seg.so 返 HTTP 200 + JSON 错误体,
+ * 如 `{"code":-352,...}`,旧逻辑按 protobuf 解析 → deprecated group wire-type=3 → parse_fail 误终止）。
+ * 体非空且（content-type 含 json 或首字节 '{'(0x7b)）→ 视作 JSON 错误体。空体(0 字节,合法空段)与
+ * 二进制 protobuf 体 → false(禁误判,保住二进制通路零行为变化)。
+ */
+export function isJsonErrBody(bytes: Uint8Array, contentType: string | null): boolean {
+  if (bytes.length === 0) return false;
+  return (contentType ?? '').toLowerCase().includes('json') || bytes[0] === 0x7b;
+}
+
+/** JSON 错误体 code → 处置类别（纯,§4.5）:风控四码 → risk(走三档退避);-403 协议变化;-101 需登录;
+ * code=0/缺失/非数字 → invalid(seg.so 成功体应为二进制,不该出现 JSON code=0,按协议异常不退避);
+ * 其余 → other(bili_<code> 不退避,计连击)。 */
+export function classifyJsonErrCode(code: number | null): JsonErrClass {
+  if (code == null) return 'invalid';
+  if (isRiskNum(code)) return 'risk';
+  if (code === -403) return 'protocol_403';
+  if (code === -101) return 'need_login';
+  if (code === 0) return 'invalid';
+  return 'other';
+}
+
+/** JSON 错误体解码（§4.5;形态已由 isJsonErrBody 命中）:体被当 JSON 但 parse 失败或不是对象
+ * → 返回 null（视作误判,回落二进制通路,零行为变化;真畸形体仍由 parseSeg 抛错走 parse_fail 现场）。
+ * code 非数字/缺失 → code:null（分类层归 invalid,协议异常语义）。 */
+export function decodeJsonErrBody(buf: Uint8Array): { code: number | null } | null {
+  let body: unknown = null;
+  try {
+    body = JSON.parse(new TextDecoder().decode(buf));
+  } catch {
+    return null;
+  }
+  if (body == null || typeof body !== 'object' || Array.isArray(body)) return null;
+  const raw = (body as { code?: unknown }).code;
+  return { code: typeof raw === 'number' ? raw : null };
+}
+
 // ── §4.2 参数解析与纯判定 ──
 
 /** 非负整数选项解析（非法 → DanmakuError ARGS，CLI 映射退 2）。 */

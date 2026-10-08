@@ -8,6 +8,7 @@
 // |---|---|---|---|
 // | R1 | 多 P 全采+段数积分 / 304 停 / --page 过滤 / segments_cap / request_budget / 批拆分 / 风控三档 / 回执结构 / dry-run / 空段转非空警示 / 匿名 cookie / extra 缺失 view 回查 | 通过 | 2026-10-07 C4;node --test --import tsx;tsc --noEmit 同轮通过 |
 // | R2 | 分支补齐:parseCollectOpts·segFailStop·segPatternChanged·segGate·stopTag·selectPages 纯判定矩阵 / view·extra 解析矩阵 / fetchSeg 归一矩阵(-403/-101/http/风控头码/网络异常/空状态头/默认域) / 定位三路失败(server_error·aid_unresolved·不一致警告·--aid 单给) / count·ingest·verify 失败矩阵(3 连败硬停·稀疏响应·空批) / 编排级 -403·-101·seg_fail·parse_fail·未知字段·失败恢复·ingest 3 连败·count 失败·verify 失败·无 title | 通过 | 2026-10-07 R2;c8 全局 branches 门 ≥93% 补齐,四 danmaku 文件定向复核达标签 |
+// | R3 | 200+JSON 错误体形态判别回归(2026-10-08 生产实测补漏):isJsonErrBody·classifyJsonErrCode 纯矩阵 / fetchSeg 直测(-352 三档退避·-403·-101 双 cookie 提示·bili_<code>·code=0 协议异常·截断 JSON 回落二进制·空体+json 头不误判) / 编排级 risk_abort·need_login 回归 | 通过 | 2026-10-08 R3;失败→通过回归纪律(修复前 -352 体被当 protobuf → parse_fail 误终止);tsc --noEmit 同轮通过 |
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -15,7 +16,7 @@ import { runCollect } from './danmaku-collect.js';
 import {
   parseCollectOpts, newState, viewMetaFromData, extraPagesOf, extraAidOf, titleOf, rowsOf,
   logOf, nowOf, segInterval, stopTag, segFailStop, segPatternChanged, segGate, shouldStopSeg,
-  selectPages, DanmakuError,
+  selectPages, DanmakuError, isJsonErrBody, classifyJsonErrCode, decodeJsonErrBody,
   type DanmakuClient, type DanmakuDeps, type DanmakuOpts, type DanmakuReceipt, type DmCtx,
 } from './danmaku-run.js';
 import {
@@ -71,7 +72,7 @@ function segRes(body: Uint8Array | string[] | null): Response {
   return new Response(buf as unknown as BodyInit, { status: 200, headers: { 'bili-status-code': '0' } });
 }
 
-function makeFetch(segMap: SegMap, over: { view?: unknown; segStatus?: number; segBili?: string } = {}) {
+function makeFetch(segMap: SegMap, over: { view?: unknown; segStatus?: number; segBili?: string; segJson?: string } = {}) {
   const rig: BiliRig = { segCalls: [], viewCalls: 0 };
   const fetchImpl: typeof fetch = async (url: unknown, init?: unknown) => {
     const u = String(url);
@@ -80,6 +81,10 @@ function makeFetch(segMap: SegMap, over: { view?: unknown; segStatus?: number; s
       const cid = Number(q.get('oid'));
       const seg = Number(q.get('segment_index'));
       rig.segCalls.push(`${cid}#${seg}`);
+      if (over.segJson != null) {
+        // 200 + JSON 错误体形态(2026-10-08 生产实测):content-type application/json,无 bili-status-code 头
+        return new Response(over.segJson, { status: 200, headers: { 'Content-Type': 'application/json' } });
+      }
       if (over.segStatus != null) {
         // segBili 缺省 '0'(无风控码):需要风控/协议码形态的用例显式传 segBili
         return new Response('blocked', { status: over.segStatus, headers: { 'bili-status-code': over.segBili ?? '0' } });
@@ -453,6 +458,32 @@ async function segCase(
   return { r, seen, logs };
 }
 
+/**
+ * fetchSeg 直测夹具:200 响应体可自定(JSON 错误体 / 二进制体 / 空体三形态通用)。
+ * 缺省 content-type=application/json(200+JSON 风控的真实形态);显式传 null 模拟无头。
+ * 返回 sleeps 便于断言退避档位,cookie 可覆盖以测 -101 双提示。
+ */
+async function segBodyCase(
+  body: string | Uint8Array,
+  over: { ctype?: string | null; cookie?: string | null } = {},
+): Promise<{ r: SegFetch; seen: string[]; logs: string[]; sleeps: number[] }> {
+  const { client } = makeClient();
+  const { deps, logs, sleeps } = makeDeps(client, async () => { throw new Error('unused'); },
+    over.cookie === undefined ? {} : { cookie: over.cookie });
+  const seen: string[] = [];
+  deps.fetchImpl = (async (url: unknown) => {
+    seen.push(String(url));
+    const headers: Record<string, string> = {};
+    const ctype = over.ctype === undefined ? 'application/json' : over.ctype;
+    if (ctype != null) headers['Content-Type'] = ctype;
+    // 空体必须传 null(Response('') 亦为 0 字节,但显式 null 更贴近 304 式空体语义)
+    const init = body.length === 0 ? null : (body as BodyInit);
+    return new Response(init, { status: 200, headers });
+  }) as typeof fetch;
+  const r = await fetchSeg(deps, newState(), '123', 456, 1);
+  return { r, seen, logs, sleeps };
+}
+
 test('fetchSeg 归一矩阵:500 无状态头→http / 502+头码-799→风控 / -403 / -101 两种 cookie 提示 / 网络异常 / 空状态头回落 http', async () => {
   const httpCase = await segCase({ status: 500 });
   assert.equal(httpCase.r.kind, 'http', '无 bili-status-code → headNum null → http 归一');
@@ -790,4 +821,157 @@ test('编排:video 行无 title → 回执 video.title null,定位日志回落 "
   assert.equal(r.video.title, null);
   assert.ok(logs.some((l) => l.includes('标题=-')), '标题缺省日志占位');
   assert.equal(rig.ingests.length, 1);
+});
+
+// ---- R3:200 + JSON 错误体形态判别（2026-10-08 生产实测补漏）----
+
+test('纯判定:isJsonErrBody 形态矩阵——json 头/0x7b 首字节命中,空体与二进制体不命中', () => {
+  const j = new TextEncoder().encode('{"code":-352}');
+  assert.equal(isJsonErrBody(j, 'application/json'), true, 'content-type 含 json → 命中');
+  assert.equal(isJsonErrBody(j, 'application/json; charset=utf-8'), true, '带 charset 仍命中');
+  assert.equal(isJsonErrBody(j, 'APPLICATION/JSON'), true, '大小写不敏感');
+  assert.equal(isJsonErrBody(j, null), true, '无 content-type 但首字节 0x7b → 命中');
+  assert.equal(isJsonErrBody(j, 'text/plain'), true, '头不中但首字节 0x7b → 命中(双条件或语义)');
+  assert.equal(isJsonErrBody(new Uint8Array(0), 'application/json'), false, '空体禁判 JSON(合法空段/304 空体)');
+  assert.equal(isJsonErrBody(new Uint8Array([0x0a, 0x03, 0x12, 0x01]), null), false, '二进制 protobuf 首字节非 0x7b → 不命中');
+  assert.equal(isJsonErrBody(new Uint8Array([0xff]), 'application/octet-stream'), false, '二进制体带非 json 头 → 不命中');
+});
+
+test('纯判定:classifyJsonErrCode 处置矩阵——风控四码/协议 -403/需登录 -101/code 0·缺失·非数字 invalid/其余 other', () => {
+  for (const c of [-412, -352, -799, -509]) {
+    assert.equal(classifyJsonErrCode(c), 'risk', `风控码 ${c} → risk(走三档退避)`);
+  }
+  assert.equal(classifyJsonErrCode(-403), 'protocol_403', '-403 协议变化不退避');
+  assert.equal(classifyJsonErrCode(-101), 'need_login');
+  assert.equal(classifyJsonErrCode(0), 'invalid', 'seg.so 成功体应为二进制,JSON code=0 属协议异常');
+  assert.equal(classifyJsonErrCode(null), 'invalid', 'code 缺失/非数字 → 协议异常');
+  assert.equal(classifyJsonErrCode(-400), 'other', '其余码归一 bili_<code>');
+  assert.equal(classifyJsonErrCode(-500), 'other');
+});
+
+test('纯判定:decodeJsonErrBody——对象取 code/非数字落 null,坏 JSON 与非对象返回 null(回落二进制)', () => {
+  const dec = (s: string) => decodeJsonErrBody(new TextEncoder().encode(s));
+  assert.deepEqual(dec('{"code":-352,"message":"-352","ttl":1}'), { code: -352 });
+  assert.deepEqual(dec('{"code":"-352"}'), { code: null }, 'code 非数字 → null(分类层归 invalid)');
+  assert.deepEqual(dec('{"message":"x"}'), { code: null }, 'code 缺失 → null');
+  assert.equal(dec('{"code":'), null, '截断 JSON → null(回落二进制通路)');
+  assert.equal(dec('[1,2]'), null, '数组不是错误体对象');
+  assert.equal(dec('"str"'), null, '字符串不是对象');
+  assert.equal(dec('null'), null, 'null 字面量');
+});
+
+test('fetchSeg 直测(200+JSON):-352 风控 → risk_abort + 三档退避,日志带 code 与「退避重试」,无解析失败字样', async () => {
+  const { r, logs, sleeps } = await segBodyCase('{"code":-352,"message":"-352","ttl":1}');
+  assert.equal(r.ok, false);
+  if (!r.ok) {
+    assert.equal(r.kind, 'risk_abort', '-352 归一风控非 parse 通路');
+    assert.equal(r.biliCode, -352, '数值码透传到归一结果');
+    assert.equal(r.httpStatus, 200);
+    assert.match(r.message, /200\+JSON 风控\(code=-352\)/);
+  }
+  assert.deepEqual(sleeps, [30_000, 120_000, 300_000], '三档退避与 HTTP 412 路径同一实现');
+  assert.ok(logs.some((l) => l.includes('http=200 body=json code=-352') && l.includes('→ 风控,退避重试')),
+    '观察纪律:日志带 code 与风控判定(CLAUDE.md §9)');
+  assert.ok(!logs.some((l) => l.includes('解析失败')), '修复后不再走 parse 通路');
+  assert.ok(logs.every((l) => !l.includes('回落二进制通路')), '形态命中不回落');
+});
+
+test('fetchSeg 直测(200+JSON):-403 → kind code 不退避;-101 双 cookie 提示;-404 → bili_-404;-500 走 other', async () => {
+  const f403 = await segBodyCase('{"code":-403}');
+  assert.equal(f403.r.ok, false);
+  if (!f403.r.ok) {
+    assert.equal(f403.r.kind, 'code');
+    assert.equal(f403.r.biliCode, -403);
+    assert.match(f403.r.message, /-403 协议变化/);
+  }
+  assert.deepEqual(f403.sleeps, [], '-403 不退避(弹幕无 wbi)');
+
+  const f101 = await segBodyCase('{"code":-101}');
+  if (!f101.r.ok) assert.equal(f101.r.biliCode, -101);
+  assert.ok(f101.logs.some((l) => l.includes('cookie 已带,疑似失效→重取')), '带 cookie 的 -101 提示');
+  assert.deepEqual(f101.sleeps, [], '-101 不退避');
+
+  const anon = await segBodyCase('{"code":-101}', { cookie: null });
+  assert.ok(anon.logs.some((l) => l.includes('未带 cookie→补 cookie 重跑')), '匿名 -101 提示');
+
+  const other = await segBodyCase('{"code":-404}');
+  assert.equal(other.r.ok, false);
+  if (!other.r.ok) {
+    assert.equal(other.r.kind, 'code');
+    assert.match(other.r.message, /bili_-404 失败/, '其余码归一 bili_<code>');
+  }
+  assert.deepEqual(other.sleeps, [], '其余码不退避');
+  assert.ok(other.logs.some((l) => l.includes('http=200 body=json code=-404')), '日志带 code');
+});
+
+test('fetchSeg 直测(200+JSON):code=0 → 协议异常(code 归一不退避);截断 JSON → 回落二进制通路;空体+json 头不误判', async () => {
+  const zero = await segBodyCase('{"code":0}');
+  assert.equal(zero.r.ok, false);
+  if (!zero.r.ok) {
+    assert.equal(zero.r.kind, 'code', 'code=0 协议异常,不走风控');
+    assert.match(zero.r.message, /200\+JSON 协议异常\(code=0/);
+  }
+  assert.deepEqual(zero.sleeps, [], '协议异常不退避');
+
+  // 截断 JSON:形态命中但 decode 失败 → 回落原 arrayBuffer + parseSeg 通路(零星脏数据仍走 parse_fail 现场)
+  const broken = await segBodyCase('{"code":');
+  assert.equal(broken.r.ok, true, '解码失败视作误判 → 走二进制通路');
+  if (broken.r.ok) {
+    assert.equal(broken.r.status, 200);
+    assert.equal(broken.r.bytes.length, 8, '原体原样交给 parseSeg');
+  }
+  assert.ok(broken.logs.some((l) => l.includes('体疑似 JSON 但解析失败/非对象 → 回落二进制通路')), '回落有日志可观察');
+  assert.deepEqual(broken.sleeps, []);
+
+  // 空体(200 + 0 字节):合法空段,即便 content-type 是 json 也禁判 JSON
+  const empty = await segBodyCase(new Uint8Array(0));
+  assert.equal(empty.r.ok, true);
+  if (empty.r.ok) {
+    assert.equal(empty.r.status, 200);
+    assert.equal(empty.r.bytes.length, 0);
+  }
+  assert.ok(empty.logs.every((l) => !l.includes('body=json')), '空体不误判为 JSON 错误体');
+  assert.deepEqual(empty.sleeps, []);
+});
+
+test('fetchSeg 直测(二进制回归):非 JSON 体零行为变化——仍 ok:true 且体原样透传', async () => {
+  const bin = segBody(['a', 'b']);
+  const { r, logs, sleeps } = await segBodyCase(bin, { ctype: 'application/octet-stream' });
+  assert.equal(r.ok, true, '二进制 protobuf 通路不变');
+  if (r.ok) {
+    assert.equal(r.status, 200);
+    assert.deepEqual(Array.from(r.bytes), Array.from(bin), '体逐字节原样');
+    assert.equal(r.biliStatusCode, null, '无 bili-status-code 头 → null');
+  }
+  assert.deepEqual(sleeps, []);
+  assert.ok(logs.every((l) => !l.includes('body=json')), '不产生 JSON 判别日志');
+});
+
+test('编排回归(失败→通过):seg 恒返 200+JSON code=-352 → partial risk_abort(修复前为 parse_fail 误终止)', async () => {
+  const { client, rig } = makeClient();
+  const { fetchImpl } = makeFetch(defaultSegMap, { segJson: '{"code":-352,"message":"-352","ttl":1}' });
+  const { deps, sleeps, logs } = makeDeps(client, fetchImpl);
+  const r = await run(deps, opts({ page: '1' }));
+  assert.equal(r.partial, true);
+  assert.equal(r.partial_reason, 'risk_abort', '生产实测形态归风控,非 parse_fail');
+  assert.deepEqual(sleeps, [30_000, 120_000, 300_000], '走风控三档退避而非立即断');
+  assert.equal(r.bili_requests, 4, '首次 + 3 次退避重试(预算按真实 HTTP 尝试计)');
+  assert.equal(r.pages.length, 0, '无成功段 → 无页统计');
+  assert.equal(rig.ingests.length, 0, '零入库');
+  assert.equal(rig.verifyCalls, 1, 'verify 仍执行');
+  assert.ok(logs.some((l) => l.includes('三档退避后仍风控 → 终止本轮(partial risk_abort)')), '停直线带风控语义');
+  assert.ok(!logs.some((l) => l.includes('解析失败')), '不再出现 parse_fail 现场(修复目标)');
+});
+
+test('编排回归:seg 恒返 200+JSON code=-101 → partial need_login 且零退避', async () => {
+  const { client, rig } = makeClient();
+  const { fetchImpl } = makeFetch(defaultSegMap, { segJson: '{"code":-101,"message":"账号未登录"}' });
+  const { deps, sleeps, logs } = makeDeps(client, fetchImpl);
+  const r = await run(deps, opts({ page: '1' }));
+  assert.equal(r.partial, true);
+  assert.equal(r.partial_reason, 'need_login', '200+JSON -101 同样进 need_login 归一');
+  assert.deepEqual(sleeps, [], '-101 不退避');
+  assert.equal(r.bili_requests, 1, '首段即停');
+  assert.ok(logs.some((l) => l.includes('-101 需登录 → 终止本轮(partial need_login)')));
+  assert.equal(rig.ingests.length, 0);
 });
