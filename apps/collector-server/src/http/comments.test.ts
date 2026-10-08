@@ -11,6 +11,7 @@
 // |---|---|---|---|
 // | R1 | ingest 200/400 族/404 + missing 四态 + pins 清打 + 事务回滚 + count/verify 全形态 + 缺省容错 | 通过 | 2026-10-04 C2 |
 // | R2 | tree 分组/排序/置顶前置/节点形态 + 孤儿楼不计入树 + 空树 200 + 404/400 | 通过 | 2026-10-05 web 契约 |
+// | R3 | list 拍平序/白名单+has_picture/limit 截根/truncated/limit=0 全部/空库 200/404/400 | 通过 | 2026-10-08 popup 评论卡 |
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -519,5 +520,128 @@ test('comments tree：孤儿楼层计入 total_rows 但不进树；在库无评�
     // 视频不在库 → 404；缺 bvid → 400
     assert.equal((await get(port, 'tree', 'BVnope')).status, 404);
     assert.equal((await get(port, 'tree')).status, 400);
+  } finally { cleanup(); }
+});
+
+// ── GET /api/comments/list（popup 评论卡，2026-10-08 契约）──
+// 轻量拍平列表：置顶前置 + 根赞降序 + 楼随其根（组内 ctime 升序）摊平成一行序；
+// 白名单字段 + has_picture 库内派生；limit 只截根数；空库 200；404/400 归 resolveVideo/limit 解析。
+
+test('comments list：拍平序（置顶前置/根赞降序/楼随根组内 ctime 升序）+ 白名单字段 + has_picture 派生 + 大列不透出', async () => {
+  const { port, cleanup } = await setup();
+  try {
+    // 根：r1(赞 2,admin 置顶) / r2(赞 10,UP 主本尊+带图) / r3(赞 5)；
+    // 楼：r2 下两楼乱序入库（f2 先于 f1）、r1 下一楼；r2f2 带 parent_reply_member 被回复者快照
+    const r = await ingest(port, ingestBody({ full_scan: true, pins: [{ rpid_str: 'r1', kind: 'admin' }] }, [
+      rawReply({ rpid_str: 'r1', like: 2, ctime: 1000 }),
+      rawReply({
+        rpid_str: 'r2', like: 10, ctime: 2000, mid_str: '3493260618106936',
+        content: { message: '带图正文', pictures: [{ img_src: 'https://a.b/1.jpg' }] },
+      }),
+      rawReply({ rpid_str: 'r3', like: 5, ctime: 3000 }),
+      rawFloor('r1f1', 'r1', { ctime: 4000 }),
+      rawFloor('r2f2', 'r2', { ctime: 6000, parent_reply_member: { mid: '200', name: '用户B' } }),
+      rawFloor('r2f1', 'r2', { ctime: 5000 }),
+    ]));
+    assert.equal(r.status, 200);
+
+    const res = await fetch(`http://127.0.0.1:${port}/api/comments/list?bvid=BV1`);
+    assert.equal(res.status, 200);
+    const j = await res.json();
+    assert.equal(j.ok, true);
+    assert.equal(j.bvid, 'BV1');
+    // total 口径=库内全量（rows 含楼、roots 含被截根之外的全体）
+    assert.deepEqual({ total_rows: j.total_rows, total_roots: j.total_roots, truncated: j.truncated },
+      { total_rows: 6, total_roots: 3, truncated: false });
+    // 拍平序：置顶 r1（随楼 r1f1）→ r2（赞 10，随楼 r2f1→r2f2 ctime 升序）→ r3（赞 5）
+    assert.deepEqual(j.comments.map((c: any) => c.rpid_str), ['r1', 'r1f1', 'r2', 'r2f1', 'r2f2', 'r3']);
+    // 白名单字段逐字对齐 popup 契约（根与楼同形态；content/member 大列不透出——白名单防体量）
+    assert.deepEqual(Object.keys(j.comments[0]), [
+      'rpid_str', 'is_root', 'uname', 'like_count', 'ctime_s', 'message', 'parent_reply_name',
+      'ip_location', 'pin_kind', 'state', 'folded', 'up_like', 'up_reply', 'is_up',
+      'root_rpid', 'parent_rpid', 'dialog_rpid', 'has_picture',
+    ]);
+    const r1 = j.comments[0];
+    assert.equal(r1.pin_kind, 'admin', '置顶根 pin_kind 落位（popup 置顶标注源）');
+    assert.equal(r1.is_root, 1);
+    const r2 = j.comments[2];
+    assert.equal(r2.is_up, 1, 'mid_str===String(upper_mid) → is_up=1（popup (UP主) 标注源）');
+    assert.equal(r2.has_picture, 1, 'content JSON $.pictures 非空数组 → has_picture=1（popup [图] 标注源）');
+    assert.equal(r2.message, '带图正文');
+    assert.equal((r2 as any).content, undefined, 'content 大列不透出');
+    assert.equal((r2 as any).member, undefined, 'member 大列不透出');
+    const f2 = j.comments[4];
+    assert.equal(f2.is_root, 0);
+    assert.equal(f2.root_rpid, 'r2', '楼行 root_rpid 供树还原');
+    assert.equal(f2.parent_reply_name, '用户B', '被回复者快照提级（popup 回复 @X 前缀源）');
+    assert.equal(j.comments[3].has_picture, 0, '无图行 has_picture=0');
+  } finally { cleanup(); }
+});
+
+test('comments list：limit 只截根数（楼随其根带出/truncated 标记/limit=0 全部根/非法 limit 400）', async () => {
+  const { port, cleanup } = await setup();
+  try {
+    // 三根（赞 30/20/10）+ 楼挂在被截根 r3 下（证明截根后其楼也不透出）
+    await ingest(port, ingestBody({}, [
+      rawReply({ rpid_str: 'r1', like: 30, ctime: 1000 }),
+      rawReply({ rpid_str: 'r2', like: 20, ctime: 2000 }),
+      rawReply({ rpid_str: 'r3', like: 10, ctime: 3000 }),
+      rawFloor('r3f1', 'r3', { ctime: 4000 }),
+    ]));
+
+    // limit=2：赞降序截前两根；r3 及其楼不出现；truncated=true（total_roots=3 > 2）
+    let res = await fetch(`http://127.0.0.1:${port}/api/comments/list?bvid=BV1&limit=2`);
+    assert.equal(res.status, 200);
+    let j = await res.json();
+    assert.deepEqual(j.comments.map((c: any) => c.rpid_str), ['r1', 'r2']);
+    assert.deepEqual({ truncated: j.truncated, total_roots: j.total_roots, limit: j.limit },
+      { truncated: true, total_roots: 3, limit: 2 });
+
+    // limit=3（恰等根数）：全根在列，truncated=false（截断=严格大于，shapeTree 同口径）
+    res = await fetch(`http://127.0.0.1:${port}/api/comments/list?bvid=BV1&limit=3`);
+    j = await res.json();
+    assert.equal(j.truncated, false);
+    assert.equal(j.comments.length, 4, '根 3 + 随根楼 1');
+
+    // limit=0：全部根（shapeTree 口径），孤儿楼无挂载点不透出（本例无孤儿，全量 4 行）
+    res = await fetch(`http://127.0.0.1:${port}/api/comments/list?bvid=BV1&limit=0`);
+    j = await res.json();
+    assert.deepEqual(j.comments.map((c: any) => c.rpid_str), ['r1', 'r2', 'r3', 'r3f1']);
+    assert.equal(j.truncated, false);
+
+    // 非法 limit：负数/非数字/空串 → 400 显式错误（静默回落默认会掩盖调用方 bug）
+    for (const bad of ['-1', 'abc', '1.5', '']) {
+      const badRes = await fetch(`http://127.0.0.1:${port}/api/comments/list?bvid=BV1&limit=${bad}`);
+      assert.equal(badRes.status, 400, `limit=${JSON.stringify(bad)} → 400`);
+    }
+
+    // 缺省 limit：默认 200（3 根全出，不截断）
+    res = await fetch(`http://127.0.0.1:${port}/api/comments/list?bvid=BV1`);
+    j = await res.json();
+    assert.deepEqual({ limit: j.limit, truncated: j.truncated }, { limit: 200, truncated: false });
+  } finally { cleanup(); }
+});
+
+test('comments list：在库无评论 200 空（非 404）/ 视频不在库 404 / 缺 bvid 400', async () => {
+  const { port, db, cleanup } = await setup();
+  try {
+    // 在库、零评论 → 200 全空（对齐 count/tree 端点语义；popup 归一「未采集」灰字）
+    let res = await fetch(`http://127.0.0.1:${port}/api/comments/list?bvid=BV1`);
+    assert.equal(res.status, 200);
+    let j = await res.json();
+    assert.deepEqual({ ok: j.ok, total_rows: j.total_rows, total_roots: j.total_roots, truncated: j.truncated },
+      { ok: true, total_rows: 0, total_roots: 0, truncated: false });
+    assert.deepEqual(j.comments, []);
+
+    // 孤儿楼场景：根已删仅剩楼 → total_rows>0 但拍平列表空（楼无挂载点，§3.4 不丢弃但不可还原）
+    await ingest(port, ingestBody({}, [rawFloor('orphan', 'r9', { ctime: 5000 })]));
+    res = await fetch(`http://127.0.0.1:${port}/api/comments/list?bvid=BV1`);
+    j = await res.json();
+    assert.deepEqual({ total_rows: j.total_rows, comments: j.comments.map((c: any) => c.rpid_str) },
+      { total_rows: 1, comments: [] });
+
+    // 视频不在库 → 404（popup hook 归一 0 条）；缺 bvid → 400
+    assert.equal((await fetch(`http://127.0.0.1:${port}/api/comments/list?bvid=BVnope`)).status, 404);
+    assert.equal((await fetch(`http://127.0.0.1:${port}/api/comments/list`)).status, 400);
   } finally { cleanup(); }
 });

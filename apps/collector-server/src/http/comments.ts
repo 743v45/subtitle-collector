@@ -1,5 +1,5 @@
 // HTTP handler：B 站评论采集通路（C2，规格唯一来源 docs/plans/comments/PLAN.md §4.1/§5.2）。
-// 四端点（读 GET / 写 POST 惯例）：
+// 五端点（读 GET / 写 POST 惯例）：
 //   POST /api/comments/ingest —— §2.3 映射前的原始条目子集 → 服务端 parseReplyRow 解析归一
 //                                 → upsertComments（单事务幂等）→ full_scan:true 时 missing 对账
 //                                 + 置顶先清后打；
@@ -7,6 +7,9 @@
 //   GET  /api/comments/verify?bvid=  —— 纯库内校验（§5.2 入口 2，无副作用）；
 //   GET  /api/comments/tree?bvid=    —— 根+楼中楼两层级树（web 评论页签展示，2026-10-05；
 //                                 复用 treeByVideo CLI 口径，置顶稳定前置；节点白名单子集）。
+//   GET  /api/comments/list?bvid=&limit= —— 轻量拍平列表（popup 评论卡展示，2026-10-08 用户现场指令，
+//                                 对齐弹幕卡 GET /api/danmaku/list 先例）：白名单字段 + 根 like 降序、
+//                                 楼组内 ctime 升序摊平成一行序，limit 默认 200 只截根数（防巨量视频撑爆）。
 // 消费方是 CLI `comments collect`（宿主直连 B 站采、经本端点写生产库——「CLI 永不写库」纪律，D4）。
 // Bearer 鉴权由 main.ts 对 /api/* 统一执行（httpAuthOk），本 handler 不重复。
 // oid 仅链路观察用（对照传输体量），服务端定位只认 bvid（评论恒挂 videos.id，先采视频再谈评论）。
@@ -16,9 +19,11 @@ import { parseReplyRow, type PinKind } from '../cli/bili-comments.js';
 import {
   clearAndSetPins,
   commentsCount,
+  commentsLightTree,
   reconcileMissing,
   treeByVideo,
   upsertComments,
+  type CommentLightRow,
   type CommentPin,
   type CommentRecord,
   type CommentUpsertRow,
@@ -189,6 +194,51 @@ function handleTree(res: ServerResponse, db: Database.Database, bvid: string | n
   });
 }
 
+/** GET /api/comments/list 的 limit 解析：缺省 200（根评论条数上限，楼中楼随其根带出——
+ *  防 88978 条级巨量视频撑爆 popup）；0=全部根（shapeTree 口径）；非正整数 → 400（显式错误，
+ *  静默回落默认会掩盖调用方 bug）。 */
+const LIST_LIMIT_DEFAULT = 200;
+function parseListLimit(raw: string | null): number | { error: string } {
+  if (raw === null) return LIST_LIMIT_DEFAULT;
+  if (!/^\d+$/.test(raw)) return { error: 'limit must be a non-negative integer' };
+  return Number(raw);
+}
+
+/** GET /api/comments/list?bvid=&limit=：轻量拍平列表（popup 评论卡消费，2026-10-08 用户现场指令）。
+ *  排序：置顶稳定前置（filter 保序，对齐 handleTree），其余根保持 commentsLightTree 赞降序；
+ *  楼中楼随其根（组内 ctime 升序）摊平进同一数组——root_rpid/parent_rpid/dialog_rpid 白名单字段
+ *  供消费方树还原。total_rows/total_roots = 库内全量口径（含未带出的被截根与孤儿楼，截断时作
+ *  分母）；truncated = 发生截根。视频在库无评论 → 200 comments:[]（对齐 tree/count，非 404）；
+ *  不在库 → 404（popup hook 归一 0 条灰字）。 */
+function handleList(res: ServerResponse, db: Database.Database, bvid: string | null, limitRaw: string | null): void {
+  const v = resolveVideo(db, bvid);
+  if ('error' in v) { json(res, v.status, { ok: false, error: v.error }); return; }
+  const limit = parseListLimit(limitRaw);
+  if (typeof limit !== 'number') { json(res, 400, { ok: false, error: limit.error }); return; }
+
+  const tree = commentsLightTree(db, v.videoId, limit);
+  // 置顶稳定前置（相对序不变），其后普通根按赞降序；根后随楼摊平成渲染序
+  const orderedRoots = [
+    ...tree.roots.filter((r) => r.pin_kind != null),
+    ...tree.roots.filter((r) => r.pin_kind == null),
+  ];
+  const comments: CommentLightRow[] = [];
+  for (const root of orderedRoots) {
+    comments.push(root);
+    for (const f of tree.floorsByRoot.get(root.rpid_str) ?? []) comments.push(f);
+  }
+  const c = commentsCount(db, v.videoId);
+  json(res, 200, {
+    ok: true,
+    bvid: v.bvid,
+    total_rows: c.rows,
+    total_roots: c.roots,
+    truncated: limit > 0 && c.roots > limit,
+    limit,
+    comments,
+  });
+}
+
 /** POST /api/comments/ingest：解析归一 → upsert（单事务）→ full 轮 missing 对账 + 置顶清打。 */
 async function handleIngest(req: IncomingMessage, res: ServerResponse, db: Database.Database): Promise<void> {
   const parsed = parseIngestBody(await readJsonBody(req));
@@ -248,6 +298,11 @@ export async function handleCommentsHttp(req: IncomingMessage, res: ServerRespon
 
   if (url.pathname === '/api/comments/tree' && req.method === 'GET') {
     handleTree(res, db, url.searchParams.get('bvid'));
+    return;
+  }
+
+  if (url.pathname === '/api/comments/list' && req.method === 'GET') {
+    handleList(res, db, url.searchParams.get('bvid'), url.searchParams.get('limit'));
     return;
   }
 

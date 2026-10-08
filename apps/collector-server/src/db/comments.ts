@@ -293,3 +293,85 @@ export function treeByVideo(db: Database.Database, videoId: number): CommentTree
   }
   return { roots, floorsByRoot };
 }
+
+// ── 轻量树查询（GET /api/comments/list 底层，2026-10-08 popup 评论卡）──
+
+/**
+ * GET /api/comments/list 行形态：popup 展示/树还原白名单子集（snake_case 对齐列名）。
+ * 不透出 member/content 大列（防体量防泄漏，对齐 http/danmaku.ts lightDanmaku 白名单口径）；
+ * has_picture 由 content JSON $.pictures 派生（0/1），popup 仅作 [图] 标注、不渲染图本体。
+ */
+export interface CommentLightRow {
+  rpid_str: string;
+  is_root: number;
+  uname: string | null;
+  like_count: number;
+  ctime_s: number | null;
+  message: string | null;
+  parent_reply_name: string | null;
+  ip_location: string | null;
+  pin_kind: string | null;
+  state: number;
+  folded: number;
+  up_like: number;
+  up_reply: number;
+  is_up: number;
+  /** content JSON $.pictures 非空数组 → 1（带图评论；verify countWithPictures 同口径，SQL 侧算） */
+  has_picture: number;
+  root_rpid: string;
+  parent_rpid: string;
+  dialog_rpid: string;
+}
+
+export interface CommentLightTree {
+  /** 根评论（like_count 降序，tie 同 treeByVideo；limit 已截） */
+  roots: CommentLightRow[];
+  /** 楼中楼按根分组（组内 ctime_s 升序）；孤儿楼（根已删）无挂载点，消费方 flatten 时自然不进列表 */
+  floorsByRoot: Map<string, CommentLightRow[]>;
+}
+
+/** 白名单列清单（两查询共用；has_picture 在库内派生，不拉 content 本体出网）。
+ *  json_type='array' 防非数组值；嵌套 CASE 防 content 坏 JSON（json_valid 先行短路，json_* 遇坏串会 throw）。 */
+const LIGHT_COLS = `
+  rpid_str, is_root, uname, like_count, ctime_s, message, parent_reply_name, ip_location,
+  pin_kind, state, folded, up_like, up_reply, is_up, root_rpid, parent_rpid, dialog_rpid,
+  CASE WHEN json_valid(content)
+       THEN CASE WHEN json_type(content, '$.pictures') = 'array'
+                 THEN json_array_length(content, '$.pictures') ELSE 0 END
+       ELSE 0 END AS has_picture
+`;
+
+/**
+ * treeByVideo 的轻量白名单版（popup 评论卡 list 端点底层，2026-10-08）：排序口径与 treeByVideo
+ * 完全同（根 like_count DESC/ctime_s ASC/id ASC，楼 ctime_s ASC/id ASC=导出 md 同序）；
+ * limit>0 只截根数、楼中楼随其根带出（IN 子查询定位，单查询防 N+1），limit=0 全部（shapeTree 口径）；
+ * 置顶前置分区由 http 层做（对齐 handleTree）。不拉 member/content 大列——88978 条级巨量视频下
+ * SELECT * 全量行出库的内存/体量不可控，白名单显式列清单防回归。
+ */
+export function commentsLightTree(db: Database.Database, videoId: number, limit: number): CommentLightTree {
+  const rootOrder = 'ORDER BY like_count DESC, ctime_s ASC, id ASC';
+  const roots = (limit > 0
+    ? db.prepare(`SELECT ${LIGHT_COLS} FROM comments WHERE video_id = ? AND is_root = 1 ${rootOrder} LIMIT ?`)
+        .all(videoId, limit)
+    : db.prepare(`SELECT ${LIGHT_COLS} FROM comments WHERE video_id = ? AND is_root = 1 ${rootOrder}`)
+        .all(videoId)
+  ) as CommentLightRow[];
+  const floorRows = (limit > 0
+    ? db.prepare(`
+        SELECT ${LIGHT_COLS} FROM comments WHERE video_id = ? AND is_root = 0
+          AND root_rpid IN (SELECT rpid_str FROM comments WHERE video_id = ? AND is_root = 1 ${rootOrder} LIMIT ?)
+        ORDER BY ctime_s ASC, id ASC
+      `).all(videoId, videoId, limit)
+    : db.prepare(`
+        SELECT ${LIGHT_COLS} FROM comments WHERE video_id = ? AND is_root = 0
+        ORDER BY ctime_s ASC, id ASC
+      `).all(videoId)
+  ) as CommentLightRow[];
+  const floorsByRoot = new Map<string, CommentLightRow[]>();
+  for (const f of floorRows) {
+    const list = floorsByRoot.get(f.root_rpid);
+    if (list) list.push(f);
+    else floorsByRoot.set(f.root_rpid, [f]);
+  }
+  return { roots, floorsByRoot };
+}
